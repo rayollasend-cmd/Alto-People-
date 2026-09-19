@@ -14,6 +14,8 @@ import { notePortalReportDownload } from '../lib/portalEngagement.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
+import { buildStoreOps, scopedOpsPhoto } from '../lib/portalOps.js';
+import { getBlobStore } from '../lib/blobStore.js';
 import {
   DAY,
   ORG_TZ,
@@ -1194,6 +1196,44 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
  * that closed inside it, and the service report for every week it
  * touches. Every number comes from the same queries the live view uses.
  */
+/**
+ * GET /client-portal/ops?date=YYYY-MM-DD — store operations for one store
+ * day: every department's SOP by shift, what needs attention, the
+ * temperature log, production and handoffs (lib/portalOps). The store's
+ * team leads read it too — operations carry no money.
+ */
+clientPortalRouter.get('/client-portal/ops', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query, { floorLead: true });
+    const now = new Date();
+    const cal = await portalCalendar(scope);
+    const dateKey = req.query.date === undefined ? cal.key(now) : parseDayKey(req.query.date, 'date');
+    const body = await buildStoreOps(scope, { dateKey, cal, now });
+    res.json({
+      scope: { client: scope.client, location: scope.location ? { id: scope.location.id, name: scope.location.name } : null },
+      ...body,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /client-portal/ops/photos/:id — SOP photo evidence, in scope. */
+clientPortalRouter.get('/client-portal/ops/photos/:id', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query, { floorLead: true });
+    const photo = await scopedOpsPhoto(scope, req.params.id);
+    if (!photo) throw new HttpError(404, 'not_found', 'Photo not found');
+    const buf = await getBlobStore().get(photo.s3Key);
+    if (!buf) throw new HttpError(404, 'blob_missing', 'Photo file is missing.');
+    res.setHeader('Content-Type', photo.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user!, req.query);

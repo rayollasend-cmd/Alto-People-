@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  AlarmClock,
   AlertTriangle,
   Camera,
   Check,
@@ -657,6 +658,12 @@ function ShiftRunner({
   // The same crew member usually does consecutive tasks — remember the
   // last "done by" pick so tagging the next task is one tap.
   const [lastTagged, setLastTagged] = useState<{ id: string; name: string } | null>(null);
+  // The clock the blocks' due times are read against.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   // A spawned follow-up announces itself in place: once the refreshed
   // task list contains it, scroll it into view and flash the row so the
   // toast points at something real.
@@ -680,6 +687,12 @@ function ShiftRunner({
     }
     return [...bySection.entries()];
   }, [tasks]);
+  // Each block's deadline ("Backroom — by 9:30 AM"), and the block to work
+  // now: the first one with anything still open.
+  const dueOf = (rows: OpsTaskRow[]) => rows.find((r) => r.dueAt)?.dueAt ?? null;
+  const overdueItems = tasks.filter((t) => t.status !== 'DONE' && t.dueAt && Date.parse(t.dueAt) < now).length;
+  const nowSection =
+    sections.find(([, rows]) => dueOf(rows) && rows.some((r) => r.status !== 'DONE'))?.[0] ?? null;
 
   const done = tasks.filter((t) => t.status === 'DONE').length;
   const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
@@ -852,6 +865,16 @@ function ShiftRunner({
                 <Camera className="h-3.5 w-3.5" aria-hidden="true" />
                 {stats.photos} photo{stats.photos === 1 ? '' : 's'}
               </span>
+              {overdueItems > 0 && (
+                <button
+                  type="button"
+                  onClick={() => nowSection && scrollTo(nowSection)}
+                  className="inline-flex items-center gap-1.5 font-medium text-alert hover:underline"
+                >
+                  <AlarmClock className="h-3.5 w-3.5" aria-hidden="true" />
+                  {overdueItems} overdue
+                </button>
+              )}
               {stats.highOpen > 0 && (
                 <Badge variant="destructive">{stats.highOpen} high-priority open</Badge>
               )}
@@ -888,19 +911,27 @@ function ShiftRunner({
             {sections.map(([section, rows]) => {
               const secDone = rows.filter((r) => r.status === 'DONE').length;
               const complete = secDone === rows.length;
+              const due = dueOf(rows);
+              const late = !complete && due !== null && Date.parse(due) < now;
               return (
                 <button
                   key={section}
                   type="button"
                   onClick={() => scrollTo(section)}
+                  aria-current={section === nowSection ? 'step' : undefined}
                   className={cn(
                     'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                     complete
                       ? 'bg-success/15 text-success'
-                      : 'text-silver hover:bg-navy-secondary/60 hover:text-white',
+                      : late
+                        ? 'bg-alert/15 text-alert'
+                        : section === nowSection
+                          ? 'text-gold ring-1 ring-inset ring-gold/40'
+                          : 'text-silver hover:bg-navy-secondary/60 hover:text-white',
                   )}
                 >
                   {complete && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {late && <AlarmClock className="h-3 w-3" aria-hidden="true" />}
                   {section}
                   <span className="tabular-nums text-2xs opacity-70">
                     {secDone}/{rows.length}
@@ -950,11 +981,13 @@ function ShiftRunner({
       {sections.map(([section, rows], secIdx) => {
         const secDone = rows.filter((r) => r.status === 'DONE').length;
         const secPct = rows.length > 0 ? Math.round((secDone / rows.length) * 100) : 0;
+        const due = dueOf(rows);
+        const late = secPct < 100 && due !== null && Date.parse(due) < now;
         return (
           <Card
             key={section}
             id={`ops-section-${section}`}
-            className="scroll-mt-16"
+            className={cn('scroll-mt-16', late && 'border-alert/50', section === nowSection && !late && 'border-gold/40')}
           >
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2.5">
@@ -978,12 +1011,27 @@ function ShiftRunner({
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-500',
-                      secPct === 100 ? 'bg-success' : 'bg-gold',
+                      secPct === 100 ? 'bg-success' : late ? 'bg-alert' : 'bg-gold',
                     )}
                     style={{ width: `${secPct}%` }}
                   />
                 </div>
               </div>
+              {due && secPct < 100 && (
+                <div
+                  className={cn(
+                    'ml-[34px] mt-1 flex items-center gap-1.5 text-xs tabular-nums',
+                    late ? 'font-medium text-alert' : section === nowSection ? 'text-gold' : 'text-silver',
+                  )}
+                >
+                  <AlarmClock className="h-3.5 w-3.5" aria-hidden="true" />
+                  {late
+                    ? `Overdue — was due ${fmtTime(due)}`
+                    : section === nowSection
+                      ? `Now · due by ${fmtTime(due)}`
+                      : `Due by ${fmtTime(due)}`}
+                </div>
+              )}
             </CardHeader>
             <CardContent className="divide-y divide-navy-secondary/60">
               {rows.map((task) => (

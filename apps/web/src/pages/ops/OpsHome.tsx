@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { OpsRunner } from './OpsRunner';
 import { OpsBoard } from './OpsBoard';
 import { OpsLibrary } from './OpsLibrary';
+import { StoreOps } from '../portal/PortalOps';
 
 /**
  * Store Operations — one module, three audiences:
@@ -15,6 +16,8 @@ import { OpsLibrary } from './OpsLibrary';
  *    Floor supervisors: "My shift" too — help on it, run it covering.
  *  - Operations / HR / the chairman: the live board + scorecard.
  *  - The same leadership trio: the SOP library (the editable standard).
+ *  - The store's team leads: "Store today" — every department's SOP, the
+ *    page their store manager reads in the portal.
  * Tabs render only for the capabilities the signed-in user actually holds.
  */
 export function OpsHome() {
@@ -26,15 +29,19 @@ export function OpsHome() {
     : false;
   const canBoard = user ? hasCapability(user.role, 'view:ops') : false;
   const canLibrary = user ? hasCapability(user.role, 'manage:ops-library') : false;
+  // The store's team leads read the whole store's day — every department's
+  // SOP, temps, freight — the page their store manager reads in the portal.
+  const canStore = user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR';
 
   const tabs = useMemo(
     () =>
       [
         canRun ? { key: 'shift', label: 'My shift' } : null,
+        canStore ? { key: 'store', label: 'Store today' } : null,
         canBoard ? { key: 'board', label: 'Board' } : null,
         canLibrary ? { key: 'library', label: 'SOP library' } : null,
       ].filter((t): t is { key: string; label: string } => t !== null),
-    [canRun, canBoard, canLibrary],
+    [canRun, canStore, canBoard, canLibrary],
   );
   // The active tab lives in ?tab= so views are linkable ("open the ops
   // board") and a tablet reload/wake doesn't dump the supervisor on the
@@ -80,6 +87,7 @@ export function OpsHome() {
         </Tabs>
       )}
       {tab === 'shift' && canRun && <OpsRunner />}
+      {tab === 'store' && canStore && <StoreOps />}
       {tab === 'board' && canBoard && <OpsBoard />}
       {tab === 'library' && canLibrary && <OpsLibrary />}
     </div>

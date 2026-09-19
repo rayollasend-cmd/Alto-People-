@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlarmClock,
   Camera,
   ChevronDown,
   ChevronRight,
@@ -44,6 +45,7 @@ import {
   METRIC_LABEL,
   patchOpsTemplate,
   patchOpsTemplateTask,
+  setOpsSectionDue,
   type OpsLibraryTemplate,
   type OpsPeriod,
   type OpsResponseType,
@@ -433,6 +435,85 @@ function HeroStat({
   );
 }
 
+/** "07:30" → "7:30 AM". */
+function fmtDueTime(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number) as [number, number];
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** A block's deadline at the store — "by 9:30 AM" — set for the whole
+ *  block in one go. Each run turns it into a real deadline on its shift. */
+function SectionDue({
+  templateId,
+  section,
+  dueTime,
+  onChanged,
+}: {
+  templateId: string;
+  section: string;
+  dueTime: string | null;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(dueTime ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async (next: string | null) => {
+    setBusy(true);
+    try {
+      await setOpsSectionDue(templateId, { section, dueTime: next });
+      toast.success(next ? `${section} is due by ${fmtDueTime(next)}` : `${section} has no due time`);
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the due time.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setValue(dueTime ?? '');
+          setEditing(true);
+        }}
+        className={cn(
+          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-2xs tabular-nums transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+          dueTime ? 'border-gold/30 text-gold' : 'border-dashed border-navy-secondary text-silver/60',
+        )}
+        aria-label={dueTime ? `${section}: due by ${fmtDueTime(dueTime)} — change` : `${section}: set a due time`}
+      >
+        <AlarmClock className="h-3 w-3" aria-hidden="true" />
+        {dueTime ? `by ${fmtDueTime(dueTime)}` : 'Set due time'}
+      </button>
+    );
+  }
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        aria-label={`${section} due by`}
+        className="h-7 rounded-md border border-navy-secondary bg-navy px-1.5 text-xs text-white tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        autoFocus
+      />
+      <Button size="sm" className="h-7 px-2" disabled={!value || busy} loading={busy} onClick={() => void save(value)}>
+        Save
+      </Button>
+      {dueTime && (
+        <Button size="sm" variant="ghost" className="h-7 px-2" disabled={busy} onClick={() => void save(null)}>
+          Clear
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" className="h-7 px-2" disabled={busy} onClick={() => setEditing(false)}>
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
 function TemplateTasks({
   tpl,
   onChanged,
@@ -463,6 +544,12 @@ function TemplateTasks({
               <span className="text-2xs uppercase tracking-wider text-silver/70">{sec}</span>
               <span className="text-2xs text-silver/40 tabular-nums">{rows.length}</span>
               <span className="h-px flex-1 bg-navy-secondary" aria-hidden="true" />
+              <SectionDue
+                templateId={tpl.id}
+                section={sec}
+                dueTime={rows.find((r) => r.dueTime)?.dueTime ?? null}
+                onChanged={onChanged}
+              />
             </div>
             <ul className="mt-1.5 space-y-1">
               {rows.map((task) => {

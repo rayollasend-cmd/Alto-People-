@@ -89,6 +89,8 @@ export interface OpsTaskRow {
   note: string | null;
   blockedReason: string | null;
   completedAt: string | null;
+  /** When its block is due, on this shift's clock (null: untimed). */
+  dueAt: string | null;
   doneAssociate: { id: string; name: string } | null;
   photos: { id: string; filename: string; createdAt: string }[];
 }
@@ -142,6 +144,8 @@ export interface OpsLibraryTemplate {
     metricKey: string | null;
     unit: string | null;
     followUpOn: OpsFollowUpOn | null;
+    /** "HH:MM" — when its block is due at the store. */
+    dueTime: string | null;
     /** How this LINE of the standard performs in practice (28d). */
     stats: {
       runs: number;
@@ -161,6 +165,12 @@ export const METRIC_LABEL: Record<string, string> = {
   oos_found: 'Out-of-stocks found',
   pallets_received: 'Pallets received',
   price_changes: 'Price changes',
+  picks_worked: 'Picks worked',
+  overstock_binned: 'Overstock binned',
+  claims_processed: 'Claims processed',
+  returns_worked: 'Returns worked',
+  donations_logged: 'Donations logged',
+  freight_left: 'Freight left',
   recorded: 'Recorded',
 };
 
@@ -206,9 +216,18 @@ export function addOpsTemplateTask(
     tempLabel?: string;
     tempMin?: number;
     tempMax?: number;
+    dueTime?: string | null;
   },
 ): Promise<{ id: string }> {
   return apiFetch(`/ops/library/templates/${templateId}/tasks`, { method: 'POST', body });
+}
+
+/** Time a whole block: every task in the section is due by `dueTime`. */
+export function setOpsSectionDue(
+  templateId: string,
+  body: { section: string; dueTime: string | null },
+): Promise<{ ok: true; updated: number }> {
+  return apiFetch(`/ops/library/templates/${templateId}/sections`, { method: 'PATCH', body });
 }
 
 /** Edit a task in the standard (run shifts keep their snapshots). */
@@ -229,6 +248,7 @@ export function patchOpsTemplateTask(
     followUpOn?: OpsFollowUpOn | null;
     followUpRequirePhoto?: boolean;
     followUpTaskTitle?: string | null;
+    dueTime?: string | null;
   },
 ): Promise<{ ok: true }> {
   return apiFetch(`/ops/library/tasks/${taskId}`, { method: 'PATCH', body });
@@ -470,6 +490,10 @@ export interface MySop {
   sopTotal: number;
   requiredOpen: number;
   handoverCount: number;
+  /** Items past their block's due time. */
+  overdue?: number;
+  /** The block to work now — the earliest with anything open. */
+  block?: { section: string | null; dueAt: string; open: number } | null;
   /** A floor supervisor running it for their shift supervisor. */
   coveringFor?: { id: string; name: string } | null;
 }

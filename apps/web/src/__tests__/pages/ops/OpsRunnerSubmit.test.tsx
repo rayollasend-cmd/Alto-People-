@@ -76,6 +76,25 @@ function renderRunner(d: OpsShiftDetail) {
   return userEvent.setup();
 }
 
+describe('<OpsRunner> — timed blocks', () => {
+  it('each block says when it is due; a late one is overdue and the header counts it', async () => {
+    const mins = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
+    renderRunner(
+      detail([
+        { ...task('t1', 'Bins scanned and capped', 'DONE'), section: 'Backroom · 7:30–9:30', dueAt: mins(-15) },
+        { ...task('t2', 'Priority picks worked', 'OPEN'), section: 'Backroom · 7:30–9:30', dueAt: mins(-15) },
+        { ...task('t3', 'Milk and eggs full', 'OPEN'), section: 'Sales floor · 9:30–11:00', dueAt: mins(90) },
+        { ...task('t4', 'Final zone', 'OPEN'), section: 'End of shift', dueAt: mins(300) },
+      ]),
+    );
+    expect(await screen.findByText(/Overdue — was due/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /1 overdue/ })).toBeInTheDocument();
+    // The late block is the one to work now; the blocks after it just say when.
+    expect(screen.getAllByText(/^Due by \d{1,2}:\d{2}\s?[AP]M$/)).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /Backroom · 7:30–9:30/, current: 'step' })).toBeInTheDocument();
+  });
+});
+
 describe('<OpsRunner> — submitting the shift SOP', () => {
   it('says when it is due and that it gates the clock-out', async () => {
     renderRunner(detail([task('t1', 'Walk the floor', 'DONE')]));

@@ -6,6 +6,9 @@ import { enqueueAudit } from './audit.js';
 import { notifyAllAdmins, notifyUser } from './notify.js';
 import { currentStoreWindows, ledWindows } from './shiftWindows.js';
 import { dateKeyInZone, orgDateKey } from './timeAnomalies.js';
+import { dueInstants } from './sopDue.js';
+import { ensureOpsSeed } from './opsSops.js';
+import { DEFAULT_TIMEZONE } from './timezone.js';
 import {
   activeCoverFor,
   firstName,
@@ -168,12 +171,15 @@ export async function createOpsShift(
     /** Scheduled headcount window; default: the org day. */
     scheduledBetween?: { from: Date; to: Date };
     scheduledPosition?: string | null;
+    /** When the shift starts — its blocks' due times count from here;
+     *  default: now. */
+    startsAt?: Date;
     now?: Date;
   },
 ): Promise<OpsShift> {
   const now = input.now ?? new Date();
   const dateKey = orgDateKey(now);
-  const [scheduledHeadcount, actualHeadcount, template] = await Promise.all([
+  const [scheduledHeadcount, actualHeadcount, template, location] = await Promise.all([
     input.scheduledBetween
       ? db.shift.count({
           where: {
@@ -202,7 +208,18 @@ export async function createOpsShift(
           orderBy: { createdAt: 'asc' },
           include: { tasks: { orderBy: { order: 'asc' } } },
         }),
+    input.locationId
+      ? db.location.findUnique({ where: { id: input.locationId }, select: { timezone: true } })
+      : Promise.resolve(null),
   ]);
+  // "By 9:00 AM" becomes 9:00 AM on this shift's clock, at the store.
+  const due = template
+    ? dueInstants(
+        template.tasks.map((task) => task.dueTime),
+        input.startsAt ?? now,
+        location?.timezone ?? DEFAULT_TIMEZONE,
+      )
+    : [];
   return db.opsShift.create({
     data: {
       clientId: input.clientId,
@@ -222,7 +239,7 @@ export async function createOpsShift(
       coveringForId: input.coveringForId ?? null,
       tasks: template
         ? {
-            create: template.tasks.map((task) => ({
+            create: template.tasks.map((task, i) => ({
               source: 'SOP' as const,
               templateTaskId: task.id,
               section: task.section,
@@ -240,6 +257,7 @@ export async function createOpsShift(
               followUpOn: task.followUpOn,
               followUpRequirePhoto: task.followUpRequirePhoto,
               followUpTaskTitle: task.followUpTaskTitle,
+              dueAt: due[i] ?? null,
             })),
           }
         : undefined,
@@ -294,6 +312,7 @@ async function openStoreShiftSop(
     dueAt: occ.end,
     coveringForId: input.coveringForId ?? null,
     scheduledBetween: { from: occ.start, to: occ.end },
+    startsAt: occ.start,
     now: input.at,
   });
   enqueueAudit(
@@ -666,6 +685,10 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startOpsSopCron(): void {
   if (timer) return;
+  // The library is current before any clock-in opens an SOP from it.
+  void ensureOpsSeed(defaultPrisma).catch((err) => {
+    console.error('[alto-people/api] SOP library seed failed:', err);
+  });
   const seconds = env.OPS_SOP_SWEEP_SECONDS;
   if (seconds <= 0) return;
   const run = () => {

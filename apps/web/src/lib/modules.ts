@@ -10,6 +10,7 @@ export type ModuleKey =
   | 'portal-today'
   | 'portal-schedule'
   | 'portal-history'
+  | 'portal-ops'
   | 'portal-requests'
   | 'floor-today'
   | 'relay'
@@ -185,6 +186,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
 const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal',
   'portal-today',
+  'portal-ops',
   'portal-schedule',
   'portal-history',
   'messages',
@@ -404,6 +406,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Today',
     description:
       'Who is on your floor right now, wave by wave — clocked in, not in yet, unfilled — with finished shifts folded to their proof line.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'portal-ops',
+    path: '/portal/ops',
+    label: 'Store operations',
+    description:
+      'Every department’s SOP, shift by shift — what’s late, temperatures out of range, freight worked, and what each shift handed the next.',
     requires: 'view:dashboard',
     group: 'core',
   },

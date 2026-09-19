@@ -924,7 +924,11 @@ function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
 /** Their shift's SOP, open until submitted — you can't clock out before. */
 function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySop>>['sop']> }) {
   const pct = sop.sopTotal > 0 ? Math.round((sop.sopDone / sop.sopTotal) * 100) : 0;
-  const overdue = sop.dueAt !== null && new Date(sop.dueAt).getTime() < Date.now();
+  const ended = sop.dueAt !== null && new Date(sop.dueAt).getTime() < Date.now();
+  const late = sop.overdue ?? 0;
+  const overdue = ended || late > 0;
+  const block = sop.block ?? null;
+  const blockLate = block !== null && Date.parse(block.dueAt) < Date.now();
   return (
     <Link
       to={`/ops?tab=shift&shift=${sop.id}`}
@@ -940,11 +944,18 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
             ? `You're running ${sop.coveringFor.name.split(' ')[0]}'s ${sop.windowLabel ?? sop.position} SOP`
             : `Your ${sop.windowLabel ?? sop.position} SOP is open`}
         </div>
+        {block && (
+          <div className={cn('mt-0.5 truncate text-xs font-medium tabular-nums', blockLate ? 'text-alert' : 'text-gold')}>
+            Now: {block.section ?? 'Next block'} · {block.open} left ·{' '}
+            {blockLate ? `was due ${fmtTime(block.dueAt)}` : `due ${fmtTime(block.dueAt)}`}
+          </div>
+        )}
         <div className="mt-0.5 text-xs text-silver tabular-nums">
           {sop.sopDone} of {sop.sopTotal} done
+          {late > 0 && <span className="text-alert"> · {late} overdue</span>}
           {sop.dueAt && (
-            <span className={overdue ? 'text-alert' : undefined}>
-              {' '}· {overdue ? 'was due' : 'due'} {fmtTime(sop.dueAt)}
+            <span className={ended ? 'text-alert' : undefined}>
+              {' '}· {ended ? 'was due' : 'due'} {fmtTime(sop.dueAt)}
             </span>
           )}
           {' '}· submit it before you clock out

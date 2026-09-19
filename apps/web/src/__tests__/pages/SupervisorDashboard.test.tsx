@@ -280,6 +280,19 @@ describe('<SupervisorDashboard> — My floor', () => {
     expect(banner.closest('a')).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
   });
 
+  it('names the block to work now and what is overdue', async () => {
+    renderPage({
+      sop: {
+        id: 'sop1', windowLabel: 'Morning', position: 'Morning shift', locationName: 'Front Beach 218',
+        dueAt: new Date(Date.now() + 5 * 3_600_000).toISOString(), openedAt: new Date().toISOString(),
+        sopDone: 8, sopTotal: 40, requiredOpen: 30, handoverCount: 0, overdue: 3,
+        block: { section: 'Backroom · 7:30–9:30', dueAt: new Date(Date.now() - 10 * 60_000).toISOString(), open: 3 },
+      },
+    });
+    expect(await screen.findByText(/Now: Backroom · 7:30–9:30 · 3 left · was due/)).toBeInTheDocument();
+    expect(screen.getByText('· 3 overdue')).toBeInTheDocument();
+  });
+
   it("off the clock, the shift starts on My floor — Clock in, and the SOP opens", async () => {
     renderPage({ clockedIn: false });
     expect(await screen.findByText("You're off the clock")).toBeInTheDocument();

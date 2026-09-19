@@ -2040,6 +2040,9 @@ model OpsSopTemplateTask {
   followUpOn          OpsFollowUpOn?
   followUpRequirePhoto Boolean        @default(false)
   followUpTaskTitle   String?         @db.VarChar(300)
+  /// "HH:MM" store time the task's block is due by ("by 9:00 AM"); each
+  /// run turns it into a real deadline on that shift's clock.
+  dueTime       String?         @db.VarChar(5)
 
   @@index([templateId, order])
 }
@@ -2153,6 +2156,9 @@ model OpsTask {
   followUpOn          OpsFollowUpOn?
   followUpRequirePhoto Boolean        @default(false)
   followUpTaskTitle   String?         @db.VarChar(300)
+  /// When this item is due — its block's due time on this shift's clock.
+  /// Open past it = overdue, on the runner and the store's dashboard.
+  dueAt           DateTime?       @db.Timestamptz(6)
   // Corrective child ← the parent whose answer spawned it.
   parentTaskId    String?         @db.Uuid
   parentTask      OpsTask?        @relation("OpsTaskFollowUp", fields: [parentTaskId], references: [id], onDelete: SetNull)

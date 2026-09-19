@@ -859,10 +859,15 @@ export function ClientPortalHome() {
         {/* ---- Last night's work (ops evidence) ------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(4)}>
           <CardContent className="p-5">
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-              <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
-              {opsIsToday ? t('portal.opsToday') : t('portal.opsTitle')}
-            </h2>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
+                {opsIsToday ? t('portal.opsToday') : t('portal.opsTitle')}
+              </h2>
+              <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                {t('portal.opsOpen')}
+              </Link>
+            </div>
             {!opsDay ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.opsNone')}</p>
             ) : (

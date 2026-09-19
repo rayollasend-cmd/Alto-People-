@@ -21,6 +21,7 @@ import {
   periodForPosition,
 } from '../lib/opsSops.js';
 import { createOpsShift } from '../lib/storeShiftSop.js';
+import { isDueTime } from '../lib/sopDue.js';
 import { currentStoreWindows } from '../lib/shiftWindows.js';
 import { personName, validLead } from '../lib/floorLeads.js';
 
@@ -178,6 +179,7 @@ const taskSelect = {
   note: true,
   blockedReason: true,
   completedAt: true,
+  dueAt: true,
   doneAssociate: { select: { id: true, firstName: true, lastName: true } },
   photos: { select: { id: true, filename: true, createdAt: true } },
 } satisfies Prisma.OpsTaskSelect;
@@ -208,6 +210,7 @@ function toTask(t: Prisma.OpsTaskGetPayload<{ select: typeof taskSelect }>) {
     note: t.note,
     blockedReason: t.blockedReason,
     completedAt: t.completedAt?.toISOString() ?? null,
+    dueAt: t.dueAt?.toISOString() ?? null,
     doneAssociate: t.doneAssociate
       ? {
           id: t.doneAssociate.id,
@@ -450,6 +453,7 @@ opsRouter.get('/library', LIB_READ, async (_req, res, next) => {
           metricKey: task.metricKey,
           unit: task.unit,
           followUpOn: task.followUpOn,
+          dueTime: task.dueTime,
           stats: taskStats.get(task.id) ?? {
             runs: 0,
             done: 0,
@@ -540,6 +544,9 @@ opsRouter.patch('/library/templates/:id', LIB, async (req, res, next) => {
   }
 });
 
+/** "HH:MM", 24-hour — when the task's block is due at the store. */
+const DueTime = z.string().refine(isDueTime, 'Use HH:MM, 24-hour.');
+
 const TemplateTaskInputSchema = z.object({
   section: z.string().trim().min(1).max(80),
   title: z.string().trim().min(1).max(300),
@@ -557,6 +564,7 @@ const TemplateTaskInputSchema = z.object({
   followUpOn: z.enum(['NO', 'NO_OR_PARTIAL', 'OUT_OF_RANGE']).nullable().optional(),
   followUpRequirePhoto: z.boolean().optional(),
   followUpTaskTitle: z.string().trim().max(300).optional(),
+  dueTime: DueTime.nullable().optional(),
 });
 
 opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
@@ -570,6 +578,14 @@ opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
       include: { tasks: { orderBy: { order: 'desc' }, take: 1 } },
     });
     if (!tpl) throw new HttpError(404, 'not_found', 'Template not found');
+    // A task added to a timed block is due with it.
+    const blockDue =
+      parsed.data.dueTime === undefined
+        ? await prisma.opsSopTemplateTask.findFirst({
+            where: { templateId: tpl.id, section: parsed.data.section, dueTime: { not: null } },
+            select: { dueTime: true },
+          })
+        : null;
     const created = await prisma.opsSopTemplateTask.create({
       data: {
         templateId: tpl.id,
@@ -588,6 +604,7 @@ opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
         followUpOn: parsed.data.followUpOn ?? null,
         followUpRequirePhoto: parsed.data.followUpRequirePhoto ?? false,
         followUpTaskTitle: parsed.data.followUpTaskTitle ?? null,
+        dueTime: parsed.data.dueTime ?? blockDue?.dueTime ?? null,
       },
     });
     enqueueAudit(
@@ -631,6 +648,7 @@ opsRouter.patch('/library/tasks/:id', LIB, async (req, res, next) => {
         followUpOn: z.enum(['NO', 'NO_OR_PARTIAL', 'OUT_OF_RANGE']).nullable().optional(),
         followUpRequirePhoto: z.boolean().optional(),
         followUpTaskTitle: z.string().trim().max(300).nullable().optional(),
+        dueTime: DueTime.nullable().optional(),
       })
       .safeParse(req.body);
     if (!parsed.success) {
@@ -653,6 +671,41 @@ opsRouter.patch('/library/tasks/:id', LIB, async (req, res, next) => {
       'ops.library',
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /ops/library/templates/:id/sections — time a whole block at once:
+ * { section, dueTime | null } sets when every task in it is due.
+ */
+opsRouter.patch('/library/templates/:id/sections', LIB, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({ section: z.string().trim().min(1).max(80), dueTime: DueTime.nullable() })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const tpl = await prisma.opsSopTemplate.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!tpl) throw new HttpError(404, 'not_found', 'Template not found');
+    const { count } = await prisma.opsSopTemplateTask.updateMany({
+      where: { templateId: tpl.id, section: parsed.data.section },
+      data: { dueTime: parsed.data.dueTime },
+    });
+    if (count === 0) throw new HttpError(404, 'section_not_found', 'No such section in this SOP.');
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'ops.sop_section_timed',
+        entityType: 'OpsSopTemplate',
+        entityId: tpl.id,
+        metadata: { section: parsed.data.section, dueTime: parsed.data.dueTime },
+      },
+      'ops.library',
+    );
+    res.json({ ok: true, updated: count });
   } catch (err) {
     next(err);
   }
@@ -1446,11 +1499,28 @@ opsRouter.get('/my-sop', RUN_OR_ASSIST, async (req, res, next) => {
       });
       return;
     }
-    const [counts, handoverCount, requiredOpen] = await Promise.all([
+    const now = new Date();
+    const [counts, handoverCount, requiredOpen, overdue, nextDue] = await Promise.all([
       liveCounts(shift.id),
       prisma.opsHandoverItem.count({ where: { fromShiftId: shift.id } }),
       prisma.opsTask.count({ where: { opsShiftId: shift.id, required: true, status: { not: 'DONE' } } }),
+      prisma.opsTask.count({ where: { opsShiftId: shift.id, status: { not: 'DONE' }, dueAt: { lt: now } } }),
+      // The block to work now: the earliest one with anything still open.
+      prisma.opsTask.findFirst({
+        where: { opsShiftId: shift.id, status: { not: 'DONE' }, dueAt: { not: null } },
+        orderBy: [{ dueAt: 'asc' }, { order: 'asc' }],
+        select: { section: true, dueAt: true },
+      }),
     ]);
+    const block = nextDue
+      ? {
+          section: nextDue.section,
+          dueAt: nextDue.dueAt!.toISOString(),
+          open: await prisma.opsTask.count({
+            where: { opsShiftId: shift.id, status: { not: 'DONE' }, section: nextDue.section, dueAt: nextDue.dueAt },
+          }),
+        }
+      : null;
     res.json({
       sop: {
         id: shift.id,
@@ -1463,6 +1533,8 @@ opsRouter.get('/my-sop', RUN_OR_ASSIST, async (req, res, next) => {
         sopTotal: counts.sopTotal,
         requiredOpen,
         handoverCount,
+        overdue,
+        block,
         coveringFor: shift.coveringFor
           ? { id: shift.coveringFor.id, name: personName(shift.coveringFor) }
           : null,

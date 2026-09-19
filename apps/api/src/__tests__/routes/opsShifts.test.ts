@@ -48,11 +48,11 @@ describe('store ops', () => {
     expect(detail.status).toBe(200);
     expect(detail.body.shift.department).toBe('Frozen & Dairy');
     expect(detail.body.shift.period).toBe('OVERNIGHT');
-    expect(detail.body.shift.templateName).toBe('Frozen & Dairy — Overnight');
+    expect(detail.body.shift.templateName).toBe('Frozen & Dairy — Overnight (10 PM–7 AM)');
     // The seeded overnight checklist came along as real task rows.
     const titles = detail.body.tasks.map((t: { title: string }) => t.title);
-    expect(titles).toContain('Stock Frozen');
-    expect(titles).toContain('Overnight temperature check');
+    expect(titles).toContain('Frozen, Dairy and Dept 97 stocked, cold chain kept');
+    expect(titles).toContain('Freezer case temperature');
 
     // Re-opening resumes rather than duplicating.
     const again = await agent
@@ -77,7 +77,7 @@ describe('store ops', () => {
     );
     expect(tempTask).toBeTruthy();
 
-    // 22°F in a -10..10 freezer band → flagged + alert.
+    // 22°F in a 33–41°F dairy cooler → flagged + alert.
     const res = await agent
       .patch(`/ops/tasks/${tempTask.id}`)
       .send({ answerNumber: 22, status: 'DONE' });
@@ -155,7 +155,7 @@ describe('store ops', () => {
 
     // The metric identity rode the snapshot in.
     const metric = detail.body.tasks.find(
-      (t: { title: string }) => t.title === 'Receive the delivery',
+      (t: { title: string }) => t.title === 'Truck received',
     );
     expect(metric.metricKey).toBe('pallets_received');
     expect(metric.unit).toBe('pallets');
