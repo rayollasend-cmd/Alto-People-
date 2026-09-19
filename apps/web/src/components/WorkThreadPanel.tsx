@@ -54,7 +54,14 @@ function deskOf(role: string | undefined): Desk | null {
   return null;
 }
 
-export function WorkThreadPanel({ associateId }: { associateId: string }) {
+export function WorkThreadPanel({
+  associateId,
+  onChanged,
+}: {
+  associateId: string;
+  /** A note posted or a ruling made — for boards that show the thread's pulse. */
+  onChanged?: () => void;
+}) {
   const { user } = useAuth();
   const myDesk = deskOf(user?.role);
   const [notes, setNotes] = useState<WorkNoteRow[] | null>(null);
@@ -102,6 +109,7 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
       setMentions([]);
       setDecisionDesk('');
       load(true);
+      onChanged?.();
       if (mentions.length > 0) {
         toast.success(
           `Posted — ${mentions.map((m) => DESKS.find((d) => d.key === m)?.label).join(' and ')} notified.`,
@@ -123,6 +131,7 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
       setDeciding(null);
       setDecisionText('');
       load(true);
+      onChanged?.();
       toast.success(approve ? 'Approved — receipt recorded.' : 'Declined — receipt recorded.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not record the ruling.');

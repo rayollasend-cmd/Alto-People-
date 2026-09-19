@@ -583,6 +583,8 @@ model User {
   clockInRequestsDecided            ClockInRequest[]              @relation("ClockInRequestDecider")
   attendanceExcusals                AttendanceEvent[]             @relation("AttendanceExcuser")
   fieldglassRegistrations           FieldglassRegistration[]      @relation("FieldglassRegistrar")
+  relayClaims                       RelayClaim[]                  @relation("RelayClaimHolder")
+  relayClaimsHandedOff              RelayClaim[]                  @relation("RelayClaimAssigner")
   workNotes                         WorkNote[]                    @relation("WorkNoteAuthor")
   workNoteDecisions                 WorkNote[]                    @relation("WorkNoteDecider")
   clientRequestsAuthored            ClientRequest[]               @relation("ClientRequestAuthor")
@@ -1189,6 +1191,27 @@ model WorkNote {
 
   @@index([subjectType, subjectKey, createdAt(sort: Desc)])
   @@index([decisionStatus, decisionDesk])
+}
+
+/// Who holds a piece of the relay — a first-paycheck lane (subjectKey =
+/// the associate), a baton (its key, "timesheets"), or a client request
+/// (its id). One holder at a time; claiming it yourself or handing it to a
+/// teammate replaces the holder, releasing clears it.
+model RelayClaim {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// LANE | BATON | REQUEST
+  subjectType String   @db.VarChar(20)
+  subjectKey  String   @db.VarChar(80)
+  userId      String   @db.Uuid
+  /// Who put it in their hands — themselves, or whoever handed it over.
+  claimedById String?  @db.Uuid
+  claimedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  user      User  @relation("RelayClaimHolder", fields: [userId], references: [id], onDelete: Cascade)
+  claimedBy User? @relation("RelayClaimAssigner", fields: [claimedById], references: [id], onDelete: SetNull)
+
+  @@unique([subjectType, subjectKey])
+  @@index([userId])
 }
 
 // One row per (associate, week) so the OT radar's morning digest alerts a

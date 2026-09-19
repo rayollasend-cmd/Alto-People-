@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
-import { computeRelayBoard, computeSingleLane } from '../lib/relayBoard.js';
+import { BATON_LABELS, computeRelayBoard, computeSingleLane } from '../lib/relayBoard.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 /**
  * THE RELAY + threads on the work.
@@ -24,9 +25,264 @@ export const relayRouter = Router();
 
 const STAFF = requireCapability('view:org');
 
-relayRouter.get('/relay/board', STAFF, async (_req, res, next) => {
+type DeskKey = 'FINANCE' | 'HR' | 'WORKFORCE';
+
+interface Person {
+  userId: string;
+  name: string;
+  photoUrl: string | null;
+}
+
+const personSelect = {
+  id: true,
+  email: true,
+  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true } },
+} as const;
+
+function personOf(u: {
+  id: string;
+  email: string;
+  associate: { id: string; firstName: string; lastName: string; photoS3Key: string | null } | null;
+}): Person {
+  return {
+    userId: u.id,
+    name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : (u.email.split('@')[0] ?? u.email),
+    photoUrl: u.associate?.photoS3Key ? `/api/associates/${u.associate.id}/photo` : null,
+  };
+}
+
+/**
+ * GET /relay/board — the board, plus what makes it a shared room: the
+ * people on each desk, who holds each lane / baton / client request, how
+ * long each new hire's thread is, and which desk the viewer answers for.
+ */
+relayRouter.get('/relay/board', STAFF, async (req, res, next) => {
   try {
-    res.json(await computeRelayBoard(prisma));
+    const board = await computeRelayBoard(prisma);
+    const laneIds = board.lanes.map((l) => l.associateId);
+    const [deskUsers, claims, noteCounts] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          status: 'ACTIVE',
+          deletedAt: null,
+          role: { in: [...new Set(Object.values(DESK_ROLES).flat())] as never[] },
+        },
+        orderBy: { email: 'asc' },
+        take: 200,
+        select: { ...personSelect, role: true },
+      }),
+      prisma.relayClaim.findMany({
+        take: 1000,
+        select: {
+          subjectType: true,
+          subjectKey: true,
+          claimedAt: true,
+          user: { select: personSelect },
+          claimedBy: { select: personSelect },
+        },
+      }),
+      laneIds.length
+        ? prisma.workNote.groupBy({
+            by: ['subjectKey'],
+            where: { subjectType: 'ASSOCIATE', subjectKey: { in: laneIds } },
+            _count: { _all: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const desks: Record<DeskKey, Person[]> = { HR: [], WORKFORCE: [], FINANCE: [] };
+    for (const u of deskUsers) {
+      const d = deskOf(u.role);
+      if (d) desks[d].push(personOf(u));
+    }
+    const notesBy = new Map(noteCounts.map((n) => [n.subjectKey, n._count._all]));
+    res.json({
+      ...board,
+      lanes: board.lanes.map((l) => ({ ...l, notes: notesBy.get(l.associateId) ?? 0 })),
+      desks,
+      claims: Object.fromEntries(
+        claims.map((c) => [
+          `${c.subjectType}:${c.subjectKey}`,
+          {
+            ...personOf(c.user),
+            claimedAt: c.claimedAt.toISOString(),
+            claimedByName: c.claimedBy ? personOf(c.claimedBy).name : null,
+          },
+        ]),
+      ),
+      me: { userId: req.user!.id, desk: deskOf(req.user!.role) },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ---- Who holds it: claims and hand-offs ------------------------------- */
+
+const ClaimSubjectSchema = z.object({
+  subjectType: z.enum(['LANE', 'BATON', 'REQUEST']),
+  subjectKey: z.string().trim().min(1).max(80),
+});
+
+/** What a claim is on, in words — and whether it exists at all. */
+async function describeSubject(type: 'LANE' | 'BATON' | 'REQUEST', key: string): Promise<string> {
+  if (type === 'LANE') {
+    const id = z.string().uuid().safeParse(key);
+    const a = id.success
+      ? await prisma.associate.findFirst({ where: { id: key, deletedAt: null }, select: { firstName: true, lastName: true } })
+      : null;
+    if (!a) throw new HttpError(404, 'subject_not_found', 'No such lane.');
+    return `${a.firstName} ${a.lastName}’s first-paycheck lane`;
+  }
+  if (type === 'REQUEST') {
+    const id = z.string().uuid().safeParse(key);
+    const r = id.success
+      ? await prisma.clientRequest.findUnique({ where: { id: key }, select: { subject: true, client: { select: { name: true } } } })
+      : null;
+    if (!r) throw new HttpError(404, 'subject_not_found', 'No such client request.');
+    return `${r.client.name}’s request “${r.subject}”`;
+  }
+  const label = Object.prototype.hasOwnProperty.call(BATON_LABELS, key) ? BATON_LABELS[key] : undefined;
+  if (!label) throw new HttpError(404, 'subject_not_found', 'No such baton.');
+  return `the “${label}” baton`;
+}
+
+/**
+ * POST /relay/claims { subjectType, subjectKey, userId? } — take it
+ * yourself, or hand it to a teammate on any desk (their bell rings with
+ * the handoff). One holder at a time: this replaces whoever held it.
+ */
+relayRouter.post('/relay/claims', STAFF, async (req, res, next) => {
+  try {
+    const input = ClaimSubjectSchema.extend({ userId: z.string().uuid().optional() }).parse(req.body);
+    const what = await describeSubject(input.subjectType, input.subjectKey);
+    const holderId = input.userId ?? req.user!.id;
+    const holder = await prisma.user.findFirst({
+      where: { id: holderId, status: 'ACTIVE', deletedAt: null },
+      select: { ...personSelect, role: true },
+    });
+    // You can always take it yourself; a hand-off goes to someone on a desk.
+    if (!holder || (holderId !== req.user!.id && !deskOf(holder.role))) {
+      throw new HttpError(404, 'user_not_found', 'That person isn’t on a desk.');
+    }
+    const key = { subjectType_subjectKey: { subjectType: input.subjectType, subjectKey: input.subjectKey } };
+    const row = await prisma.relayClaim.upsert({
+      where: key,
+      create: { subjectType: input.subjectType, subjectKey: input.subjectKey, userId: holderId, claimedById: req.user!.id },
+      update: { userId: holderId, claimedById: req.user!.id, claimedAt: new Date() },
+      select: { claimedAt: true },
+    });
+    const handedOff = holderId !== req.user!.id;
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: handedOff ? 'relay.handed_off' : 'relay.claimed',
+        entityType: 'RelayClaim',
+        entityId: `${input.subjectType}:${input.subjectKey}`,
+        metadata: { holderUserId: holderId },
+      },
+      'relay.claim',
+    );
+    if (handedOff) {
+      const from = await prisma.user.findUnique({ where: { id: req.user!.id }, select: personSelect });
+      void trackNotificationWork(
+        notifyUser(holderId, {
+          subject: `${from ? personOf(from).name : 'A teammate'} handed you ${what}`,
+          body: `It’s yours on the relay now — ${what}.`,
+          category: 'work-thread',
+          linkUrl:
+            input.subjectType === 'LANE'
+              ? `/relay?lane=${input.subjectKey}`
+              : input.subjectType === 'REQUEST'
+                ? '/relay#client-requests'
+                : `/relay#${input.subjectKey}`,
+        }),
+      );
+    }
+    const me = personOf(holder);
+    res.status(201).json({
+      claim: {
+        ...me,
+        claimedAt: row.claimedAt.toISOString(),
+        claimedByName: handedOff ? null : me.name,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** DELETE /relay/claims?subjectType=&subjectKey= — back on the desk. */
+relayRouter.delete('/relay/claims', STAFF, async (req, res, next) => {
+  try {
+    const input = ClaimSubjectSchema.parse(req.query);
+    const gone = await prisma.relayClaim.deleteMany({ where: { subjectType: input.subjectType, subjectKey: input.subjectKey } });
+    if (gone.count > 0) {
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'relay.released',
+          entityType: 'RelayClaim',
+          entityId: `${input.subjectType}:${input.subjectKey}`,
+        },
+        'relay.claim',
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ---- The conversation on the relay ----------------------------------- */
+
+/**
+ * GET /relay/activity — the latest on every thread (two weeks, newest
+ * first) and every ruling still owed (oldest first), with the person each
+ * one is about.
+ */
+relayRouter.get('/relay/activity', STAFF, async (_req, res, next) => {
+  try {
+    const since = new Date(Date.now() - 14 * 86_400_000);
+    const include = {
+      authorUser: { select: personSelect },
+      decidedBy: { select: personSelect },
+    } as const;
+    const [recent, pending] = await Promise.all([
+      prisma.workNote.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 40,
+        include,
+      }),
+      prisma.workNote.findMany({
+        where: { decisionStatus: 'PENDING' },
+        orderBy: { createdAt: 'asc' },
+        take: 50,
+        include,
+      }),
+    ]);
+    const subjectIds = [...new Set([...recent, ...pending].filter((n) => n.subjectType === 'ASSOCIATE').map((n) => n.subjectKey))];
+    const people = subjectIds.length
+      ? await prisma.associate.findMany({ where: { id: { in: subjectIds } }, select: { id: true, firstName: true, lastName: true } })
+      : [];
+    const nameOf = new Map(people.map((p) => [p.id, `${p.firstName} ${p.lastName}`.trim()]));
+    const shape = (n: (typeof recent)[number]) => ({
+      id: n.id,
+      body: n.body,
+      mentions: n.mentions,
+      createdAt: n.createdAt.toISOString(),
+      author: n.authorUser ? { name: personOf(n.authorUser).name, photoUrl: personOf(n.authorUser).photoUrl } : null,
+      subject: { associateId: n.subjectKey, name: nameOf.get(n.subjectKey) ?? 'Unknown' },
+      decisionDesk: n.decisionDesk,
+      decisionStatus: n.decisionStatus,
+      decisionNote: n.decisionNote,
+      decidedAt: n.decidedAt?.toISOString() ?? null,
+      decidedByName: n.decidedBy ? personOf(n.decidedBy).name : null,
+    });
+    res.json({
+      decisions: pending.filter((n) => nameOf.has(n.subjectKey)).map(shape),
+      notes: recent.filter((n) => nameOf.has(n.subjectKey)).map(shape),
+    });
   } catch (err) {
     next(err);
   }

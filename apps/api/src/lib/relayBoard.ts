@@ -1,6 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { soonestPayday } from './payday.js';
+import { buildFieldglassQueue } from './fieldglassQueue.js';
+import { billingWeek } from './financeCockpit.js';
 
 /**
  * THE RELAY — the one shared operating picture all four rooms stare at.
@@ -443,35 +445,13 @@ export async function computeRelayBoard(
   const weekStart = startOfWeekUTC(now);
   const CASE_OPEN = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
 
-  const [closeOutCount, transferRegs, addCandidates, pendingEntries, settleRows, payrollCaseOld, hrCaseOld, incidentOld, payrollCasesOpen, hrCasesOpen, incidentsOpen, settleAggCount] =
+  // Fieldglass: the same queue the Fieldglass setup page works, and last
+  // week's timesheets as the buyer's deadline sees them — one definition,
+  // so the relay and finance never read different numbers.
+  const [fgQueue, billing] = await Promise.all([buildFieldglassQueue(now), billingWeek(now)]);
+
+  const [addCandidates, pendingEntries, settleRows, payrollCaseOld, hrCaseOld, incidentOld, payrollCasesOpen, hrCasesOpen, incidentsOpen, settleAggCount] =
     await Promise.all([
-      prisma.fieldglassRegistration.count({
-        where: {
-          associate: {
-            OR: [{ separatedAt: { not: null } }, { deletedAt: { not: null } }],
-          },
-        },
-      }),
-      prisma.fieldglassRegistration.findMany({
-        where: {
-          clientId: { not: null },
-          associate: { deletedAt: null, separatedAt: null },
-        },
-        select: {
-          clientId: true,
-          associate: {
-            select: {
-              assignments: {
-                where: { endedAt: null },
-                orderBy: { startedAt: 'desc' },
-                take: 1,
-                select: { location: { select: { clientId: true } } },
-              },
-            },
-          },
-        },
-        take: 500,
-      }),
       prisma.application.findMany({
         where: {
           status: 'APPROVED',
@@ -528,41 +508,25 @@ export async function computeRelayBoard(
   });
 
   const candidateIds = [...new Set(addCandidates.map((a) => a.associateId))];
-  const [everScheduled, upcomingScheduled] =
+  const upcomingScheduled =
     candidateIds.length > 0
-      ? await Promise.all([
-          prisma.shift.findMany({
-            where: {
-              assignedAssociateId: { in: candidateIds },
-              status: { in: ['ASSIGNED', 'COMPLETED'] },
-            },
-            distinct: ['assignedAssociateId'],
-            select: { assignedAssociateId: true },
-          }),
-          prisma.shift.findMany({
-            where: {
-              assignedAssociateId: { in: candidateIds },
-              status: 'ASSIGNED',
-              startsAt: { gte: now },
-            },
-            orderBy: { startsAt: 'asc' },
-            select: { assignedAssociateId: true, startsAt: true },
-            take: 500,
-          }),
-        ])
-      : [[], []];
-  const everSet = new Set(everScheduled.map((s) => s.assignedAssociateId));
+      ? await prisma.shift.findMany({
+          where: {
+            assignedAssociateId: { in: candidateIds },
+            status: 'ASSIGNED',
+            startsAt: { gte: now },
+          },
+          orderBy: { startsAt: 'asc' },
+          select: { assignedAssociateId: true, startsAt: true },
+          take: 500,
+        })
+      : [];
   const upcomingBy = new Map<string, Date>();
   for (const s of upcomingScheduled) {
     if (s.assignedAssociateId && !upcomingBy.has(s.assignedAssociateId)) {
       upcomingBy.set(s.assignedAssociateId, s.startsAt);
     }
   }
-  const addIds = candidateIds.filter((id) => everSet.has(id));
-  const addSoonest = addIds
-    .map((id) => upcomingBy.get(id))
-    .filter((d): d is Date => !!d)
-    .sort((a, b) => a.getTime() - b.getTime())[0];
   // Ready-to-schedule = approved, no UPCOMING shift at all.
   const readyIds = [
     ...new Set(
@@ -576,10 +540,14 @@ export async function computeRelayBoard(
     .map((a) => a.approvedAt!)
     .sort((a, b) => a.getTime() - b.getTime())[0];
 
-  const transfers = transferRegs.filter((r) => {
-    const cur = r.associate.assignments[0]?.location.clientId;
-    return cur !== undefined && cur !== r.clientId;
-  }).length;
+  const fgClose = fgQueue.filter((r) => r.kind === 'close');
+  const fgTransfer = fgQueue.filter((r) => r.kind === 'transfer');
+  const fgAdd = fgQueue.filter((r) => r.kind === 'add');
+  const fgUnbilled = fgAdd.some((r) => r.hoursUnbilled > 0);
+  const addSoonest = fgAdd
+    .map((r) => (r.firstShiftAt ? new Date(r.firstShiftAt) : null))
+    .filter((d): d is Date => !!d && d.getTime() >= now.getTime())
+    .sort((a, b) => a.getTime() - b.getTime())[0];
 
   const ageDays = (d: Date | null | undefined) =>
     d ? (now.getTime() - d.getTime()) / DAY_MS : null;
@@ -610,36 +578,62 @@ export async function computeRelayBoard(
     'fieldglass-close',
     'Fieldglass close-outs',
     'FINANCE',
-    closeOutCount,
+    fgClose.length,
     null,
     null,
     'overdue', // a dead account is late the moment it exists
-    '/',
+    '/fieldglass',
   );
   baton(
     'fieldglass-transfer',
     'Fieldglass transfers',
     'FINANCE',
-    transfers,
+    fgTransfer.length,
     null,
     null,
     'atRisk',
-    '/',
+    '/fieldglass',
   );
   baton(
     'fieldglass-add',
     'Fieldglass adds',
     'FINANCE',
-    addIds.length,
+    fgAdd.length,
     null,
     addSoonest ?? null,
-    addSoonest && addSoonest.getTime() < now.getTime() + 48 * HOUR_MS
-      ? addSoonest.getTime() < now.getTime()
-        ? 'overdue'
-        : 'atRisk'
-      : 'quiet',
-    '/',
+    // Already working without an account: those hours can't be billed.
+    fgUnbilled
+      ? 'overdue'
+      : addSoonest && addSoonest.getTime() < now.getTime() + 48 * HOUR_MS
+        ? 'atRisk'
+        : 'quiet',
+    '/fieldglass',
   );
+  {
+    // Last week's timesheets, into Fieldglass by Monday 2 PM Pacific.
+    const due = new Date(billing.dueAt);
+    const toEnter = billing.toEnter - billing.rejected;
+    baton(
+      'fieldglass-entry',
+      'Fieldglass timesheets to enter',
+      'FINANCE',
+      toEnter,
+      null,
+      due,
+      due.getTime() < now.getTime() ? 'overdue' : due.getTime() < now.getTime() + 24 * HOUR_MS ? 'atRisk' : 'quiet',
+      `/time-attendance/timesheets?week=${billing.weekStart}`,
+    );
+    baton(
+      'fieldglass-rejected',
+      'Rejected Fieldglass timesheets',
+      'FINANCE',
+      billing.rejected + billing.rejectedOpen.count,
+      null,
+      null,
+      'overdue', // money the buyer won't pay until it's fixed
+      `/time-attendance/timesheets?week=${billing.weekStart}`,
+    );
+  }
   {
     const age = ageDays(readyOldest ?? null);
     baton(
@@ -872,13 +866,35 @@ export async function computeRelayBoard(
       medianDays,
       windowDays: LANE_WINDOW_DAYS,
     },
-    lanes: lanes.slice(0, 16),
+    lanes: lanes.slice(0, 40),
     cohorts,
     recentKept: keptSamples.slice(0, 5),
     batons,
     agenda,
   };
 }
+
+/** Every baton on the board, by key — what a claim or a hand-off names.
+ *  Kept in step with the board by a test. */
+export const BATON_LABELS: Record<string, string> = {
+  'fieldglass-close': 'Fieldglass close-outs',
+  'fieldglass-transfer': 'Fieldglass transfers',
+  'fieldglass-add': 'Fieldglass adds',
+  'fieldglass-entry': 'Fieldglass timesheets to enter',
+  'fieldglass-rejected': 'Rejected Fieldglass timesheets',
+  'ready-to-schedule': 'Approved, awaiting first shift',
+  timesheets: 'Timesheets awaiting approval',
+  settlements: 'Reimbursements to settle',
+  'payroll-cases': 'Payroll cases open',
+  'hr-cases': 'HR cases open',
+  incidents: 'Safety incidents to review',
+  'client-requests': 'Client requests — staffing',
+  'client-requests-hr': 'Client requests — feedback & issues',
+  'client-requests-finance': 'Client requests — billing',
+  'decisions-finance': 'Decisions awaiting Finance',
+  'decisions-hr': 'Decisions awaiting HR',
+  'decisions-workforce': 'Decisions awaiting Workforce',
+};
 
 export const STAGE_LABELS: Record<LaneStage['key'], string> = {
   approved: 'Approved',

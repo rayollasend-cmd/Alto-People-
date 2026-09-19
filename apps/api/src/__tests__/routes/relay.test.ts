@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { runRelayEscalationSweep } from '../../lib/relayEscalation.js';
+import { BATON_LABELS } from '../../lib/relayBoard.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import {
   DEFAULT_TEST_PASSWORD,
@@ -191,6 +192,9 @@ describe('relay escalation sweep — chain of command', () => {
           status: 'COMPLETED',
         },
       });
+      // In Fieldglass already — this sweep is about the timesheet chain,
+      // not unbillable hours (which would rightly ring Finance).
+      await prisma.fieldglassRegistration.create({ data: { associateId: assoc.id, clientId: client.id } });
     }
     const { user: sup } = await createUser({
       role: 'SHIFT_SUPERVISOR',
@@ -247,6 +251,96 @@ describe('relay escalation sweep — chain of command', () => {
     });
     expect(climbed).not.toBeNull();
     expect(climbed?.subject).toContain('Escalated');
+  });
+});
+
+describe('the relay as a shared room — desks, names on the work, the conversation', () => {
+  it('names the people on each desk, who holds what, and how long each thread is', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await prisma.application.create({
+      data: { associateId: maria.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date(now.getTime() - 2 * DAY) },
+    });
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const finance = await loginAs(fin.email);
+    await finance.post('/work-notes').send({ subjectType: 'ASSOCIATE', subjectKey: maria.id, body: 'Start date moved to Monday.' });
+
+    const board = (await finance.get('/relay/board')).body;
+    expect(board.me).toEqual({ userId: fin.id, desk: 'FINANCE' });
+    expect(board.desks.FINANCE.map((p: { userId: string }) => p.userId)).toEqual([fin.id]);
+    expect(board.desks.WORKFORCE.map((p: { userId: string }) => p.userId)).toEqual([wfm.id]);
+    expect(board.desks.HR.map((p: { userId: string }) => p.userId)).toEqual([hr.id]);
+    expect(board.lanes.find((l: { associateId: string }) => l.associateId === maria.id).notes).toBe(1);
+    expect(board.claims).toEqual({});
+    // Every baton's label is the one a claim or hand-off names.
+    for (const b of board.batons as Array<{ key: string; label: string }>) expect(BATON_LABELS[b.key]).toBe(b.label);
+  });
+
+  it('claim it, hand it to a teammate (their bell rings), release it — staff only, real subjects only', async () => {
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const finance = await loginAs(fin.email);
+
+    const mine = await finance.post('/relay/claims').send({ subjectType: 'BATON', subjectKey: 'timesheets' });
+    expect(mine.status).toBe(201);
+    let board = (await finance.get('/relay/board')).body;
+    expect(board.claims['BATON:timesheets']).toMatchObject({ userId: fin.id });
+
+    const handed = await finance.post('/relay/claims').send({ subjectType: 'LANE', subjectKey: maria.id, userId: wfm.id });
+    expect(handed.status).toBe(201);
+    await flushPendingNotifications();
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: wfm.id, channel: 'IN_APP' } });
+    expect(bell?.subject).toContain('Maria Lopez');
+    expect(bell?.linkUrl).toBe(`/relay?lane=${maria.id}`);
+    board = (await finance.get('/relay/board')).body;
+    expect(board.claims[`LANE:${maria.id}`]).toMatchObject({ userId: wfm.id });
+
+    expect((await finance.delete(`/relay/claims?subjectType=BATON&subjectKey=timesheets`)).status).toBe(200);
+    board = (await finance.get('/relay/board')).body;
+    expect(board.claims['BATON:timesheets']).toBeUndefined();
+
+    // No claims on things that don't exist, no hand-offs to someone off the desks.
+    expect((await finance.post('/relay/claims').send({ subjectType: 'BATON', subjectKey: 'nope' })).status).toBe(404);
+    expect((await finance.post('/relay/claims').send({ subjectType: 'LANE', subjectKey: fin.id })).status).toBe(404);
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE', email: maria.email, associateId: maria.id });
+    expect((await finance.post('/relay/claims').send({ subjectType: 'BATON', subjectKey: 'timesheets', userId: assoc.id })).status).toBe(404);
+    expect((await (await loginAs(assoc.email)).post('/relay/claims').send({ subjectType: 'BATON', subjectKey: 'timesheets' })).status).toBe(403);
+  });
+
+  it('the conversation: the latest on every thread, and every ruling still owed', async () => {
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(wfm.email);
+    await agent.post('/work-notes').send({ subjectType: 'ASSOCIATE', subjectKey: maria.id, body: 'Missed break Tuesday?', mentionDesks: ['FINANCE'] });
+    await agent.post('/work-notes').send({ subjectType: 'ASSOCIATE', subjectKey: maria.id, body: 'Pay her the Sunday premium?', decisionDesk: 'FINANCE' });
+
+    const act = (await (await loginAs(fin.email)).get('/relay/activity')).body;
+    expect(act.notes.map((n: { body: string }) => n.body)).toEqual(['Pay her the Sunday premium?', 'Missed break Tuesday?']);
+    expect(act.notes[1]).toMatchObject({ mentions: ['FINANCE'], subject: { associateId: maria.id, name: 'Maria Lopez' } });
+    expect(act.decisions).toEqual([
+      expect.objectContaining({ body: 'Pay her the Sunday premium?', decisionDesk: 'FINANCE', decisionStatus: 'PENDING', author: expect.objectContaining({ name: expect.any(String) }) }),
+    ]);
+  });
+
+  it('Fieldglass batons read the same queue as Fieldglass setup — someone working unregistered is late', async () => {
+    const client = await createClient('Front Beach 218');
+    const bo = await createAssociate({ firstName: 'Bo', lastName: 'Ray' });
+    const clockInAt = new Date(Date.now() - 2 * DAY);
+    await prisma.timeEntry.create({
+      data: { associateId: bo.id, clientId: client.id, clockInAt, clockOutAt: new Date(clockInAt.getTime() + 6 * HOUR), status: 'APPROVED' },
+    });
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const finance = await loginAs(fin.email);
+    const board = (await finance.get('/relay/board')).body;
+    const add = board.batons.find((b: { key: string }) => b.key === 'fieldglass-add');
+    expect(add).toMatchObject({ count: 1, status: 'overdue', link: '/fieldglass' });
+    const queue = (await finance.get('/finance/fieldglass?view=count')).body;
+    expect(queue.count).toBe(1);
   });
 });
 
