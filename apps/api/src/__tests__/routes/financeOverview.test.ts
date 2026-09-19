@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { saturdayWeek } from '../../lib/timesheetWeek.js';
+import { fieldglassDueAt } from '../../lib/fieldglassDesk.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -367,6 +369,113 @@ describe('GET /finance/overview', () => {
     expect(res.status).toBe(200);
     expect(res.body.payrollCases).toEqual({ open: 1, assignedToMe: 1 });
     expect(res.body.close.byClient[0].clientId).toBe(client.id);
+  });
+});
+
+describe('the money questions on /finance/overview', () => {
+  const addDays = (ymd: string, n: number) => {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+
+  it('the pay cycle, last week in Fieldglass, revenue against wages week by week, and receivables by age', async () => {
+    const now = new Date();
+    const thisWeek = saturdayWeek(now, 'America/New_York').weekStart;
+    const LW = addDays(thisWeek, -7); // last week — the one due in Fieldglass
+    const PW = addDays(thisWeek, -14); // the week before
+    await prisma.payrollSchedule.create({
+      data: { name: 'Alto biweekly', frequency: 'BIWEEKLY', anchorDate: new Date(`${LW}T00:00:00Z`), payDateOffsetDays: 7 },
+    });
+    const client = await createClient('Walmart Destin');
+    await prisma.client.update({ where: { id: client.id }, data: { fieldglassBillRate: 20, fieldglassSiteName: '1 - Onsite - FL - Destin' } });
+    const ann = await createAssociate({ firstName: 'Ann', lastName: 'Lee' });
+    const bo = await createAssociate({ firstName: 'Bo', lastName: 'Ray' });
+    // Ann is paid $15/hr; Bo has no hourly pay on file — payroll's $15 fallback.
+    await prisma.compensationRecord.create({
+      data: { associateId: ann.id, payType: 'HOURLY', amount: 15, effectiveFrom: new Date('2026-01-01'), reason: 'HIRE' },
+    });
+    await prisma.fieldglassRegistration.create({ data: { associateId: ann.id, clientId: client.id, workerId: 'WKR1' } });
+    const work = (associateId: string, day: string, hours: number, status: 'APPROVED' | 'COMPLETED' = 'APPROVED') => {
+      const clockInAt = new Date(`${day}T13:00:00.000Z`);
+      return prisma.timeEntry.create({
+        data: { associateId, clientId: client.id, clockInAt, clockOutAt: new Date(clockInAt.getTime() + hours * HOUR), status },
+      });
+    };
+    // Last week: Ann 8h, Bo 6h approved; Ann 3h more still awaiting approval.
+    await work(ann.id, addDays(LW, 2), 8);
+    await work(bo.id, addDays(LW, 2), 6);
+    await work(ann.id, addDays(LW, 3), 3, 'COMPLETED');
+    // The week before: Ann 45h — five hours of overtime.
+    for (let d = 1; d <= 5; d++) await work(ann.id, addDays(PW, d), 9);
+    // …and that week came back rejected from the buyer, not resubmitted yet.
+    await prisma.fieldglassTimesheet.create({
+      data: { weekStart: new Date(`${PW}T00:00:00Z`), associateId: ann.id, clientId: client.id, enteredAt: now, enteredHours: 45, fgStatus: 'REJECTED' },
+    });
+    // A statement finalized 45 days ago, unpaid.
+    await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date(now.getTime() - 52 * DAY),
+        periodEnd: new Date(now.getTime() - 46 * DAY),
+        number: 3,
+        status: 'FINAL',
+        finalizedAt: new Date(now.getTime() - 45 * DAY),
+        snapshot: { totals: { amount: 1000, hours: 50, regularHours: 50, otHours: 0 } },
+      },
+    });
+
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const res = await (await loginAs(user.email)).get('/finance/overview');
+    expect(res.status).toBe(200);
+
+    // The period this payday pays for: last week and this one.
+    expect(res.body.payCycle).toEqual({
+      periodStart: LW,
+      periodEnd: addDays(LW, 13),
+      payDate: addDays(LW, 20),
+      schedule: 'Alto biweekly',
+      hours: { approved: 14, pending: 3 },
+      run: null,
+    });
+
+    // Last week in Fieldglass: Ann to enter, Bo not registered — all of it at risk.
+    expect(res.body.billing).toMatchObject({
+      weekStart: LW,
+      weekEnd: addDays(LW, 6),
+      dueAt: fieldglassDueAt(addDays(LW, 6)).toISOString(),
+      workers: 2,
+      registered: 1,
+      notRegistered: 1,
+      entered: 0,
+      toEnter: 1,
+      hours: 14,
+      money: { approved: 0, awaiting: 0, atRisk: 280 },
+      rejectedOpen: { count: 1, amount: 900 },
+    });
+
+    // Revenue at $20/hr against wages: straight time for last week…
+    const weeks = res.body.margin.weeks as Array<{ weekStart: string; [k: string]: unknown }>;
+    expect(weeks).toHaveLength(8);
+    expect(weeks.at(-1)).toMatchObject({ weekStart: thisWeek, inProgress: true });
+    expect(weeks.find((w) => w.weekStart === LW)).toMatchObject({ hours: 14, revenue: 280, wages: 210, margin: 70, marginPct: 0.25 });
+    // …and time and a half past 40 for the week before: 40×15 + 5×22.50.
+    expect(weeks.find((w) => w.weekStart === PW)).toMatchObject({ hours: 45, revenue: 900, wages: 712.5, margin: 187.5, marginPct: 0.208 });
+    expect(res.body.margin).toMatchObject({ defaultRate: 15, defaultRateAssociates: 1 });
+
+    // Receivables by age, and who owes it.
+    expect(res.body.receivables.aging).toEqual({ current: 0, d31: 1000, d61: 0, d91: 0 });
+    expect(res.body.receivables.byClient).toEqual([
+      { clientId: client.id, clientName: 'Walmart Destin', amount: 1000, oldestDays: expect.any(Number) },
+    ]);
+    expect(res.body.receivables.byClient[0].oldestDays).toBeGreaterThanOrEqual(44);
+
+    // A draft run for the period shows on the cycle.
+    await prisma.payrollRun.create({
+      data: { periodStart: new Date(`${LW}T00:00:00Z`), periodEnd: new Date(`${addDays(LW, 13)}T00:00:00Z`), status: 'DRAFT', totalGross: 3150 },
+    });
+    const again = await (await loginAs(user.email)).get('/finance/overview');
+    expect(again.body.payCycle.run).toMatchObject({ status: 'DRAFT', totalGross: 3150 });
   });
 });
 

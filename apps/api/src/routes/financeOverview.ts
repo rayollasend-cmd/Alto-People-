@@ -14,6 +14,7 @@ import { notifyUser } from '../lib/notify.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
 import { buildFieldglassQueue, buildFieldglassRoster } from '../lib/fieldglassQueue.js';
+import { billingWeek, marginTrend, payCycle, receivablesAging } from '../lib/financeCockpit.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -90,7 +91,7 @@ financeOverviewRouter.get(
           }),
           prisma.clientStatement.findMany({
             where: { status: 'FINAL', paidAt: null },
-            select: { finalizedAt: true, snapshot: true },
+            select: { finalizedAt: true, snapshot: true, clientId: true, client: { select: { name: true } } },
           }),
           prisma.clientStatement.findMany({
             where: {
@@ -199,7 +200,23 @@ financeOverviewRouter.get(
 
       // The Fieldglass setup queue — the dashboard shows the top of it;
       // the Fieldglass setup page works all of it.
-      const fullFieldglassQueue = await buildFieldglassQueue(now);
+      // The money questions — pay cycle, last week in Fieldglass, the
+      // margin trend — alongside the queue, in parallel.
+      const [fullFieldglassQueue, cycle, billing, margin] = await Promise.all([
+        buildFieldglassQueue(now),
+        payCycle(now),
+        billingWeek(now),
+        marginTrend(now),
+      ]);
+      const aging = receivablesAging(
+        unpaidStatements.map((s) => ({
+          clientId: s.clientId,
+          clientName: s.client?.name ?? null,
+          finalizedAt: s.finalizedAt,
+          amount: stAmount(s.snapshot),
+        })),
+        now,
+      );
       const fieldglassQueue = fullFieldglassQueue.slice(0, 12);
 
       const billed = weekBilled.reduce((sum, s) => sum + stAmount(s.snapshot), 0);
@@ -243,6 +260,9 @@ financeOverviewRouter.get(
               }
             : null,
         },
+        payCycle: cycle,
+        billing,
+        margin,
         close: {
           pendingEntries: pendingEntries.length,
           pendingHours: Math.round((chaseMinutes / 60) * 10) / 10,
@@ -261,6 +281,8 @@ financeOverviewRouter.get(
             : null,
           avgDaysToPay,
           draftStatements: draftCount,
+          aging: aging.aging,
+          byClient: aging.byClient,
         },
         fieldglassQueue,
         fieldglassQueueTotal: fullFieldglassQueue.length,

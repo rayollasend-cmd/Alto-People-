@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ArrowRight,
-  Banknote,
   BarChart3,
   ChevronDown,
   ClipboardCheck,
@@ -12,15 +11,17 @@ import {
   DollarSign,
   FileSpreadsheet,
   Inbox,
-  Receipt,
+  ShieldAlert,
   Scale,
   Wallet,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { FieldglassQueueList, type FieldglassQueueRow } from './fieldglass/FieldglassQueue';
+import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
+import type { FinanceOverview } from './finance/financeTypes';
+import { BillingWeekCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList } from './finance/FinanceCockpit';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
+import { fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -41,51 +42,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
  *   paired bars → one row of the four actions the day actually needs.
  */
 
-interface FinanceOverview {
-  generatedAt: string;
-  payday: {
-    next: { date: string; schedule: string } | null;
-    inFlight: {
-      id: string;
-      status: 'DRAFT' | 'FINALIZED';
-      periodStart: string;
-      periodEnd: string;
-      totalGross: number;
-    } | null;
-    lastDisbursed: { periodEnd: string; totalGross: number } | null;
-  };
-  close: {
-    pendingEntries: number;
-    pendingHours: number;
-    oldestDay: string | null;
-    byClient: Array<{
-      clientId: string | null;
-      clientName: string;
-      entries: number;
-      hours: number;
-    }>;
-  };
-  payrollCases: { open: number; assignedToMe: number };
-  settlements: { count: number; total: number };
-  receivables: {
-    outstandingTotal: number;
-    outstandingCount: number;
-    oldestDays: number | null;
-    avgDaysToPay: number | null;
-    draftStatements: number;
-  };
-  fieldglassQueue: FieldglassQueueRow[];
-  /** The whole queue's size — the dashboard shows its top 12. */
-  fieldglassQueueTotal?: number;
-  billedVsPaid: {
-    weekStart: string;
-    billed: number;
-    paidGross: number;
-    variance: number;
-  } | null;
-}
-
-const DAY_MS = 86_400_000;
 
 function greetKey(hour: number): MessageKey {
   if (hour < 12) return 'fin.morning';
@@ -164,15 +120,12 @@ export function FinanceDashboard() {
     );
   }
 
-  const payday = data.payday.next;
-  const daysToPayday = payday
-    ? Math.max(0, Math.ceil((new Date(payday.date).getTime() - Date.now()) / DAY_MS))
-    : null;
-  const run = data.payday.inFlight;
   const chaseHot = data.close.pendingHours > 0;
   const maxChase = data.close.byClient[0]?.hours ?? 0;
-  const bvp = data.billedVsPaid;
-  const bvpMax = bvp ? Math.max(bvp.billed, bvp.paidGross, 1) : 1;
+  const lastWeek = data.margin?.weeks.filter((w) => !w.inProgress).at(-1) ?? null;
+  const atRisk = (data.billing?.money.atRisk ?? 0) + (data.billing?.rejectedOpen.amount ?? 0);
+  const aging = data.receivables.aging;
+  const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
 
   return (
     <div className="mx-auto space-y-5">
@@ -195,145 +148,69 @@ export function FinanceDashboard() {
         <ClockStrip className="mt-1.5" />
       </div>
 
-      {/* ---- Payday — sacred ------------------------------------------ */}
-      <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
-        />
-        <CardContent className="relative p-5">
-          <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
-            <div className="min-w-0">
-              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
-                <Banknote className="h-3.5 w-3.5" aria-hidden="true" />
-                {t('fin.payday')}
-              </span>
-              {payday ? (
-                <>
-                  <div className="mt-2 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white">
-                    {fmtDate(payday.date)}
-                  </div>
-                  <p className="mt-1.5 text-sm text-silver tabular-nums">
-                    <span className="font-semibold text-gold">
-                      {daysToPayday === 0
-                        ? t('fin.paydayToday')
-                        : daysToPayday === 1
-                          ? t('fin.paydayTomorrow')
-                          : t('fin.paydayIn', { days: daysToPayday ?? 0 })}
-                    </span>
-                    <span className="text-silver/60"> · {payday.schedule}</span>
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-silver">{t('fin.paydayNone')}</p>
-              )}
-              {data.payday.lastDisbursed && (
-                <p className="mt-2 text-xs text-silver/60 tabular-nums">
-                  {t('fin.lastPay', {
-                    gross: fmtMoney(data.payday.lastDisbursed.totalGross),
-                    date: fmtDate(data.payday.lastDisbursed.periodEnd),
-                  })}
-                </p>
-              )}
-            </div>
-            {/* The run in flight — money in the display face, admin canon. */}
-            {run && (
-              <div className="text-left sm:text-right">
-                <div className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">
-                  {t('fin.runLabel')} · {t(`fin.status.${run.status}` as MessageKey)}
-                </div>
-                <div className="mt-1.5 font-display text-3xl md:text-hero leading-none text-gold-bright tabular-nums">
-                  <CountUpValue value={fmtMoney(run.totalGross)} />
-                </div>
-                <div className="mt-1.5 text-xs text-silver tabular-nums">
-                  {fmtDate(run.periodStart)} – {fmtDate(run.periodEnd)}
-                </div>
-                <Link
-                  to="/payroll"
-                  className={cn(
-                    'mt-2 inline-flex items-center gap-1 text-sm underline underline-offset-2 coarse:min-h-11',
-                    run.status === 'FINALIZED'
-                      ? 'font-medium text-gold hover:text-gold-bright'
-                      : 'text-silver hover:text-white',
-                  )}
-                >
-                  {t('fin.disburse')}
-                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* ---- Payday — sacred — and what needs finance today ----------- */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <PayCycleHero data={data} />
+        </div>
+        <TodayList data={data} />
+      </div>
 
-      {/* ---- The four operating counters ------------------------------ */}
+      {/* ---- The four numbers that matter ----------------------------- */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <FinKpi
-          to="/timesheets"
-          label={t('fin.kpiChase')}
-          value={chaseHot ? fmtHours(data.close.pendingHours) : '0h'}
-          hot={chaseHot}
-          icon={ClockAlert}
-          hint={
-            chaseHot
-              ? data.close.oldestDay
-                ? t('fin.closeOldest', { date: fmtDate(data.close.oldestDay) })
-                : undefined
-              : t('fin.closeClean')
-          }
+          to="/labor-costs"
+          label={t('fin.kpiRevenue')}
+          value={lastWeek ? fmtMoney(lastWeek.revenue) : '—'}
+          icon={DollarSign}
+          hint={lastWeek ? t('fin.kpiRevenueHint', { hours: fmtHours(lastWeek.hours - lastWeek.unpricedHours) }) : undefined}
           stagger={1}
         />
         <FinKpi
-          to="/reimbursements"
-          label={t('fin.settle')}
-          value={fmtMoney(data.settlements.total)}
-          icon={Receipt}
-          hint={
-            data.settlements.count > 0
-              ? t('fin.settleLine', {
-                  count: data.settlements.count,
-                  total: fmtMoney(data.settlements.total),
-                })
-              : t('fin.clear')
-          }
+          to="/labor-costs"
+          label={t('fin.kpiMargin')}
+          value={lastWeek?.marginPct != null ? `${Math.round(lastWeek.marginPct * 100)}%` : '—'}
+          hot={lastWeek?.marginPct != null && lastWeek.marginPct < 0.1}
+          hotTone={lastWeek?.marginPct != null && lastWeek.marginPct < 0 ? 'alert' : 'warning'}
+          icon={BarChart3}
+          hint={lastWeek ? t('fin.kpiMarginHint', { amount: fmtMoney(lastWeek.margin) }) : undefined}
           stagger={2}
+        />
+        <FinKpi
+          to={data.billing ? `/time-attendance/timesheets?week=${data.billing.weekStart}` : '/time-attendance/timesheets'}
+          label={t('fin.kpiRisk')}
+          value={fmtMoney(atRisk)}
+          hot={atRisk > 0}
+          hotTone="alert"
+          icon={ShieldAlert}
+          hint={atRisk > 0 ? t('fin.kpiRiskHint') : t('fin.kpiRiskClean')}
+          stagger={3}
         />
         <FinKpi
           to="/clients/statements"
           label={t('fin.kpiAr')}
           value={fmtMoney(data.receivables.outstandingTotal)}
-          hot={data.receivables.outstandingCount > 0}
+          hot={pastDue > 0}
           hotTone="alert"
           icon={Scale}
           hint={
             data.receivables.outstandingCount > 0
               ? [
                   t('fin.arLine', { count: data.receivables.outstandingCount }),
-                  data.receivables.oldestDays !== null &&
-                    t('fin.arOldest', { days: data.receivables.oldestDays }),
+                  data.receivables.oldestDays !== null && t('fin.arOldest', { days: data.receivables.oldestDays }),
                 ]
                   .filter(Boolean)
                   .join(' · ')
               : t('fin.arClean')
           }
-          stagger={3}
-        />
-        <FinKpi
-          to="/clients/statements"
-          label={t('fin.kpiDso')}
-          value={
-            data.receivables.avgDaysToPay !== null
-              ? `${data.receivables.avgDaysToPay}d`
-              : '—'
-          }
-          icon={BarChart3}
-          hint={
-            data.receivables.draftStatements > 0
-              ? t('fin.arDrafts', { count: data.receivables.draftStatements })
-              : undefined
-          }
           stagger={4}
         />
+      </div>
+
+      {/* ---- Getting paid: last week in Fieldglass, and the margin ----- */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <BillingWeekCard billing={data.billing} />
+        <MarginTrendCard margin={data.margin} />
       </div>
 
       {/* ---- Fieldglass setup queue ----------------------------------- */}
@@ -445,43 +322,10 @@ export function FinanceDashboard() {
           </Card>
         )}
 
-        {/* ---- Billed vs paid, as paired bars -------------------------- */}
-        {bvp && (
-          <Card
-            className={cn('animate-enter', !chaseHot && 'lg:col-span-2')}
-            style={enterStagger(6)}
-          >
-            <CardContent className="p-5">
-              <h2 className="text-sm font-medium text-white">{t('fin.bvp')}</h2>
-              <div className="mt-3 space-y-2.5">
-                <BvpBar
-                  label={t('fin.bvpBilled')}
-                  amount={bvp.billed}
-                  max={bvpMax}
-                  barClass="bg-gold/80"
-                />
-                <BvpBar
-                  label={t('fin.bvpPaid')}
-                  amount={bvp.paidGross}
-                  max={bvpMax}
-                  barClass="bg-silver/50"
-                />
-              </div>
-              <p className="mt-3 text-sm tabular-nums">
-                <span
-                  className={cn(
-                    'font-semibold',
-                    bvp.variance >= 0 ? 'text-success' : 'text-alert',
-                  )}
-                >
-                  {bvp.variance >= 0 ? '+' : ''}
-                  {fmtMoney(bvp.variance)}
-                </span>
-                <span className="text-silver/60"> · {t('fin.bvpNote')}</span>
-              </p>
-            </CardContent>
-          </Card>
-        )}
+        {/* ---- Who owes us, and for how long --------------------------- */}
+        <div className={cn(!chaseHot && 'lg:col-span-2')}>
+          <ReceivablesCard receivables={data.receivables} />
+        </div>
       </div>
 
       {/* ---- The actions the day needs -------------------------------- */}
@@ -595,32 +439,5 @@ function FinKpi({
         </CardContent>
       </Card>
     </Link>
-  );
-}
-
-function BvpBar({
-  label,
-  amount,
-  max,
-  barClass,
-}: {
-  label: string;
-  amount: number;
-  max: number;
-  barClass: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="text-silver">{label}</span>
-        <span className="tabular-nums text-white">{fmtMoney(amount)}</span>
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
-        <div
-          className={cn('h-full rounded-full', barClass)}
-          style={{ width: `${Math.max(2, (amount / max) * 100)}%` }}
-        />
-      </div>
-    </div>
   );
 }
