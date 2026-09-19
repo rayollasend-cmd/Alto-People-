@@ -7,6 +7,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { emitLiveEvent } from '../lib/liveEvents.js';
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
@@ -20,6 +21,7 @@ import {
   type RunLive,
 } from '../lib/transportLive.js';
 import {
+  NO_SHOW_WAIT_MS,
   OPEN_RIDE_STATUSES,
   bookableStores,
   getTransportSettings,
@@ -132,6 +134,32 @@ transportRouter.get('/me', RIDE, async (req, res) => {
     where: { associateId, chargeCents: { gt: 0 }, waivedAt: null, chargedRunId: null },
     select: { chargeCents: true, status: true },
   });
+  // One-tap booking goes from where they went last time: that pickup (a
+  // stop, a saved address, or the address itself) and that store.
+  const last = await prisma.ride.findFirst({
+    where: { associateId },
+    orderBy: { createdAt: 'desc' },
+    select: { locationId: true, stopId: true, address: true, lat: true, lng: true },
+  });
+  const liveStop = last?.stopId ? stops.find((x) => x.id === last.stopId) : undefined;
+  const lastPlace = last?.address ? places.find((p) => p.address === last.address) : undefined;
+  const defaultPickup = liveStop
+    ? { kind: 'stop' as const, stopId: liveStop.id, label: liveStop.name }
+    : lastPlace
+      ? { kind: 'place' as const, placeId: lastPlace.id, label: lastPlace.label }
+      : last?.address
+        ? {
+            kind: 'address' as const,
+            address: last.address,
+            lat: last.lat === null ? null : Number(last.lat),
+            lng: last.lng === null ? null : Number(last.lng),
+            label: last.address,
+          }
+        : places[0]
+          ? { kind: 'place' as const, placeId: places[0].id, label: places[0].label }
+          : null;
+  const defaultStoreId =
+    last && stores.some((x) => x.id === last.locationId) ? last.locationId : (stores[0]?.id ?? null);
   res.json({
     settings,
     consent: consent ? { acceptedAt: consent.acceptedAt.toISOString() } : null,
@@ -152,6 +180,8 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       locationId: s.locationId,
     })),
     rides: rides.map(toRideView),
+    defaultPickup,
+    defaultStoreId,
     charges: {
       pendingCents: owed.reduce((n, r) => n + r.chargeCents, 0),
       rides: owed.filter((r) => r.status !== 'NO_SHOW').length,
@@ -354,6 +384,37 @@ transportRouter.post('/me/rides/:id/cancel', RIDE, async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * The rider's word to the driver while the van is coming: "I'm outside" or
+ * "running a few minutes late". The driver sees it on the stop and hears it.
+ */
+transportRouter.post('/me/rides/:id/signal', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const id = z.string().uuid().parse(req.params.id);
+  const { kind } = z.object({ kind: z.enum(['OUTSIDE', 'LATE']) }).parse(req.body);
+  const ride = await prisma.ride.findFirst({ where: { id, associateId }, select: rideSelect });
+  if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  const soon = ride.run && ride.run.status === 'PLANNED' && ride.run.departAt.getTime() - Date.now() < 2 * 3_600_000;
+  if (ride.status !== 'SCHEDULED' || !ride.run || !(ride.run.status === 'ACTIVE' || soon)) {
+    throw new HttpError(409, 'not_on_the_way', 'You can message the driver once your van is on its way.');
+  }
+  await prisma.ride.update({ where: { id }, data: { riderSignal: kind, riderSignalAt: new Date() } });
+  const first = ride.associate.firstName;
+  void trackNotificationWork(
+    notifyUser(ride.run.driver.id, {
+      subject: kind === 'OUTSIDE' ? `${first} is outside` : `${first} is running a few minutes late`,
+      body:
+        kind === 'OUTSIDE'
+          ? `${first} ${ride.associate.lastName} is waiting at ${ride.stop ? ride.stop.name : (ride.address ?? 'the pickup')}.`
+          : `${first} ${ride.associate.lastName} asked you to hold on a few minutes at ${ride.stop ? ride.stop.name : (ride.address ?? 'the pickup')}.`,
+      category: 'transport',
+      linkUrl: '/',
+    }),
+  );
+  emitLiveEvent(ride.run.driver.id, 'transport');
+  res.json({ ok: true });
+});
+
 const IssueInput = z.object({
   category: z.enum(['LATE_VAN', 'MISSED_PICKUP', 'CHARGE_DISPUTE', 'SAFETY', 'VEHICLE', 'CONDUCT', 'OTHER']),
   body: z.string().trim().min(5).max(2000),
@@ -515,9 +576,57 @@ transportRouter.post('/driver/rides/:id/board', DRIVE, async (req, res) => {
   res.json({ ride: toRideView(updated) });
 });
 
+/**
+ * "Arrived" at a pickup: every rider still waiting there hears "your van is
+ * here", and the 3-minute clock before a no-show starts.
+ */
+transportRouter.post('/driver/runs/:id/arrived', DRIVE, async (req, res) => {
+  const { rideIds } = z.object({ rideIds: z.array(z.string().uuid()).min(1).max(60) }).parse(req.body);
+  let run = await ownRun(req, z.string().uuid().parse(req.params.id));
+  if (run.status === 'COMPLETED' || run.status === 'CANCELLED') throw new HttpError(409, 'run_closed', 'This run is closed.');
+  if (run.status === 'PLANNED') run = await startRun(run.id, req.user!.id);
+  const here = run.rides.filter((r) => rideIds.includes(r.id) && r.status === 'SCHEDULED' && !r.vanArrivedAt);
+  const now = new Date();
+  if (here.length > 0) {
+    await prisma.ride.updateMany({ where: { id: { in: here.map((r) => r.id) } }, data: { vanArrivedAt: now } });
+    for (const r of here) {
+      const where = run.direction === 'TO_WORK' ? (r.stop ? r.stop.name : 'your pickup') : r.location.name;
+      void trackNotificationWork(
+        notifyAssociate(r.associate.id, {
+          subject: `Your van is here`,
+          body:
+            `${run.van.name}${run.van.plate ? ` (${run.van.plate})` : ''} is at ${where}. ` +
+            `${personName(run.driver).split(' ')[0]} will wait ${Math.round(NO_SHOW_WAIT_MS / 60_000)} minutes.`,
+          category: 'transport',
+          linkUrl: '/rides',
+        }),
+      );
+    }
+    const riders = await prisma.user.findMany({
+      where: { associateId: { in: here.map((r) => r.associate.id) }, status: 'ACTIVE', deletedAt: null },
+      select: { id: true },
+    });
+    for (const u of riders) emitLiveEvent(u.id, 'transport');
+  }
+  res.json({ run: toRunView((await prisma.rideRun.findUnique({ where: { id: run.id }, include: runInclude }))!) });
+});
+
 transportRouter.post('/driver/rides/:id/no-show', DRIVE, async (req, res) => {
   const ride = await driverRide(req);
   if (ride.status !== 'SCHEDULED') throw new HttpError(409, 'not_scheduled', 'This rider is already marked.');
+  // Fair to the rider: the van stopped, they heard it, and they had 3
+  // minutes to come out.
+  if (!ride.vanArrivedAt) {
+    throw new HttpError(409, 'not_arrived', 'Tap Arrived at the stop first — riders get 3 minutes to come out.');
+  }
+  const waitUntil = ride.vanArrivedAt.getTime() + NO_SHOW_WAIT_MS;
+  if (Date.now() < waitUntil) {
+    throw new HttpError(
+      409,
+      'still_waiting',
+      `Give them until ${fmtTime(new Date(waitUntil), ride.location.timezone)} — riders get 3 minutes after you arrive.`,
+    );
+  }
   const updated = await prisma.ride.update({
     where: { id: ride.id },
     data: { status: 'NO_SHOW', noShowAt: new Date(), chargeCents: ride.noShowFeeCents },
@@ -735,6 +844,8 @@ transportRouter.get('/me/live', RIDE, async (req, res) => {
       },
       stopsBefore: firstStop > 0 ? firstStop : 0,
       lateMinutes: toWork ? (live.plan.lateMinutes.get(r.location.id) ?? 0) : 0,
+      vanArrivedAt: iso(r.vanArrivedAt),
+      riderSignal: r.riderSignal,
     },
   });
 });

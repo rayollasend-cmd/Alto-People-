@@ -108,6 +108,9 @@ export const rideSelect = {
   noShowAt: true,
   cancelledAt: true,
   cancelReason: true,
+  vanArrivedAt: true,
+  riderSignal: true,
+  riderSignalAt: true,
   createdAt: true,
   location: { select: { id: true, name: true, timezone: true, client: { select: { id: true, name: true } } } },
   stop: { select: { id: true, name: true, address: true, lat: true, lng: true } },
@@ -118,7 +121,7 @@ export const rideSelect = {
       status: true,
       departAt: true,
       van: { select: { id: true, name: true, plate: true } },
-      driver: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
+      driver: { select: { id: true, email: true, associate: { select: { id: true, firstName: true, lastName: true } } } },
     },
   },
 } satisfies Prisma.RideSelect;
@@ -168,7 +171,12 @@ export function toRideView(r: RideRow) {
           status: r.run.status,
           departAt: r.run.departAt.toISOString(),
           van: r.run.van,
-          driver: { userId: r.run.driver.id, name: personName(r.run.driver) },
+          driver: {
+            userId: r.run.driver.id,
+            name: personName(r.run.driver),
+            /** For the driver's photo on the rider's card. */
+            associateId: r.run.driver.associate?.id ?? null,
+          },
         }
       : null,
     fareCents: r.fareCents,
@@ -182,9 +190,19 @@ export function toRideView(r: RideRow) {
     noShowAt: r.noShowAt?.toISOString() ?? null,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     cancelReason: r.cancelReason,
+    /** The driver tapped "Arrived" at this pickup. */
+    vanArrivedAt: r.vanArrivedAt?.toISOString() ?? null,
+    /** The rider's word to the driver: "I'm outside" / "running late". */
+    riderSignal: r.riderSignal ? { kind: r.riderSignal as RiderSignal, at: r.riderSignalAt!.toISOString() } : null,
     createdAt: r.createdAt.toISOString(),
   };
 }
+
+export type RiderSignal = 'OUTSIDE' | 'LATE';
+
+/** How long a driver waits after arriving before a rider can be marked a
+ *  no-show — the rider isn't charged for a van that never stopped. */
+export const NO_SHOW_WAIT_MS = 3 * 60_000;
 
 /** Rides still waiting on the van or the rider — the ones that can be
  *  cancelled or dispatched. */

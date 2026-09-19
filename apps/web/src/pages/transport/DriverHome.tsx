@@ -1,15 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Check, Home, LocateFixed, LocateOff, MapPin, Phone, RotateCcw, UserX } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bus,
+  Check,
+  CheckCheck,
+  Clock,
+  Home,
+  LocateFixed,
+  LocateOff,
+  MapPin,
+  Navigation,
+  Phone,
+  RotateCcw,
+  Store,
+  UserX,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm } from '@/lib/haptics';
-import { fmtMoney, fmtRelativeDayTz, fmtTimeTz, mapsUrl } from '@/lib/format';
+import { onLiveEvent } from '@/lib/liveEvents';
+import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import {
+  NO_SHOW_WAIT_MS,
   completeDriverRun,
+  driverArrived,
   getDriverRunLive,
   getDriverRuns,
   markBoarded,
@@ -23,6 +41,7 @@ import {
   type TransportIssueCategory,
 } from '@/lib/transportApi';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -39,14 +58,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { fmtClock, fmtIn } from './rideShifts';
 
 /**
- * Driver mode — the driver's phone on the dash. Their runs from yesterday
- * to the day after tomorrow, soonest first; the one on the road (or next
- * to leave) opens as the hero. Each rider in pickup order with the place,
- * the time and a call button; one tap for on board, one for a no-show
- * (confirmed — it costs the rider), undo for a mis-tap. Marking the first
- * rider starts the run; Finish closes it once everyone is marked.
+ * Driver mode — the phone on the dash, built around the STOP, not a list:
+ *
+ *   the day      runs, riders, picked up — three numbers
+ *   up next      a run that hasn't left: when it leaves, its stops, Start
+ *   on the road  the map, then the stop you're driving to — Navigate,
+ *                Arrived (every rider there hears "your van is here"), each
+ *                rider On board / No-show, All on board for a housing
+ *                complex. A rider's "I'm outside / running late" shows on
+ *                their row. No-show opens 3 minutes after Arrived — the
+ *                rider isn't charged for a van that never stopped. When
+ *                everyone's picked up: the drop-off, Navigate, Finish.
+ *
+ * Location is shared from this phone while the run is on the road.
  */
 
 const DRIVER_ISSUES: TransportIssueCategory[] = ['VEHICLE', 'SAFETY', 'CONDUCT', 'LATE_VAN', 'OTHER'];
@@ -55,14 +82,82 @@ function runTz(run: RideRun): string {
   return run.rides[0]?.store.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+function useTick(ms: number, on = true): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const id = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(id);
+  }, [ms, on]);
+  return now;
+}
+
+const directionsUrl = (address: string) =>
+  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+
+/* ----- Stops: riders grouped by where the van stops -------------------------- */
+
+export interface Stop {
+  key: string;
+  kind: 'home' | 'store';
+  label: string;
+  address: string;
+  rides: Ride[];
+  at: string | null;
+}
+
+const riding = (r: Ride) => r.status !== 'CANCELLED';
+const homeKey = (r: Ride) => (r.pickup.kind === 'stop' ? `stop:${r.pickup.id}` : `addr:${r.pickup.address.trim().toLowerCase()}`);
+
+function group(rides: Ride[], keyOf: (r: Ride) => string, make: (r: Ride) => Omit<Stop, 'rides' | 'key' | 'at'>): Stop[] {
+  const out: Stop[] = [];
+  for (const r of rides) {
+    const key = keyOf(r);
+    let stop = out.find((s) => s.key === key);
+    if (!stop) {
+      stop = { key, ...make(r), rides: [], at: null };
+      out.push(stop);
+    }
+    stop.rides.push(r);
+    const at = r.pickupAt ?? r.targetAt;
+    if (!stop.at || at < stop.at) stop.at = at;
+  }
+  return out;
+}
+
+/** Where the van picks up, in order, and where it drops off. To work: homes
+ *  (and housing complexes) → the store. Home: the store → each home. */
+export function stopsFor(run: RideRun): { pickups: Stop[]; drops: Stop[] } {
+  const rides = run.rides.filter(riding).sort((a, b) => (a.pickupOrder ?? 99) - (b.pickupOrder ?? 99));
+  const home = (r: Ride) => ({
+    kind: 'home' as const,
+    label: r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address,
+    address: r.pickup.address,
+  });
+  const store = (r: Ride) => ({ kind: 'store' as const, label: r.store.name, address: `${r.store.clientName} ${r.store.name}` });
+  return run.direction === 'TO_WORK'
+    ? { pickups: group(rides, homeKey, home), drops: group(rides, (r) => `store:${r.store.id}`, store) }
+    : { pickups: group(rides, (r) => `store:${r.store.id}`, store), drops: group(rides, homeKey, home) };
+}
+
+const stopDone = (s: Stop) => s.rides.every((r) => r.status !== 'SCHEDULED');
+
+/* ----- The page ---------------------------------------------------------------- */
+
 export function DriverHome() {
   const { t } = useI18n();
-  const runs = useQuery({ queryKey: ['transport', 'driver'], queryFn: getDriverRuns, refetchInterval: 60_000 });
+  const queryClient = useQueryClient();
+  const runs = useQuery({ queryKey: ['transport', 'driver'], queryFn: getDriverRuns, refetchInterval: 30_000 });
+  // A rider's "I'm outside" lands now, not on the next poll.
+  useEffect(
+    () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] })),
+    [queryClient],
+  );
   const [reporting, setReporting] = useState<string | null | undefined>(undefined);
-  const list = (runs.data?.runs ?? []).filter((r) => r.status !== 'COMPLETED' || isRecent(r));
-  // The van on the road first, then what leaves next.
-  const open = [...list.filter((r) => r.status === 'ACTIVE'), ...list.filter((r) => r.status === 'PLANNED')];
-  const done = list.filter((r) => r.status === 'COMPLETED');
+  const all = runs.data?.runs ?? [];
+  const active = all.filter((r) => r.status === 'ACTIVE');
+  const planned = all.filter((r) => r.status === 'PLANNED');
+  const done = all.filter((r) => r.status === 'COMPLETED' && isRecent(r));
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -78,20 +173,24 @@ export function DriverHome() {
       />
       {runs.isLoading ? (
         <div className="space-y-3">
-          <Skeleton className="h-40" />
-          <Skeleton className="h-24" />
+          <Skeleton className="h-20" />
+          <Skeleton className="h-64" />
         </div>
       ) : runs.error ? (
         <p className="text-sm text-alert">{runs.error instanceof ApiError ? runs.error.message : String(runs.error)}</p>
-      ) : open.length === 0 && done.length === 0 ? (
+      ) : active.length + planned.length + done.length === 0 ? (
         <EmptyState icon={Bus} title={t('drive.none')} description={t('drive.noneBody')} />
       ) : (
         <div className="space-y-4">
-          {open.map((run, i) => (
-            <RunCard key={run.id} run={run} hero={i === 0} onReport={() => setReporting(run.id)} />
+          <DayStats runs={[...active, ...planned, ...done]} />
+          {active.map((run) => (
+            <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} />
+          ))}
+          {planned.map((run, i) => (
+            <UpNext key={run.id} run={run} hero={active.length === 0 && i === 0} onReport={() => setReporting(run.id)} />
           ))}
           {done.map((run) => (
-            <RunCard key={run.id} run={run} hero={false} onReport={() => setReporting(run.id)} />
+            <Finished key={run.id} run={run} />
           ))}
         </div>
       )}
@@ -106,16 +205,31 @@ function isRecent(r: RideRun): boolean {
   return !!r.endedAt && Date.now() - new Date(r.endedAt).getTime() < 6 * 3_600_000;
 }
 
-function RunCard({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport: () => void }) {
+function DayStats({ runs }: { runs: RideRun[] }) {
   const { t } = useI18n();
+  const rides = runs.flatMap((r) => r.rides.filter(riding));
+  const up = rides.filter((r) => r.status === 'BOARDED' || r.status === 'COMPLETED').length;
+  const tiles = [
+    { label: t('drive.statRuns'), value: runs.length },
+    { label: t('drive.statRiders'), value: rides.length },
+    { label: t('drive.statDone'), value: `${up}/${rides.length}` },
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {tiles.map((x) => (
+        <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
+          <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
+          <div className="mt-0.5 text-xl font-bold tabular-nums text-white">{x.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Run a driver action, then refresh the runs. */
+function useAct() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const tz = runTz(run);
-  const riders = run.rides.filter((r) => r.status !== 'CANCELLED');
-  const left = riders.filter((r) => r.status === 'SCHEDULED').length;
-  const active = run.status === 'ACTIVE';
-  const closed = run.status === 'COMPLETED' || run.status === 'CANCELLED';
-
   const act = async (fn: () => Promise<unknown>, success?: string) => {
     setBusy(true);
     try {
@@ -129,85 +243,408 @@ function RunCard({ run, hero, onReport }: { run: RideRun; hero: boolean; onRepor
       setBusy(false);
     }
   };
+  return { act, busy };
+}
 
-  const stores = [...new Set(riders.map((r) => r.store.name))];
-  const sharing = useShareVanLocation(run.id, active);
+function RunHeader({ run, tone }: { run: RideRun; tone: 'success' | 'gold' | 'quiet' }) {
+  const { t } = useI18n();
+  const tz = runTz(run);
+  const stores = [...new Set(run.rides.filter(riding).map((r) => r.store.name))];
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={cn(
+            'flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider',
+            tone === 'success' ? 'text-success' : tone === 'gold' ? 'text-gold' : 'text-silver',
+          )}
+        >
+          <Bus className="h-3.5 w-3.5" aria-hidden="true" />
+          {run.van.name}
+          {run.van.plate ? ` · ${run.van.plate}` : ''}
+        </span>
+        <Badge variant={tone === 'success' ? 'success' : tone === 'gold' ? 'accent' : 'default'}>
+          {t(`drive.status.${run.status}` as MessageKey)}
+        </Badge>
+      </div>
+      <div className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+        {fmtRelativeDayTz(run.departAt, tz)}
+        <span className="text-silver/50"> · </span>
+        <span className="tabular-nums">{t('drive.departs', { time: fmtTimeTz(run.departAt, tz) })}</span>
+      </div>
+      <p className="mt-1 text-sm text-silver">
+        {run.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')}
+        {stores.length > 0 && ` · ${stores.join(', ')}`} · {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+      </p>
+      {run.notes && <p className="mt-2 text-sm text-white">{run.notes}</p>}
+    </>
+  );
+}
 
+/* ----- On the road: the stop you're driving to ----------------------------------- */
+
+function OnTheRoad({ run, onReport }: { run: RideRun; onReport: () => void }) {
+  const { t } = useI18n();
+  const { act, busy } = useAct();
+  const sharing = useShareVanLocation(run.id, true);
+  const { pickups, drops } = stopsFor(run);
+  const current = pickups.find((s) => !stopDone(s)) ?? null;
+  const n = current ? pickups.indexOf(current) + 1 : pickups.length;
+  const later = current ? pickups.slice(n) : [];
+  const finished = pickups.filter(stopDone);
+  const tz = runTz(run);
+
+  return (
+    <section
+      aria-label={`${run.van.name} ${fmtTimeTz(run.departAt, tz)}`}
+      className="relative overflow-hidden rounded-lg border border-success/40 bg-navy bg-gradient-to-br from-success/[0.12] via-transparent to-transparent"
+    >
+      <div className="p-5">
+        <RunHeader run={run} tone="success" />
+        <SharingPill state={sharing} />
+        <RunMap runId={run.id} />
+
+        {current ? (
+          <StopCard run={run} stop={current} n={n} total={pickups.length} act={act} busy={busy} />
+        ) : (
+          <DropCard run={run} drops={drops} act={act} busy={busy} />
+        )}
+
+        {later.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.laterStops')}</h3>
+            <ol className="mt-1 divide-y divide-navy-secondary/60">
+              {later.map((s, i) => (
+                <li key={s.key} className="flex items-center gap-3 py-2 text-sm">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-navy-secondary text-xs font-semibold text-white">
+                    {n + i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-white">{s.label}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-silver">
+                    {s.at ? fmtTimeTz(s.at, tz) : ''} · {s.rides.length}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        {finished.length > 0 && current && (
+          <div className="mt-4">
+            <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.doneStops')}</h3>
+            <ul className="mt-1 space-y-1">
+              {finished.flatMap((s) => s.rides).map((r) => (
+                <MarkedRow key={r.id} ride={r} act={act} busy={busy} />
+              ))}
+            </ul>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onReport}
+          className="mt-4 inline-flex items-center text-sm text-silver hover:text-white coarse:min-h-11"
+        >
+          {t('ride.report')}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function StopCard({
+  run,
+  stop,
+  n,
+  total,
+  act,
+  busy,
+}: {
+  run: RideRun;
+  stop: Stop;
+  n: number;
+  total: number;
+  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const tz = runTz(run);
+  const waiting = stop.rides.filter((r) => r.status === 'SCHEDULED');
+  const arrivedAt = stop.rides.map((r) => r.vanArrivedAt).find(Boolean) ?? null;
+  const now = useTick(1_000, !!arrivedAt);
+
+  return (
+    <div className="mt-4 rounded-lg border border-gold/40 bg-gold/[0.06] p-4">
+      <div className="flex items-center justify-between gap-2 text-2xs font-semibold uppercase tracking-wider text-gold">
+        <span>
+          {t('drive.nextStop')} · {t('drive.stopOf', { n, total })}
+        </span>
+        {stop.at && <span className="tabular-nums text-silver">{fmtTimeTz(stop.at, tz)}</span>}
+      </div>
+      <div className="mt-1.5 flex items-start gap-2">
+        {stop.kind === 'store' ? (
+          <Store className="mt-1 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+        ) : (
+          <MapPin className="mt-1 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+        )}
+        <div className="min-w-0">
+          <div className="text-lg font-semibold leading-snug text-white">{stop.label}</div>
+          {stop.label !== stop.address && <div className="text-xs text-silver">{stop.address}</div>}
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant={arrivedAt ? 'secondary' : 'secondary'} asChild>
+          <a href={directionsUrl(stop.address)} target="_blank" rel="noreferrer">
+            <Navigation className="h-3.5 w-3.5" />
+            {t('drive.navigate')}
+          </a>
+        </Button>
+        {arrivedAt ? (
+          <span className="inline-flex items-center gap-1 text-sm text-success">
+            <Check className="h-4 w-4" aria-hidden="true" />
+            {t('drive.arrivedAt', { time: fmtTimeTz(arrivedAt, tz) })}
+          </span>
+        ) : (
+          <Button size="sm" onClick={() => void act(() => driverArrived(run.id, waiting.map((r) => r.id)))} disabled={busy}>
+            <MapPin className="h-3.5 w-3.5" />
+            {t('drive.arrived')}
+          </Button>
+        )}
+        {waiting.length > 1 && (
+          <Button
+            size="sm"
+            variant={arrivedAt ? 'primary' : 'secondary'}
+            onClick={() =>
+              void act(async () => {
+                for (const r of waiting) await markBoarded(r.id);
+              })
+            }
+            disabled={busy}
+          >
+            <CheckCheck className="h-3.5 w-3.5" />
+            {t('drive.allOnBoard')}
+          </Button>
+        )}
+      </div>
+      {!arrivedAt && <p className="mt-2 text-xs text-silver">{t('drive.arrivedHint')}</p>}
+
+      <ul className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
+        {stop.rides.map((r) => (
+          <RiderAtStop key={r.id} ride={r} now={now} act={act} busy={busy} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function RiderAtStop({
+  ride,
+  now,
+  act,
+  busy,
+}: {
+  ride: Ride;
+  now: number;
+  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const confirm = useConfirm();
+  if (ride.status !== 'SCHEDULED') return <MarkedRow ride={ride} act={act} busy={busy} />;
+  const openAt = ride.vanArrivedAt ? Date.parse(ride.vanArrivedAt) + NO_SHOW_WAIT_MS : null;
+  const canNoShow = openAt !== null && now >= openAt;
+  const noShow = async () => {
+    const ok = await confirm({
+      title: t('drive.noShowConfirm', { name: ride.rider.name }),
+      description: t('drive.noShowBody', { fee: fmtMoney(ride.noShowFeeCents / 100) }),
+      confirmLabel: t('drive.noShow'),
+      destructive: true,
+    });
+    if (ok) await act(() => markNoShow(ride.id));
+  };
+  return (
+    <li className="py-3">
+      <div className="flex items-center gap-3">
+        <Avatar src={`/api/associates/${ride.rider.associateId}/photo`} name={ride.rider.name} email="" size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium text-white">{ride.rider.name}</span>
+            {ride.riderSignal && (
+              <Badge size="sm" variant={ride.riderSignal.kind === 'OUTSIDE' ? 'success' : 'pending'}>
+                {t(`drive.signal.${ride.riderSignal.kind}` as MessageKey)}
+              </Badge>
+            )}
+          </div>
+          {ride.direction === 'FROM_WORK' && <div className="text-xs text-silver">{t('drive.dropAt', { place: ride.pickup.kind === 'stop' ? ride.pickup.name : ride.pickup.address })}</div>}
+          {ride.note && <div className="text-xs text-gold">{ride.note}</div>}
+        </div>
+        {ride.rider.phone && (
+          <Button size="icon-sm" variant="ghost" asChild>
+            <a href={`tel:${ride.rider.phone}`} aria-label={`${t('drive.call')} ${ride.rider.name}`}>
+              <Phone className="h-4 w-4" />
+            </a>
+          </Button>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
+        <Button size="sm" onClick={() => void act(() => markBoarded(ride.id))} disabled={busy}>
+          <Check className="h-3.5 w-3.5" />
+          {t('drive.onBoard')}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => void noShow()} disabled={busy || !canNoShow}>
+          {canNoShow || openAt === null ? <UserX className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+          {openAt !== null && !canNoShow ? t('drive.noShowIn', { time: fmtClock(openAt - now) }) : t('drive.noShow')}
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function MarkedRow({
+  ride,
+  act,
+  busy,
+}: {
+  ride: Ride;
+  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const noShow = ride.status === 'NO_SHOW';
+  return (
+    <li className="flex items-center gap-2 py-1.5 text-sm">
+      {noShow ? (
+        <UserX className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
+      ) : (
+        <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+      )}
+      <span className="min-w-0 flex-1 truncate text-white">{ride.rider.name}</span>
+      <Badge size="sm" variant={noShow ? 'destructive' : 'success'}>
+        {t(`ride.status.${ride.status}` as MessageKey)}
+      </Badge>
+      {(ride.status === 'BOARDED' || noShow) && (
+        <Button size="xs" variant="ghost" onClick={() => void act(() => undoRideMark(ride.id))} disabled={busy}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          {t('drive.undo')}
+        </Button>
+      )}
+    </li>
+  );
+}
+
+/** Everyone's picked up: where they're going, and Finish. */
+function DropCard({
+  run,
+  drops,
+  act,
+  busy,
+}: {
+  run: RideRun;
+  drops: Stop[];
+  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const aboard = run.rides.filter((r) => r.status === 'BOARDED').length;
+  return (
+    <div className="mt-4 rounded-lg border border-success/40 bg-success/[0.06] p-4">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-success">{t('drive.pickupsDone')}</div>
+      <div className="mt-1 text-lg font-semibold text-white">
+        {drops.length === 1 ? t('drive.dropOffAt', { place: drops[0]!.label }) : t('drive.dropOffs')}
+      </div>
+      <ol className="mt-2 space-y-2">
+        {drops.map((d, i) => (
+          <li key={d.key} className="flex items-center gap-2 text-sm">
+            {d.kind === 'store' ? (
+              <Store className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+            ) : (
+              <Home className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-white">
+              {drops.length > 1 ? `${i + 1}. ` : ''}
+              {d.label}
+              <span className="text-silver"> · {d.rides.filter((r) => r.status === 'BOARDED').map((r) => r.rider.name.split(' ')[0]).join(', ')}</span>
+            </span>
+            <Button size="xs" variant="secondary" asChild>
+              <a href={directionsUrl(d.address)} target="_blank" rel="noreferrer">
+                <Navigation className="h-3.5 w-3.5" />
+                {t('drive.navigate')}
+              </a>
+            </Button>
+          </li>
+        ))}
+      </ol>
+      <Button className="mt-3 w-full sm:w-auto" onClick={() => void act(() => completeDriverRun(run.id), t('drive.finished'))} disabled={busy}>
+        <Check className="h-4 w-4" />
+        {t('drive.finish')}
+        {aboard > 0 ? ` · ${aboard}` : ''}
+      </Button>
+    </div>
+  );
+}
+
+/* ----- Up next: a run that hasn't left ------------------------------------------ */
+
+function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport: () => void }) {
+  const { t } = useI18n();
+  const { act, busy } = useAct();
+  const now = useTick(30_000);
+  const tz = runTz(run);
+  const { pickups } = stopsFor(run);
+  const until = Date.parse(run.departAt) - now;
   return (
     <section
       aria-label={`${run.van.name} ${fmtTimeTz(run.departAt, tz)}`}
       className={cn(
         'relative overflow-hidden rounded-lg border bg-navy',
-        active
-          ? 'border-success/40 bg-gradient-to-br from-success/[0.12] via-transparent to-transparent'
-          : hero && !closed
-            ? 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent'
-            : 'border-navy-secondary',
+        hero ? 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent' : 'border-navy-secondary',
       )}
     >
       <div className="p-5">
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className={cn(
-              'flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider',
-              active ? 'text-success' : closed ? 'text-silver' : 'text-gold',
-            )}
-          >
-            <Bus className="h-3.5 w-3.5" aria-hidden="true" />
-            {run.van.name}
-            {run.van.plate ? ` · ${run.van.plate}` : ''}
-          </span>
-          <Badge variant={active ? 'success' : closed ? 'default' : 'accent'}>
-            {t(`drive.status.${run.status}` as MessageKey)}
-          </Badge>
-        </div>
-        <div className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
-          {fmtRelativeDayTz(run.departAt, tz)}
-          <span className="text-silver/50"> · </span>
-          <span className="tabular-nums">{t('drive.departs', { time: fmtTimeTz(run.departAt, tz) })}</span>
-        </div>
-        <p className="mt-1 text-sm text-silver">
-          {run.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')}
-          {stores.length > 0 && ` · ${stores.join(', ')}`}
-          {' · '}
-          {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
-        </p>
-        {run.notes && <p className="mt-2 text-sm text-white">{run.notes}</p>}
-        {active && <SharingPill state={sharing} />}
-        {active && <RunMap runId={run.id} />}
-
-        <ol className="mt-4 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
-          {riders.map((r, i) => (
-            <RiderRow key={r.id} ride={r} n={i + 1} closed={closed} busy={busy} act={act} />
+        <RunHeader run={run} tone="gold" />
+        {until > 0 && <p className="mt-1 text-xs tabular-nums text-gold">{t('drive.leavesIn', { time: fmtIn(until) })}</p>}
+        {hero && <RunMap runId={run.id} />}
+        <ol className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
+          {pickups.map((s, i) => (
+            <li key={s.key} className="flex items-center gap-3 py-2 text-sm">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-navy-secondary text-xs font-semibold text-white">
+                {i + 1}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-white">{s.label}</span>
+                <span className="block truncate text-xs text-silver">{s.rides.map((r) => r.rider.name).join(', ')}</span>
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-silver">{s.at ? fmtTimeTz(s.at, tz) : ''}</span>
+            </li>
           ))}
         </ol>
-
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          {run.status === 'PLANNED' && (
-            <Button onClick={() => void act(() => startDriverRun(run.id), t('drive.started'))} disabled={busy}>
-              {t('drive.start')}
-            </Button>
-          )}
-          {active && (
-            <Button
-              onClick={() => void act(() => completeDriverRun(run.id), t('drive.finished'))}
-              disabled={busy || left > 0}
-            >
-              <Check className="h-4 w-4" />
-              {t('drive.finish')}
-            </Button>
-          )}
-          {active && left > 0 && <span className="text-sm text-silver">{t('drive.left', { count: left })}</span>}
-          <button
-            type="button"
-            onClick={onReport}
-            className="inline-flex items-center text-sm text-silver hover:text-white coarse:min-h-11"
-          >
+          <Button onClick={() => void act(() => startDriverRun(run.id), t('drive.started'))} disabled={busy}>
+            {t('drive.start')}
+          </Button>
+          <button type="button" onClick={onReport} className="inline-flex items-center text-sm text-silver hover:text-white coarse:min-h-11">
             {t('ride.report')}
           </button>
         </div>
       </div>
     </section>
+  );
+}
+
+function Finished({ run }: { run: RideRun }) {
+  const { t } = useI18n();
+  const tz = runTz(run);
+  const rides = run.rides.filter(riding);
+  const noShows = rides.filter((r) => r.status === 'NO_SHOW').length;
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy p-3.5 text-sm">
+      <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-white">
+        {run.van.name} · {fmtTimeTz(run.departAt, tz)}
+      </span>
+      <span className="shrink-0 text-xs text-silver">
+        {t('drive.status.COMPLETED')} · {rides.length - noShows}/{rides.length}
+      </span>
+    </div>
   );
 }
 
@@ -343,139 +780,13 @@ function RunMap({ runId }: { runId: string }) {
     ...(run.position ? [[run.position.lng, run.position.lat] as [number, number]] : []),
     ...run.waypoints.filter((w) => w.point).map((w) => [w.point!.lng, w.point!.lat] as [number, number]),
   ];
-  const next = run.waypoints.find((w) => w.point);
   return (
     <div className="mt-3">
       {markers.length > 0 && (
         <LazyLiveMap ariaLabel={t('drive.map')} className="h-56 w-full sm:h-72" markers={markers} route={route.length > 1 ? route : undefined} trail={run.trail} />
       )}
-      {next?.point && (
-        <Button size="sm" variant="secondary" className="mt-2" asChild>
-          <a href={`https://www.google.com/maps/dir/?api=1&destination=${next.point.lat},${next.point.lng}`} target="_blank" rel="noreferrer">
-            <MapPin className="h-3.5 w-3.5" />
-            {t('drive.navigate')} · {next.label}
-          </a>
-        </Button>
-      )}
+
     </div>
-  );
-}
-
-function RiderRow({
-  ride,
-  n,
-  closed,
-  busy,
-  act,
-}: {
-  ride: Ride;
-  n: number;
-  closed: boolean;
-  busy: boolean;
-  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
-}) {
-  const { t } = useI18n();
-  const confirm = useConfirm();
-  const tz = ride.store.timezone;
-  const toWork = ride.direction === 'TO_WORK';
-  const home = ride.pickup.kind === 'stop' ? ride.pickup.name : ride.pickup.address;
-  const where = toWork ? home : ride.store.name;
-  const drop = toWork ? ride.store.name : home;
-  const marked = ride.status === 'BOARDED' || ride.status === 'NO_SHOW' || ride.status === 'COMPLETED';
-
-  const noShow = async () => {
-    const ok = await confirm({
-      title: t('drive.noShowConfirm', { name: ride.rider.name }),
-      description: t('drive.noShowBody', { fee: fmtMoney(ride.noShowFeeCents / 100) }),
-      confirmLabel: t('drive.noShow'),
-      destructive: true,
-    });
-    if (ok) await act(() => markNoShow(ride.id));
-  };
-
-  return (
-    <li className="py-3">
-      <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold tabular-nums',
-            ride.status === 'BOARDED' || ride.status === 'COMPLETED'
-              ? 'bg-success/20 text-success'
-              : ride.status === 'NO_SHOW'
-                ? 'bg-alert/20 text-alert'
-                : 'bg-navy-secondary text-white',
-          )}
-          aria-hidden="true"
-        >
-          {ride.status === 'BOARDED' || ride.status === 'COMPLETED' ? <Check className="h-3.5 w-3.5" /> : n}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="truncate font-medium text-white">{ride.rider.name}</span>
-            {ride.pickupAt && (
-              <span className="shrink-0 text-sm tabular-nums text-white">{fmtTimeTz(ride.pickupAt, tz)}</span>
-            )}
-          </div>
-          <a
-            href={mapsUrl(toWork ? ride.pickup.address : ride.store.name)}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-0.5 flex items-center gap-1 text-sm text-silver hover:text-white"
-          >
-            <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{where}</span>
-          </a>
-          <div className="mt-0.5 flex items-center gap-1 text-xs text-silver/80">
-            <Home className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{t('drive.dropAt', { place: drop })}</span>
-          </div>
-          {ride.note && <p className="mt-1 text-xs text-gold">{ride.note}</p>}
-        </div>
-      </div>
-      {!closed && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 pl-10">
-          {ride.status === 'SCHEDULED' ? (
-            <>
-              <Button size="sm" onClick={() => void act(() => markBoarded(ride.id))} disabled={busy}>
-                <Check className="h-3.5 w-3.5" />
-                {t('drive.onBoard')}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => void noShow()} disabled={busy}>
-                <UserX className="h-3.5 w-3.5" />
-                {t('drive.noShow')}
-              </Button>
-            </>
-          ) : (
-            marked && (
-              <>
-                <Badge variant={ride.status === 'NO_SHOW' ? 'destructive' : 'success'}>
-                  {t(`ride.status.${ride.status}` as MessageKey)}
-                </Badge>
-                <Button size="xs" variant="ghost" onClick={() => void act(() => undoRideMark(ride.id))} disabled={busy}>
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {t('drive.undo')}
-                </Button>
-              </>
-            )
-          )}
-          {ride.rider.phone && (
-            <Button size="sm" variant="ghost" asChild>
-              <a href={`tel:${ride.rider.phone}`}>
-                <Phone className="h-3.5 w-3.5" />
-                {t('drive.call')}
-              </a>
-            </Button>
-          )}
-        </div>
-      )}
-      {closed && marked && (
-        <div className="mt-1.5 pl-10">
-          <Badge size="sm" variant={ride.status === 'NO_SHOW' ? 'destructive' : 'success'}>
-            {t(`ride.status.${ride.status}` as MessageKey)}
-          </Badge>
-        </div>
-      )}
-    </li>
   );
 }
 

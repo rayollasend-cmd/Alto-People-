@@ -27,6 +27,7 @@ vi.mock('@/components/transport/LazyLiveMap', () => ({
 import { apiFetch } from '@/lib/api';
 import { RideHome } from '@/pages/transport/RideHome';
 import { DriverHome } from '@/pages/transport/DriverHome';
+import { RideStrip } from '@/pages/transport/RideStrip';
 import { TransportHome } from '@/pages/transport/TransportHome';
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -57,6 +58,9 @@ function ride(over: Partial<Ride> & { id: string }): Ride {
     noShowAt: null,
     cancelledAt: null,
     cancelReason: null,
+    vanArrivedAt: null,
+    riderSignal: null,
+    point: null,
     createdAt: new Date().toISOString(),
     ...over,
   };
@@ -71,6 +75,8 @@ function me(over: Partial<MyTransport> = {}): MyTransport {
     stores: [{ id: 'l1', name: 'Front Beach 218', timezone: tz, clientName: 'Coastal Resort Holdings', address: null }],
     shifts: [],
     rides: [],
+    defaultPickup: null,
+    defaultStoreId: 'l1',
     charges: { pendingCents: 0, rides: 0, noShows: 0, nextPayday: null },
     ...over,
   };
@@ -143,7 +149,7 @@ describe('<RideHome> — the associate’s Ride tab', () => {
         status: 'PLANNED',
         departAt: hoursFromNow(18.8),
         van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
-        driver: { userId: 'd1', name: 'Mike Chen' },
+        driver: { userId: 'd1', name: 'Mike Chen', associateId: null },
       },
     });
     routes((path, init) => {
@@ -152,12 +158,15 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     });
     renderAs('ASSOCIATE', <RideHome />);
     const hero = await screen.findByRole('region', { name: 'Your next ride' });
-    expect(within(hero).getByText(/Pickup/)).toHaveTextContent(
+    expect(within(hero).getByText(/^Pickup \d/)).toHaveTextContent(
       new Date(pickupAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     );
-    expect(within(hero).getByText(/Van 1 · driver Mike/)).toBeInTheDocument();
+    // The driver and the van, and where the ride is: van set, not yet on the way.
+    expect(within(hero).getByText('Mike')).toBeInTheDocument();
+    expect(within(hero).getByText(/Van 1 · ALT 101/)).toBeInTheDocument();
     expect(within(hero).getByText('Seaside Housing')).toBeInTheDocument();
-    expect(within(hero).getByText('Van confirmed')).toBeInTheDocument();
+    expect(within(hero).getByRole('list', { name: 'Van set' })).toBeInTheDocument();
+    expect(within(hero).getByText(/Pickup in 1[89]h/)).toBeInTheDocument();
     await userEvent.click(within(hero).getByRole('button', { name: 'Cancel ride' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel ride' }));
@@ -172,7 +181,9 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     fireEvent.change(within(dialog).getByLabelText(/^Day/), { target: { value: zonedDayKey(new Date(), tz) } });
     fireEvent.change(within(dialog).getByLabelText(/Be at work by/), { target: { value: '00:00' } });
     expect(within(dialog).getByRole('alert')).toHaveTextContent(/Too soon — book at least 10 hours ahead/);
-    expect(within(dialog).getByRole('button', { name: 'Book ride' })).toBeDisabled();
+    // Both ways is the default — most rides are there and back.
+    expect(within(dialog).getByRole('radio', { name: 'Both ways' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('button', { name: 'Book both rides' })).toBeDisabled();
   });
 
   it('books both ways from a shift on their schedule — arrive by the start, leave at the end', async () => {
@@ -204,53 +215,130 @@ describe('<RideHome> — the associate’s Ride tab', () => {
   });
 });
 
-describe('<DriverHome> — driver mode', () => {
-  function run(): RideRun {
+describe('<DriverHome> — driver mode, stop by stop', () => {
+  function run(over: Partial<RideRun> = {}, rides?: Ride[]): RideRun {
     const r1 = ride({ id: 'r1', status: 'SCHEDULED', pickupOrder: 1, pickupAt: hoursFromNow(1) });
     const r2 = ride({
       id: 'r2',
       status: 'SCHEDULED',
       pickupOrder: 2,
-      pickupAt: hoursFromNow(1.2),
+      pickupAt: hoursFromNow(1),
       rider: { associateId: 'a2', name: 'Ben Ray', phone: null },
+    });
+    const r3 = ride({
+      id: 'r3',
+      status: 'SCHEDULED',
+      pickupOrder: 3,
+      pickupAt: hoursFromNow(1.3),
+      rider: { associateId: 'a3', name: 'Cy Dale', phone: null },
+      pickup: { kind: 'address', id: null, name: null, address: '12 Palm St' },
     });
     return {
       id: 'run1',
       direction: 'TO_WORK',
       serviceDate: zonedDayKey(new Date(), tz),
       departAt: hoursFromNow(0.8),
-      status: 'PLANNED',
-      startedAt: null,
+      status: 'ACTIVE',
+      startedAt: hoursFromNow(-0.1),
       endedAt: null,
       notes: null,
       van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12 },
       driver: { userId: 'u', name: 'Mike Chen' },
-      seats: { taken: 2, capacity: 12 },
-      rides: [r1, r2],
+      seats: { taken: 3, capacity: 12 },
+      rides: rides ?? [r1, r2, r3],
+      ...over,
     };
   }
+  const geo = { watchPosition: vi.fn(() => 1), clearWatch: vi.fn(), getCurrentPosition: vi.fn() };
 
-  it('lists the riders in pickup order and marks them on board or a no-show', async () => {
+  it('a run that hasn’t left: when it leaves, its stops, and Start', async () => {
     routes((path, init) => {
-      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run()] };
-      if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run({ status: 'PLANNED' })] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path === '/transport/driver/runs/run1/start' && init?.method === 'POST') return { run: run() };
     });
     renderAs('DRIVER', <DriverHome />);
     const card = await screen.findByRole('region', { name: /Van 1/ });
-    const items = within(card).getAllByRole('listitem');
-    expect(items[0]).toHaveTextContent('Maria Lopez');
-    expect(items[1]).toHaveTextContent('Ben Ray');
-    expect(within(card).getByText('2/12 seats', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByText(/Leaves in 4[5-9]m/)).toBeInTheDocument();
+    const stops = within(card).getAllByRole('listitem');
+    // Two riders at the housing complex are ONE stop.
+    expect(stops[0]).toHaveTextContent('Seaside Housing');
+    expect(stops[0]).toHaveTextContent('Maria Lopez, Ben Ray');
+    expect(stops[1]).toHaveTextContent('12 Palm St');
+    await userEvent.click(within(card).getByRole('button', { name: 'Start run' }));
+    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/start', { method: 'POST' });
+  });
 
-    await userEvent.click(within(items[0]!).getByRole('button', { name: 'On board' }));
+  it('on the road: the stop you’re driving to — Arrived tells the riders, All on board in one tap, no-show only after 3 minutes', async () => {
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run()] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path === '/transport/driver/runs/run1/arrived' && init?.method === 'POST') return { run: run() };
+      if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    const stop = (await screen.findByText(/Next stop · Stop 1 of 2/)).closest('div.rounded-lg') as HTMLElement;
+    expect(within(stop).getByText('Seaside Housing')).toBeInTheDocument();
+    expect(within(stop).getByText('Maria Lopez')).toBeInTheDocument();
+    expect(within(stop).getByText('Ben Ray')).toBeInTheDocument();
+    // Not arrived: no-show can't be marked yet.
+    for (const b of within(stop).getAllByRole('button', { name: 'No-show' })) expect(b).toBeDisabled();
+
+    await userEvent.click(within(stop).getByRole('button', { name: 'Arrived' }));
+    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/arrived', { method: 'POST', body: { rideIds: ['r1', 'r2'] } });
+
+    await userEvent.click(within(stop).getByRole('button', { name: 'All on board' }));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/board', { method: 'POST' }));
     expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r1/board', { method: 'POST' });
+    // The next stop is still to come.
+    expect(screen.getByText('Later stops')).toBeInTheDocument();
+  });
 
-    await userEvent.click(within(items[1]!).getByRole('button', { name: 'No-show' }));
+  it('arrived 4 minutes ago: the no-show opens; a rider’s “running late” shows on their row', async () => {
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    const arrived = new Date(Date.now() - 4 * 60_000).toISOString();
+    const rides = [
+      ride({ id: 'r1', status: 'BOARDED', pickupOrder: 1, vanArrivedAt: arrived }),
+      ride({
+        id: 'r2',
+        status: 'SCHEDULED',
+        pickupOrder: 2,
+        vanArrivedAt: arrived,
+        rider: { associateId: 'a2', name: 'Ben Ray', phone: null },
+        riderSignal: { kind: 'LATE', at: new Date().toISOString() },
+      }),
+    ];
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run({}, rides)] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    const stop = (await screen.findByText(/Next stop · Stop 1 of 1/)).closest('div.rounded-lg') as HTMLElement;
+    expect(within(stop).getByText(/Arrived/)).toBeInTheDocument();
+    expect(within(stop).getByText('Running late')).toBeInTheDocument();
+    await userEvent.click(within(stop).getByRole('button', { name: 'No-show' }));
     const confirm = await screen.findByRole('dialog');
     expect(confirm).toHaveTextContent('Mark Ben Ray a no-show?');
     expect(confirm).toHaveTextContent('$1.00 no-show fee');
     await userEvent.click(within(confirm).getByRole('button', { name: 'No-show' }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/no-show', { method: 'POST' }));
+  });
+
+  it('everyone picked up: the drop-off, and Finish', async () => {
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    const rides = [ride({ id: 'r1', status: 'BOARDED', pickupOrder: 1 })];
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run({}, rides)] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path === '/transport/driver/runs/run1/complete' && init?.method === 'POST') return { run: run({ status: 'COMPLETED' }, rides) };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    expect(await screen.findByText('Everyone’s picked up')).toBeInTheDocument();
+    expect(screen.getByText('Drop off at Front Beach 218')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Finish run/ }));
+    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/complete', { method: 'POST' });
   });
 });
 
@@ -322,7 +410,7 @@ describe('the vans live', () => {
         status: 'ACTIVE',
         departAt: hoursFromNow(-0.2),
         van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
-        driver: { userId: 'd1', name: 'Mike Chen' },
+        driver: { userId: 'd1', name: 'Mike Chen', associateId: null },
       },
     });
     const live: MyLiveRide = {
@@ -447,5 +535,151 @@ describe('the vans live', () => {
       drivers: [],
     };
   }
+});
+
+describe('the Ride tab, one tap at a time', () => {
+  const shiftAt = (h: number) => {
+    const start = new Date(Date.now() + h * 3_600_000);
+    start.setMinutes(0, 0, 0);
+    return { id: `sh-${h}`, startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 8 * 3_600_000).toISOString(), position: 'Server', locationId: 'l1' };
+  };
+  const seaside = { kind: 'stop' as const, stopId: 's1', label: 'Seaside Housing' };
+
+  it('books a round trip for a shift in one tap — from where they went last time', async () => {
+    const shift = shiftAt(30);
+    routes((path, init) => {
+      if (path === '/transport/me') return me({ shifts: [shift], defaultPickup: seaside });
+      if (path === '/transport/me/rides' && init?.method === 'POST') return { ride: ride({ id: 'new' }) };
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    expect(await screen.findByText('Rides for your shifts')).toBeInTheDocument();
+    expect(screen.getByText('One tap books from Seaside Housing.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Round trip · $10.00' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides', {
+        method: 'POST',
+        body: { direction: 'FROM_WORK', locationId: 'l1', stopId: 's1', targetAt: shift.endsAt, shiftId: shift.id },
+      }),
+    );
+    expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides', {
+      method: 'POST',
+      body: { direction: 'TO_WORK', locationId: 'l1', stopId: 's1', targetAt: shift.startsAt, shiftId: shift.id },
+    });
+  });
+
+  it('a shift already covered says so; one with the ride there booked offers just the ride home', async () => {
+    const a = shiftAt(30);
+    const b = shiftAt(54);
+    const there = ride({ id: 'r-a1', direction: 'TO_WORK', targetAt: a.startsAt, shiftId: a.id });
+    const home = ride({ id: 'r-a2', direction: 'FROM_WORK', targetAt: a.endsAt, shiftId: a.id });
+    const bThere = ride({ id: 'r-b1', direction: 'TO_WORK', targetAt: b.startsAt, shiftId: b.id });
+    routes((path) => (path === '/transport/me' ? me({ shifts: [a, b], rides: [there, home, bThere], defaultPickup: seaside }) : undefined));
+    renderAs('ASSOCIATE', <RideHome />);
+    expect(await screen.findByText('Both ways booked')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ride home · $5.00' })).toBeInTheDocument();
+  });
+
+  it('the van is here: the hero turns green with the time left to board, and “I’m outside” tells the driver', async () => {
+    const r = ride({
+      id: 'r1',
+      status: 'SCHEDULED',
+      pickupAt: new Date().toISOString(),
+      vanArrivedAt: new Date(Date.now() - 30_000).toISOString(),
+      run: {
+        id: 'run1',
+        status: 'ACTIVE',
+        departAt: hoursFromNow(-0.3),
+        van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
+        driver: { userId: 'd1', name: 'Mike Chen', associateId: 'm1' },
+      },
+    });
+    routes((path, init) => {
+      if (path === '/transport/me') return me({ rides: [r] });
+      if (path === '/transport/me/rides/r1/signal' && init?.method === 'POST') return { ok: true };
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    const hero = await screen.findByRole('region', { name: 'Your next ride' });
+    expect(within(hero).getAllByText('Your van is here').length).toBeGreaterThan(0);
+    expect(within(hero).getByText('Mike is waiting at Seaside Housing.')).toBeInTheDocument();
+    expect(within(hero).getByText(/2:[0-3]\d to get on board/)).toBeInTheDocument();
+    expect(within(hero).getByRole('list', { name: 'Here' })).toBeInTheDocument();
+    await userEvent.click(within(hero).getByRole('button', { name: 'I’m outside' }));
+    expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides/r1/signal', { method: 'POST', body: { kind: 'OUTSIDE' } });
+  });
+
+  it('Book again opens the form with that ride — same store, pickup and way', async () => {
+    const past = ride({ id: 'old', status: 'COMPLETED', direction: 'FROM_WORK', targetAt: hoursFromNow(-30) });
+    routes((path) => (path === '/transport/me' ? me({ rides: [past] }) : undefined));
+    renderAs('ASSOCIATE', <RideHome />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Book again' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Home' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByLabelText(/Take me to/)).toHaveValue('stop:s1');
+  });
+});
+
+describe('<RideStrip> — the van on Home', () => {
+  it('the ride that’s coming, live', async () => {
+    const r = ride({
+      id: 'r1',
+      status: 'SCHEDULED',
+      pickupAt: hoursFromNow(0.2),
+      run: {
+        id: 'run1',
+        status: 'ACTIVE',
+        departAt: hoursFromNow(-0.2),
+        van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
+        driver: { userId: 'd1', name: 'Mike Chen', associateId: null },
+      },
+    });
+    const live: MyLiveRide = {
+      rideId: 'r1',
+      direction: 'TO_WORK',
+      status: 'SCHEDULED',
+      runStatus: 'ACTIVE',
+      timezone: tz,
+      departAt: hoursFromNow(-0.2),
+      van: { name: 'Van 1', plate: 'ALT 101' },
+      driver: 'Mike',
+      position: { lat: 30.3, lng: -85.95, heading: 90, speedMps: 11, at: new Date().toISOString() },
+      stale: false,
+      pickup: { label: 'Seaside Housing', point: null, scheduledAt: null, etaAt: new Date(Date.now() + 8 * 60_000).toISOString() },
+      destination: { label: 'Front Beach 218', point: null, dueAt: null, etaAt: null },
+      stopsBefore: 0,
+      lateMinutes: 0,
+      vanArrivedAt: null,
+      riderSignal: null,
+    };
+    routes((path) => {
+      if (path === '/transport/me') return me({ rides: [r] });
+      if (path === '/transport/me/live') return { live };
+    });
+    renderAs('ASSOCIATE', <RideStrip />);
+    const link = await screen.findByRole('link', { name: /Your ride/ });
+    expect(link).toHaveAttribute('href', '/rides');
+    await waitFor(() => expect(link).toHaveTextContent(/About [78] min away/));
+    expect(link).toHaveTextContent('Van 1 · To work');
+  });
+
+  it('no ride coming: a one-tap round trip for the next shift that needs one', async () => {
+    const start = new Date(Date.now() + 30 * 3_600_000);
+    start.setMinutes(0, 0, 0);
+    const shift = { id: 'sh1', startsAt: start.toISOString(), endsAt: new Date(start.getTime() + 8 * 3_600_000).toISOString(), position: 'Server', locationId: 'l1' };
+    routes((path, init) => {
+      if (path === '/transport/me') return me({ shifts: [shift], defaultPickup: { kind: 'stop', stopId: 's1', label: 'Seaside Housing' } });
+      if (path === '/transport/me/rides' && init?.method === 'POST') return { ride: ride({ id: 'n' }) };
+    });
+    renderAs('ASSOCIATE', <RideStrip />);
+    expect(await screen.findByText(/Need a ride to your .* shift\?/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Round trip · $10.00' }));
+    await waitFor(() => expect(vi.mocked(apiFetch).mock.calls.filter(([p]) => p === '/transport/me/rides')).toHaveLength(2));
+  });
+
+  it('stays quiet before they’ve signed up for rides', async () => {
+    routes((path) => (path === '/transport/me' ? me({ consent: null }) : undefined));
+    const { container } = renderAs('ASSOCIATE', <RideStrip />);
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/me'));
+    expect(container).toBeEmptyDOMElement();
+  });
 });
 

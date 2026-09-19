@@ -47,6 +47,7 @@ import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
+import { RideStrip } from '@/pages/transport/RideStrip';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { MyShiftHero, MyWeekStrip, pickNextShift } from '@/pages/associate/MyShiftHero';
@@ -197,6 +198,10 @@ export function AssociateDashboard() {
           }
         />
       )}
+
+      {/* Their van — the ride that's coming, or a one-tap ride for the
+          next shift that needs one. */}
+      <RideStrip />
 
       <EnablePushCard />
       <ActionNeededCard

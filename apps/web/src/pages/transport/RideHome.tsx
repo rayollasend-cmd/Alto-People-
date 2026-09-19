@@ -26,7 +26,9 @@ import {
   getMyTransport,
   getMyLiveRide,
   giveRideConsent,
+  NO_SHOW_WAIT_MS,
   reportTransportIssue,
+  signalDriver,
   whereAmI,
   type BookRideInput,
   type GeoPoint,
@@ -35,9 +37,12 @@ import {
   type Ride,
   type RideDirection,
   type RideStatus,
+  type RiderSignal,
   type TransportIssueCategory,
 } from '@/lib/transportApi';
+import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -113,7 +118,8 @@ function homeEnd(r: Ride): string {
 export function RideHome() {
   const { t } = useI18n();
   const me = useQuery({ queryKey: ['transport', 'me'], queryFn: getMyTransport, refetchInterval: 60_000 });
-  const [booking, setBooking] = useState(false);
+  // The booking form, open — blank, or prefilled from a shift / a past ride.
+  const [booking, setBooking] = useState<BookPrefill | null>(null);
   const [reporting, setReporting] = useState<{ rideId?: string } | null>(null);
   const data = me.data;
   const canBook = !!data?.consent && (data?.stores.length ?? 0) > 0;
@@ -125,7 +131,7 @@ export function RideHome() {
         subtitle={t('ride.subtitle')}
         primaryAction={
           canBook ? (
-            <Button onClick={() => setBooking(true)}>
+            <Button onClick={() => setBooking({})}>
               <Plus className="h-4 w-4" />
               {t('ride.book')}
             </Button>
@@ -152,10 +158,15 @@ export function RideHome() {
         <ConsentCard data={data} />
       ) : (
         <>
-          <NextRideHero data={data} onBook={() => setBooking(true)} onReport={(rideId) => setReporting({ rideId })} />
+          <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
+          <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
           <UpcomingRides data={data} />
           <ChargesCard data={data} />
-          <PastRides data={data} onReport={(rideId) => setReporting({ rideId })} />
+          <PastRides
+            data={data}
+            onReport={(rideId) => setReporting({ rideId })}
+            onBookAgain={(ride) => setBooking(prefillFromRide(data, ride))}
+          />
           <SavedPlaces data={data} />
           <div className="mt-2 mb-8 flex justify-center">
             <Button variant="ghost" size="sm" onClick={() => setReporting({})}>
@@ -165,7 +176,9 @@ export function RideHome() {
           </div>
         </>
       )}
-      {data && booking && <BookRideDialog data={data} open={booking} onOpenChange={setBooking} />}
+      {data && booking && (
+        <BookRideDialog data={data} initial={booking} open onOpenChange={(o) => !o && setBooking(null)} />
+      )}
       {data && reporting && (
         <ReportDialog
           rides={data.rides}
@@ -262,6 +275,46 @@ function useCancelRide() {
   };
 }
 
+/** Re-render on a tick — countdowns and "Updated 20s ago" move. */
+function useTick(ms: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+const STEPS = ['ride.step.booked', 'ride.step.van', 'ride.step.onWay', 'ride.step.here', 'ride.step.aboard'] as const;
+
+/** Where the ride is, Uber-style: booked → van set → on the way → here → on board. */
+export function rideStep(ride: Ride, live: MyLiveRide | null): number {
+  if (ride.status === 'BOARDED' || ride.status === 'COMPLETED') return 4;
+  if (ride.vanArrivedAt || live?.vanArrivedAt) return 3;
+  if (ride.run?.status === 'ACTIVE' || live?.runStatus === 'ACTIVE') return 2;
+  if (ride.run) return 1;
+  return 0;
+}
+
+function RideStepper({ step, tone }: { step: number; tone: 'gold' | 'success' }) {
+  const { t } = useI18n();
+  return (
+    <ol className="mt-3 grid grid-cols-5 gap-1" aria-label={t(STEPS[step]!)}>
+      {STEPS.map((k, i) => (
+        <li key={k} className="min-w-0" aria-current={i === step ? 'step' : undefined}>
+          <div
+            className={cn(
+              'h-1.5 rounded-full',
+              i < step ? (tone === 'success' ? 'bg-success/60' : 'bg-gold/60') : i === step ? (tone === 'success' ? 'bg-success' : 'bg-gold') : 'bg-navy-secondary',
+            )}
+          />
+          <div className={cn('mt-1 truncate text-2xs', i === step ? 'font-semibold text-white' : 'text-silver/70')}>{t(k)}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function NextRideHero({
   data,
   onBook,
@@ -273,10 +326,13 @@ function NextRideHero({
 }) {
   const { t } = useI18n();
   const cancel = useCancelRide();
-  const now = Date.now();
-  const next = sortedLive(data.rides, now)[0];
+  const queryClient = useQueryClient();
+  const [signalling, setSignalling] = useState(false);
+  const next = sortedLive(data.rides, Date.now())[0];
   const live = useMyLiveRide();
   const liveHere = live && next && live.rideId === next.id ? live : null;
+  const arrivedAt = next?.vanArrivedAt ?? liveHere?.vanArrivedAt ?? null;
+  const now = useTick(arrivedAt ? 1_000 : 30_000);
 
   if (!next) {
     return (
@@ -301,54 +357,115 @@ function NextRideHero({
 
   const tz = next.store.timezone;
   const onVan = next.status === 'BOARDED';
-  const waiting = next.status === 'REQUESTED';
+  const here = !!arrivedAt && next.status === 'SCHEDULED';
+  const onTheWay = next.status === 'SCHEDULED' && (next.run?.status === 'ACTIVE' || liveHere?.runStatus === 'ACTIVE');
+  const step = rideStep(next, liveHere);
   const headlineAt = next.pickupAt ?? next.targetAt;
+  const untilPickup = Date.parse(headlineAt) - now;
   const cancellable = OPEN.includes(next.status) && next.run?.status !== 'ACTIVE';
+  const driverFirst = next.run?.driver.name.split(' ')[0] ?? '';
+  const signal = next.riderSignal?.kind ?? liveHere?.riderSignal ?? null;
   const targetLine =
     next.direction === 'TO_WORK'
       ? t('ride.arriveBy', { time: fmtTimeTz(next.targetAt, tz) })
       : t('ride.leaveAt', { time: fmtTimeTz(next.targetAt, tz) });
+  const green = onVan || here;
+  const waitLeft = arrivedAt ? Date.parse(arrivedAt) + NO_SHOW_WAIT_MS - now : 0;
+
+  const tell = async (kind: RiderSignal) => {
+    setSignalling(true);
+    try {
+      await signalDriver(next.id, kind);
+      hapticConfirm();
+      toast.success(kind === 'OUTSIDE' ? t('ride.toldOutside', { driver: driverFirst }) : t('ride.toldLate', { driver: driverFirst }));
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSignalling(false);
+    }
+  };
 
   return (
     <section
       aria-label={t('ride.nextRide')}
       className={cn(
         'relative mb-4 overflow-hidden rounded-lg border bg-navy animate-enter',
-        onVan
+        green
           ? 'border-success/40 bg-gradient-to-br from-success/[0.12] via-transparent to-transparent'
           : 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
       )}
     >
       <div className="relative p-5">
         <div className="flex items-center justify-between gap-2">
-          <span
-            className={cn(
-              'flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider',
-              onVan ? 'text-success' : 'text-gold',
-            )}
-          >
+          <span className={cn('flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider', green ? 'text-success' : 'text-gold')}>
             <Bus className="h-3.5 w-3.5" aria-hidden="true" />
-            {onVan ? t('ride.onVan') : t('ride.nextRide')}
+            {here ? t('ride.vanHere') : onVan ? t('ride.onVan') : t('ride.nextRide')}
           </span>
-          <Badge variant={statusVariant(next.status)}>{t(`ride.status.${next.status}` as MessageKey)}</Badge>
+          {here ? (
+            <span className="relative flex h-2 w-2" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+          ) : !onVan && !onTheWay && untilPickup > 0 && untilPickup < 24 * H ? (
+            <span className="text-xs tabular-nums text-silver/80">
+              {next.pickupAt ? t('ride.pickupIn', { time: fmtIn(untilPickup) }) : t('ride.leavesIn', { time: fmtIn(untilPickup) })}
+            </span>
+          ) : (
+            <Badge variant={statusVariant(next.status)}>{t(`ride.status.${next.status}` as MessageKey)}</Badge>
+          )}
         </div>
 
-        <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
-          {fmtRelativeDayTz(headlineAt, tz, now)}
-          <span className="text-silver/50"> · </span>
-          <span className="tabular-nums">
-            {next.pickupAt ? t('ride.pickupAt', { time: fmtTimeTz(next.pickupAt, tz) }) : fmtTimeTz(next.targetAt, tz)}
-          </span>
-        </div>
-        <p className="mt-1.5 text-sm text-silver">
-          {next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {next.store.name}
-          {' · '}
-          {targetLine}
-        </p>
+        {here ? (
+          <>
+            <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">{t('ride.vanHere')}</div>
+            <p className="mt-1.5 text-sm text-silver">
+              {t('ride.vanHereBody', { driver: driverFirst, place: pickupPlace(next) })}
+            </p>
+            <p className={cn('mt-1 text-sm font-semibold tabular-nums', waitLeft > 0 ? 'text-success' : 'text-warning')}>
+              {waitLeft > 0 ? t('ride.waitLeft', { time: fmtClock(waitLeft) }) : t('ride.waitOver')}
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+              {fmtRelativeDayTz(headlineAt, tz, now)}
+              <span className="text-silver/50"> · </span>
+              <span className="tabular-nums">
+                {next.pickupAt ? t('ride.pickupAt', { time: fmtTimeTz(next.pickupAt, tz) }) : fmtTimeTz(next.targetAt, tz)}
+              </span>
+            </div>
+            <p className="mt-1.5 text-sm text-silver">
+              {next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {next.store.name} · {targetLine}
+            </p>
+          </>
+        )}
 
-        {liveHere && <LiveRideBlock live={liveHere} />}
+        <RideStepper step={step} tone={green ? 'success' : 'gold'} />
+
+        {liveHere && !here && <LiveRideBlock live={liveHere} />}
 
         <div className="mt-4 space-y-2.5 border-t border-navy-secondary/60 pt-3">
+          {next.run ? (
+            <div className="flex items-center gap-2.5">
+              <Avatar
+                src={next.run.driver.associateId ? `/api/associates/${next.run.driver.associateId}/photo` : undefined}
+                name={next.run.driver.name}
+                email=""
+                size="sm"
+              />
+              <div className="min-w-0 flex-1 text-sm">
+                <span className="text-silver/70">{t('ride.driverLabel')} · </span>
+                <span className="text-white">{driverFirst}</span>
+                <span className="text-silver">
+                  {' '}· {next.run.van.name}
+                  {next.run.van.plate ? ` · ${next.run.van.plate}` : ''}
+                </span>
+              </div>
+            </div>
+          ) : (
+            next.status === 'REQUESTED' && <p className="text-sm text-silver">{t('ride.waitingVanBody')}</p>
+          )}
           <div className="flex items-center gap-2 text-sm text-silver">
             <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{pickupPlace(next)}</span>
@@ -369,22 +486,26 @@ function NextRideHero({
               <span className="min-w-0 flex-1 truncate">{homeEnd(next)}</span>
             </div>
           )}
-          {next.run ? (
-            <div className="flex items-center gap-2 text-sm text-white">
-              <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">
-                {t('ride.vanDriver', { van: next.run.van.name, driver: next.run.driver.name.split(' ')[0] ?? '' })}
-                {next.run.van.plate && (
-                  <span className="text-silver/80"> · {t('ride.plate', { plate: next.run.van.plate })}</span>
-                )}
-              </span>
-            </div>
-          ) : (
-            waiting && <p className="text-sm text-silver">{t('ride.waitingVanBody')}</p>
-          )}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          {(onTheWay || here) &&
+            (signal ? (
+              <span className="inline-flex items-center gap-1 text-sm text-success">
+                <Check className="h-4 w-4" aria-hidden="true" />
+                {signal === 'OUTSIDE' ? t('ride.toldOutside', { driver: driverFirst }) : t('ride.toldLate', { driver: driverFirst })}
+              </span>
+            ) : (
+              <>
+                <Button size="sm" onClick={() => void tell('OUTSIDE')} disabled={signalling}>
+                  <Check className="h-3.5 w-3.5" />
+                  {t('ride.imOutside')}
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => void tell('LATE')} disabled={signalling}>
+                  {t('ride.runningLate')}
+                </Button>
+              </>
+            ))}
           {cancellable && (
             <Button size="sm" variant="secondary" onClick={() => void cancel(next)}>
               {t('ride.cancel')}
@@ -400,6 +521,104 @@ function NextRideHero({
         </div>
       </div>
     </section>
+  );
+}
+
+/* ----- Rides for your shifts — one tap ------------------------------------- */
+
+export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (shift: Shift) => void }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  const covers = coverageFor(data).slice(0, 6);
+  if (covers.length === 0) return null;
+  const fare = data.settings.fareCents;
+  const pickup = data.defaultPickup;
+  const open = covers.filter((c) => c.canBook.length > 0);
+  const openLegs = open.reduce((n, c) => n + c.canBook.length, 0);
+
+  const book = async (key: string, list: typeof covers) => {
+    if (!pickup) return onCustom(list[0]!.shift);
+    setBusy(key);
+    try {
+      const n = await bookShifts(data, list);
+      hapticConfirm();
+      toast.success(n === 1 ? t('ride.booked') : t('ride.bookedCount', { count: n }));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+    }
+  };
+
+  return (
+    <Card className="mb-4">
+      <CardContent className="pt-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.forShifts')}</h2>
+            <p className="mt-0.5 text-xs text-silver/80">
+              {pickup ? t('ride.forShiftsFrom', { pickup: pickup.label }) : t('ride.forShiftsNoPickup')}
+            </p>
+          </div>
+          {pickup && open.length > 1 && (
+            <Button size="sm" onClick={() => void book('all', open)} loading={busy === 'all'} disabled={!!busy}>
+              {t('ride.bookAll', { amount: cents(openLegs * fare) })}
+            </Button>
+          )}
+        </div>
+        <ul className="mt-2 divide-y divide-navy-secondary/60">
+          {covers.map((c) => {
+            const store = data.stores.find((st) => st.id === c.shift.locationId);
+            const tz = store?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const both = !!c.there && !!c.home;
+            const label =
+              c.canBook.length === 2
+                ? t('ride.roundTrip', { amount: cents(2 * fare) })
+                : c.canBook[0] === 'FROM_WORK'
+                  ? t('ride.addHome', { amount: cents(fare) })
+                  : t('ride.addThere', { amount: cents(fare) });
+            return (
+              <li key={c.shift.id} className="flex items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-white">
+                    {fmtRelativeDayTz(c.shift.startsAt, tz)} ·{' '}
+                    <span className="tabular-nums">
+                      {fmtTimeTz(c.shift.startsAt, tz)}–{fmtTimeTz(c.shift.endsAt, tz)}
+                    </span>
+                  </div>
+                  <div className="truncate text-xs text-silver">
+                    {store?.name}
+                    {c.there && !both && ` · ${t('ride.thereBooked')}`}
+                    {c.home && !both && ` · ${t('ride.homeBooked')}`}
+                  </div>
+                </div>
+                {both ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs text-success">
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t('ride.bothBooked')}
+                  </span>
+                ) : c.canBook.length === 0 ? (
+                  <span className="shrink-0 text-xs text-silver/70">{t('ride.tooSoonShift')}</span>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant={c === open[0] ? 'primary' : 'secondary'}
+                    className="shrink-0"
+                    onClick={() => void book(c.shift.id, [c])}
+                    loading={busy === c.shift.id}
+                    disabled={!!busy}
+                  >
+                    {label}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -624,7 +843,15 @@ function ChargesCard({ data }: { data: MyTransport }) {
   );
 }
 
-function PastRides({ data, onReport }: { data: MyTransport; onReport: (rideId: string) => void }) {
+function PastRides({
+  data,
+  onReport,
+  onBookAgain,
+}: {
+  data: MyTransport;
+  onReport: (rideId: string) => void;
+  onBookAgain: (ride: Ride) => void;
+}) {
   const { t } = useI18n();
   const past = data.rides
     .filter((r) => !LIVE.includes(r.status))
@@ -641,16 +868,18 @@ function PastRides({ data, onReport }: { data: MyTransport; onReport: (rideId: s
               key={r.id}
               ride={r}
               action={
-                r.status === 'NO_SHOW' || r.status === 'COMPLETED' ? (
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label={t('ride.report')}
-                    onClick={() => onReport(r.id)}
-                  >
-                    <AlertTriangle className="h-4 w-4" />
-                  </Button>
-                ) : undefined
+                <div className="flex shrink-0 items-center gap-1">
+                  {data.stores.some((st) => st.id === r.store.id) && (
+                    <Button size="xs" variant="secondary" onClick={() => onBookAgain(r)}>
+                      {t('ride.bookAgain')}
+                    </Button>
+                  )}
+                  {(r.status === 'NO_SHOW' || r.status === 'COMPLETED') && (
+                    <Button size="icon-sm" variant="ghost" aria-label={t('ride.report')} onClick={() => onReport(r.id)}>
+                      <AlertTriangle className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               }
             />
           ))}
@@ -710,35 +939,101 @@ function addDays(ymd: string, n: number): string {
   return at.toISOString().slice(0, 10);
 }
 
+/** What the booking form opens with — a shift, a past ride, or nothing. */
+export interface BookPrefill {
+  way?: Way;
+  storeId?: string;
+  date?: string;
+  arrive?: string;
+  leave?: string;
+  shiftId?: string | null;
+  pickup?: string;
+  address?: string;
+}
+
+/** The pickup select's value for where they went last time. */
+function defaultPickupKey(data: MyTransport): { pickup: string; address?: string } {
+  const d = data.defaultPickup;
+  if (d?.kind === 'stop') return { pickup: `stop:${d.stopId}` };
+  if (d?.kind === 'place') return { pickup: `place:${d.placeId}` };
+  if (d?.kind === 'address') return { pickup: 'new', address: d.address };
+  if (data.places[0]) return { pickup: `place:${data.places[0].id}` };
+  if (data.stops[0]) return { pickup: `stop:${data.stops[0].id}` };
+  return { pickup: 'new' };
+}
+
+export function prefillFromShift(data: MyTransport, shift: Shift): BookPrefill {
+  const tz = data.stores.find((st) => st.id === shift.locationId)?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return {
+    way: 'BOTH',
+    storeId: shift.locationId ?? undefined,
+    date: zonedDayKey(shift.startsAt, tz),
+    arrive: hhmm(shift.startsAt, tz),
+    leave: hhmm(shift.endsAt, tz),
+    shiftId: shift.id,
+  };
+}
+
+/** The same ride again — same store, pickup, way and time — on the next
+ *  day it can still be booked. */
+export function prefillFromRide(data: MyTransport, ride: Ride): BookPrefill {
+  const tz = ride.store.timezone;
+  const at = hhmm(ride.targetAt, tz);
+  const earliest = Date.now() + data.settings.cutoffHours * H + 5 * 60_000;
+  let day = zonedDayKey(new Date(Math.max(Date.now(), Date.parse(ride.targetAt))), tz);
+  for (let i = 0; i < 8 && Date.parse(localInputToUtcIso(`${day}T${at}`, tz)) < earliest; i++) day = addDays(day, 1);
+  const pickup =
+    ride.pickup.kind === 'stop'
+      ? { pickup: `stop:${ride.pickup.id}` }
+      : (() => {
+          const saved = data.places.find((p) => p.address === ride.pickup.address);
+          return saved ? { pickup: `place:${saved.id}` } : { pickup: 'new', address: ride.pickup.address };
+        })();
+  return {
+    way: ride.direction,
+    storeId: ride.store.id,
+    date: day,
+    ...(ride.direction === 'TO_WORK' ? { arrive: at } : { leave: at }),
+    ...pickup,
+  };
+}
+
 export function BookRideDialog({
   data,
+  initial = {},
   open,
   onOpenChange,
 }: {
   data: MyTransport;
+  initial?: BookPrefill;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const s = data.settings;
-  const [way, setWay] = useState<Way>('TO_WORK');
-  const [storeId, setStoreId] = useState(data.stores.length === 1 ? data.stores[0]!.id : '');
+  // Most rides are there and back; most associates ride from the same
+  // place to the same store — start there.
+  const [way, setWay] = useState<Way>(initial.way ?? 'BOTH');
+  const [storeId, setStoreId] = useState(
+    initial.storeId ?? data.defaultStoreId ?? (data.stores.length === 1 ? data.stores[0]!.id : ''),
+  );
   const store = data.stores.find((x) => x.id === storeId) ?? null;
   const tz = store?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const earliest = useMemo(() => new Date(Date.now() + s.cutoffHours * H + 5 * 60_000), [s.cutoffHours]);
   // Open on the first bookable day: a 7:00 arrival that's already inside
   // the cutoff moves to the next morning instead of opening on an error.
   const [date, setDate] = useState(() => {
+    if (initial.date) return initial.date;
     const first = zonedDayKey(earliest, tz);
     return new Date(localInputToUtcIso(`${first}T07:00`, tz)) < earliest ? addDays(first, 1) : first;
   });
-  const [arrive, setArrive] = useState('07:00');
-  const [leave, setLeave] = useState('15:30');
-  const [shiftId, setShiftId] = useState<string | null>(null);
-  const firstPickup = data.places[0] ? `place:${data.places[0].id}` : data.stops[0] ? `stop:${data.stops[0].id}` : 'new';
-  const [pickup, setPickup] = useState(firstPickup);
-  const [address, setAddress] = useState('');
+  const [arrive, setArrive] = useState(initial.arrive ?? '07:00');
+  const [leave, setLeave] = useState(initial.leave ?? '15:30');
+  const [shiftId, setShiftId] = useState<string | null>(initial.shiftId ?? null);
+  const start = initial.pickup ? { pickup: initial.pickup, address: initial.address } : defaultPickupKey(data);
+  const [pickup, setPickup] = useState(start.pickup);
+  const [address, setAddress] = useState(start.address ?? '');
   // "Use where I am now": the phone's point, kept while the address it
   // filled in is unchanged.
   const [here, setHere] = useState<{ point: GeoPoint; address: string } | null>(null);

@@ -220,8 +220,23 @@ describe('dispatch → the driver → the charge', () => {
     expect((await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } })).status).toBe('COMPLETED');
   });
 
-  it('a no-show owes $1 and hears about it', async () => {
-    const { ride, driverAgent, kimUser } = await bookedAndDispatched();
+  it('a no-show owes $1 and hears about it — only after the van arrived and waited 3 minutes', async () => {
+    const { ride, run, driverAgent, kimUser } = await bookedAndDispatched();
+    // The van never stopped: no charge possible.
+    expect((await driverAgent.post(`/transport/driver/rides/${ride.id}/no-show`)).body.error.code).toBe('not_arrived');
+    const arrived = await driverAgent.post(`/transport/driver/runs/${run.id}/arrived`).send({ rideIds: [ride.id] });
+    expect(arrived.status).toBe(200);
+    expect(arrived.body.run.status).toBe('ACTIVE');
+    await flushPendingNotifications();
+    const here = await prisma.notification.findFirst({
+      where: { recipientUserId: kimUser.id, channel: 'IN_APP', subject: 'Your van is here' },
+    });
+    expect(here?.body).toMatch(/Van 1 \(ALT 101\) is at Seaside Housing\. Mike will wait 3 minutes\./);
+    // Inside the 3 minutes: not yet.
+    const early = await driverAgent.post(`/transport/driver/rides/${ride.id}/no-show`);
+    expect(early.body.error.code).toBe('still_waiting');
+    expect(early.body.error.message).toMatch(/riders get 3 minutes after you arrive/);
+    await prisma.ride.update({ where: { id: ride.id }, data: { vanArrivedAt: new Date(Date.now() - 4 * 60_000) } });
     const res = await driverAgent.post(`/transport/driver/rides/${ride.id}/no-show`);
     expect(res.body.ride).toMatchObject({ status: 'NO_SHOW', owedCents: 100 });
     await flushPendingNotifications();
@@ -367,3 +382,59 @@ describe('supervisors ride too', () => {
     expect(ok.status).toBe(201);
   });
 });
+
+describe('the pickup handshake and one-tap booking', () => {
+  it('the rider tells the driver "I\u2019m outside" or "running late" once the van is on its way', async () => {
+    const s = await seed();
+    await s.kimAgent.post('/transport/me/consent');
+    const targetAt = inHours(20);
+    const ride = (
+      await book(s.kimAgent, { direction: 'TO_WORK', locationId: s.store.id, stopId: s.stop.id, targetAt: targetAt.toISOString() })
+    ).body.ride;
+    // Not on a van yet.
+    expect((await s.kimAgent.post(`/transport/me/rides/${ride.id}/signal`).send({ kind: 'OUTSIDE' })).body.error.code).toBe(
+      'not_on_the_way',
+    );
+    const run = await s.directorAgent.post('/transport/runs').send({
+      vanId: s.van.id,
+      driverUserId: s.driver.id,
+      direction: 'TO_WORK',
+      serviceDate: ride.serviceDate,
+      departAt: new Date(targetAt.getTime() - 60 * 60_000).toISOString(),
+      rides: [{ rideId: ride.id, pickupAt: new Date(targetAt.getTime() - 40 * 60_000).toISOString() }],
+    });
+    await s.driverAgent.post(`/transport/driver/runs/${run.body.run.id}/start`);
+    expect((await s.kimAgent.post(`/transport/me/rides/${ride.id}/signal`).send({ kind: 'LATE' })).status).toBe(200);
+    await flushPendingNotifications();
+    const told = await prisma.notification.findFirst({
+      where: { recipientUserId: s.driver.id, channel: 'IN_APP', subject: 'Kim is running a few minutes late' },
+    });
+    expect(told?.body).toMatch(/Seaside Housing/);
+    const runs = await s.driverAgent.get('/transport/driver/runs');
+    expect(runs.body.runs[0].rides[0].riderSignal).toMatchObject({ kind: 'LATE' });
+  });
+
+  it('remembers where they went last — the pickup and the store — for one-tap booking', async () => {
+    const s = await seed();
+    await s.kimAgent.post('/transport/me/consent');
+    const before = await s.kimAgent.get('/transport/me');
+    expect(before.body.defaultPickup).toBeNull();
+    expect(before.body.defaultStoreId).toBe(s.store.id);
+
+    await book(s.kimAgent, { direction: 'TO_WORK', locationId: s.store.id, stopId: s.stop.id, targetAt: inHours(20).toISOString() });
+    expect((await s.kimAgent.get('/transport/me')).body.defaultPickup).toEqual({
+      kind: 'stop',
+      stopId: s.stop.id,
+      label: 'Seaside Housing',
+    });
+
+    const place = await s.kimAgent.post('/transport/me/places').send({ label: 'Home', address: '12 Oak St, Destin FL' });
+    await book(s.kimAgent, { direction: 'FROM_WORK', locationId: s.store.id, placeId: place.body.place.id, targetAt: inHours(30).toISOString() });
+    expect((await s.kimAgent.get('/transport/me')).body.defaultPickup).toEqual({
+      kind: 'place',
+      placeId: place.body.place.id,
+      label: 'Home',
+    });
+  });
+});
+

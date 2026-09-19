@@ -7460,6 +7460,13 @@ model Ride {
   cancelReason   String?        @db.VarChar(300)
   /// The rider heard "your van is about 10 minutes away" (once).
   nearNotifiedAt DateTime?      @db.Timestamptz(6)
+  /// The driver tapped "Arrived" at this rider's pickup — the rider hears
+  /// "your van is here", and a no-show can only be marked 3 minutes later.
+  vanArrivedAt   DateTime?      @db.Timestamptz(6)
+  /// The rider told the driver "I'm outside" (OUTSIDE) or "running a few
+  /// minutes late" (LATE).
+  riderSignal    String?        @db.VarChar(20)
+  riderSignalAt  DateTime?      @db.Timestamptz(6)
   createdById    String         @db.Uuid
   createdAt      DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(6)

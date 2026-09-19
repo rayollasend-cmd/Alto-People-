@@ -55,7 +55,7 @@ export interface Ride {
     status: RideRunStatus;
     departAt: string;
     van: { id: string; name: string; plate: string | null };
-    driver: { userId: string; name: string };
+    driver: { userId: string; name: string; associateId: string | null };
   } | null;
   fareCents: number;
   noShowFeeCents: number;
@@ -68,8 +68,17 @@ export interface Ride {
   noShowAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** The driver tapped "Arrived" at this pickup. */
+  vanArrivedAt: string | null;
+  /** The rider's word to the driver. */
+  riderSignal: { kind: RiderSignal; at: string } | null;
   createdAt: string;
 }
+
+export type RiderSignal = 'OUTSIDE' | 'LATE';
+
+/** A rider can be marked a no-show this long after the driver arrived. */
+export const NO_SHOW_WAIT_MS = 3 * 60_000;
 
 export interface RideRun {
   id: string;
@@ -104,6 +113,13 @@ export interface MyTransport {
   stores: RideStore[];
   shifts: Array<{ id: string; startsAt: string; endsAt: string; position: string | null; locationId: string | null }>;
   rides: Ride[];
+  /** Where they went last time — one-tap booking starts there. */
+  defaultPickup:
+    | { kind: 'stop'; stopId: string; label: string }
+    | { kind: 'place'; placeId: string; label: string }
+    | { kind: 'address'; address: string; lat: number | null; lng: number | null; label: string }
+    | null;
+  defaultStoreId: string | null;
   charges: {
     pendingCents: number;
     rides: number;
@@ -138,6 +154,10 @@ export interface BookRideInput {
 export const bookRide = (body: BookRideInput) =>
   apiFetch<{ ride: Ride }>('/transport/me/rides', { method: 'POST', body });
 
+/** "I'm outside" / "running late" — to the driver, once the van is on its way. */
+export const signalDriver = (rideId: string, kind: RiderSignal) =>
+  apiFetch<{ ok: true }>(`/transport/me/rides/${rideId}/signal`, { method: 'POST', body: { kind } });
+
 export const cancelMyRide = (id: string) =>
   apiFetch<{ ok: true }>(`/transport/me/rides/${id}/cancel`, { method: 'POST' });
 
@@ -169,6 +189,8 @@ export interface MyLiveRide {
   destination: { label: string; point: GeoPoint | null; dueAt: string | null; etaAt: string | null };
   stopsBefore: number;
   lateMinutes: number;
+  vanArrivedAt: string | null;
+  riderSignal: RiderSignal | null;
 }
 
 export const getMyLiveRide = () => apiFetch<{ live: MyLiveRide | null }>('/transport/me/live');
@@ -233,6 +255,10 @@ export const markBoarded = (rideId: string) =>
 
 export const markNoShow = (rideId: string) =>
   apiFetch<{ ride: Ride }>(`/transport/driver/rides/${rideId}/no-show`, { method: 'POST' });
+
+/** "Arrived" at a pickup — the riders there hear the van is here. */
+export const driverArrived = (runId: string, rideIds: string[]) =>
+  apiFetch<{ run: RideRun }>(`/transport/driver/runs/${runId}/arrived`, { method: 'POST', body: { rideIds } });
 
 export const undoRideMark = (rideId: string) =>
   apiFetch<{ ride: Ride }>(`/transport/driver/rides/${rideId}/undo`, { method: 'POST' });

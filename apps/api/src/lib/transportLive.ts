@@ -192,6 +192,8 @@ export const liveRunInclude = {
       lat: true,
       lng: true,
       nearNotifiedAt: true,
+      vanArrivedAt: true,
+      riderSignal: true,
       stop: { select: { id: true, name: true, address: true, lat: true, lng: true } },
       associate: { select: { id: true, firstName: true, lastName: true } },
       location: {
