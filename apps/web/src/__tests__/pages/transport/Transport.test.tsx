@@ -443,6 +443,92 @@ describe('the vans live', () => {
     expect(within(map).getByText('Seaside Housing')).toBeInTheDocument();
   });
 
+  it('from the moment they ask, the trip is on the map — the pickup waiting on a driver, and where they’re headed', async () => {
+    const r = ride({ id: 'r1', status: 'REQUESTED', targetAt: hoursFromNow(20) });
+    const live: MyLiveRide = {
+      rideId: 'r1',
+      direction: 'TO_WORK',
+      status: 'REQUESTED',
+      runStatus: null,
+      timezone: tz,
+      departAt: null,
+      van: null,
+      driver: null,
+      position: null,
+      stale: false,
+      pickup: { label: 'Seaside Housing', point: { lat: 30.21, lng: -85.86 }, scheduledAt: null, etaAt: null },
+      destination: { label: 'Front Beach 218', point: { lat: 30.17, lng: -85.8 }, dueAt: hoursFromNow(20), etaAt: null },
+      stopsBefore: 0,
+      lateMinutes: 0,
+      vanArrivedAt: null,
+      riderSignal: null,
+    };
+    routes((path) => {
+      if (path === '/transport/me') return me({ rides: [r] });
+      if (path === '/transport/me/live') return { live };
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    const hero = await screen.findByRole('region', { name: 'Your next ride' });
+    expect(await within(hero).findByText('Finding you a driver')).toBeInTheDocument();
+    const map = within(hero).getByRole('list', { name: 'Map of your van' });
+    expect(within(map).getByText('Seaside Housing')).toBeInTheDocument();
+    expect(within(map).getByText('Front Beach 218')).toBeInTheDocument();
+    expect(within(hero).getByText('Your trip')).toBeInTheDocument();
+
+    // Full screen, and back.
+    await userEvent.click(within(hero).getByRole('button', { name: 'Full-screen map' }));
+    const full = await screen.findByRole('dialog', { name: 'Map of your van' });
+    expect(within(full).getByRole('list', { name: 'Map of your van' })).toBeInTheDocument();
+    await userEvent.click(within(full).getByRole('button', { name: 'Close the map' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('the van is here: the map stays, close in on the van at their pickup', async () => {
+    const r = ride({
+      id: 'r1',
+      status: 'SCHEDULED',
+      pickupAt: new Date().toISOString(),
+      vanArrivedAt: new Date(Date.now() - 20_000).toISOString(),
+      run: {
+        id: 'run1',
+        status: 'ACTIVE',
+        departAt: hoursFromNow(-0.3),
+        van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
+        driver: { userId: 'd1', name: 'Mike Chen', associateId: null },
+      },
+    });
+    const live: MyLiveRide = {
+      rideId: 'r1',
+      direction: 'TO_WORK',
+      status: 'SCHEDULED',
+      runStatus: 'ACTIVE',
+      timezone: tz,
+      departAt: hoursFromNow(-0.3),
+      van: { name: 'Van 1', plate: 'ALT 101' },
+      driver: 'Mike',
+      position: { lat: 30.2101, lng: -85.8601, heading: 0, speedMps: 0, at: new Date().toISOString() },
+      stale: false,
+      pickup: { label: 'Seaside Housing', point: { lat: 30.21, lng: -85.86 }, scheduledAt: null, etaAt: null },
+      destination: { label: 'Front Beach 218', point: { lat: 30.17, lng: -85.8 }, dueAt: null, etaAt: null },
+      stopsBefore: 0,
+      lateMinutes: 0,
+      vanArrivedAt: new Date(Date.now() - 20_000).toISOString(),
+      riderSignal: null,
+    };
+    routes((path) => {
+      if (path === '/transport/me') return me({ rides: [r] });
+      if (path === '/transport/me/live') return { live };
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    const hero = await screen.findByRole('region', { name: 'Your next ride' });
+    const map = await within(hero).findByRole('list', { name: 'Map of your van' });
+    expect(within(map).getByText('Van 1')).toBeInTheDocument();
+    expect(within(map).getByText('Seaside Housing')).toBeInTheDocument();
+    expect(within(map).queryByText('Front Beach 218')).not.toBeInTheDocument();
+    expect(within(hero).getByText('Live')).toBeInTheDocument();
+    expect(within(hero).getByText(/2:[3-4]\d to get on board/)).toBeInTheDocument();
+  });
+
   it('the driver’s phone shares the van’s position once the run is on the road', async () => {
     const watchers: Array<(p: GeolocationPosition) => void> = [];
     const geo = {
@@ -660,6 +746,9 @@ describe('<RideStrip> — the van on Home', () => {
     expect(link).toHaveAttribute('href', '/rides');
     await waitFor(() => expect(link).toHaveTextContent(/About [78] min away/));
     expect(link).toHaveTextContent('Van 1 · To work');
+    // The van, moving, right on Home.
+    const map = within(link).getByRole('list', { name: 'Map of your van' });
+    expect(within(map).getByText('Van 1')).toBeInTheDocument();
   });
 
   it('no ride coming: a one-tap round trip for the next shift that needs one', async () => {

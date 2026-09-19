@@ -163,6 +163,52 @@ describe('the van on the map', () => {
     expect(JSON.stringify(kim)).not.toMatch(/Harbor|Ana/);
   });
 
+  it('the rider sees the trip from the moment they ask — finding a driver, then a van that leaves later', async () => {
+    const s = await onTheRoad();
+    // A seat asked for tomorrow: no van yet, but both ends of the trip.
+    const tomorrow = await prisma.ride.create({
+      data: {
+        associateId: s.kim.associate.id,
+        direction: 'FROM_WORK',
+        locationId: s.store.id,
+        stopId: s.stop.id,
+        targetAt: inMinutes(26 * 60),
+        serviceDate: dateKeyInZone(inMinutes(26 * 60), s.store.timezone),
+        fareCents: 500,
+        noShowFeeCents: 100,
+        createdById: s.kim.user.id,
+      },
+    });
+    // Kim's van today is done with her: her next ride is tomorrow's.
+    await prisma.ride.update({ where: { id: s.kim.ride.id }, data: { status: 'COMPLETED' } });
+    const finding = (await s.kim.agent.get('/transport/me/live')).body.live;
+    expect(finding).toMatchObject({
+      rideId: tomorrow.id,
+      status: 'REQUESTED',
+      runStatus: null,
+      van: null,
+      driver: null,
+      position: null,
+      pickup: { label: expect.any(String), point: STORE, etaAt: null },
+      destination: { label: 'Seaside Housing', point: SEASIDE },
+    });
+
+    // On a van that leaves in 20 hours: the van and driver, still no position.
+    await prisma.rideRun.update({ where: { id: s.runId }, data: { departAt: inMinutes(20 * 60) } });
+    await prisma.ride.update({ where: { id: s.ana.ride.id }, data: { targetAt: inMinutes(21 * 60) } });
+    const later = (await s.ana.agent.get('/transport/me/live')).body.live;
+    expect(later).toMatchObject({
+      status: 'SCHEDULED',
+      runStatus: 'PLANNED',
+      van: { name: 'Van 1', plate: 'ALT 101' },
+      driver: 'Mike',
+      position: null,
+      pickup: { point: { lat: 30.25, lng: -85.9 } },
+      destination: { point: STORE },
+    });
+    expect(JSON.stringify(later)).not.toMatch(/Seaside|Kim/);
+  });
+
   it('about 10 minutes out, the rider hears it — once', async () => {
     const s = await onTheRoad();
     await s.driverAgent.post(`/transport/driver/runs/${s.runId}/start`);

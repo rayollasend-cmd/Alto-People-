@@ -11,14 +11,17 @@ import { useI18n } from '@/lib/i18n';
 import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import { getMyLiveRide, getMyTransport, type Ride } from '@/lib/transportApi';
 import { Button } from '@/components/ui/Button';
+import { LazyLiveMap } from '@/components/transport/LazyLiveMap';
 import { bookShifts, coverageFor } from './rideShifts';
+import { tripGeometry, tripStage } from './TripMap';
 import { useRiderAlerts } from './useRiderAlerts';
 
 /**
  * The van, on Home — where the associate already looks. One line under the
  * shift card: the ride that's coming (live: "about 8 min away", "your van is
- * here"), or, when their next shift has no ride, a one-tap round trip from
- * where they went last time. Quiet otherwise.
+ * here" — with the van moving on a small map while it's out), or, when
+ * their next shift has no ride, a one-tap round trip from where they went
+ * last time. Quiet otherwise.
  */
 
 const H = 3_600_000;
@@ -73,14 +76,44 @@ function RideStripInner() {
         ? t('ride.toWork')
         : t('ride.fromWork');
     const green = here || next.status === 'BOARDED' || mins !== null;
+    const stage = tripStage(next, l);
+    const geo =
+      l?.position && (stage === 'ON_THE_WAY' || stage === 'HERE' || stage === 'ON_BOARD')
+        ? tripGeometry(stage, l, next.run?.van.name ?? l.van?.name ?? '')
+        : null;
     return (
       <Link
         to="/rides"
         className={cn(
-          'mb-4 flex items-center gap-3 rounded-lg border p-3.5 transition-colors animate-enter',
+          'mb-4 block overflow-hidden rounded-lg border transition-colors animate-enter',
           green ? 'border-success/40 bg-success/[0.06] hover:bg-success/[0.1]' : 'border-navy-secondary bg-navy hover:border-silver/40',
         )}
       >
+        {geo && (
+          <div className="relative h-36 border-b border-success/20">
+            <LazyLiveMap
+              ariaLabel={t('ride.liveMap')}
+              className="h-full w-full rounded-none"
+              markers={geo.markers}
+              route={geo.route}
+              path={geo.path}
+              maxZoom={geo.maxZoom}
+              padding={28}
+              controls={false}
+              interactive={false}
+            />
+            {!l?.stale && (
+              <span className="pointer-events-none absolute left-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-midnight/85 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-white shadow backdrop-blur">
+                <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70 motion-reduce:hidden" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                </span>
+                {t('ride.mapLive')}
+              </span>
+            )}
+          </div>
+        )}
+        <span className="flex items-center gap-3 p-3.5">
         <span
           className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', green ? 'bg-success/15 text-success' : 'bg-gold/15 text-gold')}
           aria-hidden="true"
@@ -93,6 +126,7 @@ function RideStripInner() {
           <span className="block truncate text-xs text-silver">{sub}</span>
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+        </span>
       </Link>
     );
   }

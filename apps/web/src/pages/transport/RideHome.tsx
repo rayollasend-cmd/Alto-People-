@@ -55,7 +55,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
+import { TripMap, tripStage } from './TripMap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Dialog,
@@ -128,12 +128,15 @@ export function RideHome() {
   const data = me.data;
   const canBook = !!data?.consent && (data?.stores.length ?? 0) > 0;
   useRiderAlerts(data, useMyLiveRide());
+  // With a ride coming the trip leads — the explainer steps aside.
+  const riding = !!data?.consent && sortedLive(data.rides, Date.now()).length > 0;
 
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title={t('ride.title')}
-        subtitle={t('ride.subtitle')}
+        subtitle={riding ? undefined : t('ride.subtitle')}
+        className={riding ? 'mb-3 md:mb-5' : undefined}
         secondaryActions={<SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />}
         primaryAction={
           canBook ? (
@@ -339,7 +342,7 @@ function NextRideHero({
   const live = useMyLiveRide();
   const liveHere = live && next && live.rideId === next.id ? live : null;
   const arrivedAt = next?.vanArrivedAt ?? liveHere?.vanArrivedAt ?? null;
-  const now = useTick(arrivedAt ? 1_000 : 30_000);
+  const now = useTick(arrivedAt ? 1_000 : 15_000);
 
   if (!next) {
     return (
@@ -363,14 +366,16 @@ function NextRideHero({
   }
 
   const tz = next.store.timezone;
-  const onVan = next.status === 'BOARDED';
-  const here = !!arrivedAt && next.status === 'SCHEDULED';
-  const onTheWay = next.status === 'SCHEDULED' && (next.run?.status === 'ACTIVE' || liveHere?.runStatus === 'ACTIVE');
+  const stage = tripStage(next, liveHere);
+  const onVan = stage === 'ON_BOARD';
+  const here = stage === 'HERE' && next.status === 'SCHEDULED';
+  const onTheWay = stage === 'ON_THE_WAY';
   const step = rideStep(next, liveHere);
   const headlineAt = next.pickupAt ?? next.targetAt;
   const untilPickup = Date.parse(headlineAt) - now;
   const cancellable = OPEN.includes(next.status) && next.run?.status !== 'ACTIVE';
-  const driverFirst = next.run?.driver.name.split(' ')[0] ?? '';
+  const driverFirst = next.run?.driver.name.split(' ')[0] ?? liveHere?.driver ?? '';
+  const vanName = next.run?.van.name ?? liveHere?.van?.name ?? '';
   const signal = next.riderSignal?.kind ?? liveHere?.riderSignal ?? null;
   const targetLine =
     next.direction === 'TO_WORK'
@@ -378,6 +383,11 @@ function NextRideHero({
       : t('ride.leaveAt', { time: fmtTimeTz(next.targetAt, tz) });
   const green = onVan || here;
   const waitLeft = arrivedAt ? Date.parse(arrivedAt) + NO_SHOW_WAIT_MS - now : 0;
+  const tripLine = `${next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · ${next.store.name} · ${targetLine}`;
+  // The live numbers, once the van is out.
+  const liveOut = liveHere?.runStatus === 'ACTIVE' ? liveHere : null;
+  const eta = liveOut ? (onVan ? liveOut.destination.etaAt : liveOut.pickup.etaAt) : null;
+  const mins = eta ? Math.max(0, Math.round((Date.parse(eta) - now) / 60_000)) : null;
 
   const tell = async (kind: RiderSignal) => {
     setSignalling(true);
@@ -393,17 +403,109 @@ function NextRideHero({
     }
   };
 
+  // The one line a rider reads first, per stage.
+  const headline =
+    stage === 'FINDING' ? (
+      <div className="mt-2 flex items-baseline gap-1 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+        {t('ride.findingDriver')}
+        <FindingDots />
+      </div>
+    ) : here ? (
+      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">{t('ride.vanHere')}</div>
+    ) : onVan && liveOut ? (
+      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white tabular-nums sm:text-4xl">
+        {eta ? t('ride.liveArriving', { time: fmtTimeTz(eta, tz) }) : t('ride.onVan')}
+      </div>
+    ) : onTheWay && liveOut ? (
+      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white tabular-nums sm:text-4xl">
+        {mins === null ? t('ride.liveOnWay', { van: vanName }) : mins <= 1 ? t('ride.liveHere') : t('ride.liveAway', { min: mins })}
+      </div>
+    ) : (
+      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+        {fmtRelativeDayTz(headlineAt, tz, now)}
+        <span className="text-silver/50"> · </span>
+        <span className="tabular-nums">
+          {next.pickupAt ? t('ride.pickupAt', { time: fmtTimeTz(next.pickupAt, tz) }) : fmtTimeTz(next.targetAt, tz)}
+        </span>
+      </div>
+    );
+
+  const subline = here ? (
+    <>
+      <p className="mt-1.5 text-sm text-silver">{t('ride.vanHereBody', { driver: driverFirst, place: pickupPlace(next) })}</p>
+      <WaitRing left={waitLeft} />
+    </>
+  ) : onTheWay && liveOut ? (
+    <LiveLines live={liveOut} vanName={vanName} />
+  ) : onVan && liveOut ? (
+    <>
+      <p className="mt-1.5 text-sm text-silver">
+        {next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {liveOut.destination.label}
+      </p>
+      <TripProgress from={next.boardedAt ?? liveOut.departAt} to={eta} now={now} />
+    </>
+  ) : stage === 'FINDING' ? (
+    <>
+      <p className="mt-1.5 text-sm text-silver">
+        {fmtRelativeDayTz(headlineAt, tz, now)} · {tripLine}
+      </p>
+      <p className="mt-1 text-xs text-silver/80">{t('ride.waitingVanBody')}</p>
+    </>
+  ) : (
+    <>
+      <p className="mt-1.5 text-sm text-silver">{tripLine}</p>
+      {next.run && next.run.status === 'PLANNED' && (
+        <p className="mt-0.5 text-xs text-silver/80">
+          {t('ride.liveLeaves', { van: next.run.van.name, time: fmtTimeTz(next.run.departAt, tz) })}
+        </p>
+      )}
+    </>
+  );
+
+  const vanChip = next.run?.van.plate ? (
+    <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
+      {next.run.van.plate}
+    </span>
+  ) : null;
+
   return (
     <section
       aria-label={t('ride.nextRide')}
       className={cn(
-        'relative mb-4 overflow-hidden rounded-lg border bg-navy animate-enter',
-        green
-          ? 'border-success/40 bg-gradient-to-br from-success/[0.12] via-transparent to-transparent'
-          : 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
+        'relative mb-4 overflow-hidden border-y bg-navy animate-enter -mx-4 sm:mx-0 sm:rounded-xl sm:border',
+        green ? 'border-success/40' : 'border-gold/30',
       )}
     >
-      <div className="relative p-5">
+      {liveHere && (
+        <TripMap
+          stage={stage}
+          live={liveHere}
+          vanLabel={vanName}
+          className="h-[42vh] min-h-[15rem] max-h-[26rem]"
+          overlay={
+            <div className="rounded-xl border border-navy-secondary bg-navy/95 p-4 shadow-2xl backdrop-blur">
+              <div className="text-xs font-medium uppercase tracking-wider text-gold">{t('ride.nextRide')}</div>
+              {headline}
+              {!here && !onTheWay && !onVan && <p className="mt-1 text-sm text-silver">{tripLine}</p>}
+              {(onTheWay || onVan) && liveOut && (
+                <p className="mt-1 text-sm text-silver">
+                  {vanName}
+                  {next.run?.van.plate ? ` · ${next.run.van.plate}` : ''} · {driverFirst}
+                </p>
+              )}
+            </div>
+          }
+        />
+      )}
+      <div
+        className={cn(
+          'relative p-5',
+          liveHere && '-mt-5 rounded-t-2xl border-t border-navy-secondary/80 bg-navy shadow-[0_-12px_30px_rgba(0,0,0,.45)]',
+          green
+            ? 'bg-gradient-to-br from-success/[0.12] via-navy to-navy'
+            : 'bg-gradient-to-br from-gold/[0.12] via-navy to-navy',
+        )}
+      >
         <div className="flex items-center justify-between gap-2">
           <span className={cn('flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider', green ? 'text-success' : 'text-gold')}>
             <Bus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -414,6 +516,8 @@ function NextRideHero({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
+          ) : (onTheWay || onVan) && eta ? (
+            <span className="text-xs tabular-nums text-silver/80">{t('ride.etaAt', { time: fmtTimeTz(eta, tz) })}</span>
           ) : !onVan && !onTheWay && untilPickup > 0 && untilPickup < 24 * H ? (
             <span className="text-xs tabular-nums text-silver/80">
               {next.pickupAt ? t('ride.pickupIn', { time: fmtIn(untilPickup) }) : t('ride.leavesIn', { time: fmtIn(untilPickup) })}
@@ -423,34 +527,10 @@ function NextRideHero({
           )}
         </div>
 
-        {here ? (
-          <>
-            <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">{t('ride.vanHere')}</div>
-            <p className="mt-1.5 text-sm text-silver">
-              {t('ride.vanHereBody', { driver: driverFirst, place: pickupPlace(next) })}
-            </p>
-            <p className={cn('mt-1 text-sm font-semibold tabular-nums', waitLeft > 0 ? 'text-success' : 'text-warning')}>
-              {waitLeft > 0 ? t('ride.waitLeft', { time: fmtClock(waitLeft) }) : t('ride.waitOver')}
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
-              {fmtRelativeDayTz(headlineAt, tz, now)}
-              <span className="text-silver/50"> · </span>
-              <span className="tabular-nums">
-                {next.pickupAt ? t('ride.pickupAt', { time: fmtTimeTz(next.pickupAt, tz) }) : fmtTimeTz(next.targetAt, tz)}
-              </span>
-            </div>
-            <p className="mt-1.5 text-sm text-silver">
-              {next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {next.store.name} · {targetLine}
-            </p>
-          </>
-        )}
+        {headline}
+        {subline}
 
         <RideStepper step={step} tone={green ? 'success' : 'gold'} />
-
-        {liveHere && !here && <LiveRideBlock live={liveHere} />}
 
         <div className="mt-4 space-y-2.5 border-t border-navy-secondary/60 pt-3">
           {next.run ? (
@@ -473,15 +553,9 @@ function NextRideHero({
                 </div>
                 <div className="truncate text-xs text-silver">{vanLookText(next.run.van) || t('ride.driverLabel')}</div>
               </div>
-              {next.run.van.plate && (
-                <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
-                  {next.run.van.plate}
-                </span>
-              )}
+              {vanChip}
             </button>
-          ) : (
-            next.status === 'REQUESTED' && <p className="text-sm text-silver">{t('ride.waitingVanBody')}</p>
-          )}
+          ) : null}
           <div className="flex items-center gap-2 text-sm text-silver">
             <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{pickupPlace(next)}</span>
@@ -539,6 +613,63 @@ function NextRideHero({
         </div>
       </div>
     </section>
+  );
+}
+
+/** "Finding you a driver…" — the dots breathe while drivers look. */
+function FindingDots() {
+  return (
+    <span className="inline-flex gap-1 self-center" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 animate-pulse rounded-full bg-gold motion-reduce:animate-none"
+          style={{ animationDelay: `${i * 200}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** The time left to get on board, as a ring that runs down. */
+function WaitRing({ left }: { left: number }) {
+  const { t } = useI18n();
+  const frac = Math.max(0, Math.min(1, left / NO_SHOW_WAIT_MS));
+  const r = 16;
+  const c = 2 * Math.PI * r;
+  if (left <= 0) return <p className="mt-2 text-sm font-semibold text-warning">{t('ride.waitOver')}</p>;
+  return (
+    <div className="mt-2 flex items-center gap-2.5">
+      <svg viewBox="0 0 40 40" className="h-9 w-9 shrink-0 -rotate-90" aria-hidden="true">
+        <circle cx="20" cy="20" r={r} fill="none" strokeWidth="4" className="stroke-navy-secondary" />
+        <circle
+          cx="20"
+          cy="20"
+          r={r}
+          fill="none"
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - frac)}
+          className="stroke-success transition-[stroke-dashoffset] duration-1000 ease-linear"
+        />
+      </svg>
+      <p className="text-sm font-semibold tabular-nums text-success">{t('ride.waitLeft', { time: fmtClock(left) })}</p>
+    </div>
+  );
+}
+
+/** On board: how far into the trip, by the clock. */
+function TripProgress({ from, to, now }: { from: string | null; to: string | null; now: number }) {
+  if (!from || !to) return null;
+  const a = Date.parse(from);
+  const b = Date.parse(to);
+  if (!(b > a)) return null;
+  const pct = Math.round(Math.max(0.04, Math.min(1, (now - a) / (b - a))) * 100);
+  return (
+    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-navy-secondary" aria-hidden="true">
+      <div className="h-full rounded-full bg-success transition-[width] duration-1000" style={{ width: `${pct}%` }} />
+    </div>
   );
 }
 
@@ -726,86 +857,30 @@ function useAgo(iso: string | null | undefined): string {
   return s < 10 ? t('ride.agoNow') : s < 60 ? t('ride.agoSec', { n: s }) : t('ride.agoMin', { n: Math.round(s / 60) });
 }
 
-const pt = (p: GeoPoint): [number, number] => [p.lng, p.lat];
-
-export function LiveRideBlock({ live }: { live: MyLiveRide }) {
+/** Where the van is, in words: who's coming and the stops before them,
+ *  how fresh the position is, and whether it's running late. */
+function LiveLines({ live, vanName }: { live: MyLiveRide; vanName: string }) {
   const { t } = useI18n();
   const ago = useAgo(live.position?.at);
-  const tz = live.timezone;
-  const onVan = live.status === 'BOARDED';
-  const toWork = live.direction === 'TO_WORK';
-  const eta = onVan ? live.destination.etaAt : live.pickup.etaAt;
-  const mins = eta ? Math.max(0, Math.round((Date.parse(eta) - Date.now()) / 60_000)) : null;
-
-  const markers: MapMarker[] = [];
-  if (live.position) {
-    markers.push({ id: 'van', kind: 'van', ...live.position, label: live.van.name, stale: live.stale, highlight: true });
-  }
-  if (live.pickup.point && !onVan) {
-    markers.push({ id: 'pickup', kind: toWork ? 'home' : 'store', ...live.pickup.point, label: live.pickup.label });
-  }
-  if (live.destination.point) {
-    markers.push({ id: 'dest', kind: toWork ? 'store' : 'home', ...live.destination.point, label: live.destination.label });
-  }
-  const route = [
-    ...(live.position ? [pt(live.position)] : []),
-    ...(!onVan && live.pickup.point ? [pt(live.pickup.point)] : []),
-    ...(live.destination.point ? [pt(live.destination.point)] : []),
-  ];
-
   return (
-    <div className="mt-4 rounded-md border border-navy-secondary/70 bg-navy-secondary/20 p-3">
-      {live.runStatus === 'ACTIVE' ? (
-        <>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-2xl font-bold tracking-tight text-white tabular-nums">
-              {onVan
-                ? eta
-                  ? t('ride.liveArriving', { time: fmtTimeTz(eta, tz) })
-                  : t('ride.onVan')
-                : mins === null
-                  ? t('ride.liveOnWay', { van: live.van.name })
-                  : mins <= 1
-                    ? t('ride.liveHere')
-                    : t('ride.liveAway', { min: mins })}
-            </span>
-            {live.position && (
-              <span className={cn('shrink-0 text-xs', live.stale ? 'text-warning' : 'text-silver')}>
-                {live.stale ? t('ride.liveStale', { ago }) : t('ride.liveUpdated', { ago })}
-              </span>
-            )}
-          </div>
-          {!onVan && (
-            <p className="mt-0.5 text-sm text-silver">
-              {t('ride.liveOnWay', { van: live.van.name })} ·{' '}
-              {live.stopsBefore === 0
-                ? t('ride.liveNextStop')
-                : live.stopsBefore === 1
-                  ? t('ride.liveStopsOne')
-                  : t('ride.liveStopsMany', { count: live.stopsBefore })}
-            </p>
-          )}
-          {live.lateMinutes >= 5 && (
-            <p className="mt-1 text-sm font-medium text-warning">{t('ride.liveLate', { min: live.lateMinutes })}</p>
-          )}
-        </>
-      ) : (
-        <>
-          <p className="text-sm font-medium text-white">
-            {t('ride.liveLeaves', { van: live.van.name, time: fmtTimeTz(live.departAt, tz) })}
-          </p>
-          <p className="text-xs text-silver">{t('ride.liveNoPosition')}</p>
-        </>
-      )}
-      {markers.length > 0 && (
-        <LazyLiveMap
-          ariaLabel={t('ride.liveMap')}
-          className="mt-3 h-72 w-full sm:h-80"
-          markers={markers}
-          route={route.length > 1 ? route : undefined}
-        />
-      )}
-    </div>
+    <>
+      <p className="mt-1.5 text-sm text-silver">
+        {t('ride.liveOnWay', { van: vanName })} ·{' '}
+        {live.stopsBefore === 0
+          ? t('ride.liveNextStop')
+          : live.stopsBefore === 1
+            ? t('ride.liveStopsOne')
+            : t('ride.liveStopsMany', { count: live.stopsBefore })}
+      </p>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
+        {live.position && (
+          <span className={live.stale ? 'text-warning' : 'text-silver/80'}>
+            {live.stale ? t('ride.liveStale', { ago }) : t('ride.liveUpdated', { ago })}
+          </span>
+        )}
+        {live.lateMinutes >= 5 && <span className="font-medium text-warning">{t('ride.liveLate', { min: live.lateMinutes })}</span>}
+      </div>
+    </>
   );
 }
 

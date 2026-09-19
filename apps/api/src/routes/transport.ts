@@ -18,7 +18,9 @@ import {
   MIN_PING_GAP_MS,
   afterPing,
   computeRunLive,
+  homePoint,
   liveRunInclude,
+  storePoint,
   type LiveRunRow,
   type RunLive,
 } from '../lib/transportLive.js';
@@ -795,34 +797,47 @@ transportRouter.get('/driver/runs/:id/live', DRIVE, async (req, res) => {
 });
 
 /**
- * The rider's live ride: the van (only while it's on the road), their own
- * pickup and where they're headed, the ETAs, and how many stops come first
- * — never anyone else's address. A run that hasn't left shows within 3
- * hours of departure, without a van position.
+ * The rider's trip — their NEXT ride, whatever stage it's at, so the Ride
+ * tab always has its map:
+ *   finding a driver  the pickup and where they're headed (no van yet)
+ *   van confirmed     the same, with the van and driver
+ *   on the road       the van itself (while it's out), the ETAs, and how
+ *                     many stops come first — from 3 hours before it leaves
+ * Their own pickup only — never anyone else's address.
  */
 transportRouter.get('/me/live', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const now = new Date();
-  const mine = await prisma.ride.findMany({
+  // The next ride the way the Ride tab orders them: by pickup (else the
+  // arrive-by / leave-at time), anything not over in the last 12 hours.
+  const open = await prisma.ride.findMany({
     where: {
       associateId,
-      status: { in: ['SCHEDULED', 'BOARDED'] },
-      run: {
-        OR: [{ status: 'ACTIVE' }, { status: 'PLANNED', departAt: { lte: new Date(now.getTime() + 3 * 3_600_000) } }],
-      },
+      status: { in: ['REQUESTED', 'SCHEDULED', 'BOARDED'] },
+      targetAt: { gt: new Date(now.getTime() - 12 * 3_600_000) },
     },
-    orderBy: [{ pickupAt: 'asc' }, { targetAt: 'asc' }],
-    take: 1,
-    select: { id: true, runId: true },
+    select: { id: true, runId: true, pickupAt: true, targetAt: true, run: { select: { status: true, departAt: true } } },
+    take: 50,
   });
-  const ride = mine[0];
-  if (!ride?.runId) {
+  const next = open.sort(
+    (a, b) => (a.pickupAt ?? a.targetAt).getTime() - (b.pickupAt ?? b.targetAt).getTime(),
+  )[0];
+  if (!next) {
     res.json({ live: null });
     return;
   }
-  const run = (await prisma.rideRun.findUnique({ where: { id: ride.runId }, include: liveRunInclude }))!;
+  const onTheRoad =
+    !!next.runId &&
+    !!next.run &&
+    (next.run.status === 'ACTIVE' ||
+      (next.run.status === 'PLANNED' && next.run.departAt.getTime() <= now.getTime() + 3 * 3_600_000));
+  if (!onTheRoad) {
+    res.json({ live: await tripAhead(next.id) });
+    return;
+  }
+  const run = (await prisma.rideRun.findUnique({ where: { id: next.runId! }, include: liveRunInclude }))!;
   const live = await computeRunLive(run, now);
-  const r = run.rides.find((x) => x.id === ride.id)!;
+  const r = run.rides.find((x) => x.id === next.id)!;
   const home = live.homes.get(r.id) ?? null;
   const store = live.stores.get(r.location.id)!;
   const firstStop = live.plan.waypoints.findIndex((w) => w.rideIds.includes(r.id));
@@ -858,6 +873,73 @@ transportRouter.get('/me/live', RIDE, async (req, res) => {
     },
   });
 });
+
+/** A ride that isn't on the road yet — still finding a driver, or on a
+ *  van that leaves later: its two ends, so the rider sees the trip. */
+async function tripAhead(rideId: string) {
+  const r = await prisma.ride.findUniqueOrThrow({
+    where: { id: rideId },
+    select: {
+      id: true,
+      direction: true,
+      status: true,
+      pickupAt: true,
+      targetAt: true,
+      address: true,
+      lat: true,
+      lng: true,
+      vanArrivedAt: true,
+      riderSignal: true,
+      stop: { select: { id: true, name: true, address: true, lat: true, lng: true } },
+      location: {
+        select: {
+          name: true,
+          timezone: true,
+          addressLine1: true,
+          city: true,
+          state: true,
+          zip: true,
+          latitude: true,
+          longitude: true,
+        },
+      },
+      run: {
+        select: {
+          status: true,
+          departAt: true,
+          van: { select: { name: true, plate: true } },
+          driver: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+        },
+      },
+    },
+  });
+  const [home, store] = await Promise.all([homePoint(r), storePoint(r.location)]);
+  const toWork = r.direction === 'TO_WORK';
+  const homeLabel = r.stop?.name ?? r.address ?? '';
+  return {
+    rideId: r.id,
+    direction: r.direction,
+    status: r.status,
+    runStatus: r.run?.status ?? null,
+    timezone: r.location.timezone,
+    departAt: iso(r.run?.departAt),
+    van: r.run ? { name: r.run.van.name, plate: r.run.van.plate } : null,
+    driver: r.run ? (personName(r.run.driver).split(' ')[0] ?? '') : null,
+    position: null,
+    stale: false,
+    pickup: { label: toWork ? homeLabel : r.location.name, point: toWork ? home : store, scheduledAt: iso(r.pickupAt), etaAt: null },
+    destination: {
+      label: toWork ? r.location.name : homeLabel,
+      point: toWork ? store : home,
+      dueAt: toWork ? r.targetAt.toISOString() : null,
+      etaAt: null,
+    },
+    stopsBefore: 0,
+    lateMinutes: 0,
+    vanArrivedAt: iso(r.vanArrivedAt),
+    riderSignal: r.riderSignal,
+  };
+}
 
 /* ===== Seat requests — the drivers' side of ride-share ================== */
 

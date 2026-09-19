@@ -41,6 +41,8 @@ export interface MapMarker {
   order?: number;
   /** Draw attention (the selected van, the rider's own pickup). */
   highlight?: boolean;
+  /** Radar rings — a pickup still waiting on a driver. */
+  pulse?: boolean;
 }
 
 export interface LiveMapProps {
@@ -49,8 +51,23 @@ export interface LiveMapProps {
   route?: Array<[number, number]>;
   /** Where the van has been — a solid line. [lng, lat] pairs. */
   trail?: Array<[number, number]>;
+  /** The leg being driven right now — bold, flowing toward where it's
+   *  headed (the van to the rider's pickup, or on to the store). */
+  path?: Array<[number, number]>;
   ariaLabel: string;
   className?: string;
+  /** Fit padding in px — room for a sheet laid over the map's foot. */
+  padding?: number | { top: number; bottom: number; left: number; right: number };
+  /** The closest a fit zooms in. */
+  maxZoom?: number;
+  /** Change it to fit everything again ("recenter"). */
+  fitKey?: string | number;
+  /** Zoom buttons (off for a thumbnail or a page with its own). */
+  controls?: boolean;
+  /** Off: a thumbnail — no panning, no zooming. */
+  interactive?: boolean;
+  /** Px a sheet overlaps the map's foot — the map credit sits above it. */
+  footInset?: number;
 }
 
 const BUS_SVG =
@@ -70,6 +87,20 @@ function markerElement(m: MapMarker): HTMLElement {
   paint(root, m);
   return root;
 }
+
+// Radar rings for a pickup still waiting on a driver — injected once.
+let radarCss = false;
+function ensureRadarCss() {
+  if (radarCss || typeof document === 'undefined') return;
+  radarCss = true;
+  const st = document.createElement('style');
+  st.textContent =
+    '@keyframes alto-radar{0%{transform:scale(.7);opacity:.75}100%{transform:scale(2.6);opacity:0}}' +
+    '.alto-radar{position:absolute;inset:0;border-radius:9999px;border:2px solid #D4A017;animation:alto-radar 2.4s cubic-bezier(0,0,.2,1) infinite;pointer-events:none}' +
+    '@media (prefers-reduced-motion: reduce){.alto-radar{display:none}}';
+  document.head.appendChild(st);
+}
+const RINGS = '<span class="alto-radar"></span><span class="alto-radar" style="animation-delay:1.2s"></span>';
 
 function paint(root: HTMLElement, m: MapMarker) {
   if (m.label) {
@@ -94,12 +125,17 @@ function paint(root: HTMLElement, m: MapMarker) {
       arrow.style.display = has ? '' : 'none';
       if (has) arrow.style.transform = `translateX(-50%) rotate(${m.heading}deg)`;
     }
-  } else if (m.kind === 'store') {
-    el.style.cssText = `width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#0B1832;color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
-    el.innerHTML = STORE_SVG;
-  } else if (m.kind === 'home') {
-    el.style.cssText = `width:28px;height:28px;border-radius:9999px;display:grid;place-items:center;background:#2F6FDE;color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
-    el.innerHTML = HOME_SVG;
+  } else if (m.kind === 'store' || m.kind === 'home') {
+    const store = m.kind === 'store';
+    const look = `position:relative;width:28px;height:28px;border-radius:${store ? '8px' : '9999px'};display:grid;place-items:center;background:${store ? '#0B1832' : '#2F6FDE'};color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
+    const key = `${m.kind}:${m.pulse ? 1 : 0}`;
+    el.style.cssText = look;
+    // Rebuilt only when it changes, so the rings don't restart each refresh.
+    if (el.dataset.kind !== key) {
+      el.dataset.kind = key;
+      if (m.pulse) ensureRadarCss();
+      el.innerHTML = `${m.pulse ? RINGS : ''}<span style="position:relative;display:grid;place-items:center">${store ? STORE_SVG : HOME_SVG}</span>`;
+    }
   } else {
     el.style.cssText = `min-width:22px;height:22px;padding:0 5px;border-radius:9999px;display:grid;place-items:center;background:#fff;color:#0B1832;border:2px solid #0B1832;font:600 11px/1 system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.25);${ring}`;
     el.textContent = m.order !== undefined ? String(m.order) : '•';
@@ -114,6 +150,25 @@ function lineSource(coords: Array<[number, number]>) {
   };
 }
 
+/** The flowing dash on the leg being driven — MapLibre can't offset a
+ *  dash, so the pattern steps through a sequence that reads as motion. */
+const FLOW = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
+
 const GLIDE_MS = 1_600;
 /** Further than this in one refresh is a jump (a reconnect), not a drive. */
 const SNAP_M = 5_000;
@@ -124,7 +179,20 @@ function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: n
   return Math.hypot(x, rad(b.lat - a.lat)) * 6_371_000;
 }
 
-export default function LiveMap({ markers, route, trail, ariaLabel, className }: LiveMapProps) {
+export default function LiveMap({
+  markers,
+  route,
+  trail,
+  path,
+  ariaLabel,
+  className,
+  padding = 48,
+  maxZoom = 15,
+  fitKey,
+  controls = true,
+  interactive = true,
+  footInset = 0,
+}: LiveMapProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pins = useRef(new Map<string, { marker: Marker; el: HTMLElement; kind: MapMarker['kind'] }>());
@@ -166,6 +234,7 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
         center: [-85.8, 30.2],
         zoom: 10,
         attributionControl: { compact: true },
+        interactive,
         dragRotate: false,
         pitchWithRotate: false,
         touchPitch: false,
@@ -176,9 +245,14 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
       setFailed(true);
       return;
     }
-    m.touchZoomRotate.disableRotation();
-    m.addControl(new NavigationControl({ showCompass: false }), 'top-right');
+    if (interactive) m.touchZoomRotate.disableRotation();
+    if (controls && interactive) m.addControl(new NavigationControl({ showCompass: false }), 'top-right');
+    // The map credit (OpenStreetMap's, required) as its small (i) — MapLibre
+    // opens it wide on load, over the map's foot — and clear of any sheet.
+    const credit = box.current.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
+    if (credit && footInset) credit.style.marginBottom = `${footInset}px`;
     m.on('load', () => {
+      box.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       m.addSource('trail', { type: 'geojson', data: lineSource([]) });
       m.addLayer({ id: 'trail', type: 'line', source: 'trail', paint: { 'line-color': '#D4A017', 'line-width': 4, 'line-opacity': 0.7 } });
       m.addSource('route', { type: 'geojson', data: lineSource([]) });
@@ -186,19 +260,50 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
         id: 'route',
         type: 'line',
         source: 'route',
-        paint: { 'line-color': '#0B1832', 'line-width': 3, 'line-dasharray': [1.5, 1.5], 'line-opacity': 0.6 },
+        layout: { 'line-cap': 'round' },
+        // Navy disappears on the dark tiles — the planned route reads silver there.
+        paint: { 'line-color': dark ? '#C9D3E6' : '#0B1832', 'line-width': 3, 'line-dasharray': [1.5, 1.5], 'line-opacity': dark ? 0.75 : 0.6 },
+      });
+      m.addSource('path', { type: 'geojson', data: lineSource([]) });
+      m.addLayer({
+        id: 'path-casing',
+        type: 'line',
+        source: 'path',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': dark ? '#0B1832' : '#FFFFFF', 'line-width': 9, 'line-opacity': 0.9 },
+      });
+      m.addLayer({
+        id: 'path',
+        type: 'line',
+        source: 'path',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#D4A017', 'line-width': 5 },
+      });
+      m.addLayer({
+        id: 'path-flow',
+        type: 'line',
+        source: 'path',
+        layout: { 'line-join': 'round' },
+        paint: { 'line-color': '#FFF4CC', 'line-width': 2.5, 'line-dasharray': FLOW[0] },
       });
       setReady(true);
     });
     map.current = m;
+    // A map whose box changes size (the page reflowing, full screen)
+    // redraws at its new size instead of stretching.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => m.resize()) : null;
+    ro?.observe(box.current);
     const markersNow = pins.current;
     const glidesNow = glides.current;
     return () => {
+      ro?.disconnect();
       for (const id of glidesNow.values()) cancelAnimationFrame(id);
       markersNow.clear();
       m.remove();
       map.current = null;
     };
+    // The map is built once; its options are the first render's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Markers: add, move, repaint, remove — keyed by id. Fitting waits for
@@ -228,30 +333,60 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
         pins.current.delete(id);
       }
     }
-    // Fit once per set of markers.
-    const key = markers
-      .map((x) => x.id)
-      .sort()
-      .join('|');
-    if (key && key !== fittedFor.current) {
+    // Fit once per set of markers (and again when asked to).
+    const key =
+      markers
+        .map((x) => x.id)
+        .sort()
+        .join('|') + `#${fitKey ?? ''}`;
+    if (markers.length > 0 && key !== fittedFor.current) {
+      const first = !fittedFor.current;
       fittedFor.current = key;
       m.resize();
       if (markers.length === 1) {
-        m.jumpTo({ center: [markers[0]!.lng, markers[0]!.lat], zoom: 14 });
+        m.easeTo({ center: [markers[0]!.lng, markers[0]!.lat], zoom: Math.min(14, maxZoom), duration: first ? 0 : 700 });
       } else {
         const b = new LngLatBounds();
         for (const x of markers) b.extend([x.lng, x.lat]);
-        m.fitBounds(b, { padding: 48, maxZoom: 15, duration: 0 });
+        // A planned trip's arc bulges past its two ends — keep it in view.
+        for (const c of route ?? []) b.extend(c);
+        m.fitBounds(b, { padding, maxZoom, duration: first ? 0 : 700 });
       }
     }
-  }, [markers, ready]);
+    // The fit follows the markers and the ask; padding and the route's
+    // shape ride along with them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markers, ready, fitKey]);
 
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
     (m.getSource('route') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(route ?? []));
     (m.getSource('trail') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(trail ?? []));
-  }, [route, trail, ready]);
+    (m.getSource('path') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(path ?? []));
+  }, [route, trail, path, ready]);
+
+  // The leg being driven flows toward where it's going — unless the viewer
+  // asked for less motion.
+  const flowing = ready && (path?.length ?? 0) > 1;
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !flowing) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    let step = 0;
+    let last = 0;
+    let raf = 0;
+    const tick = (now: number) => {
+      if (now - last > 70) {
+        last = now;
+        step = (step + 1) % FLOW.length;
+        if (m.getLayer('path-flow')) m.setPaintProperty('path-flow', 'line-dasharray', FLOW[step]);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [flowing]);
 
   if (failed) {
     return (

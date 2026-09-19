@@ -192,15 +192,19 @@ export interface VanPosition extends GeoPoint {
 }
 
 /** The rider's live ride: the van, their own pickup and destination only. */
+/** The rider's next ride as a trip — from the moment they ask: its two
+ *  ends always; the van, driver and run once a driver accepts; the van's
+ *  position and the ETAs from 3 hours before it leaves. */
 export interface MyLiveRide {
   rideId: string;
   direction: RideDirection;
   status: RideStatus;
-  runStatus: RideRunStatus;
+  /** Null while it's still finding a driver. */
+  runStatus: RideRunStatus | null;
   timezone: string;
-  departAt: string;
-  van: { name: string; plate: string | null };
-  driver: string;
+  departAt: string | null;
+  van: { name: string; plate: string | null } | null;
+  driver: string | null;
   position: VanPosition | null;
   stale: boolean;
   pickup: { label: string; point: GeoPoint | null; scheduledAt: string | null; etaAt: string | null };
