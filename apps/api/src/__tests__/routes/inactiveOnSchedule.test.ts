@@ -172,7 +172,13 @@ describe('"on the floor now" counts everyone clocked in', () => {
     // "Today" in the viewer's zone can be the org's yesterday or tomorrow
     // (a Pacific store at 9:30 PM is already on the Eastern 18th) — the
     // neighbouring days carry the live list too; older days never do.
-    const dayKey = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    // Step from the store's own today (the payload's), not the UTC date —
+    // from 8 PM to midnight Eastern, UTC is already a day ahead.
+    const storeToday = day.body.today as string;
+    const dayKey = (offset: number) => {
+      const [y, m, d] = storeToday.split('-').map(Number);
+      return new Date(Date.UTC(y!, m! - 1, d! + offset)).toISOString().slice(0, 10);
+    };
     for (const offset of [-1, 1]) {
       const near = await sup.get(`/client-portal/day?date=${dayKey(offset)}`);
       expect(near.body.onFloorNow).toHaveLength(2);
