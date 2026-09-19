@@ -80,6 +80,20 @@ describe('Fieldglass timesheets — its own sidebar entry', () => {
     const entry = MODULES.find((m) => m.key === 'fieldglass')!;
     expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Fieldglass timesheets', group: 'time-and-pay' });
   });
+
+  it('Fieldglass setup is its own entry too — finance’s (the packet carries PII), never a supervisor’s', () => {
+    expect(keysFor('FINANCE_ACCOUNTANT')).toEqual(expect.arrayContaining(['fieldglass', 'fieldglass-setup']));
+    expect(keysFor('HR_ADMINISTRATOR')).toContain('fieldglass-setup');
+    for (const role of ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR', 'WORKFORCE_MANAGER', 'ASSOCIATE', 'CLIENT_PORTAL'] as Role[]) {
+      expect(keysFor(role), role).not.toContain('fieldglass-setup');
+    }
+    expect(MODULES.find((m) => m.key === 'fieldglass-setup')).toMatchObject({
+      path: '/fieldglass',
+      label: 'Fieldglass setup',
+      requires: 'process:payroll',
+      group: 'time-and-pay',
+    });
+  });
 });
 
 describe('visibleModules — SHIFT_SUPERVISOR curation', () => {

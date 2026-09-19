@@ -74,6 +74,7 @@ const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'S
 
 // Time / scheduling / payroll
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
+const FieldglassSetup = lazyNamed(() => import('@/pages/fieldglass/FieldglassSetup'), 'FieldglassSetup');
 const TimesheetHistory = lazyNamed(
   () => import('@/pages/time/TimesheetHistory'),
   'TimesheetHistory',
@@ -470,6 +471,7 @@ const LAYOUT_ROUTES = [
   { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
   { path: 'time-attendance/timesheets', element: <RequireCapability cap="manage:time"><TimesheetsView /></RequireCapability> },
   { path: 'time-attendance/timesheets/history/:associateId', element: <RequireCapability cap="manage:time"><TimesheetHistory /></RequireCapability> },
+  { path: 'fieldglass', element: <RequireCapability cap="process:payroll"><FieldglassSetup /></RequireCapability> },
 ];
 
 // Modules whose key has no explicit route above get a generic

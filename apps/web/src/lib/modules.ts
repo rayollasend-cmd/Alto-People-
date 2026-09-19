@@ -17,6 +17,7 @@ export type ModuleKey =
   | 'statements'
   | 'timesheets'
   | 'fieldglass'
+  | 'fieldglass-setup'
   | 'onboarding'
   | 'time-attendance'
   | 'kiosk'
@@ -215,6 +216,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'people',
   'timesheets',
   'fieldglass',
+  'fieldglass-setup',
   'time-off',
   'scheduling',
   // Comes with full scheduling authority: swap requests, pickup claims,
@@ -962,6 +964,17 @@ export const MODULES: ModuleNav[] = [
     description:
       'Fieldglass-ready weekly hours (Saturday → Friday): enter each worker’s week before Monday 2 PM Pacific, import what the buyer approved, and open any associate’s timesheet history across pay periods.',
     requires: 'manage:time',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'fieldglass-setup',
+    path: '/fieldglass',
+    label: 'Fieldglass setup',
+    // Registration is finance's: the packet carries date of birth and the
+    // SSN's last 4, so the page is process:payroll — never a supervisor's.
+    description:
+      'Register new associates in Fieldglass with everything the buyer’s form asks, move transfers, close out separations, and keep every Worker ID on file.',
+    requires: 'process:payroll',
     group: 'time-and-pay',
   },
   {

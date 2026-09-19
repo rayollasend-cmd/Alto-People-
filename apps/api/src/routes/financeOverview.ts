@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { primaryClientsForAssociates } from '../lib/associateClients.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
@@ -14,6 +13,7 @@ import { nextPayDate } from '../lib/payday.js';
 import { notifyUser } from '../lib/notify.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
+import { buildFieldglassQueue, buildFieldglassRoster } from '../lib/fieldglassQueue.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -197,292 +197,10 @@ financeOverviewRouter.get(
           ? Math.round(payLags.reduce((a, b) => a + b, 0) / payLags.length)
           : null;
 
-      // The Fieldglass setup queue — approved+scheduled workers not yet
-      // marked as registered. Windowed to recent approvals so the first
-      // deploy never floods the list with historical associates.
-      const fgWindowStart = new Date(now.getTime() - 60 * DAY_MS);
-      const recentApproved = await prisma.application.findMany({
-        where: {
-          status: 'APPROVED',
-          approvedAt: { gte: fgWindowStart },
-          deletedAt: null,
-        },
-        orderBy: { approvedAt: 'desc' },
-        take: 100,
-        select: {
-          associateId: true,
-          approvedAt: true,
-          client: { select: { name: true } },
-          associate: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              hireDate: true,
-              separatedAt: true,
-              deactivatedAt: true,
-              fieldglassRegistration: { select: { associateId: true } },
-            },
-          },
-        },
-      });
-      // Never ask Finance to ADD someone who has since separated or is
-      // paused — their released shifts already dropped them in practice;
-      // this makes it explicit.
-      const fgCandidates = recentApproved.filter(
-        (a) =>
-          a.associate.fieldglassRegistration === null &&
-          a.associate.separatedAt === null &&
-          a.associate.deactivatedAt === null,
-      );
-      const fgShifts =
-        fgCandidates.length > 0
-          ? await prisma.shift.findMany({
-              where: {
-                assignedAssociateId: { in: fgCandidates.map((a) => a.associateId) },
-                status: { in: ['ASSIGNED', 'COMPLETED'] },
-              },
-              orderBy: { startsAt: 'asc' },
-              take: 500,
-              select: {
-                assignedAssociateId: true,
-                startsAt: true,
-                position: true,
-                client: { select: { name: true } },
-              },
-            })
-          : [];
-      // Where each candidate works NOW: a transfer before they were added
-      // to Fieldglass means "add under the new client" — their first shift
-      // and their application both sit at the client they left.
-      const fgCurrent = await primaryClientsForAssociates(fgCandidates.map((a) => a.associateId));
-      const firstShiftByAssociate = new Map<string, (typeof fgShifts)[number]>();
-      for (const s of fgShifts) {
-        if (s.assignedAssociateId && !firstShiftByAssociate.has(s.assignedAssociateId)) {
-          firstShiftByAssociate.set(s.assignedAssociateId, s);
-        }
-      }
-      // TRANSFERS: registered under one client, currently assigned to
-      // another → "close old account, open new one". Not windowed — a
-      // two-year associate can transfer.
-      const regs = await prisma.fieldglassRegistration.findMany({
-        take: 500,
-        select: {
-          associateId: true,
-          clientId: true,
-          workerId: true,
-          client: { select: { name: true } },
-          associate: {
-            select: {
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              hireDate: true,
-              deletedAt: true,
-              separatedAt: true,
-              assignments: {
-                where: { endedAt: null },
-                orderBy: { startedAt: 'desc' },
-                take: 1,
-                select: {
-                  location: {
-                    select: { client: { select: { id: true, name: true } } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-      // CLOSE-OUTS: separated (or erased) workers still registered — a
-      // live account at the client for someone who no longer works here.
-      // Keys off separatedAt, NEVER deactivatedAt: deactivation is a
-      // reversible pause and must not close anyone's account.
-      const closeRows = regs
-        .filter(
-          (r) => r.associate.separatedAt !== null || r.associate.deletedAt !== null,
-        )
-        .map((r) => ({
-          kind: 'close' as const,
-          associateId: r.associateId,
-          name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
-          clientName: r.client?.name ?? null,
-          fromClientName: null as string | null,
-          workerId: r.workerId,
-          position: null as string | null,
-          firstShiftAt: null as string | null,
-          approvedAt: null as string | null,
-          email: r.associate.email,
-          phone: r.associate.phone,
-          hireDate: r.associate.hireDate
-            ? r.associate.hireDate.toISOString().slice(0, 10)
-            : null,
-        }));
-      const transferRows = regs
-        .filter((r) => {
-          const cur = r.associate.assignments[0]?.location.client;
-          return (
-            r.associate.deletedAt === null &&
-            r.associate.separatedAt === null &&
-            cur !== undefined &&
-            r.clientId !== null &&
-            cur.id !== r.clientId
-          );
-        })
-        .map((r) => {
-          const cur = r.associate.assignments[0]!.location.client!;
-          return {
-            kind: 'transfer' as const,
-            associateId: r.associateId,
-            name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
-            clientName: cur.name,
-            fromClientName: r.client?.name ?? null,
-            workerId: r.workerId,
-            position: null as string | null,
-            firstShiftAt: null as string | null,
-            approvedAt: null as string | null,
-            email: r.associate.email,
-            phone: r.associate.phone,
-            hireDate: r.associate.hireDate
-              ? r.associate.hireDate.toISOString().slice(0, 10)
-              : null,
-          };
-        });
-      // Earliest upcoming shift at the NEW client — the transfer deadline.
-      if (transferRows.length > 0) {
-        const upcoming = await prisma.shift.findMany({
-          where: {
-            assignedAssociateId: { in: transferRows.map((r) => r.associateId) },
-            status: 'ASSIGNED',
-            startsAt: { gte: now },
-          },
-          orderBy: { startsAt: 'asc' },
-          take: 200,
-          select: { assignedAssociateId: true, startsAt: true, position: true },
-        });
-        for (const row of transferRows) {
-          const s = upcoming.find((u) => u.assignedAssociateId === row.associateId);
-          if (s) {
-            row.firstShiftAt = s.startsAt.toISOString();
-            row.position = s.position;
-          }
-        }
-      }
-
-      const addRows = fgCandidates
-        .map((a) => {
-          const shift = firstShiftByAssociate.get(a.associateId);
-          if (!shift) return null; // approved but not yet scheduled
-          return {
-            kind: 'add' as const,
-            associateId: a.associateId,
-            name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
-            clientName: fgCurrent.get(a.associateId)?.clientName ?? shift.client?.name ?? a.client?.name ?? null,
-            // Moved before being added: say where from, so nobody adds them
-            // under the client they left.
-            fromClientName: (() => {
-              const now = fgCurrent.get(a.associateId)?.clientName;
-              const started = shift.client?.name ?? a.client?.name ?? null;
-              return now && started && now !== started ? started : null;
-            })() as string | null,
-            workerId: null as string | null,
-            position: shift.position as string | null,
-            firstShiftAt: shift.startsAt.toISOString() as string | null,
-            approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
-            // The Fieldglass entry facts — on the row, so most workers
-            // never require leaving the dashboard at all.
-            email: a.associate.email,
-            phone: a.associate.phone,
-            hireDate: a.associate.hireDate
-              ? a.associate.hireDate.toISOString().slice(0, 10)
-              : null,
-          };
-        })
-        .filter((row): row is NonNullable<typeof row> => row !== null);
-
-      // HOURS ALREADY WORKED by someone not in Fieldglass under that client
-      // — the costliest add: those hours can't be billed until they are.
-      // Not tied to the approval window or a scheduled shift: a walk-in or
-      // an old hire working now is found here too.
-      const workedSince = new Date(now.getTime() - 21 * DAY_MS);
-      const workedEntries = await prisma.timeEntry.findMany({
-        where: {
-          clockInAt: { gte: workedSince },
-          status: { in: ['APPROVED', 'COMPLETED'] },
-          clientId: { not: null },
-          clockOutAt: { not: null },
-        },
-        select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true },
-        take: 5000,
-      });
-      const workedBy = new Map<string, { associateId: string; clientId: string; hours: number; firstAt: Date }>();
-      for (const e of workedEntries) {
-        const k = `${e.associateId}|${e.clientId}`;
-        const row = workedBy.get(k) ?? { associateId: e.associateId, clientId: e.clientId!, hours: 0, firstAt: e.clockInAt };
-        row.hours += (e.clockOutAt!.getTime() - e.clockInAt.getTime()) / 3_600_000;
-        if (e.clockInAt < row.firstAt) row.firstAt = e.clockInAt;
-        workedBy.set(k, row);
-      }
-      const regByAssociate = new Map(regs.map((r) => [r.associateId, r]));
-      const unregistered = [...workedBy.values()].filter((w) => {
-        const reg = regByAssociate.get(w.associateId);
-        // Registered elsewhere is the transfer queue's; not registered at all is ours.
-        return !reg && w.hours > 0;
-      });
-      const unbilledHours = new Map<string, number>();
-      if (unregistered.length > 0) {
-        const [people, clientNames] = await Promise.all([
-          prisma.associate.findMany({
-            where: { id: { in: unregistered.map((u) => u.associateId) }, deletedAt: null, separatedAt: null },
-            select: { id: true, firstName: true, lastName: true, email: true, phone: true, hireDate: true },
-          }),
-          prisma.client.findMany({
-            where: { id: { in: [...new Set(unregistered.map((u) => u.clientId))] } },
-            select: { id: true, name: true },
-          }),
-        ]);
-        const person = new Map(people.map((p) => [p.id, p]));
-        const clientName = new Map(clientNames.map((c) => [c.id, c.name]));
-        for (const u of unregistered) {
-          const p = person.get(u.associateId);
-          if (!p) continue;
-          const hours = Math.round(u.hours * 10) / 10;
-          unbilledHours.set(u.associateId, (unbilledHours.get(u.associateId) ?? 0) + hours);
-          if (addRows.some((r) => r.associateId === u.associateId)) continue;
-          addRows.push({
-            kind: 'add' as const,
-            associateId: u.associateId,
-            name: `${p.firstName} ${p.lastName}`.trim(),
-            clientName: clientName.get(u.clientId) ?? '—',
-            fromClientName: null,
-            workerId: null,
-            position: null,
-            firstShiftAt: u.firstAt.toISOString(),
-            approvedAt: null,
-            email: p.email,
-            phone: p.phone,
-            hireDate: p.hireDate ? p.hireDate.toISOString().slice(0, 10) : null,
-          });
-        }
-      }
-
-      // Close-outs outrank transfers outrank adds (a dead account for a
-      // departed worker is the worst kind of open baton); among adds,
-      // someone already working unbilled comes first; then soonest shift.
-      const KIND_RANK = { close: 0, transfer: 1, add: 2 } as const;
-      const shiftTime = (v: string | null) =>
-        v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
-      const fieldglassQueue = [...closeRows, ...transferRows, ...addRows]
-        .map((r) => ({ ...r, hoursUnbilled: unbilledHours.get(r.associateId) ?? 0 }))
-        .sort((x, y) => {
-          if (x.kind !== y.kind) return KIND_RANK[x.kind] - KIND_RANK[y.kind];
-          if ((y.hoursUnbilled > 0 ? 1 : 0) !== (x.hoursUnbilled > 0 ? 1 : 0)) return y.hoursUnbilled > 0 ? 1 : -1;
-          return shiftTime(x.firstShiftAt) - shiftTime(y.firstShiftAt);
-        })
-        .slice(0, 12);
+      // The Fieldglass setup queue — the dashboard shows the top of it;
+      // the Fieldglass setup page works all of it.
+      const fullFieldglassQueue = await buildFieldglassQueue(now);
+      const fieldglassQueue = fullFieldglassQueue.slice(0, 12);
 
       const billed = weekBilled.reduce((sum, s) => sum + stAmount(s.snapshot), 0);
       const paidGross = weekRuns.reduce((sum, r) => sum + Number(r.totalGross), 0);
@@ -545,6 +263,7 @@ financeOverviewRouter.get(
           draftStatements: draftCount,
         },
         fieldglassQueue,
+        fieldglassQueueTotal: fullFieldglassQueue.length,
         payrollCases: { open: casesOpen, assignedToMe: casesMine },
         billedVsPaid:
           billed > 0 || paidGross > 0
@@ -556,6 +275,28 @@ financeOverviewRouter.get(
               }
             : null,
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /finance/fieldglass[?view=count] — the Fieldglass setup page: the
+ * whole queue (add / transfer / close) and the roster of everyone
+ * registered. `view=count` is just the queue's size, for the sidebar.
+ */
+financeOverviewRouter.get(
+  '/finance/fieldglass',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const queue = await buildFieldglassQueue();
+      if (req.query.view === 'count') {
+        res.json({ count: queue.length });
+        return;
+      }
+      res.json({ generatedAt: new Date().toISOString(), queue, roster: await buildFieldglassRoster() });
     } catch (err) {
       next(err);
     }

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import { saturdayWeek } from '../../lib/timesheetWeek.js';
 import {
   DEFAULT_TEST_PASSWORD,
@@ -118,6 +119,7 @@ describe('an associate’s timesheet history', () => {
       // Approved 8h; the rejected 6h and the unentered 7h are at risk.
       money: { approved: 160, awaiting: 0, atRisk: 260 },
     });
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({ where: { action: 'associate.pii_viewed', entityId: w.ann.id } });
     expect(audit?.metadata).toMatchObject({ purpose: 'timesheet_history', fields: ['securityId'] });
   });
@@ -162,6 +164,7 @@ describe('an associate’s timesheet history', () => {
     let w2 = (h.periods as Period[])[1]!.weeks[0]!;
     expect(w2.fieldglass).toMatchObject({ status: 'SUBMITTED', resubmittedAt: expect.any(String), comment: 'Missing Sunday' });
     expect(h.totals.fieldglass).toMatchObject({ rejected: 0, awaiting: 1 });
+    await flushPendingAudits();
     expect(await prisma.auditLog.findFirst({ where: { action: 'timesheet.fieldglass_resubmitted', entityId: w.ann.id } })).not.toBeNull();
     // Undo: rejected again.
     await w.finance

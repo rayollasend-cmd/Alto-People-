@@ -52,7 +52,7 @@ function toWork(r: TimesheetRow): boolean {
   return !!f?.registered && ((!f.enteredAt && !f.status) || f.status === 'REJECTED');
 }
 
-const STATUS_CHIP: Record<FieldglassStatus, { label: string; variant: 'success' | 'destructive' | 'info' | 'default' }> = {
+export const STATUS_CHIP: Record<FieldglassStatus, { label: string; variant: 'success' | 'destructive' | 'info' | 'default' }> = {
   APPROVED: { label: 'Approved', variant: 'success' },
   INVOICED: { label: 'Invoiced', variant: 'success' },
   REJECTED: { label: 'Rejected', variant: 'destructive' },

@@ -29,6 +29,7 @@ import {
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { useFieldglassSetupCount } from '@/lib/useFieldglassSetupCount';
 import { useQuery } from '@tanstack/react-query';
 import { unreadMessages } from '@/lib/messagesApi';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
@@ -126,7 +127,15 @@ export function Sidebar() {
     refetchInterval: 60_000,
     enabled: hasMessages,
   });
-  const badgeFor = (key: string) => (key === 'approvals' ? approvalsCount : key === 'messages' ? (unread.data?.unread ?? null) : null);
+  const fieldglassSetup = useFieldglassSetupCount(visible.some((m) => m.key === 'fieldglass-setup'));
+  const badgeFor = (key: string) =>
+    key === 'approvals'
+      ? approvalsCount
+      : key === 'messages'
+        ? (unread.data?.unread ?? null)
+        : key === 'fieldglass-setup'
+          ? fieldglassSetup
+          : null;
   const { pinned, isPinned, togglePin } = usePinnedModules();
   const recents = useRecentModules();
 

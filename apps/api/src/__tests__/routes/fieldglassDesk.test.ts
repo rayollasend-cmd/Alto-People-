@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import ExcelJS from 'exceljs';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import { fieldglassDueAt, normalizeFieldglassStatus, parseFieldglassList, workerKey } from '../../lib/fieldglassDesk.js';
 import { fieldglassSecurityId } from '../../lib/fieldglassSecurityId.js';
 import {
@@ -119,6 +120,7 @@ describe('the registration packet', () => {
     );
     expect(bo.worker.securityId.value).toBeNull();
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({ where: { action: 'associate.pii_viewed', entityId: w.ann.id } });
     expect(audit).not.toBeNull();
     // Not a supervisor's to see.
@@ -155,6 +157,7 @@ describe('the Security ID without an SSN', () => {
     expect(p.worker.travelDocLast4).toBe('X987');
     expect(p.worker.securityId).toEqual({ value: '1107RA987', source: 'travel_doc', needs: [] });
     expect(p.missing).not.toContain('Last 4 of SSN — or of a passport / travel document');
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({ where: { action: 'associate.travel_doc_set', entityId: w.bo.id } });
     expect(audit?.metadata).toEqual({ cleared: false }); // never the number itself
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: w.client.id });
@@ -178,6 +181,42 @@ describe('the worklist', () => {
     await w.finance.post(`/finance/fieldglass/${w.bo.id}/done`).send({ workerId: 'WKR5' });
     const after = await w.finance.get('/finance/overview');
     expect(after.body.fieldglassQueue.find((r: { associateId: string }) => r.associateId === w.bo.id)).toBeUndefined();
+  });
+});
+
+describe('the Fieldglass setup page', () => {
+  it('the whole queue, everyone already registered — and the count for the menu', async () => {
+    const w = await world();
+    // Ann: registered, with a Worker ID; her week entered and approved.
+    await prisma.fieldglassRegistration.create({ data: { associateId: w.ann.id, clientId: w.client.id, workerId: 'WKR1', addedById: w.fin.id } });
+    await prisma.fieldglassTimesheet.create({
+      data: { weekStart: new Date(`${WEEK_START}T00:00:00Z`), associateId: w.ann.id, clientId: w.client.id, enteredAt: new Date(), fgStatus: 'APPROVED' },
+    });
+    // Bo: working now, not registered — his hours can't be billed.
+    const clockInAt = new Date(Date.now() - 2 * 86_400_000);
+    await prisma.timeEntry.create({
+      data: { associateId: w.bo.id, clientId: w.client.id, clockInAt, clockOutAt: new Date(clockInAt.getTime() + 6 * 3600_000), status: 'APPROVED' },
+    });
+
+    const res = await w.finance.get('/finance/fieldglass');
+    expect(res.status).toBe(200);
+    expect(res.body.queue).toEqual([expect.objectContaining({ kind: 'add', associateId: w.bo.id, hoursUnbilled: 6 })]);
+    expect(res.body.roster).toEqual([
+      expect.objectContaining({
+        associateId: w.ann.id,
+        name: 'Ann Lee',
+        clientName: 'Walmart Destin',
+        workerId: 'WKR1',
+        addedBy: expect.any(String),
+        separated: false,
+        lastWorked: '2026-06-15',
+        lastTimesheet: { weekEnd: '2026-06-19', status: 'APPROVED', entered: true },
+      }),
+    ]);
+    expect((await w.finance.get('/finance/fieldglass?view=count')).body).toEqual({ count: 1 });
+    expect((await w.finance.get('/finance/overview')).body.fieldglassQueueTotal).toBe(1);
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: w.client.id });
+    expect((await (await loginAs(sup.email)).get('/finance/fieldglass')).status).toBe(403);
   });
 });
 
