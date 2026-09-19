@@ -6,16 +6,24 @@ import { createApp } from '../../app.js';
  * The browser app is served by this API, so this one Content-Security-Policy
  * header is the whole front-end's policy.
  *
- * Two things must stay true at once:
- *   - WebAssembly must be allowed to compile ('wasm-unsafe-eval'), because
- *     the document scanner ships OpenCV as wasm. Without it the browser
- *     refuses to instantiate the module and scanning silently degrades.
- *   - Plain string evaluation must stay banned ('unsafe-eval' must NOT be
- *     present), because that re-opens eval()/new Function() for every
- *     script on the page — the exact thing CSP exists to stop.
+ * This file used to assert that 'unsafe-eval' was NOT present, on the
+ * reasoning that the document scanner only needed WebAssembly to compile.
+ * That reasoning was incomplete. OpenCV (scanning) and libheif via heic2any
+ * (HEIC uploads) are both Emscripten builds using embind, and embind
+ * assembles its argument-wiring and method-caller trampolines with
+ * `new Function(...)` on every bound call. That is ordinary JavaScript
+ * evaluation, which 'wasm-unsafe-eval' does not permit — so the .wasm
+ * instantiated and the first call into it was blocked instead.
+ *
+ * So 'unsafe-eval' is present now, deliberately, and this file's job
+ * changes: pin the widening to exactly that one token, and keep every
+ * other protection asserted so the next edit can't quietly widen further.
+ * The narrow fix — moving both libraries into Web Workers served with
+ * their own looser CSP — would let this go back; see app.ts.
  *
  * Token-aware matching matters here: "'wasm-unsafe-eval'" contains the
- * substring "unsafe-eval", so a naive includes() check would pass forever.
+ * substring "unsafe-eval", so a naive includes() check would be meaningless
+ * in both directions.
  */
 function scriptSrcTokens(csp: string): string[] {
   const directive = csp
@@ -27,7 +35,7 @@ function scriptSrcTokens(csp: string): string[] {
 }
 
 describe('Content-Security-Policy', () => {
-  it('allows WebAssembly compilation but not string evaluation', async () => {
+  it('allows the embind libraries to evaluate, and nothing else', async () => {
     const res = await request(createApp()).get('/health');
     const csp = res.headers['content-security-policy'];
     expect(csp).toBeTruthy();
@@ -35,8 +43,13 @@ describe('Content-Security-Policy', () => {
     const tokens = scriptSrcTokens(csp);
     expect(tokens).toContain("'self'");
     expect(tokens).toContain("'wasm-unsafe-eval'");
-    expect(tokens).not.toContain("'unsafe-eval'");
+    // The deliberate widening — embind's new Function() trampolines.
+    expect(tokens).toContain("'unsafe-eval'");
+    // Still banned: inline <script> and injected event handlers, which is
+    // the half of the policy that stops reflected/stored XSS from running.
     expect(tokens).not.toContain("'unsafe-inline'");
+    // No remote script origins crept in alongside the eval widening.
+    expect(tokens.filter((t) => !t.startsWith("'"))).toEqual([]);
   });
 
   it('lets the vans map load its tiles, without opening blob: workers', async () => {

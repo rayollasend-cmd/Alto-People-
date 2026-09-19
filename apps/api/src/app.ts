@@ -228,15 +228,30 @@ export function createApp() {
       contentSecurityPolicy: {
         useDefaults: true,
         directives: {
-          // Document scanning (the ID/void-cheque capture on onboarding)
-          // runs OpenCV compiled to WebAssembly. Instantiating a .wasm
-          // module counts as script evaluation under CSP, so helmet's
-          // default script-src 'self' blocks it and edge detection /
-          // deskew silently dies in the browser. 'wasm-unsafe-eval'
-          // permits WebAssembly compilation ONLY — it does not re-enable
-          // eval() or new Function() for JavaScript, which is why we add
-          // it instead of 'unsafe-eval'.
-          'script-src': ["'self'", "'wasm-unsafe-eval'"],
+          // Two Emscripten libraries load on the main thread: OpenCV (the
+          // ID / void-cheque capture on onboarding) and libheif via
+          // heic2any (turning an iPhone HEIC upload into a JPEG).
+          //
+          // 'wasm-unsafe-eval' alone was not enough, and the reason is
+          // worth writing down: it permits WebAssembly.compile and
+          // nothing else. Both libraries are built with embind, which
+          // assembles its argument-wiring and method-caller trampolines
+          // with `new Function(...)` on every bound call — ordinary
+          // JavaScript evaluation, not WASM compilation. So the .wasm
+          // instantiated fine and the very first call into it was
+          // blocked, which is why the violation moved from script-src to
+          // citing 'unsafe-eval'.
+          //
+          // This is a real widening and not one to enjoy: it re-enables
+          // eval() and new Function() for every script on the origin. The
+          // narrow fix is to move both libraries into Web Workers and
+          // serve those worker scripts with their own looser CSP header,
+          // which confines eval to the worker; both are dynamic imports on
+          // the main thread today, so that is a refactor rather than a
+          // directive change. 'wasm-unsafe-eval' stays listed because it
+          // documents the WASM requirement even though 'unsafe-eval'
+          // subsumes it.
+          'script-src': ["'self'", "'wasm-unsafe-eval'", "'unsafe-eval'"],
           'connect-src': [
             "'self'",
             'https://*.ingest.sentry.io',
