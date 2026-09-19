@@ -19,7 +19,14 @@ import { dateKeyInZone } from './timeAnomalies.js';
 export async function nextPaydayFor(
   associateId: string,
   now: Date = new Date(),
-): Promise<{ payDate: string; periodStart: string; periodEnd: string; schedule: string } | null> {
+): Promise<{
+  payDate: string;
+  periodStart: string;
+  periodEnd: string;
+  schedule: string;
+  /** Today is a payday: the days it pays for (until midnight). */
+  paidToday: { periodStart: string; periodEnd: string } | null;
+} | null> {
   const live = { isActive: true, deletedAt: null } as const;
   const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
   const own = await prisma.associate.findUnique({
@@ -47,6 +54,7 @@ export async function nextPaydayFor(
   if (!schedule) return null;
   const today = dateKeyInZone(now, DEFAULT_TIMEZONE);
   let w = getNextPayday(schedule, new Date(`${today}T12:00:00.000Z`));
+  const paidToday = w.payDate === today ? { periodStart: w.periodStart, periodEnd: w.periodEnd } : null;
   if (w.payDate <= today) w = getPeriodAfter(schedule, w);
-  return { payDate: w.payDate, periodStart: w.periodStart, periodEnd: w.periodEnd, schedule: schedule.name };
+  return { payDate: w.payDate, periodStart: w.periodStart, periodEnd: w.periodEnd, schedule: schedule.name, paidToday };
 }

@@ -163,6 +163,8 @@ export interface NextPayday {
   periodStart: string;
   periodEnd: string;
   schedule: string;
+  /** Today is a payday: the days it pays for. */
+  paidToday?: { periodStart: string; periodEnd: string } | null;
 }
 
 export function getMyNextPayday(): Promise<{ nextPayday: NextPayday | null }> {

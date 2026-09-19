@@ -219,7 +219,7 @@ function shortDay(ymd: string): string {
   return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ymd;
 }
 
-function NextPaydayCard() {
+export function NextPaydayCard() {
   const { t } = useI18n();
   const q = useQuery({
     queryKey: ['me', 'nextPayday'],
@@ -257,6 +257,12 @@ function NextPaydayCard() {
         <p className="mt-1 text-sm text-silver">
           {t('pay.forWork', { from: shortDay(p.periodStart), to: shortDay(p.periodEnd) })}
         </p>
+        {p.paidToday && (
+          <p className="mt-3 flex items-center gap-1.5 border-t border-navy-secondary/60 pt-3 text-sm font-medium text-success">
+            <CalendarCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {t('pay.todayIsPayday', { from: shortDay(p.paidToday.periodStart), to: shortDay(p.paidToday.periodEnd) })}
+          </p>
+        )}
       </div>
     </section>
   );

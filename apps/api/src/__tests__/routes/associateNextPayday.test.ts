@@ -94,13 +94,18 @@ describe("Alto's pay rule — biweekly Sat→Fri, paid the Friday after", () => 
 
   it('on payday (Fri Sep 18, paying Aug 29–Sep 11) the next payday is Fri Oct 2, for Sep 12–25', async () => {
     const id = await altoAssociate();
+    // Morning, evening, and 9:30 PM Eastern (already the 19th in UTC):
+    // payday until midnight, and the next one is Oct 2.
     for (const at of ['2026-09-18T13:00:00.000Z', '2026-09-18T23:30:00.000Z', '2026-09-19T01:30:00.000Z']) {
       expect(await nextPaydayFor(id, new Date(at))).toMatchObject({
         payDate: '2026-10-02',
         periodStart: '2026-09-12',
         periodEnd: '2026-09-25',
+        paidToday: { periodStart: '2026-08-29', periodEnd: '2026-09-11' },
       });
     }
+    // After midnight Eastern it's no longer payday.
+    expect((await nextPaydayFor(id, new Date('2026-09-19T05:00:00.000Z')))?.paidToday).toBeNull();
   });
 
   it('the evening before payday, payday is still tomorrow — and mid-period it is the Friday after the period', async () => {
