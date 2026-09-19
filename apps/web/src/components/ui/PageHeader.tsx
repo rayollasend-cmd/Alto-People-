@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
-import { usePublishPageTitle } from '@/lib/pageTitle';
+import { useHeroObserver, usePublishPageTitle } from '@/lib/pageTitle';
 import { Breadcrumb, type BreadcrumbSegment } from './Breadcrumb';
 
 /**
@@ -57,6 +57,11 @@ export function PageHeader({
     topbarTitle ?? (typeof title === 'string' ? title : null);
   usePublishPageTitle(published, breadcrumbs ?? null);
 
+  // While this heading is on screen the topbar keeps quiet; once it scrolls
+  // away the chrome picks the name up. One title at a time, like an app.
+  const heroRef = React.useRef<HTMLHeadingElement>(null);
+  useHeroObserver(heroRef);
+
   return (
     <header className={cn('mb-5 md:mb-7', className)}>
       {/* Phones read like an app's large-title header: no breadcrumb trail
@@ -81,7 +86,7 @@ export function PageHeader({
               opens the title block so it doesn't read as a one-liner.
               max-w on subtitle keeps line length scannable on wide
               monitors. */}
-          <h1 className="font-display text-hero md:text-hero-lg leading-[1.1] tracking-tight text-white">
+          <h1 ref={heroRef} className="font-display text-hero md:text-hero-lg leading-[1.1] tracking-tight text-white">
             {title}
           </h1>
           {subtitle && (

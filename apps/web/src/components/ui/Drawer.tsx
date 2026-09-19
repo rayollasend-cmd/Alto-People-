@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DiscardConfirm, useDiscardGuard } from './Dialog';
 
 /**
@@ -45,6 +46,12 @@ export function Drawer({
 }: DrawerProps) {
   // Dirty-guard — same contract as Dialog's confirmDiscard.
   const guard = useDiscardGuard(confirmDiscard, () => onOpenChange(false));
+  // Back closes the panel before it closes the page — the same dismissal
+  // the swipe gesture performs, guard and all.
+  useOverlayBackButton(open, () => {
+    if (guard.intercept()) return true;
+    onOpenChange(false);
+  });
   // Swipe-right-to-close — the native side-panel dismissal gesture.
   // Direction-locked: the gesture only claims the touch once it's clearly
   // horizontal, so vertical scrolling inside DrawerBody is untouched.

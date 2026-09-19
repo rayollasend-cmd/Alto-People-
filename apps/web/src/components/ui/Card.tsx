@@ -11,14 +11,31 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
    * cards.
    */
   interactive?: boolean;
+  /**
+   * Opt out of the entrance animation. Cards ease in by default — a 0.18s
+   * fade and 4px rise as they mount, which is what makes content arrive
+   * rather than blink into place.
+   *
+   * It used to be opt-in via `animate-enter`, and only the associate-facing
+   * pages opted in: an associate got staged entrances while a manager on
+   * the same build got hard cuts. Defaulting it on evens that out, since
+   * React keeps mounted rows across re-renders — only genuinely new content
+   * animates, not every refetch.
+   *
+   * Pass `animate={false}` where a card is already inside something that
+   * animates (so the two don't compound), or for a card that mounts on a
+   * fast timer.
+   */
+  animate?: boolean;
 }
 
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
-  ({ className, interactive, ...props }, ref) => (
+  ({ className, interactive, animate = true, ...props }, ref) => (
     <div
       ref={ref}
       className={cn(
         'rounded-lg border border-navy-secondary bg-navy text-white elev-1',
+        animate && 'animate-enter',
         interactive &&
           'transition-colors hover:border-steel hover:bg-navy-secondary/30 hover:elev-2 focus-within:border-steel cursor-pointer',
         className,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigation } from 'react-router-dom';
+import { useChunkLoading } from '@/lib/chunkLoading';
 
 /**
  * Top progress bar shown when route navigation is pending — typically
@@ -8,23 +8,23 @@ import { useNavigation } from 'react-router-dom';
  * a bar), then animate to ~80% via CSS while the chunk fetch is in
  * flight, then snap to 100% and fade out when it lands.
  *
- * react-router's `useNavigation()` reports `state === 'loading'` for both
- * lazy-chunk fetches and loader runs — exactly the cases where the user
- * is waiting and nothing visible has changed yet. With our CSS route
- * page transition the previous page stays on screen while the next chunk
- * loads, which is good UX except on a slow connection where it looks
- * like nothing happened. This bar fills that gap.
+ * The signal comes from `lib/chunkLoading`, which every lazy route reports
+ * into as its chunk is fetched. It used to come from react-router's
+ * `useNavigation()`, but no route in this app declares a `loader`, so that
+ * state never left 'idle' and this bar never rendered once. A chunk fetch
+ * is the real thing the user waits on, and on a slow connection it is the
+ * only sign that the tap registered at all.
  *
  * Brand-consistent: thin gold gradient. Sits above the topbar with a
  * subtle blur shadow for contrast against any background.
  */
 export function NavigationProgress() {
-  const navigation = useNavigation();
+  const loading = useChunkLoading();
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    if (navigation.state === 'loading') {
+    if (loading) {
       // Defer first paint until after 200ms — a fast cache hit will
       // resolve before then and the bar never appears.
       const showTimer = setTimeout(() => setVisible(true), 200);
@@ -53,7 +53,7 @@ export function NavigationProgress() {
     }
     setProgress(0);
     return undefined;
-  }, [navigation.state, visible]);
+  }, [loading, visible]);
 
   if (!visible && progress === 0) return null;
 

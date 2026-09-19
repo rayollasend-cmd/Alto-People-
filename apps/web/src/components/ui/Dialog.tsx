@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { Button } from './Button';
 
 /* ------------------------------------------------------- discard guard */
@@ -113,6 +114,12 @@ export interface DialogProps
 export function Dialog({ confirmDiscard, ...props }: DialogProps) {
   const { onOpenChange } = props;
   const guard = useDiscardGuard(confirmDiscard, () => onOpenChange?.(false));
+  // Back dismisses the sheet, not the page under it — and it goes through the
+  // same unsaved-changes guard as Esc, so a swipe can't throw away edits.
+  useOverlayBackButton(props.open === true, () => {
+    if (guard.intercept()) return true;
+    onOpenChange?.(false);
+  });
   return (
     <DiscardGuardContext.Provider value={{ onUserDismiss: guard.intercept }}>
       <DialogPrimitive.Root {...props} />

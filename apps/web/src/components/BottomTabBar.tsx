@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import type { Capability } from '@alto-people/shared';
 import { DASHBOARD_NAV, useActiveNavPath } from '@/lib/modules';
+import { prefetchRoute } from '@/lib/prefetch';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
@@ -194,6 +195,8 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
             key={tab.path}
             to={tab.path}
             aria-current={active ? 'page' : undefined}
+            // Warm the tab's chunk on touch-down — see MobileNav.
+            onTouchStart={() => prefetchRoute(tab.path)}
             className={cn(
               'flex-1 min-h-14 flex flex-col items-center justify-center gap-0.5',
               'transition-colors active:bg-navy-secondary/50',

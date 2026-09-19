@@ -115,6 +115,15 @@ export default {
           from: { transform: 'translateX(0)' },
           to: { transform: 'translateX(100%)' },
         },
+        // The nav drawer is anchored left, so it enters and leaves leftward.
+        'slide-in-from-left': {
+          from: { transform: 'translateX(-100%)' },
+          to: { transform: 'translateX(0)' },
+        },
+        'slide-out-to-left': {
+          from: { transform: 'translateX(0)' },
+          to: { transform: 'translateX(-100%)' },
+        },
         // Bottom-sheet dialogs on phones.
         'slide-up-in': {
           from: { transform: 'translateY(100%)' },
@@ -195,6 +204,8 @@ export default {
         'zoom-out': 'zoom-out 0.18s cubic-bezier(0.4,0,1,1)',
         'slide-in-from-right': 'slide-in-from-right 0.22s cubic-bezier(0.16,1,0.3,1)',
         'slide-out-to-right': 'slide-out-to-right 0.18s cubic-bezier(0.4,0,1,1)',
+        'slide-in-from-left': 'slide-in-from-left 0.22s cubic-bezier(0.16,1,0.3,1)',
+        'slide-out-to-left': 'slide-out-to-left 0.18s cubic-bezier(0.4,0,1,1)',
         'slide-up-in': 'slide-up-in 0.26s cubic-bezier(0.16,1,0.3,1)',
         'slide-down-out': 'slide-down-out 0.2s cubic-bezier(0.4,0,1,1)',
         'shimmer': 'shimmer 1.6s infinite',

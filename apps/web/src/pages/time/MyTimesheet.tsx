@@ -555,7 +555,7 @@ function DisputeDialog({
       toast.success(t('time.reportSent'), {
         action: {
           label: t('pay.viewInCases'),
-          onClick: () => navigate(`/hr-cases?return=${encodeURIComponent('/time')}`),
+          onClick: () => navigate(`/hr-cases?return=${encodeURIComponent('/time-attendance')}`),
         },
       });
       setMessage('');

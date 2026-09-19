@@ -322,10 +322,17 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
         </h2>
         <p className="text-sm text-silver mt-2 max-w-2xl leading-relaxed">
           This is your home base. Items needing your attention are pinned
-          at the top, followed by today's workforce metrics. Click any
-          tile to drill in. Drag a sidebar item into the topbar's
-          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-2xs font-mono">⌘K</kbd>) to jump anywhere in two
-          keystrokes.
+          at the top, followed by today's workforce metrics. Tap any tile
+          to drill in.
+          {/* The keyboard tip named a sidebar and a ⌘K that a phone has
+              neither of; the tab bar's own hint takes its place there. */}
+          <span className="hidden md:inline">
+            {' '}Drag a sidebar item into the topbar's command palette
+            (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-2xs font-mono">⌘K</kbd>) to jump anywhere in two keystrokes.
+          </span>
+          <span className="md:hidden">
+            {' '}The tabs along the bottom carry the rest — More opens everything else.
+          </span>
         </p>
       </CardContent>
     </Card>

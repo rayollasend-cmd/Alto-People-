@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
@@ -113,6 +114,8 @@ export function CommandPalette({
   }, [open]);
 
   const close = () => onOpenChange(false);
+  // Back dismisses the palette rather than the page it's floating over.
+  useOverlayBackButton(open, close);
 
   const q = search.trim().toLowerCase();
   const entityQueryActive = q.length >= 2;

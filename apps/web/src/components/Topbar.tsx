@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { ROLE_LABELS } from '@/lib/roles';
-import { usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
+import { useHeroHidden, usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -98,6 +98,10 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
   const breadcrumbs = usePageBreadcrumbs();
+  const heroHidden = useHeroHidden();
+  // Only a page that published a title has a hero to hand off from; the
+  // wordmark fallback must never fade.
+  const hasHero = !!pageTitle || !!(breadcrumbs && breadcrumbs.length > 0);
   const [signingOut, setSigningOut] = useState(false);
 
   const handleSignOut = async () => {
@@ -122,6 +126,20 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
           scroll. Prefer the breadcrumb trail when the page provided one;
           otherwise fall back to the title alone. Sourced from PageTitleProvider. */}
+      <div
+        // The handoff. While the page's own <h1> is on screen this block is
+        // faded out but still occupies its space, so nothing reflows when it
+        // arrives — and it's hidden from screen readers too, which would
+        // otherwise meet the page's name twice in a row. A page with no hero
+        // of its own (`hasHero` false) keeps its name here permanently.
+        aria-hidden={hasHero && !heroHidden}
+        className={cn(
+          'flex min-w-0 items-center transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+          hasHero && !heroHidden
+            ? 'pointer-events-none translate-y-1 opacity-0'
+            : 'translate-y-0 opacity-100',
+        )}
+      >
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav
           aria-label="Breadcrumb"
@@ -179,6 +197,7 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
           {pageTitle ?? 'Alto People'}
         </h2>
       )}
+      </div>
 
       <div className="flex-1 min-w-0" />
 

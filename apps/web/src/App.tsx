@@ -21,6 +21,7 @@ import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
 import { queryClient } from '@/lib/queryClient';
+import { trackChunk } from '@/lib/chunkLoading';
 import { listDirectory } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
@@ -45,8 +46,12 @@ function lazyNamed<T extends ComponentType<any>>(
   loader: () => Promise<Record<string, unknown>>,
   exportName: string
 ) {
+  // trackChunk publishes "a page is on the wire" so the chrome's top
+  // progress bar has something real to read. React Router can't tell us —
+  // no route here declares a loader, so its navigation state never leaves
+  // 'idle' and anything driving off it never fires.
   return lazy(() =>
-    loader().then((mod) => ({ default: mod[exportName] as T }))
+    trackChunk(loader).then((mod) => ({ default: mod[exportName] as T }))
   );
 }
 
@@ -211,7 +216,7 @@ registerPrefetch('/onboarding', () => import('@/pages/onboarding/OnboardingHome'
 registerPrefetch('/recruiting', () => import('@/pages/recruiting/RecruitingHome'));
 registerPrefetch('/people', () => import('@/pages/people/PeopleDirectory'));
 registerPrefetch('/clients', () => import('@/pages/clients/ClientsHome'));
-registerPrefetch('/time', () => import('@/pages/time/TimeHome'));
+registerPrefetch('/time-attendance', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
 registerPrefetch('/scheduling', () => import('@/pages/scheduling/SchedulingHome'));
 registerPrefetch('/approvals', () => import('@/pages/approvals/ApprovalsHome'));

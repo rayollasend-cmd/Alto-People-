@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
 import {
@@ -11,6 +11,8 @@ import {
 } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
+import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
+import { prefetchRoute } from '@/lib/prefetch';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useI18n, type Lang } from '@/lib/i18n';
@@ -72,6 +74,30 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
           (m) => m.group === 'core' && !m.key.startsWith('portal') && m.key !== 'region',
         );
 
+  // Stay mounted through the closing animation. `if (!open) return null`
+  // made the menu vanish between two frames — the one piece of chrome in
+  // the app that blinked out instead of leaving.
+  const [mounted, setMounted] = useState(open);
+  const [exiting, setExiting] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setExiting(false);
+      return;
+    }
+    if (!mounted) return;
+    setExiting(true);
+    const t = window.setTimeout(() => {
+      setMounted(false);
+      setExiting(false);
+    }, 180); // matches slide-out-to-left
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Back closes the menu instead of leaving the page behind it.
+  useOverlayBackButton(open, onClose);
+
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -115,11 +141,14 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 z-40 md:hidden animate-fade-in"
+      className={cn(
+        'fixed inset-0 z-40 lg:hidden',
+        exiting ? 'pointer-events-none animate-fade-out' : 'animate-fade-in',
+      )}
       role="dialog"
       aria-modal="true"
       aria-label="Main navigation"
@@ -131,7 +160,10 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
       />
       <aside
         ref={panelRef}
-        className="absolute left-0 top-0 h-full w-72 max-w-[calc(100vw-3rem)] bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
+        className={cn(
+          'absolute left-0 top-0 h-full w-72 max-w-[calc(100vw-3rem)] bg-navy border-r border-navy-secondary flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]',
+          exiting ? 'animate-slide-out-to-left' : 'animate-slide-in-from-left',
+        )}
       >
         <div className="px-4 min-h-14 flex items-center justify-between gap-3 border-b border-navy-secondary">
           <div className="flex items-center gap-2 min-w-0">
@@ -335,6 +367,11 @@ function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
     <Link
       to={to}
       aria-current={active ? 'page' : undefined}
+      // The phone is the slowest network in the fleet and was the only
+      // navigator that fetched its chunk cold. A touch starts ~100ms before
+      // the tap completes — enough to have the route in flight already.
+      onTouchStart={() => prefetchRoute(to)}
+      onMouseEnter={() => prefetchRoute(to)}
       className={cn(
         'relative mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
         'before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
