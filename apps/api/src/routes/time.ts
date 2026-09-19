@@ -76,6 +76,8 @@ import {
   buildAssociateTimesheetDetail,
   fileTimesheetWeek,
 } from '../lib/timesheetWeek.js';
+import { parseFieldglassList, workerKey } from '../lib/fieldglassDesk.js';
+import multer from 'multer';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
 
 export const timeRouter = Router();
@@ -3062,6 +3064,8 @@ timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
       clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
       shiftScopeWhere: scopeShifts(req.user!),
+      // The billed dollars are the contract's revenue side — never a store-bound role's.
+      showMoney: !isClientBoundedRole(req.user!.role),
     });
     res.json(result);
   } catch (err) {
@@ -3122,10 +3126,197 @@ timeRouter.post('/admin/timesheets/file', MANAGE, async (req, res, next) => {
         clientId: timesheetClientId(req.user!, parsed.data.clientId),
         scopeWhere: scopeTimeEntries(req.user!),
         shiftScopeWhere: scopeShifts(req.user!),
+        showMoney: !isClientBoundedRole(req.user!.role),
       },
       req.user!.id,
     );
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets/entered
+ * Body: { weekStart: ISO, associateId, clientId, entered }
+ *
+ * The Fieldglass desk's tick: this worker's week is entered in Fieldglass
+ * (or not, to undo) — with who did it and at how many hours, so two
+ * people never enter the same timesheet and a later change in hours shows.
+ * Only a worker registered in Fieldglass under that client can be entered.
+ */
+const EnteredInputSchema = z.object({
+  weekStart: z.string().datetime(),
+  associateId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  entered: z.boolean(),
+});
+
+timeRouter.post('/admin/timesheets/entered', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = EnteredInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const clientId = timesheetClientId(req.user!, parsed.data.clientId) ?? parsed.data.clientId;
+    const week = await buildTimesheetWeek(prisma, {
+      weekStart: new Date(parsed.data.weekStart),
+      clientId,
+      scopeWhere: scopeTimeEntries(req.user!),
+      shiftScopeWhere: scopeShifts(req.user!),
+    });
+    const row = week.rows.find((r) => r.associateId === parsed.data.associateId && r.clientId === clientId);
+    if (!row) throw new HttpError(404, 'not_on_sheet', 'That worker has no hours for this client that week.');
+    if (parsed.data.entered && !row.fieldglass?.registered) {
+      throw new HttpError(409, 'not_registered', `${row.worker} isn't registered in Fieldglass under this client yet — register them first.`);
+    }
+    const weekStart = new Date(`${week.weekStart}T00:00:00Z`);
+    const key = { weekStart_associateId_clientId: { weekStart, associateId: row.associateId, clientId } };
+    const data = parsed.data.entered
+      ? { enteredAt: new Date(), enteredById: req.user!.id, enteredHours: row.total }
+      : { enteredAt: null, enteredById: null, enteredHours: null };
+    await prisma.fieldglassTimesheet.upsert({
+      where: key,
+      create: { weekStart, associateId: row.associateId, clientId, ...data },
+      update: data,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId,
+        action: parsed.data.entered ? 'timesheet.fieldglass_entered' : 'timesheet.fieldglass_unentered',
+        entityType: 'Associate',
+        entityId: row.associateId,
+        metadata: { weekStart: week.weekStart, hours: row.total },
+      },
+      'timesheet.fieldglass',
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets/fieldglass-import (multipart: file, clientId?)
+ *
+ * The buyer's side, brought back: the Timesheets list exported from
+ * Fieldglass (.xlsx or .csv — Status, ID, Revision, Worker, Site, End,
+ * Total…). Each row is matched to Alto's worker for that week — by Worker
+ * ID when the list has one, else by name (and site) — and its status,
+ * timesheet ID, revision and hours are recorded. Returns what matched,
+ * what didn't, and where Fieldglass's hours differ from Alto's.
+ */
+const fgUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+timeRouter.post('/admin/timesheets/fieldglass-import', MANAGE, fgUpload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) throw new HttpError(400, 'no_file', 'Attach the Timesheets list exported from Fieldglass.');
+    const list = await parseFieldglassList(req.file.buffer, req.file.originalname);
+    if (list.length === 0) {
+      throw new HttpError(
+        400,
+        'nothing_found',
+        'No timesheet rows found — export the Timesheets list from Fieldglass (with Worker, End and Total columns) and try again.',
+      );
+    }
+    const requested = typeof req.body?.clientId === 'string' && req.body.clientId ? req.body.clientId : undefined;
+    const clientId = timesheetClientId(req.user!, requested);
+    // Each week in the file (by its week-ending Friday), newest eight.
+    const weekStarts = [
+      ...new Set(
+        list.map((r) => {
+          const end = new Date(`${r.weekEnd}T12:00:00Z`);
+          end.setUTCDate(end.getUTCDate() - 6);
+          return end.toISOString().slice(0, 10);
+        }),
+      ),
+    ]
+      .sort()
+      .slice(-8);
+    const weeks = new Map<string, Awaited<ReturnType<typeof buildTimesheetWeek>>>();
+    for (const ws of weekStarts) {
+      weeks.set(
+        ws,
+        await buildTimesheetWeek(prisma, {
+          weekStart: new Date(`${ws}T12:00:00Z`),
+          clientId,
+          scopeWhere: scopeTimeEntries(req.user!),
+          shiftScopeWhere: scopeShifts(req.user!),
+        }),
+      );
+    }
+    const regs = await prisma.fieldglassRegistration.findMany({
+      where: { workerId: { not: null } },
+      select: { associateId: true, workerId: true },
+    });
+    const byWorkerId = new Map(regs.map((r) => [r.workerId!.toLowerCase(), r.associateId]));
+    const now = new Date();
+    let matched = 0;
+    const unmatched: Array<{ worker: string; site: string | null; weekEnd: string; hours: number; status: string }> = [];
+    const variances: Array<{ associateId: string; worker: string; weekEnd: string; alto: number; fieldglass: number }> = [];
+    const statuses: Record<string, number> = {};
+    for (const fg of list) {
+      const end = new Date(`${fg.weekEnd}T12:00:00Z`);
+      end.setUTCDate(end.getUTCDate() - 6);
+      const week = weeks.get(end.toISOString().slice(0, 10));
+      const byId = fg.workerId ? byWorkerId.get(fg.workerId.toLowerCase()) : undefined;
+      const candidates = (week?.rows ?? []).filter(
+        (r) => r.clientId && (byId ? r.associateId === byId : workerKey(r.worker) === workerKey(fg.worker)),
+      );
+      const row =
+        candidates.length > 1 && fg.site
+          ? (candidates.find((c) => c.site.toLowerCase() === fg.site!.toLowerCase()) ?? candidates[0])
+          : candidates[0];
+      if (!week || !row?.clientId) {
+        unmatched.push({ worker: fg.worker, site: fg.site, weekEnd: fg.weekEnd, hours: fg.hours, status: fg.statusText });
+        continue;
+      }
+      matched += 1;
+      if (fg.status) statuses[fg.status] = (statuses[fg.status] ?? 0) + 1;
+      const weekStart = new Date(`${week.weekStart}T00:00:00Z`);
+      const data = {
+        fgStatus: fg.status,
+        fgTimesheetId: fg.timesheetId,
+        fgRevision: fg.revision,
+        fgHours: fg.hours,
+        fgSyncedAt: now,
+      };
+      await prisma.fieldglassTimesheet.upsert({
+        where: { weekStart_associateId_clientId: { weekStart, associateId: row.associateId, clientId: row.clientId } },
+        create: { weekStart, associateId: row.associateId, clientId: row.clientId, ...data },
+        update: data,
+      });
+      // The list names the Worker ID Fieldglass gave them: keep it.
+      if (fg.workerId) {
+        await prisma.fieldglassRegistration.updateMany({
+          where: { associateId: row.associateId, clientId: row.clientId, workerId: null },
+          data: { workerId: fg.workerId },
+        });
+      }
+      if (Math.abs(fg.hours - row.total) >= 0.01) {
+        variances.push({ associateId: row.associateId, worker: row.worker, weekEnd: fg.weekEnd, alto: row.total, fieldglass: fg.hours });
+      }
+    }
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: clientId ?? null,
+        action: 'timesheet.fieldglass_imported',
+        entityType: 'TimesheetFiling',
+        entityId: weekStarts[weekStarts.length - 1] ?? 'none',
+        metadata: { rows: list.length, matched, unmatched: unmatched.length, variances: variances.length, file: req.file.originalname },
+      },
+      'timesheet.fieldglass',
+    );
+    res.json({
+      weeks: weekStarts,
+      rows: list.length,
+      matched,
+      statuses,
+      unmatched: unmatched.slice(0, 50),
+      variances,
+    });
   } catch (err) {
     next(err);
   }

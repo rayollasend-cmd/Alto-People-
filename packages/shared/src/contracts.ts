@@ -1398,8 +1398,32 @@ export type TimesheetWeekInput = z.infer<typeof TimesheetWeekInputSchema>;
 export const TimesheetRowStatusSchema = z.enum(['READY', 'PENDING']);
 export type TimesheetRowStatus = z.infer<typeof TimesheetRowStatusSchema>;
 
+/** A worker's timesheet as Fieldglass has it — the desk's tracking. */
+export const FieldglassStatusSchema = z.enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'INVOICED']);
+export type FieldglassStatus = z.infer<typeof FieldglassStatusSchema>;
+
+export const TimesheetFieldglassSchema = z.object({
+  /** Registered in Fieldglass under this row's client. */
+  registered: z.boolean(),
+  /** The Fieldglass Worker ID, when finance recorded it. */
+  workerId: z.string().nullable(),
+  /** Alto entered this week into Fieldglass — when, by whom, at how many hours. */
+  enteredAt: z.string().nullable(),
+  enteredBy: z.string().nullable(),
+  enteredHours: z.number().nullable(),
+  /** From the imported Fieldglass list: its status, timesheet ID, revision, hours. */
+  status: FieldglassStatusSchema.nullable(),
+  timesheetId: z.string().nullable(),
+  revision: z.number().int().nullable(),
+  hours: z.number().nullable(),
+  syncedAt: z.string().nullable(),
+});
+export type TimesheetFieldglass = z.infer<typeof TimesheetFieldglassSchema>;
+
 export const TimesheetRowSchema = z.object({
   associateId: UuidSchema,
+  /** The client (Fieldglass SOW) this row bills to; null for client-less time. */
+  clientId: UuidSchema.nullable().optional(),
   /** "Last, First" — matches the Fieldglass Worker column. */
   worker: z.string(),
   /** Worksite / client label, shown in the Fieldglass Site column. */
@@ -1412,6 +1436,8 @@ export const TimesheetRowSchema = z.object({
   total: z.number().nonnegative(),
   /** READY = all of this worker's week is approved; PENDING = some awaits review. */
   status: TimesheetRowStatusSchema,
+  /** Where this worker's week stands in Fieldglass (null: no client). */
+  fieldglass: TimesheetFieldglassSchema.nullable().optional(),
 });
 export type TimesheetRow = z.infer<typeof TimesheetRowSchema>;
 
@@ -1488,6 +1514,7 @@ export const TimesheetIssueKindSchema = z.enum([
   'MISSING_CLOCKOUT', // an entry never clocked out (still ACTIVE)
   'PENDING_APPROVAL', // approved-only hours ship; these await approval
   'OVER_HOURS', // implausibly high weekly total — review before filing
+  'NOT_IN_FIELDGLASS', // hours for a worker not registered under that client — unbillable until added
 ]);
 export type TimesheetIssueKind = z.infer<typeof TimesheetIssueKindSchema>;
 
@@ -1552,6 +1579,38 @@ export const TimesheetWeekResponseSchema = z.object({
   scheduleComparison: z.array(TimesheetScheduleRowSchema),
   /** Filing record for this week, with drift since — null if never filed. */
   filing: TimesheetFilingInfoSchema.nullable(),
+  /** The week in Fieldglass: the deadline, entry progress, buyer statuses,
+   *  and — scoped to one client with a bill rate — the money. */
+  fieldglass: z
+    .object({
+      /** When the week's timesheets are due in Fieldglass. */
+      dueAt: z.string(),
+      /** Rows that bill to a client. */
+      workers: z.number().int().nonnegative(),
+      entered: z.number().int().nonnegative(),
+      notRegistered: z.number().int().nonnegative(),
+      submitted: z.number().int().nonnegative(),
+      approved: z.number().int().nonnegative(),
+      rejected: z.number().int().nonnegative(),
+      /** Rows whose Fieldglass hours differ from Alto's. */
+      variances: z.number().int().nonnegative(),
+      /** When the buyer's list was last imported. */
+      syncedAt: z.string().nullable(),
+      /** One client with a bill rate: approved (billable now), awaiting
+       *  (entered or submitted, not approved), at risk (not registered,
+       *  rejected, or not entered). Null otherwise, and never for a
+       *  store-bound role. */
+      money: z
+        .object({
+          billRate: z.number().nonnegative(),
+          approved: z.number().nonnegative(),
+          awaiting: z.number().nonnegative(),
+          atRisk: z.number().nonnegative(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .optional(),
   timeZone: z.string(),
   generatedAt: z.string(),
 });

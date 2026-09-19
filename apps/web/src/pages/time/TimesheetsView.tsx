@@ -25,7 +25,9 @@ import {
   exportTimesheetXlsx,
   getAssociateTimesheetDetail,
   fileTimesheetWeek,
+  markFieldglassEntered,
 } from '@/lib/timeApi';
+import { EnterInFieldglass, FieldglassStatusCell, FieldglassStrip } from './FieldglassDesk';
 import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
@@ -99,6 +101,7 @@ const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
   MISSING_CLOCKOUT: 'Missing clock-out',
   PENDING_APPROVAL: 'Pending approval',
   OVER_HOURS: 'Over hours',
+  NOT_IN_FIELDGLASS: 'Not in Fieldglass',
 };
 
 /**
@@ -157,6 +160,9 @@ export function TimesheetsView() {
 
   const [showSchedule, setShowSchedule] = useState(false);
   const [search, setSearch] = useState('');
+  // The Fieldglass desk: enter mode, and a row's "entered" tick in flight.
+  const [entering, setEntering] = useState(false);
+  const [ticking, setTicking] = useState<string | null>(null);
 
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
   // Bounded viewers start (and stay) pinned to their client; everyone else
@@ -378,7 +384,24 @@ export function TimesheetsView() {
     }
   };
 
+  const toggleEntered = async (r: NonNullable<typeof data>['rows'][number], entered: boolean) => {
+    if (!r.clientId) return;
+    setTicking(`${r.associateId}|${r.clientId}`);
+    try {
+      await markFieldglassEntered({ weekStart: weekStart.toISOString(), associateId: r.associateId, clientId: r.clientId, entered });
+      await load({ silent: true });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update it.');
+    } finally {
+      setTicking(null);
+    }
+  };
+
   const allRows = data?.rows ?? [];
+  // ST / OT / DT / NB stay zero under a flat "Others" SOW — shown only when
+  // a week actually uses them (the export always carries every column).
+  const showBuckets = allRows.some((r) => r.st > 0 || r.ot > 0 || r.dt > 0 || r.nb > 0);
+  const cols = showBuckets ? 13 : 9;
   // Client-side name/site filter — the week's rows are already all loaded.
   // Token match ("aaliyah nelson" finds "Nelson, Aaliyah") since Fieldglass
   // names are Last, First. Copy/Export/filing stay on the FULL week: those
@@ -529,6 +552,15 @@ export function TimesheetsView() {
         </div>
       </div>
 
+      {data && (
+        <FieldglassStrip
+          data={data}
+          clientId={clientArg}
+          onEnter={() => setEntering(true)}
+          onImported={() => void load({ silent: true })}
+        />
+      )}
+
       {data?.filing &&
         (data.filing.drift.length > 0 ? (
           <div className="rounded-md border border-gold/40 bg-gold/10 p-3">
@@ -637,26 +669,31 @@ export function TimesheetsView() {
                 <TableHead className="hidden lg:table-cell">ID</TableHead>
                 <TableHead className="hidden lg:table-cell text-right">Revision</TableHead>
                 <TableHead>Associate</TableHead>
+                <TableHead>Fieldglass</TableHead>
                 <TableHead className="hidden sm:table-cell">Site</TableHead>
                 <TableHead className="hidden lg:table-cell">End</TableHead>
-                <TableHead className="hidden md:table-cell text-right">ST</TableHead>
-                <TableHead className="hidden md:table-cell text-right">OT</TableHead>
-                <TableHead className="hidden md:table-cell text-right">DT</TableHead>
+                {showBuckets && (
+                  <>
+                    <TableHead className="hidden md:table-cell text-right">ST</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">OT</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">DT</TableHead>
+                  </>
+                )}
                 <TableHead className="hidden md:table-cell text-right">Others</TableHead>
-                <TableHead className="hidden md:table-cell text-right">NB</TableHead>
+                {showBuckets && <TableHead className="hidden md:table-cell text-right">NB</TableHead>}
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="p-0">
+                  <TableCell colSpan={cols} className="p-0">
                     <SkeletonRows count={8} />
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12}>
+                  <TableCell colSpan={cols}>
                     {allRows.length > 0 ? (
                       <EmptyState
                         title="No associate matches"
@@ -678,10 +715,14 @@ export function TimesheetsView() {
                         {r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
                       </Badge>
                     </TableCell>
-                    {/* ID + Revision are Fieldglass-assigned on entry — shown to keep
-                        the columns aligned with the Fieldglass list for eyeballing. */}
-                    <TableCell className="hidden lg:table-cell text-silver/50">—</TableCell>
-                    <TableCell className="hidden lg:table-cell text-right tabular-nums text-silver/60">0</TableCell>
+                    {/* ID + Revision are Fieldglass's — filled from the imported
+                        Fieldglass list, so the columns match it line for line. */}
+                    <TableCell className="hidden lg:table-cell font-mono text-xs text-silver">
+                      {r.fieldglass?.timesheetId ?? <span className="text-silver/50">—</span>}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums text-silver/60">
+                      {r.fieldglass?.revision ?? 0}
+                    </TableCell>
                     <TableCell className="font-medium">
                       <button
                         type="button"
@@ -691,14 +732,32 @@ export function TimesheetsView() {
                       >
                         {r.worker}
                       </button>
+                      {r.fieldglass?.workerId && (
+                        <div className="font-mono text-xs2 font-normal text-silver/70">{r.fieldglass.workerId}</div>
+                      )}
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-silver">{r.site}</TableCell>
+                    <TableCell>
+                      <FieldglassStatusCell
+                        row={r}
+                        busy={ticking === `${r.associateId}|${r.clientId}`}
+                        onToggle={(entered) => void toggleEntered(r, entered)}
+                      />
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell max-w-[12rem] truncate text-silver" title={r.site}>
+                      {r.site}
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell tabular-nums text-silver">{data?.weekEnding}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
+                    {showBuckets && (
+                      <>
+                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
+                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
+                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
+                      </>
+                    )}
                     <TableCell className="hidden md:table-cell text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
+                    {showBuckets && (
+                      <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
+                    )}
                     <TableCell className="text-right tabular-nums font-semibold text-white">{hoursCell(r.total)}</TableCell>
                   </TableRow>
                 ))
@@ -787,6 +846,16 @@ export function TimesheetsView() {
           · {data.totalHours.toFixed(2)} total hours · week ending {data.weekEnding}. Hours are net
           of unpaid breaks, billed flat under &ldquo;Others&rdquo; per the SOW.
         </p>
+      )}
+
+      {data && (
+        <EnterInFieldglass
+          open={entering}
+          onClose={() => setEntering(false)}
+          data={data}
+          weekStartIso={weekStart.toISOString()}
+          onChanged={() => void load({ silent: true })}
+        />
       )}
 
       {/* Fieldglass individual-timesheet drill-down */}

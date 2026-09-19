@@ -667,6 +667,7 @@ model Client {
   shifts                 Shift[]
   statements             ClientStatement[]
   fieldglassRegistrations FieldglassRegistration[]
+  fieldglassTimesheets   FieldglassTimesheet[]
   clientRequests         ClientRequest[]
   clientAcknowledgements ClientAcknowledgement[]
   conversations          Conversation[]
@@ -914,10 +915,44 @@ model FieldglassRegistration {
   clientId    String?  @db.Uuid
   addedById   String?  @db.Uuid
   addedAt     DateTime @default(now()) @db.Timestamptz(6)
+  /// The Fieldglass Worker ID the buyer's system assigned ("WKR00012345") —
+  /// what ties Alto's hours to the worker's Fieldglass account.
+  workerId    String?  @db.VarChar(40)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   addedBy   User?     @relation("FieldglassRegistrar", fields: [addedById], references: [id], onDelete: SetNull)
+}
+
+/// One worker's Fieldglass timesheet for one Sat→Fri week at one client:
+/// Alto's side (entered into Fieldglass, when, by whom, at how many hours)
+/// and Fieldglass's side (its status, timesheet ID, revision and hours —
+/// from the buyer's timesheet list, imported back). Approved is what the
+/// buyer invoices; a rejection or a difference in hours is money at risk.
+model FieldglassTimesheet {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The Saturday that starts the week (store-local).
+  weekStart     DateTime  @db.Date
+  associateId   String    @db.Uuid
+  clientId      String    @db.Uuid
+  enteredAt     DateTime? @db.Timestamptz(6)
+  enteredById   String?   @db.Uuid
+  /// Alto's approved hours when it was entered.
+  enteredHours  Decimal?  @db.Decimal(8, 2)
+  /// DRAFT | SUBMITTED | APPROVED | REJECTED | INVOICED (from the import).
+  fgStatus      String?   @db.VarChar(20)
+  fgTimesheetId String?   @db.VarChar(40)
+  fgRevision    Int?
+  fgHours       Decimal?  @db.Decimal(8, 2)
+  fgSyncedAt    DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([weekStart, associateId, clientId])
+  @@index([weekStart, clientId])
 }
 
 // The client in the loop: a portal user's structured ask — staffing,
@@ -1636,6 +1671,7 @@ model Associate {
   kbFeedback               KbFeedback[]
   // Finance's Fieldglass worklist completion marker.
   fieldglassRegistration   FieldglassRegistration?
+  fieldglassTimesheets     FieldglassTimesheet[]
   // Phase 125 — new-hire ramp plans.
   rampPlans                RampPlan[]
   // Phase 127 — tuition reimbursement requests.

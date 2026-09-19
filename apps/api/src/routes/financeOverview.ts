@@ -12,6 +12,8 @@ import {
 } from '../lib/timeAnomalies.js';
 import { nextPayDate } from '../lib/payday.js';
 import { notifyUser } from '../lib/notify.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -270,6 +272,7 @@ financeOverviewRouter.get(
         select: {
           associateId: true,
           clientId: true,
+          workerId: true,
           client: { select: { name: true } },
           associate: {
             select: {
@@ -308,6 +311,7 @@ financeOverviewRouter.get(
           name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
           clientName: r.client?.name ?? null,
           fromClientName: null as string | null,
+          workerId: r.workerId,
           position: null as string | null,
           firstShiftAt: null as string | null,
           approvedAt: null as string | null,
@@ -336,6 +340,7 @@ financeOverviewRouter.get(
             name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
             clientName: cur.name,
             fromClientName: r.client?.name ?? null,
+            workerId: r.workerId,
             position: null as string | null,
             firstShiftAt: null as string | null,
             approvedAt: null as string | null,
@@ -383,6 +388,7 @@ financeOverviewRouter.get(
               const started = shift.client?.name ?? a.client?.name ?? null;
               return now && started && now !== started ? started : null;
             })() as string | null,
+            workerId: null as string | null,
             position: shift.position as string | null,
             firstShiftAt: shift.startsAt.toISOString() as string | null,
             approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
@@ -397,15 +403,83 @@ financeOverviewRouter.get(
         })
         .filter((row): row is NonNullable<typeof row> => row !== null);
 
+      // HOURS ALREADY WORKED by someone not in Fieldglass under that client
+      // — the costliest add: those hours can't be billed until they are.
+      // Not tied to the approval window or a scheduled shift: a walk-in or
+      // an old hire working now is found here too.
+      const workedSince = new Date(now.getTime() - 21 * DAY_MS);
+      const workedEntries = await prisma.timeEntry.findMany({
+        where: {
+          clockInAt: { gte: workedSince },
+          status: { in: ['APPROVED', 'COMPLETED'] },
+          clientId: { not: null },
+          clockOutAt: { not: null },
+        },
+        select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true },
+        take: 5000,
+      });
+      const workedBy = new Map<string, { associateId: string; clientId: string; hours: number; firstAt: Date }>();
+      for (const e of workedEntries) {
+        const k = `${e.associateId}|${e.clientId}`;
+        const row = workedBy.get(k) ?? { associateId: e.associateId, clientId: e.clientId!, hours: 0, firstAt: e.clockInAt };
+        row.hours += (e.clockOutAt!.getTime() - e.clockInAt.getTime()) / 3_600_000;
+        if (e.clockInAt < row.firstAt) row.firstAt = e.clockInAt;
+        workedBy.set(k, row);
+      }
+      const regByAssociate = new Map(regs.map((r) => [r.associateId, r]));
+      const unregistered = [...workedBy.values()].filter((w) => {
+        const reg = regByAssociate.get(w.associateId);
+        // Registered elsewhere is the transfer queue's; not registered at all is ours.
+        return !reg && w.hours > 0;
+      });
+      const unbilledHours = new Map<string, number>();
+      if (unregistered.length > 0) {
+        const [people, clientNames] = await Promise.all([
+          prisma.associate.findMany({
+            where: { id: { in: unregistered.map((u) => u.associateId) }, deletedAt: null, separatedAt: null },
+            select: { id: true, firstName: true, lastName: true, email: true, phone: true, hireDate: true },
+          }),
+          prisma.client.findMany({
+            where: { id: { in: [...new Set(unregistered.map((u) => u.clientId))] } },
+            select: { id: true, name: true },
+          }),
+        ]);
+        const person = new Map(people.map((p) => [p.id, p]));
+        const clientName = new Map(clientNames.map((c) => [c.id, c.name]));
+        for (const u of unregistered) {
+          const p = person.get(u.associateId);
+          if (!p) continue;
+          const hours = Math.round(u.hours * 10) / 10;
+          unbilledHours.set(u.associateId, (unbilledHours.get(u.associateId) ?? 0) + hours);
+          if (addRows.some((r) => r.associateId === u.associateId)) continue;
+          addRows.push({
+            kind: 'add' as const,
+            associateId: u.associateId,
+            name: `${p.firstName} ${p.lastName}`.trim(),
+            clientName: clientName.get(u.clientId) ?? '—',
+            fromClientName: null,
+            workerId: null,
+            position: null,
+            firstShiftAt: u.firstAt.toISOString(),
+            approvedAt: null,
+            email: p.email,
+            phone: p.phone,
+            hireDate: p.hireDate ? p.hireDate.toISOString().slice(0, 10) : null,
+          });
+        }
+      }
+
       // Close-outs outrank transfers outrank adds (a dead account for a
-      // departed worker is the worst kind of open baton); within each,
-      // soonest shift first.
+      // departed worker is the worst kind of open baton); among adds,
+      // someone already working unbilled comes first; then soonest shift.
       const KIND_RANK = { close: 0, transfer: 1, add: 2 } as const;
       const shiftTime = (v: string | null) =>
         v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
       const fieldglassQueue = [...closeRows, ...transferRows, ...addRows]
+        .map((r) => ({ ...r, hoursUnbilled: unbilledHours.get(r.associateId) ?? 0 }))
         .sort((x, y) => {
           if (x.kind !== y.kind) return KIND_RANK[x.kind] - KIND_RANK[y.kind];
+          if ((y.hoursUnbilled > 0 ? 1 : 0) !== (x.hoursUnbilled > 0 ? 1 : 0)) return y.hoursUnbilled > 0 ? 1 : -1;
           return shiftTime(x.firstShiftAt) - shiftTime(y.firstShiftAt);
         })
         .slice(0, 12);
@@ -488,6 +562,17 @@ financeOverviewRouter.get(
   },
 );
 
+/** A Fieldglass Worker ID — letters, digits and dashes ("WKR00012345"). */
+const WorkerIdSchema = z.object({
+  workerId: z
+    .string()
+    .trim()
+    .max(40)
+    .regex(/^[A-Za-z0-9._-]*$/, 'Letters, numbers and dashes only.')
+    .transform((v) => v || undefined)
+    .optional(),
+});
+
 /** Mark a worker as registered in Fieldglass — clears them from the
  *  queue with attribution. Idempotent (re-marking keeps the first stamp). */
 financeOverviewRouter.post(
@@ -507,20 +592,83 @@ financeOverviewRouter.post(
       // what clears the transfer row from the queue.
       const { currentClientOf } = await import('../lib/fieldglassNotify.js');
       const current = await currentClientOf(associate.id);
+      // The Worker ID Fieldglass gave them — what ties our hours to their
+      // account. Optional here (it can come later, or from the import).
+      const { workerId } = WorkerIdSchema.parse(req.body ?? {});
+      const existing = await prisma.fieldglassRegistration.findUnique({
+        where: { associateId: associate.id },
+        select: { clientId: true, workerId: true },
+      });
+      // Same client: keep the ID on file unless a new one is given. A
+      // transfer is a new Fieldglass account — its ID, or none yet.
+      const sameClient = !!existing && existing.clientId === (current?.id ?? null);
       await prisma.fieldglassRegistration.upsert({
         where: { associateId: associate.id },
         create: {
           associateId: associate.id,
           addedById: req.user!.id,
           clientId: current?.id ?? null,
+          workerId: workerId ?? null,
         },
         update: {
           addedById: req.user!.id,
           addedAt: new Date(),
           clientId: current?.id ?? null,
+          workerId: workerId ?? (sameClient ? existing!.workerId : null),
         },
       });
       res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /finance/fieldglass/:associateId/packet — everything the Fieldglass
+ * "new worker" form asks for, in its order, and what's still missing. Date
+ * of birth and SSN last 4 ride along, so every look is audited.
+ */
+financeOverviewRouter.get(
+  '/finance/fieldglass/:associateId/packet',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const packet = await buildFieldglassPacket(z.string().uuid().parse(req.params.associateId));
+      if (!packet) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'associate.pii_viewed',
+          entityType: 'Associate',
+          entityId: packet.associateId,
+          metadata: { purpose: 'fieldglass_registration', fields: ['dob', 'ssnLast4', 'address'] },
+        },
+        'associate.pii',
+      );
+      res.json({ packet });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** PATCH /finance/fieldglass/:associateId — { workerId }: record (or fix)
+ *  the Fieldglass Worker ID on a registered worker. */
+financeOverviewRouter.patch(
+  '/finance/fieldglass/:associateId',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const { workerId } = WorkerIdSchema.parse(req.body ?? {});
+      const updated = await prisma.fieldglassRegistration.updateMany({
+        where: { associateId: z.string().uuid().parse(req.params.associateId) },
+        data: { workerId: workerId ?? null },
+      });
+      if (updated.count === 0) {
+        throw new HttpError(409, 'not_registered', 'Mark them added to Fieldglass first.');
+      }
+      res.json({ ok: true, workerId: workerId ?? null });
     } catch (err) {
       next(err);
     }

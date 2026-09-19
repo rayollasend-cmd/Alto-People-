@@ -17,6 +17,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { FieldglassPacketPanel, MarkAddedDialog } from './fieldglass/FieldglassPacket';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
@@ -80,6 +81,10 @@ interface FinanceOverview {
     name: string;
     clientName: string | null;
     fromClientName: string | null;
+    /** Their Fieldglass Worker ID (transfers and close-outs). */
+    workerId?: string | null;
+    /** Hours already worked (last 3 weeks) that can't be billed until added. */
+    hoursUnbilled?: number;
     position: string | null;
     firstShiftAt: string | null;
     approvedAt: string | null;
@@ -128,11 +133,15 @@ export function FinanceDashboard() {
   const refreshOverview = () =>
     queryClient.invalidateQueries({ queryKey: ['finance', 'overview'] });
 
+  // "Mark added" asks for the Worker ID Fieldglass gave them first.
+  const [adding, setAdding] = useState<{ associateId: string; name: string } | null>(null);
+
   // Mark added → row leaves the queue; the toast carries a real Undo.
-  const markFieldglass = async (associateId: string) => {
+  const markFieldglass = async (associateId: string, workerId?: string) => {
     setFgBusy(associateId);
     try {
-      await apiFetch(`/finance/fieldglass/${associateId}/done`, { method: 'POST' });
+      await apiFetch(`/finance/fieldglass/${associateId}/done`, { method: 'POST', body: workerId ? { workerId } : {} });
+      setAdding(null);
       void refreshOverview();
       toast.success(t('fin.fgMarked'), {
         action: {
@@ -511,6 +520,14 @@ export function FinanceDashboard() {
                                 </span>
                               )}
                               {w.kind === 'transfer' && ' · '}
+                              {(w.hoursUnbilled ?? 0) > 0 && (
+                                <>
+                                  <span className="font-medium text-alert">
+                                    {t('fin.fgUnbilled', { hours: w.hoursUnbilled!.toFixed(1) })}
+                                  </span>
+                                  {' · '}
+                                </>
+                              )}
                               {/* Moved before being added to Fieldglass —
                                   add under where they work now. */}
                               {w.kind === 'add' && w.fromClientName && (
@@ -545,9 +562,9 @@ export function FinanceDashboard() {
                         loading={fgBusy === w.associateId}
                         disabled={fgBusy !== null}
                         onClick={() =>
-                          void (w.kind === 'close'
-                            ? markFieldglassClosed(w.associateId)
-                            : markFieldglass(w.associateId))
+                          w.kind === 'close'
+                            ? void markFieldglassClosed(w.associateId)
+                            : setAdding({ associateId: w.associateId, name: w.name })
                         }
                       >
                         {w.kind === 'close' ? t('fin.fgMarkClosed') : t('fin.fgMark')}
@@ -556,37 +573,8 @@ export function FinanceDashboard() {
                     {open && (
                       <div className="grid animate-unfold">
                         <div className="overflow-hidden">
-                          <div className="ml-[52px] mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
-                            {w.email && (
-                              <div>
-                                <span className="text-silver/60">{t('fin.fgEmail')}: </span>
-                                {/* select-all: one tap selects the value for
-                                    copying straight into Fieldglass. */}
-                                <span className="select-all text-white">{w.email}</span>
-                              </div>
-                            )}
-                            {w.phone && (
-                              <div>
-                                <span className="text-silver/60">{t('fin.fgPhone')}: </span>
-                                <span className="select-all text-white tabular-nums">
-                                  {w.phone}
-                                </span>
-                              </div>
-                            )}
-                            {w.hireDate && (
-                              <div>
-                                <span className="text-silver/60">{t('fin.fgStart')}: </span>
-                                <span className="select-all text-white tabular-nums">
-                                  {fmtDate(w.hireDate)}
-                                </span>
-                              </div>
-                            )}
-                            <div>
-                              <span className="text-silver/60">{t('fin.fgClient')}: </span>
-                              <span className="select-all text-white">
-                                {w.clientName ?? '—'}
-                              </span>
-                            </div>
+                          <div className="ml-[52px] mt-2">
+                            <FieldglassPacketPanel associateId={w.associateId} kind={w.kind} />
                           </div>
                           <Link
                             to={`/people?associateId=${w.associateId}&return=${encodeURIComponent('/')}`}
@@ -605,6 +593,15 @@ export function FinanceDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {adding && (
+        <MarkAddedDialog
+          name={adding.name}
+          busy={fgBusy === adding.associateId}
+          onConfirm={(workerId) => void markFieldglass(adding.associateId, workerId)}
+          onClose={() => setAdding(null)}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* ---- The chase list, as bars -------------------------------- */}

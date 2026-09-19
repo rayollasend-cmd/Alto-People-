@@ -489,6 +489,44 @@ export function fileTimesheetWeek(
   });
 }
 
+/** The Fieldglass desk's tick: this worker's week is entered in Fieldglass
+ *  (entered: false undoes it). */
+export function markFieldglassEntered(body: {
+  weekStart: string;
+  associateId: string;
+  clientId: string;
+  entered: boolean;
+}): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>('/time/admin/timesheets/entered', { method: 'POST', body });
+}
+
+/** What the buyer's Fieldglass list said, matched to Alto's weeks. */
+export interface FieldglassImportResult {
+  weeks: string[];
+  rows: number;
+  matched: number;
+  statuses: Record<string, number>;
+  unmatched: Array<{ worker: string; site: string | null; weekEnd: string; hours: number; status: string }>;
+  variances: Array<{ associateId: string; worker: string; weekEnd: string; alto: number; fieldglass: number }>;
+}
+
+/** Import the Timesheets list exported from Fieldglass (.xlsx or .csv). */
+export async function importFieldglassList(file: File, clientId?: string): Promise<FieldglassImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  if (clientId) form.append('clientId', clientId);
+  const res = await fetch('/api/time/admin/timesheets/fieldglass-import', {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `Import failed (${res.status})`);
+  }
+  return (await res.json()) as FieldglassImportResult;
+}
+
 /** Download the same week as an .xlsx that mirrors the Fieldglass list view. */
 export async function exportTimesheetXlsx(
   body: TimesheetWeekInput

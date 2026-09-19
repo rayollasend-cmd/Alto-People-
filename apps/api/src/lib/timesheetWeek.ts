@@ -30,6 +30,7 @@ import { paidMinutesForRange } from '@alto-people/shared';
 import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js';
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
+import { attachFieldglass } from './fieldglassDesk.js';
 
 /**
  * The single Fieldglass bucket every worked hour lands in for the current
@@ -103,6 +104,7 @@ export function toUsDate(iso: string): string {
 
 interface RowAccumulator {
   associateId: string;
+  clientId: string | null;
   worker: string;
   site: string;
   minutes: number;
@@ -132,6 +134,7 @@ export function aggregateTimesheetRows(
     if (!g) {
       g = {
         associateId: e.associateId,
+        clientId: e.clientId,
         worker: `${e.lastName}, ${e.firstName}`.trim(),
         site: e.site ?? '—',
         minutes: 0,
@@ -164,6 +167,7 @@ export function aggregateTimesheetRows(
     buckets[HOURS_BUCKET] = hours;
     rows.push({
       associateId: g.associateId,
+      clientId: g.clientId,
       worker: g.worker,
       site: g.site,
       ...buckets,
@@ -188,7 +192,7 @@ export type TimesheetSnapshot = Record<string, { worker: string; hours: number }
 export async function buildTimesheetWeek(
   db: Pick<
     PrismaClient,
-    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user'
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet'
   >,
   input: {
     weekStart: Date;
@@ -197,6 +201,8 @@ export async function buildTimesheetWeek(
     scopeWhere?: Prisma.TimeEntryWhereInput;
     /** Shift-side scope (from scopeShifts) for the scheduled-vs-actual query. */
     shiftScopeWhere?: Prisma.ShiftWhereInput;
+    /** The billed dollars — never for a store-bound role. */
+    showMoney?: boolean;
   },
   timeZone: string = DEFAULT_TIMEZONE,
 ): Promise<TimesheetWeekResponse> {
@@ -272,12 +278,27 @@ export async function buildTimesheetWeek(
     };
   });
 
-  const { rows, totalHours, pendingCount } = aggregateTimesheetRows(
-    entries,
-    dateKeySet,
-  );
+  const aggregated = aggregateTimesheetRows(entries, dateKeySet);
+  const { totalHours, pendingCount } = aggregated;
 
-  const issues = computeTimesheetIssues(entries, rows, dateKeySet);
+  // Where each worker's week stands in Fieldglass — registered, entered,
+  // approved — and the hours that can't be billed yet.
+  const fg = await attachFieldglass(db, {
+    rows: aggregated.rows,
+    weekStart: week.weekStart,
+    weekEndIso: week.weekEnd,
+    clientId: input.clientId,
+    showMoney: input.showMoney ?? false,
+  });
+  const rows = fg.rows;
+  const baseIssues = computeTimesheetIssues(entries, rows, dateKeySet);
+  // A missing clock-out still leads (that day has no hours at all); an
+  // unregistered worker is next — their hours can't be billed.
+  const issues = [
+    ...baseIssues.filter((i) => i.kind === 'MISSING_CLOCKOUT'),
+    ...fg.issues,
+    ...baseIssues.filter((i) => i.kind !== 'MISSING_CLOCKOUT'),
+  ];
 
   // Scheduled-vs-actual — published assigned shifts (ASSIGNED/COMPLETED, not
   // DRAFT scratch) starting in the week, by local day, summed per associate.
@@ -358,6 +379,7 @@ export async function buildTimesheetWeek(
     issues,
     scheduleComparison,
     filing,
+    fieldglass: fg.summary,
     timeZone,
     generatedAt: new Date().toISOString(),
   };
@@ -400,13 +422,14 @@ export function computeDrift(
 export async function fileTimesheetWeek(
   db: Pick<
     PrismaClient,
-    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user'
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet'
   >,
   input: {
     weekStart: Date;
     clientId?: string;
     scopeWhere?: Prisma.TimeEntryWhereInput;
     shiftScopeWhere?: Prisma.ShiftWhereInput;
+    showMoney?: boolean;
   },
   filedById: string,
   timeZone: string = DEFAULT_TIMEZONE,
