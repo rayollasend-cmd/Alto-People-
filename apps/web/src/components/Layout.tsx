@@ -9,7 +9,7 @@ import {
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
-import { BottomTabBar } from './BottomTabBar';
+import { BottomTabBar, tabBarHiddenFrom } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
 import { WhatsNew } from './WhatsNew';
 import { NavigationProgress } from './NavigationProgress';
@@ -157,7 +157,24 @@ export function Layout() {
           onClose={() => setMobileOpen(false)}
           onOpenCommandPalette={() => setPaletteOpen(true)}
         />
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* Whichever element actually touches the bottom of the screen is
+            the one that must consume env(safe-area-inset-bottom), and on a
+            phone that is the tab bar, not <main>. Both were padding for it:
+            34px of dead space above the bar on an iPhone plus the 34px
+            inside it, when only the bar's own is doing any work. So the
+            inset lives here, and only from the width where the tab bar
+            stops rendering and <main> becomes the bottom-most element.
+            (On the wrapper rather than on <main> so it can't collide with
+            main's own p-4/md:p-6/lg:p-8 shorthand, where which rule wins
+            comes down to Tailwind's emit order.) */}
+        <div
+          className={cn(
+            'flex-1 flex flex-col min-w-0',
+            tabBarHiddenFrom(user?.role) === 'lg'
+              ? 'lg:pb-[env(safe-area-inset-bottom)]'
+              : 'md:pb-[env(safe-area-inset-bottom)]',
+          )}
+        >
           <Topbar
             onOpenCommandPalette={() => setPaletteOpen(true)}
           />
@@ -176,7 +193,7 @@ export function Layout() {
             // horizontal panning at the page level; legitimately-wide
             // content (admin grids, paystub tables) lives inside its own
             // overflow-x-auto wrappers, which still scroll.
-            className="relative flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
+            className="relative flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
             {/* PERF: pure-CSS route fade (keyed remount replays the
                 animation) — this was the ONLY framer-motion usage in the

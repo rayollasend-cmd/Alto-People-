@@ -143,6 +143,23 @@ const DEFAULT_TABS: TabDef[] = [
   { path: '/payroll', labelKey: 'tabs.pay', icon: DollarSign, requires: 'view:payroll' },
 ];
 
+/**
+ * The width at which the tab bar stops being rendered.
+ *
+ * The store manager's and the supervisors' four destinations are labeled
+ * tabs, not icon-rail guesses, so they keep them through iPad widths.
+ *
+ * Layout reads this too: whichever element actually touches the bottom of
+ * the screen is the one that must consume env(safe-area-inset-bottom), and
+ * that swaps at exactly this breakpoint. Exported rather than duplicated
+ * because the two drifting apart is invisible until someone holds a phone.
+ */
+export function tabBarHiddenFrom(role: string | null | undefined): 'md' | 'lg' {
+  return role === 'CLIENT_PORTAL' || role === 'SHIFT_SUPERVISOR' || role === 'FLOOR_SUPERVISOR'
+    ? 'lg'
+    : 'md';
+}
+
 export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const { can, user } = useAuth();
   const { t } = useI18n();
@@ -178,12 +195,11 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
     <nav
       aria-label="Primary"
       className={cn(
-        // The store manager's and the supervisors' four destinations are
-        // labeled tabs, not icon-rail guesses — keep them through iPad
-        // widths.
-        user?.role === 'CLIENT_PORTAL' || user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR'
-          ? 'lg:hidden'
-          : 'md:hidden',
+        tabBarHiddenFrom(user?.role) === 'lg' ? 'lg:hidden' : 'md:hidden',
+        // The bar owns the bottom safe area: its background extends under
+        // the home indicator the way a native tab bar's does, so the labels
+        // clear it. Layout must NOT also pad <main> for that inset while
+        // this bar is on screen — see the note there.
         'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]',
       )}
     >

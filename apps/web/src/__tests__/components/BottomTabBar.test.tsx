@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
-import { BottomTabBar } from '@/components/BottomTabBar';
+import { BottomTabBar, tabBarHiddenFrom } from '@/components/BottomTabBar';
 
 vi.mock('@/lib/useApprovalsCount', () => ({ useApprovalsCount: () => 3 }));
 vi.mock('@/lib/messagesApi', () => ({ unreadMessages: async () => ({ unread: 0 }) }));
@@ -85,5 +85,46 @@ describe('<BottomTabBar>', () => {
     renderBar([...ROLE_CAPABILITIES.TRANSPORTATION_DIRECTOR], 'TRANSPORTATION_DIRECTOR');
     expect(screen.getByRole('link', { name: /command center/i })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: /messages/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Whichever element actually touches the bottom of the screen is the one
+ * that must consume env(safe-area-inset-bottom). On a phone that is this
+ * bar; once it stops rendering it becomes <main>, via the wrapper Layout
+ * pads. Both were doing it, which put 34px of dead space above the bar on
+ * an iPhone on top of the 34px inside it.
+ *
+ * These two must therefore agree on WHERE the swap happens, and nothing
+ * about that is visible until someone holds a phone — hence the shared
+ * helper and this test.
+ */
+describe('who owns the bottom safe area', () => {
+  it('keeps the labelled tabs — and the inset with them — through iPad widths for the floor roles', () => {
+    for (const role of ['CLIENT_PORTAL', 'SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] as Role[]) {
+      expect(tabBarHiddenFrom(role)).toBe('lg');
+    }
+  });
+
+  it('hands over at md for everyone else, and for an unknown or absent role', () => {
+    for (const role of ['ASSOCIATE', 'HR_ADMINISTRATOR', 'FINANCE_ACCOUNTANT'] as Role[]) {
+      expect(tabBarHiddenFrom(role)).toBe('md');
+    }
+    expect(tabBarHiddenFrom(null)).toBe('md');
+    expect(tabBarHiddenFrom(undefined)).toBe('md');
+  });
+
+  it('the bar pads for the inset, and hides at the width the helper names', () => {
+    const { container } = renderBar([...ROLE_CAPABILITIES.ASSOCIATE]);
+    const nav = container.querySelector('nav[aria-label="Primary"]')!;
+    expect(nav.className).toContain('pb-[env(safe-area-inset-bottom)]');
+    expect(nav.className).toContain('md:hidden');
+  });
+
+  it('a floor role keeps its bar to lg', () => {
+    const { container } = renderBar([...ROLE_CAPABILITIES.SHIFT_SUPERVISOR], 'SHIFT_SUPERVISOR');
+    const nav = container.querySelector('nav[aria-label="Primary"]')!;
+    expect(nav.className).toContain('lg:hidden');
+    expect(nav.className).not.toContain('md:hidden');
   });
 });
