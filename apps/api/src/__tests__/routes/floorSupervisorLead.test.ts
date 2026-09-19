@@ -267,7 +267,9 @@ describe('helping on the shift supervisor\'s SOP', () => {
 
 describe('handing the shift over', () => {
   it('the shift supervisor hands a day to their floor supervisor, who is told; the clock-in opens the SOP for THEM and holds their clock-out', async () => {
-    const { dana, marcus, tablet } = await seed();
+    // A cover is for today or later: the shift started today, even just
+    // after midnight.
+    const { dana, marcus, tablet } = await seed({ startedMin: Math.min(60, minuteOfDayInZone(new Date(), TZ)) });
     const d = await loginAs(dana.user.email);
     const cover = await d
       .post('/shift-covers')

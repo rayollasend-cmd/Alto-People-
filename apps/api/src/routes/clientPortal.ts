@@ -505,8 +505,13 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         if (s.assignedAssociateId) weekAssociateIds.add(s.assignedAssociateId);
       }
     }
+    // occurredOn is a calendar DATE (UTC midnight on the wire): the day it
+    // names, not an instant read on the store's clock — through the zone, a
+    // Saturday's no-show landed in the week before.
+    const dayWeekKey = (d: Date) =>
+      weekKeyOf(new Date(cal.midnight(d.toISOString().slice(0, 10)).getTime() + DAY / 2));
     for (const e of trendEvents) {
-      const wk = weekAgg.get(weekKeyOf(e.occurredOn));
+      const wk = weekAgg.get(dayWeekKey(e.occurredOn));
       if (!wk) continue;
       if (e.kind === 'NO_CALL_NO_SHOW') wk.noCallNoShows += 1;
       else if (e.kind === 'CALL_OUT') wk.callOuts += 1;
