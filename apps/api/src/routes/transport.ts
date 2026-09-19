@@ -24,6 +24,7 @@ import {
   tripStates,
 } from '../lib/transportSeats.js';
 import { haversineM } from '../lib/transportLive.js';
+import { clusterAndOrder, type ClusterMember } from '../lib/rideClusters.js';
 import {
   MIN_PING_GAP_MS,
   afterPing,
@@ -873,6 +874,32 @@ async function runMapView(run: LiveRunRow, live: RunLive) {
       rideIds: w.rideIds,
     })),
     stores: [...live.stores.values()].map((s) => ({ locationId: s.location.id, name: s.location.name, point: s.point })),
+    // The same stops the driver's plan groups: riders within a short walk
+    // ride together, so the map shows one pin per stop, in order.
+    clusters: clusterAndOrder(
+      run.rides
+        .filter((r) => r.status !== 'CANCELLED')
+        .map((r) => ({
+          rideId: r.id,
+          associateId: r.associate.id,
+          name: `${r.associate.firstName} ${r.associate.lastName}`,
+          label: r.stop?.name ?? r.address ?? '',
+          address: r.stop?.address ?? r.address ?? '',
+          point: live.homes.get(r.id) ?? null,
+          pinned: r.stop ? r.stop.lat !== null : r.lat !== null,
+          status: r.status,
+        })),
+      [...live.stores.values()][0]?.point ?? null,
+      run.direction,
+    ).map((c) => ({
+      ...c,
+      etaAt: iso(
+        c.riders
+          .map((m) => live.plan.pickupEta.get(m.rideId))
+          .filter((d): d is Date => !!d)
+          .sort((a, b) => a.getTime() - b.getTime())[0],
+      ),
+    })),
     late: [...live.plan.lateMinutes.entries()]
       .filter(([, m]) => m > 0)
       .map(([locationId, minutes]) => ({ locationId, store: live.stores.get(locationId)?.location.name ?? '', minutes })),
@@ -1109,6 +1136,154 @@ transportRouter.get('/driver/requests', DRIVE, async (req, res) => {
 });
 
 /**
+ * GET /transport/driver/trip-map — one shift's pickups, clustered.
+ *
+ * Everyone riding that store's shift, grouped into stops (riders within a
+ * short walk share one), in the order to work them: farthest from the
+ * store first on the way in, nearest drop first on the way home. Riders
+ * whose address has no pin yet come back unmapped, so the driver can drop
+ * it once and it sticks.
+ */
+const TripMapQuery = z.object({
+  locationId: z.string().uuid(),
+  direction: z.enum(['TO_WORK', 'FROM_WORK']),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  windowLabel: z.string().max(80).optional(),
+});
+
+transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
+  const q = TripMapQuery.parse(req.query);
+  const rides = await prisma.ride.findMany({
+    where: {
+      locationId: q.locationId,
+      direction: q.direction,
+      serviceDate: q.date,
+      windowLabel: q.windowLabel ?? null,
+      status: { in: ['REQUESTED', 'SCHEDULED', 'BOARDED'] },
+    },
+    orderBy: { targetAt: 'asc' },
+    take: 60,
+    select: rideSelect,
+  });
+  const location = await prisma.location.findUnique({
+    where: { id: q.locationId },
+    select: {
+      id: true,
+      name: true,
+      timezone: true,
+      addressLine1: true,
+      city: true,
+      state: true,
+      zip: true,
+      latitude: true,
+      longitude: true,
+      client: { select: { name: true } },
+    },
+  });
+  if (!location) throw new HttpError(404, 'not_found', 'Store not found.');
+  const members: ClusterMember[] = [];
+  for (const r of rides) {
+    members.push({
+      rideId: r.id,
+      associateId: r.associate.id,
+      name: `${r.associate.firstName} ${r.associate.lastName}`,
+      label: r.stop?.name ?? r.address ?? '',
+      address: r.stop?.address ?? r.address ?? '',
+      point: await homePoint(r),
+      // A stop's or the rider's own coordinates — not a lookup's guess.
+      pinned: r.stop ? r.stop.lat !== null : r.lat !== null,
+      status: r.status,
+    });
+  }
+  const store = await storePoint(location);
+  // Name order in, name order out: the same shift always reads the same.
+  members.sort((a, b) => a.name.localeCompare(b.name));
+  const clusters = clusterAndOrder(members, store, q.direction);
+  res.json({
+    trip: {
+      locationId: location.id,
+      store: {
+        name: location.name,
+        clientName: location.client?.name ?? null,
+        address: [location.addressLine1, location.city, location.state].filter(Boolean).join(', '),
+        point: store,
+        timezone: location.timezone,
+      },
+      direction: q.direction,
+      windowLabel: q.windowLabel ?? null,
+      serviceDate: q.date,
+      targetAt: rides[0]?.targetAt.toISOString() ?? null,
+      riders: members.length,
+      requested: rides.filter((r) => r.status === 'REQUESTED').length,
+      scheduled: rides.filter((r) => r.status !== 'REQUESTED').length,
+    },
+    clusters: clusters.map((c) => ({
+      ...c,
+      riders: c.riders.map((m) => ({
+        ...m,
+        photoUrl: `/api/associates/${m.associateId}/photo`,
+      })),
+    })),
+    unmapped: clusters.filter((c) => !c.mapped).length,
+  });
+});
+
+/**
+ * POST /transport/rides/:id/pin { lat, lng } — the real meeting point.
+ *
+ * The address lookup puts most pickups on the right spot; when it doesn't
+ * (a long driveway, a back entrance, a brand-new street), whoever is
+ * driving drops the pin once. It sticks to this ride, to the rider's saved
+ * place for that address, and to their other upcoming rides from it.
+ */
+const PinBody = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+});
+
+transportRouter.post('/rides/:id/pin', DRIVE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const input = PinBody.parse(req.body);
+  const ride = await prisma.ride.findUnique({
+    where: { id },
+    select: { id: true, associateId: true, address: true, stopId: true, stop: { select: { id: true, name: true } } },
+  });
+  if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  if (ride.stopId) {
+    // A named stop is everyone's — only dispatch moves it.
+    if (!hasCapability(req.user!.role, 'manage:transport')) {
+      throw new HttpError(409, 'named_stop', `${ride.stop?.name ?? 'That stop'} is a shared pickup point — dispatch sets where it is.`);
+    }
+    await prisma.transportStop.update({ where: { id: ride.stopId }, data: { lat: input.lat, lng: input.lng } });
+  } else {
+    await prisma.ride.update({ where: { id }, data: { lat: input.lat, lng: input.lng } });
+    if (ride.address) {
+      // Remembered: their saved place, and every ride still ahead of them
+      // from the same address.
+      await prisma.ridePlace.updateMany({
+        where: { associateId: ride.associateId, address: ride.address },
+        data: { lat: input.lat, lng: input.lng },
+      });
+      await prisma.ride.updateMany({
+        where: {
+          associateId: ride.associateId,
+          address: ride.address,
+          stopId: null,
+          targetAt: { gte: new Date() },
+          status: { in: ['REQUESTED', 'SCHEDULED'] },
+        },
+        data: { lat: input.lat, lng: input.lng },
+      });
+    }
+  }
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.pin_set', entityType: 'Ride', entityId: id, metadata: { lat: input.lat, lng: input.lng } },
+    'transport',
+  );
+  res.json({ ok: true, point: { lat: input.lat, lng: input.lng } });
+});
+
+/**
  * GET /transport/driver/schedule?from=&days= — the driver's week, like the
  * schedule: each day's runs (the shift, the store, when they leave, seats
  * filled) with the riders in pickup order — names and faces — and how
@@ -1180,6 +1355,8 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
       const labels = run.rides.map((r) => r.windowLabel).filter((x): x is string => !!x);
       const shift = labels.sort((a, b) => labels.filter((x) => x === b).length - labels.filter((x) => x === a).length)[0] ?? null;
       const stores = [...new Map(run.rides.map((r) => [r.location.id, r.location.name])).values()];
+      // The store the shift's map opens on — the one most of the run serves.
+      const storeId = run.rides[0]?.location.id ?? null;
       const aboard = run.rides.filter((r) => r.status !== 'NO_SHOW');
       return {
         id: run.id,
@@ -1190,6 +1367,7 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
         timezone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE,
         shift,
         stores,
+        storeId,
         van: run.van,
         seats: { taken: aboard.length, capacity: run.van.capacity },
         riders: run.rides.map((r) => ({

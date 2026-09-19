@@ -274,6 +274,8 @@ export interface RunMap {
   /** Where the van has been — [lng, lat] pairs. */
   trail: Array<[number, number]>;
   waypoints: Array<{ kind: 'pickup' | 'store' | 'drop'; point: GeoPoint | null; etaAt: string | null; label: string; rideIds: string[] }>;
+  /** The run's stops, riders within a short walk grouped into one. */
+  clusters?: RideCluster[];
   stores: Array<{ locationId: string; name: string; point: GeoPoint | null }>;
   late: Array<{ locationId: string; store: string; minutes: number }>;
   riders: Array<{
@@ -291,6 +293,61 @@ export const getLiveBoard = (date?: string) =>
   apiFetch<{ date: string; generatedAt: string; runs: RunMap[] }>(`/transport/live${date ? `?date=${date}` : ''}`);
 
 export const getDriverRunLive = (runId: string) => apiFetch<{ run: RunMap }>(`/transport/driver/runs/${runId}/live`);
+
+/** One rider inside a stop. */
+export interface ClusterRider {
+  rideId: string;
+  associateId: string;
+  name: string;
+  label: string;
+  address: string;
+  point: GeoPoint | null;
+  /** Their own pin (or a named stop's), not an address lookup's guess. */
+  pinned: boolean;
+  status: RideStatus;
+  photoUrl?: string;
+}
+
+/** A stop: everyone riding from one spot, in the order to work them. */
+export interface RideCluster {
+  key: string;
+  label: string;
+  address: string;
+  point: GeoPoint | null;
+  order: number;
+  riders: ClusterRider[];
+  /** How far apart the addresses in this stop are, in meters. */
+  spreadM: number;
+  mapped: boolean;
+  etaAt?: string | null;
+}
+
+export interface TripMap {
+  trip: {
+    locationId: string;
+    store: { name: string; clientName: string | null; address: string; point: GeoPoint | null; timezone: string };
+    direction: RideDirection;
+    windowLabel: string | null;
+    serviceDate: string;
+    targetAt: string | null;
+    riders: number;
+    requested: number;
+    scheduled: number;
+  };
+  clusters: RideCluster[];
+  unmapped: number;
+}
+
+/** One shift's pickups, grouped into stops and put in order. */
+export const getTripMap = (q: { locationId: string; direction: RideDirection; date: string; windowLabel?: string | null }) => {
+  const p = new URLSearchParams({ locationId: q.locationId, direction: q.direction, date: q.date });
+  if (q.windowLabel) p.set('windowLabel', q.windowLabel);
+  return apiFetch<TripMap>(`/transport/driver/trip-map?${p.toString()}`);
+};
+
+/** Where the van should actually stop for this rider — remembered. */
+export const pinRide = (rideId: string, point: GeoPoint) =>
+  apiFetch<{ ok: true; point: GeoPoint }>(`/transport/rides/${rideId}/pin`, { method: 'POST', body: point });
 
 export const sendVanLocation = (
   runId: string,
@@ -464,6 +521,8 @@ export interface DriverWeekRun {
   /** The store shift it serves ("Morning"); null for other times. */
   shift: string | null;
   stores: string[];
+  /** The store whose shift map this run opens. */
+  storeId?: string | null;
   van: { name: string; plate: string | null; capacity: number };
   seats: { taken: number; capacity: number };
   riders: Array<{

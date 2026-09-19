@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -14,10 +14,12 @@ import {
   Navigation,
   Phone,
   RotateCcw,
+  Route,
   Store,
   UserX,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ShiftMapDrawer, type TripKey } from './ShiftMap';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
@@ -152,6 +154,36 @@ export function stopsFor(run: RideRun): { pickups: Stop[]; drops: Stop[] } {
 
 const stopDone = (s: Stop) => s.rides.every((r) => r.status !== 'SCHEDULED');
 
+/* ----- The shift's stops, from anywhere on the page --------------------------- */
+
+const ShiftMapContext = createContext<(trip: TripKey) => void>(() => {});
+
+/** "Stops" — the shift's pickups, clustered and in order. */
+function StopsButton({ trip, className }: { trip: TripKey | null; className?: string }) {
+  const { t } = useI18n();
+  const open = useContext(ShiftMapContext);
+  if (!trip) return null;
+  return (
+    <Button variant="ghost" size="xs" className={className} onClick={() => open(trip)}>
+      <Route className="h-3.5 w-3.5" />
+      {t('drive.shiftStopsBtn')}
+    </Button>
+  );
+}
+
+/** The trip a run serves: its store, its shift, its day. */
+function tripOfRun(run: RideRun): TripKey | null {
+  const first = run.rides.find(riding) ?? run.rides[0];
+  if (!first) return null;
+  return {
+    locationId: first.store.id,
+    direction: run.direction,
+    date: run.serviceDate,
+    windowLabel: first.windowLabel ?? null,
+    storeName: first.store.name,
+  };
+}
+
 /* ----- The page ---------------------------------------------------------------- */
 
 export function DriverHome() {
@@ -165,6 +197,7 @@ export function DriverHome() {
   );
   const [reporting, setReporting] = useState<string | null | undefined>(undefined);
   const [rider, setRider] = useState<string | null>(null);
+  const [shiftMap, setShiftMap] = useState<TripKey | null>(null);
   const all = runs.data?.runs ?? [];
   // A rider's "I'm outside" / "running late", and a run the desk put on
   // them: buzz, chime.
@@ -182,7 +215,8 @@ export function DriverHome() {
   const done = all.filter((r) => r.status === 'COMPLETED' && isRecent(r));
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <ShiftMapContext.Provider value={setShiftMap}>
+      <div className="mx-auto max-w-2xl">
       <PageHeader
         title={t('drive.title')}
         subtitle={t('drive.subtitle')}
@@ -225,7 +259,9 @@ export function DriverHome() {
         <DriverReportDialog runId={reporting} open onOpenChange={(o) => !o && setReporting(undefined)} />
       )}
       {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
-    </div>
+      <ShiftMapDrawer trip={shiftMap} open={!!shiftMap} onClose={() => setShiftMap(null)} />
+      </div>
+    </ShiftMapContext.Provider>
   );
 }
 
@@ -311,13 +347,28 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
                     {run.stores.join(', ')} · {run.van.name} · {t('drive.departs', { time: fmtTimeTz(run.departAt, run.timezone) })}
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
-                    run.seats.taken >= run.seats.capacity ? 'bg-success/15 text-success' : 'bg-navy-secondary text-white',
-                  )}
-                >
-                  {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+                <span className="flex shrink-0 items-center gap-1">
+                  <StopsButton
+                    trip={
+                      run.storeId
+                        ? {
+                            locationId: run.storeId,
+                            direction: run.direction,
+                            date: run.serviceDate,
+                            windowLabel: run.shift,
+                            storeName: run.stores[0] ?? '',
+                          }
+                        : null
+                    }
+                  />
+                  <span
+                    className={cn(
+                      'rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
+                      run.seats.taken >= run.seats.capacity ? 'bg-success/15 text-success' : 'bg-navy-secondary text-white',
+                    )}
+                  >
+                    {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+                  </span>
                 </span>
               </div>
               <ol className="mt-2.5 space-y-1.5">
@@ -356,6 +407,15 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
                 {' · '}
                 {a.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {a.store.name}
               </span>
+              <StopsButton
+                trip={{
+                  locationId: a.store.id,
+                  direction: a.direction,
+                  date: a.serviceDate,
+                  windowLabel: a.windowLabel,
+                  storeName: a.store.name,
+                }}
+              />
             </li>
           ))}
         </ul>
@@ -413,6 +473,9 @@ function RunHeader({ run, tone }: { run: RideRun; tone: 'success' | 'gold' | 'qu
   const { t } = useI18n();
   const tz = runTz(run);
   const stores = [...new Set(run.rides.filter(riding).map((r) => r.store.name))];
+  // Whose store it is — the brand the riders clock in for.
+  const clients = [...new Set(run.rides.filter(riding).map((r) => r.store.clientName))];
+  const client = clients.length === 1 ? clients[0] : null;
   return (
     <>
       <div className="flex items-center justify-between gap-2">
@@ -435,9 +498,13 @@ function RunHeader({ run, tone }: { run: RideRun; tone: 'success' | 'gold' | 'qu
         <span className="text-silver/50"> · </span>
         <span className="tabular-nums">{t('drive.departs', { time: fmtTimeTz(run.departAt, tz) })}</span>
       </div>
-      <p className="mt-1 text-sm text-silver">
-        {run.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')}
-        {stores.length > 0 && ` · ${stores.join(', ')}`} · {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+      <p className="mt-1 flex flex-wrap items-center gap-x-1 text-sm text-silver">
+        <span>
+          {run.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')}
+          {stores.length > 0 && ` · ${stores.join(', ')}`}
+          {client && <span className="text-silver/60"> ({client})</span>} · {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+        </span>
+        <StopsButton trip={tripOfRun(run)} className="ml-auto" />
       </p>
       {run.notes && <p className="mt-2 text-sm text-white">{run.notes}</p>}
     </>
@@ -1124,11 +1191,12 @@ function RunMap({ runId }: { runId: string }) {
   if (!run) return null;
   const markers: MapMarker[] = [];
   if (run.position) markers.push({ id: 'van', kind: 'van', ...run.position, label: run.van.name, stale: run.stale, highlight: true });
-  let n = 0;
+  // One pin per stop: riders within a short walk of each other share it.
+  for (const c of run.clusters ?? []) {
+    if (c.point) markers.push({ id: c.key, kind: 'stop', ...c.point, order: c.order, label: `${c.label} · ${c.riders.length}` });
+  }
   for (const w of run.waypoints) {
-    if (!w.point) continue;
-    if (w.kind === 'store') markers.push({ id: `s-${w.label}`, kind: 'store', ...w.point, label: w.label });
-    else markers.push({ id: `w-${w.rideIds.join(',')}`, kind: 'stop', ...w.point, order: ++n, label: w.label });
+    if (w.point && w.kind === 'store') markers.push({ id: `s-${w.label}`, kind: 'store', ...w.point, label: w.label });
   }
   const route: Array<[number, number]> = [
     ...(run.position ? [[run.position.lng, run.position.lat] as [number, number]] : []),

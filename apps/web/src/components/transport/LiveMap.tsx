@@ -68,6 +68,8 @@ export interface LiveMapProps {
   interactive?: boolean;
   /** Px a sheet overlaps the map's foot — the map credit sits above it. */
   footInset?: number;
+  /** Set: tapping the map reports that spot — dropping a pickup's pin. */
+  onPick?: (point: { lat: number; lng: number }) => void;
 }
 
 const BUS_SVG =
@@ -192,6 +194,7 @@ export default function LiveMap({
   controls = true,
   interactive = true,
   footInset = 0,
+  onPick,
 }: LiveMapProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const map = useRef<MapLibreMap | null>(null);
@@ -365,6 +368,23 @@ export default function LiveMap({
     (m.getSource('trail') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(trail ?? []));
     (m.getSource('path') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(path ?? []));
   }, [route, trail, path, ready]);
+
+  // Dropping a pin: a tap on the map is the spot. The handler lives in a
+  // ref so changing it never re-binds (or re-creates) the map.
+  const pick = useRef(onPick);
+  pick.current = onPick;
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const canvas = m.getCanvas();
+    if (onPick) canvas.style.cursor = 'crosshair';
+    const onClick = (e: { lngLat: { lat: number; lng: number } }) => pick.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    m.on('click', onClick);
+    return () => {
+      m.off('click', onClick);
+      if (canvas) canvas.style.cursor = '';
+    };
+  }, [ready, onPick]);
 
   // The leg being driven flows toward where it's going — unless the viewer
   // asked for less motion.
