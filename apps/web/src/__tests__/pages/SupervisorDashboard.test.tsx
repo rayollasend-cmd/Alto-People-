@@ -467,6 +467,8 @@ describe('<SupervisorDashboard> — arriving by van', () => {
           name: 'Maria Lopez',
           store: { id: 'l1', name: 'Front Beach 218' },
           arriveBy: at(2),
+          etaAt: at(2.2),
+          lateMinutes: 12,
           status: 'SCHEDULED',
           van: 'Van 1',
           hasShift: true,
@@ -489,6 +491,9 @@ describe('<SupervisorDashboard> — arriving by van', () => {
     expect(screen.getByText('1 without a shift here')).toBeInTheDocument();
     expect(screen.getByText('No shift')).toBeInTheDocument();
     expect(screen.getByText('Waiting on a van')).toBeInTheDocument();
+    // A van on the road that's running late says so.
+    expect(screen.getByText('~12 min late')).toBeInTheDocument();
+    expect(screen.getByText(/Van 1 · here about/)).toBeInTheDocument();
   });
 
   it('stays out of the way when nobody is coming by van', async () => {

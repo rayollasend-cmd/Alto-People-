@@ -24,7 +24,7 @@ const MAX_STREAM_MS = 14 * 60_000;
 
 const streams = new Map<string, Set<Response>>();
 
-export type LiveEventType = 'notification' | 'message';
+export type LiveEventType = 'notification' | 'message' | 'transport';
 
 export function registerLiveStream(userId: string, res: Response): void {
   let set = streams.get(userId);

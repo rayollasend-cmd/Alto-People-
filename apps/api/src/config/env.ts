@@ -184,6 +184,15 @@ const EnvSchema = z.object({
   // Notification retention sweep (read bell rows >90d, delivery-audit
   // rows >365d). 0 disables. Daily is plenty — the windows are month-scale.
   NOTIFICATION_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // The Alto vans' map: address → coordinates for pickups, stops and
+  // stores. 'nominatim' (OpenStreetMap, no key, ~1 lookup/second — results
+  // are cached in GeoCache so each address is looked up once), 'mapbox'
+  // (needs MAPBOX_TOKEN), or 'off' (no lookups; the tests). Unset: mapbox
+  // when a token is present, else nominatim — off under NODE_ENV=test.
+  GEOCODER: z.enum(['nominatim', 'mapbox', 'off']).optional(),
+  MAPBOX_TOKEN: z.string().optional(),
+  // Van trail retention sweep (RideRunPing rows >30 days). 0 disables.
+  VAN_TRAIL_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Daily compliance-score snapshot (org + per-client). The interval is only
   // how often we CHECK for today's row — one row/day/scope regardless. 0
   // disables (and with it the scorecard trend + week-delta features).

@@ -7458,6 +7458,8 @@ model Ride {
   cancelledAt    DateTime?      @db.Timestamptz(6)
   cancelledById  String?        @db.Uuid
   cancelReason   String?        @db.VarChar(300)
+  /// The rider heard "your van is about 10 minutes away" (once).
+  nearNotifiedAt DateTime?      @db.Timestamptz(6)
   createdById    String         @db.Uuid
   createdAt      DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
@@ -7489,11 +7491,21 @@ model RideRun {
   createdById  String        @db.Uuid
   createdAt    DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+  // The van right now — the driver's phone, while the run is on the road.
+  lastLat        Decimal?  @db.Decimal(9, 6)
+  lastLng        Decimal?  @db.Decimal(9, 6)
+  lastHeading    Int?
+  lastSpeedMps   Float?
+  lastAccuracyM  Int?
+  lastLocationAt DateTime? @db.Timestamptz(6)
+  /// The store supervisors heard this run is running late (once per run).
+  lateAlertedAt  DateTime? @db.Timestamptz(6)
 
   van    Van              @relation(fields: [vanId], references: [id], onDelete: Restrict)
   driver User             @relation("RideRunDriver", fields: [driverUserId], references: [id], onDelete: Restrict)
   rides  Ride[]
   issues TransportIssue[]
+  pings  RideRunPing[]
 
   @@index([serviceDate])
   @@index([driverUserId, serviceDate])
@@ -7520,6 +7532,34 @@ model TransportIssue {
   run        RideRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+}
+
+/// The van's trail — one row per location the driver's phone sent while
+/// the run was on the road. Kept 30 days (a late-van dispute), then pruned.
+model RideRunPing {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId     String   @db.Uuid
+  lat       Decimal  @db.Decimal(9, 6)
+  lng       Decimal  @db.Decimal(9, 6)
+  heading   Int?
+  speedMps  Float?
+  accuracyM Int?
+  at        DateTime @db.Timestamptz(6)
+  run       RideRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, at])
+  @@index([at])
+}
+
+/// Address → coordinates, looked up once. `found` false remembers a miss
+/// so a bad address isn't looked up on every map refresh.
+model GeoCache {
+  key       String   @id @db.VarChar(300)
+  lat       Decimal? @db.Decimal(9, 6)
+  lng       Decimal? @db.Decimal(9, 6)
+  found     Boolean
+  provider  String   @db.VarChar(20)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
 }
 
 /// The fares and the booking cutoff — one row, the director's to set.

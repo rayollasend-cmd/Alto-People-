@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,6 +29,7 @@ import {
   createRun,
   createStop,
   createVan,
+  getLiveBoard,
   getTransportBoard,
   getTransportCharges,
   getTransportSettings,
@@ -46,11 +47,14 @@ import {
   type RideDirection,
   type RideRun,
   type RideStatus,
+  type RunMap,
   type TransportBoard,
   type TransportIssue,
   type TransportStop,
   type Van,
 } from '@/lib/transportApi';
+import { onLiveEvent } from '@/lib/liveEvents';
+import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -89,10 +93,11 @@ import {
  * view:transport reads everything here; manage:transport acts.
  */
 
-const TABS = ['today', 'rides', 'issues', 'vans', 'stops', 'charges', 'settings'] as const;
+const TABS = ['today', 'live', 'rides', 'issues', 'vans', 'stops', 'charges', 'settings'] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   today: 'Today',
+  live: 'Live map',
   rides: 'Rides',
   issues: 'Issues',
   vans: 'Vans & drivers',
@@ -213,6 +218,9 @@ export function TransportHome() {
           ) : board.data ? (
             <TodayBoard board={board.data} manage={manage} />
           ) : null}
+        </TabsContent>
+        <TabsContent value="live">
+          <LiveTab />
         </TabsContent>
         <TabsContent value="rides">
           <RidesTab manage={manage} />
@@ -829,6 +837,146 @@ function DispatchDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ===== Live map ============================================================= */
+
+function ago(iso: string, now: number): string {
+  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`;
+}
+
+function LiveTab() {
+  const queryClient = useQueryClient();
+  const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 10_000 });
+  useEffect(
+    () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport', 'live'] })),
+    [queryClient],
+  );
+  const [picked, setPicked] = useState<string | null>(null);
+  const runs = live.data?.runs ?? [];
+  const onRoad = runs.filter((r) => r.status === 'ACTIVE');
+  const planned = runs.filter((r) => r.status === 'PLANNED');
+  const selected = runs.find((r) => r.runId === picked) ?? onRoad[0] ?? null;
+  const now = Date.now();
+
+  const markers: MapMarker[] = [];
+  for (const r of onRoad) {
+    if (!r.position) continue;
+    markers.push({
+      id: `van-${r.runId}`,
+      kind: 'van',
+      ...r.position,
+      label: `${r.van.name} · ${r.driver.name}`,
+      stale: r.stale,
+      highlight: r.runId === selected?.runId,
+    });
+  }
+  let n = 0;
+  for (const w of selected?.waypoints ?? []) {
+    if (!w.point) continue;
+    if (w.kind === 'store') markers.push({ id: `store-${w.label}`, kind: 'store', ...w.point, label: w.label });
+    else markers.push({ id: `stop-${w.rideIds.join(',')}`, kind: 'stop', ...w.point, order: ++n, label: w.label });
+  }
+  const route: Array<[number, number]> = selected
+    ? [
+        ...(selected.position ? [[selected.position.lng, selected.position.lat] as [number, number]] : []),
+        ...selected.waypoints.filter((w) => w.point).map((w) => [w.point!.lng, w.point!.lat] as [number, number]),
+      ]
+    : [];
+
+  if (live.isLoading) return <Skeleton className="h-96" />;
+  if (live.error) return <p className="text-sm text-alert">{errMsg(live.error)}</p>;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="lg:col-span-2">
+        {markers.length > 0 ? (
+          <LazyLiveMap
+            ariaLabel="Live map of the vans"
+            className="h-[55vh] min-h-80 w-full"
+            markers={markers}
+            route={route.length > 1 ? route : undefined}
+            trail={selected?.trail}
+          />
+        ) : (
+          <EmptyState
+            icon={Bus}
+            title="No vans on the road"
+            description="A van shows here as soon as its driver starts the run and their phone shares its location."
+          />
+        )}
+      </div>
+      <section aria-label="Runs" className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
+          On the road <span className="text-white">{onRoad.length}</span>
+        </h2>
+        {onRoad.length === 0 && <p className="text-sm text-silver">Nothing on the road right now.</p>}
+        {onRoad.map((r) => (
+          <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
+        ))}
+        {planned.length > 0 && (
+          <>
+            <h2 className="pt-3 text-sm font-semibold uppercase tracking-wider text-silver">
+              Leaving later <span className="text-white">{planned.length}</span>
+            </h2>
+            {planned.map((r) => (
+              <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
+            ))}
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; selected: boolean; onPick: () => void }) {
+  const late = Math.max(0, ...run.late.map((l) => l.minutes));
+  const next = run.waypoints.find((w) => w.etaAt) ?? run.waypoints[0];
+  const active = run.status === 'ACTIVE';
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      aria-pressed={selected}
+      className={cn(
+        'w-full rounded-lg border p-3 text-left transition-colors',
+        selected ? 'border-gold/60 bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
+        <span className="font-semibold text-white">{run.van.name}</span>
+        <span className="truncate text-sm text-silver">· {run.driver.name}</span>
+        <span className="ml-auto">
+          {active ? (
+            late >= 5 ? (
+              <Badge variant="pending">~{late} min late</Badge>
+            ) : (
+              <Badge variant="success">On time</Badge>
+            )
+          ) : (
+            <Badge variant="accent">Leaves {fmtTimeTz(run.departAt, run.timezone)}</Badge>
+          )}
+        </span>
+      </div>
+      <div className="mt-1 text-xs text-silver">
+        {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'} · {run.riders.filter((r) => r.status === 'BOARDED').length} on board ·{' '}
+        {run.riders.filter((r) => r.status === 'SCHEDULED').length} to pick up
+      </div>
+      {active && next && (
+        <div className="mt-1 text-sm text-white">
+          Next: {next.label}
+          {next.etaAt && <span className="text-silver"> · about {Math.max(1, Math.round((Date.parse(next.etaAt) - now) / 60_000))} min</span>}
+        </div>
+      )}
+      {active && (
+        <div className={cn('mt-1 text-xs', run.stale ? 'text-warning' : 'text-silver')}>
+          {run.position ? (run.stale ? `No signal since ${ago(run.position.at, now)}` : `Updated ${ago(run.position.at, now)}`) : 'Waiting for the driver’s phone'}
+        </div>
+      )}
+    </button>
   );
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { onLiveEvent } from '@/lib/liveEvents';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Trash2, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
@@ -23,9 +24,13 @@ import {
   cancelMyRide,
   deleteRidePlace,
   getMyTransport,
+  getMyLiveRide,
   giveRideConsent,
   reportTransportIssue,
+  whereAmI,
   type BookRideInput,
+  type GeoPoint,
+  type MyLiveRide,
   type MyTransport,
   type Ride,
   type RideDirection,
@@ -41,6 +46,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Dialog,
@@ -269,6 +275,8 @@ function NextRideHero({
   const cancel = useCancelRide();
   const now = Date.now();
   const next = sortedLive(data.rides, now)[0];
+  const live = useMyLiveRide();
+  const liveHere = live && next && live.rideId === next.id ? live : null;
 
   if (!next) {
     return (
@@ -338,6 +346,8 @@ function NextRideHero({
           {targetLine}
         </p>
 
+        {liveHere && <LiveRideBlock live={liveHere} />}
+
         <div className="mt-4 space-y-2.5 border-t border-navy-secondary/60 pt-3">
           <div className="flex items-center gap-2 text-sm text-silver">
             <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
@@ -390,6 +400,122 @@ function NextRideHero({
         </div>
       </div>
     </section>
+  );
+}
+
+/* ----- The van, live ------------------------------------------------------- */
+
+/** The rider's ride while the van is out (or about to leave): refetched
+ *  every 15s, and the moment the server says the van moved. */
+function useMyLiveRide(): MyLiveRide | null {
+  const queryClient = useQueryClient();
+  const q = useQuery({
+    queryKey: ['transport', 'me', 'live'],
+    queryFn: getMyLiveRide,
+    refetchInterval: (query) => (query.state.data?.live?.runStatus === 'ACTIVE' ? 15_000 : 60_000),
+  });
+  useEffect(
+    () =>
+      onLiveEvent('transport', () => {
+        void queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+      }),
+    [queryClient],
+  );
+  return q.data?.live ?? null;
+}
+
+function useAgo(iso: string | null | undefined): string {
+  const { t } = useI18n();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 5_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!iso) return '';
+  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  return s < 10 ? t('ride.agoNow') : s < 60 ? t('ride.agoSec', { n: s }) : t('ride.agoMin', { n: Math.round(s / 60) });
+}
+
+const pt = (p: GeoPoint): [number, number] => [p.lng, p.lat];
+
+export function LiveRideBlock({ live }: { live: MyLiveRide }) {
+  const { t } = useI18n();
+  const ago = useAgo(live.position?.at);
+  const tz = live.timezone;
+  const onVan = live.status === 'BOARDED';
+  const toWork = live.direction === 'TO_WORK';
+  const eta = onVan ? live.destination.etaAt : live.pickup.etaAt;
+  const mins = eta ? Math.max(0, Math.round((Date.parse(eta) - Date.now()) / 60_000)) : null;
+
+  const markers: MapMarker[] = [];
+  if (live.position) {
+    markers.push({ id: 'van', kind: 'van', ...live.position, label: live.van.name, stale: live.stale, highlight: true });
+  }
+  if (live.pickup.point && !onVan) {
+    markers.push({ id: 'pickup', kind: toWork ? 'home' : 'store', ...live.pickup.point, label: live.pickup.label });
+  }
+  if (live.destination.point) {
+    markers.push({ id: 'dest', kind: toWork ? 'store' : 'home', ...live.destination.point, label: live.destination.label });
+  }
+  const route = [
+    ...(live.position ? [pt(live.position)] : []),
+    ...(!onVan && live.pickup.point ? [pt(live.pickup.point)] : []),
+    ...(live.destination.point ? [pt(live.destination.point)] : []),
+  ];
+
+  return (
+    <div className="mt-4 rounded-md border border-navy-secondary/70 bg-navy-secondary/20 p-3">
+      {live.runStatus === 'ACTIVE' ? (
+        <>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-2xl font-bold tracking-tight text-white tabular-nums">
+              {onVan
+                ? eta
+                  ? t('ride.liveArriving', { time: fmtTimeTz(eta, tz) })
+                  : t('ride.onVan')
+                : mins === null
+                  ? t('ride.liveOnWay', { van: live.van.name })
+                  : mins <= 1
+                    ? t('ride.liveHere')
+                    : t('ride.liveAway', { min: mins })}
+            </span>
+            {live.position && (
+              <span className={cn('shrink-0 text-xs', live.stale ? 'text-warning' : 'text-silver')}>
+                {live.stale ? t('ride.liveStale', { ago }) : t('ride.liveUpdated', { ago })}
+              </span>
+            )}
+          </div>
+          {!onVan && (
+            <p className="mt-0.5 text-sm text-silver">
+              {t('ride.liveOnWay', { van: live.van.name })} ·{' '}
+              {live.stopsBefore === 0
+                ? t('ride.liveNextStop')
+                : live.stopsBefore === 1
+                  ? t('ride.liveStopsOne')
+                  : t('ride.liveStopsMany', { count: live.stopsBefore })}
+            </p>
+          )}
+          {live.lateMinutes >= 5 && (
+            <p className="mt-1 text-sm font-medium text-warning">{t('ride.liveLate', { min: live.lateMinutes })}</p>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium text-white">
+            {t('ride.liveLeaves', { van: live.van.name, time: fmtTimeTz(live.departAt, tz) })}
+          </p>
+          <p className="text-xs text-silver">{t('ride.liveNoPosition')}</p>
+        </>
+      )}
+      {markers.length > 0 && (
+        <LazyLiveMap
+          ariaLabel={t('ride.liveMap')}
+          className="mt-3 h-56 w-full sm:h-64"
+          markers={markers}
+          route={route.length > 1 ? route : undefined}
+        />
+      )}
+    </div>
   );
 }
 
@@ -613,6 +739,10 @@ export function BookRideDialog({
   const firstPickup = data.places[0] ? `place:${data.places[0].id}` : data.stops[0] ? `stop:${data.stops[0].id}` : 'new';
   const [pickup, setPickup] = useState(firstPickup);
   const [address, setAddress] = useState('');
+  // "Use where I am now": the phone's point, kept while the address it
+  // filled in is unchanged.
+  const [here, setHere] = useState<{ point: GeoPoint; address: string } | null>(null);
+  const [locating, setLocating] = useState(false);
   const [saveAs, setSaveAs] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -654,6 +784,32 @@ export function BookRideDialog({
   const total = legs.length * s.fareCents;
   const pickupLabel = way === 'TO_WORK' ? t('ride.pickupTo') : way === 'FROM_WORK' ? t('ride.pickupFrom') : t('ride.pickupBoth');
 
+  const useWhereIAm = () => {
+    if (!navigator.geolocation) return setError(t('ride.locateFailed'));
+    setLocating(true);
+    setError(null);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        try {
+          const { address: found } = await whereAmI(point);
+          const text = found ?? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`;
+          setAddress(text);
+          setHere({ point, address: text });
+        } catch {
+          setError(t('ride.locateFailed'));
+        } finally {
+          setLocating(false);
+        }
+      },
+      () => {
+        setLocating(false);
+        setError(t('ride.locateFailed'));
+      },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 },
+    );
+  };
+
   const submit = async () => {
     if (!store) return setError(t('ride.pickStore'));
     if (pickup === 'new' && address.trim().length < 5) return setError(t('ride.pickPickup'));
@@ -664,10 +820,13 @@ export function BookRideDialog({
       let home: Pick<BookRideInput, 'stopId' | 'placeId' | 'address'>;
       if (pickup.startsWith('stop:')) home = { stopId: pickup.slice(5) };
       else if (pickup.startsWith('place:')) home = { placeId: pickup.slice(6) };
-      else if (saveAs.trim()) {
-        const { place } = await addRidePlace({ label: saveAs.trim(), address: address.trim() });
-        home = { placeId: place.id };
-      } else home = { address: address.trim() };
+      else {
+        const point = here && here.address === address ? here.point : null;
+        if (saveAs.trim()) {
+          const { place } = await addRidePlace({ label: saveAs.trim(), address: address.trim(), ...(point ?? {}) });
+          home = { placeId: place.id };
+        } else home = { address: address.trim(), ...(point ?? {}) };
+      }
       let booked = 0;
       for (const leg of legs) {
         try {
@@ -825,11 +984,18 @@ export function BookRideDialog({
                   />
                 )}
               </Field>
+
               <Field label={t('ride.saveAs')}>
                 {(p) => (
                   <Input {...p} value={saveAs} onChange={(e) => setSaveAs(e.target.value)} placeholder={t('ride.saveAsPlaceholder')} maxLength={40} />
                 )}
               </Field>
+              <div className="sm:col-span-3 -mt-1">
+                <Button type="button" size="xs" variant="ghost" onClick={useWhereIAm} loading={locating} disabled={locating}>
+                  <MapPin className="h-3.5 w-3.5" />
+                  {locating ? t('ride.locating') : t('ride.useWhereIAm')}
+                </Button>
+              </div>
             </div>
           )}
           <Field label={t('ride.note')}>

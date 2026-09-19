@@ -35,6 +35,8 @@ function connect(): void {
   };
   es.addEventListener('notification', () => dispatch('notification'));
   es.addEventListener('message', () => dispatch('message'));
+  // A van moved (a rider's, the desk's, a store's) — its map refetches now.
+  es.addEventListener('transport', () => dispatch('transport'));
   es.onerror = () => {
     // EventSource retries by itself for transient blips; for hard
     // failures (auth expired, server down) it closes — reschedule with

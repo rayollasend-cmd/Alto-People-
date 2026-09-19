@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,11 +7,21 @@ import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shar
 import { AuthContext } from '@/lib/auth';
 import { ConfirmProvider } from '@/lib/confirm';
 import { zonedDayKey } from '@/lib/format';
-import type { MyTransport, Ride, RideRun, TransportBoard } from '@/lib/transportApi';
+import type { MyLiveRide, MyTransport, Ride, RideRun, RunMap, TransportBoard } from '@/lib/transportApi';
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
   apiFetch: vi.fn(),
+}));
+// No WebGL in jsdom — the map is stood in for by its markers' labels.
+vi.mock('@/components/transport/LazyLiveMap', () => ({
+  LazyLiveMap: ({ markers, ariaLabel }: { markers: Array<{ id: string; label?: string }>; ariaLabel: string }) => (
+    <ul aria-label={ariaLabel}>
+      {markers.map((m) => (
+        <li key={m.id}>{m.label}</li>
+      ))}
+    </ul>
+  ),
 }));
 
 import { apiFetch } from '@/lib/api';
@@ -92,7 +102,7 @@ function renderAs(role: Role, ui: React.ReactElement) {
 type Handler = (path: string, init?: { method?: string; body?: unknown }) => unknown;
 function routes(handler: Handler) {
   vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
-    const out = handler(path, init);
+    const out = handler(path, init) ?? (path === '/transport/me/live' ? { live: null } : undefined);
     if (out === undefined) throw new Error(`unexpected ${init?.method ?? 'GET'} ${path}`);
     return out as never;
   });
@@ -294,3 +304,146 @@ describe('<TransportHome> — the command center', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 });
+
+describe('the vans live', () => {
+  const minutesFromNow = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
+
+  it('the rider sees how far off the van is, the stops before them, and the map', async () => {
+    const pickupAt = hoursFromNow(0.3);
+    const r = ride({
+      id: 'r1',
+      status: 'SCHEDULED',
+      targetAt: hoursFromNow(1),
+      pickupAt,
+      run: {
+        id: 'run1',
+        status: 'ACTIVE',
+        departAt: hoursFromNow(-0.2),
+        van: { id: 'v1', name: 'Van 1', plate: 'ALT 101' },
+        driver: { userId: 'd1', name: 'Mike Chen' },
+      },
+    });
+    const live: MyLiveRide = {
+      rideId: 'r1',
+      direction: 'TO_WORK',
+      status: 'SCHEDULED',
+      runStatus: 'ACTIVE',
+      timezone: tz,
+      departAt: hoursFromNow(-0.2),
+      van: { name: 'Van 1', plate: 'ALT 101' },
+      driver: 'Mike',
+      position: { lat: 30.3, lng: -85.95, heading: 90, speedMps: 11, at: new Date().toISOString() },
+      stale: false,
+      pickup: { label: 'Seaside Housing', point: { lat: 30.21, lng: -85.86 }, scheduledAt: pickupAt, etaAt: minutesFromNow(8) },
+      destination: { label: 'Front Beach 218', point: { lat: 30.17, lng: -85.8 }, dueAt: hoursFromNow(1), etaAt: minutesFromNow(30) },
+      stopsBefore: 1,
+      lateMinutes: 0,
+    };
+    routes((path) => {
+      if (path === '/transport/me') return me({ rides: [r] });
+      if (path === '/transport/me/live') return { live };
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    expect(await screen.findByText(/About [78] min away/)).toBeInTheDocument();
+    expect(screen.getByText(/Van 1 is on its way · 1 stop before you/)).toBeInTheDocument();
+    expect(screen.getByText('Updated just now')).toBeInTheDocument();
+    const map = screen.getByRole('list', { name: 'Map of your van' });
+    expect(within(map).getByText('Van 1')).toBeInTheDocument();
+    expect(within(map).getByText('Seaside Housing')).toBeInTheDocument();
+  });
+
+  it('the driver’s phone shares the van’s position once the run is on the road', async () => {
+    const watchers: Array<(p: GeolocationPosition) => void> = [];
+    const geo = {
+      watchPosition: vi.fn((ok: (p: GeolocationPosition) => void) => {
+        watchers.push(ok);
+        return 1;
+      }),
+      clearWatch: vi.fn(),
+      getCurrentPosition: vi.fn(),
+    };
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    const active: RideRun = {
+      id: 'run1',
+      direction: 'TO_WORK',
+      serviceDate: zonedDayKey(new Date(), tz),
+      departAt: hoursFromNow(-0.1),
+      status: 'ACTIVE',
+      startedAt: hoursFromNow(-0.1),
+      endedAt: null,
+      notes: null,
+      van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12 },
+      driver: { userId: 'u', name: 'Mike Chen' },
+      seats: { taken: 1, capacity: 12 },
+      rides: [ride({ id: 'r1', status: 'SCHEDULED', pickupOrder: 1, pickupAt: hoursFromNow(0.2) })],
+    };
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [active] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path === '/transport/driver/runs/run1/location' && init?.method === 'POST') return { ok: true };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    expect(await screen.findByText('Finding the van…')).toBeInTheDocument();
+    await waitFor(() => expect(watchers).toHaveLength(1));
+    act(() =>
+      watchers[0]!({
+        coords: { latitude: 30.3, longitude: -85.95, heading: 90, speed: 11, accuracy: 8 },
+        timestamp: Date.now(),
+      } as unknown as GeolocationPosition),
+    );
+    expect(await screen.findByText('Sharing the van’s location with riders')).toBeInTheDocument();
+    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/location', {
+      method: 'POST',
+      body: { lat: 30.3, lng: -85.95, heading: 90, speed: 11, accuracy: 8 },
+    });
+  });
+
+  it('the desk’s live map lists every van on the road — on time or late, the next stop, the signal', async () => {
+    const run: RunMap = {
+      runId: 'run1',
+      status: 'ACTIVE',
+      direction: 'TO_WORK',
+      serviceDate: zonedDayKey(new Date(), tz),
+      departAt: hoursFromNow(-0.2),
+      timezone: tz,
+      van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12 },
+      driver: { userId: 'd1', name: 'Mike Chen' },
+      position: { lat: 30.3, lng: -85.95, heading: 90, speedMps: 11, at: new Date().toISOString() },
+      stale: false,
+      trail: [[-85.96, 30.31], [-85.95, 30.3]],
+      waypoints: [
+        { kind: 'pickup', point: { lat: 30.21, lng: -85.86 }, etaAt: minutesFromNow(6), label: 'Kim Rider', rideIds: ['r1'] },
+        { kind: 'store', point: { lat: 30.17, lng: -85.8 }, etaAt: minutesFromNow(25), label: 'Front Beach 218', rideIds: ['r1'] },
+      ],
+      stores: [{ locationId: 'l1', name: 'Front Beach 218', point: { lat: 30.17, lng: -85.8 } }],
+      late: [{ locationId: 'l1', store: 'Front Beach 218', minutes: 12 }],
+      riders: [{ rideId: 'r1', name: 'Kim Rider', status: 'SCHEDULED', pickupAt: null, point: null, pickupEtaAt: minutesFromNow(6), dropEtaAt: minutesFromNow(25) }],
+    };
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return { ...board0(), rides: [] };
+      if (path.startsWith('/transport/live')) return { date: run.serviceDate, generatedAt: new Date().toISOString(), runs: [run] };
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    await userEvent.click(await screen.findByRole('tab', { name: /Live map/ }));
+    const row = await screen.findByRole('button', { name: /Van 1/ });
+    expect(row).toHaveTextContent('~12 min late');
+    expect(row).toHaveTextContent(/Next: Kim Rider · about [56] min/);
+    expect(row).toHaveTextContent('Updated just now');
+    const map = screen.getByRole('list', { name: 'Live map of the vans' });
+    expect(within(map).getByText('Van 1 · Mike Chen')).toBeInTheDocument();
+    expect(within(map).getByText('Kim Rider')).toBeInTheDocument();
+  });
+
+  function board0(): TransportBoard {
+    return {
+      date: zonedDayKey(new Date(), tz),
+      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+      kpis: { booked: 0, needsVan: 0, scheduled: 0, onBoard: 0, completed: 0, noShows: 0, cancelled: 0, vansOut: 1, runs: 1, openIssues: 0 },
+      rides: [],
+      runs: [],
+      vans: [],
+      drivers: [],
+    };
+  }
+});
+

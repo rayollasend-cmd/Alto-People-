@@ -92,6 +92,8 @@ export const rideSelect = {
   shiftId: true,
   note: true,
   address: true,
+  lat: true,
+  lng: true,
   pickupOrder: true,
   pickupAt: true,
   fareCents: true,
@@ -108,7 +110,7 @@ export const rideSelect = {
   cancelReason: true,
   createdAt: true,
   location: { select: { id: true, name: true, timezone: true, client: { select: { id: true, name: true } } } },
-  stop: { select: { id: true, name: true, address: true } },
+  stop: { select: { id: true, name: true, address: true, lat: true, lng: true } },
   associate: { select: { id: true, firstName: true, lastName: true, phone: true } },
   run: {
     select: {
@@ -125,6 +127,10 @@ export type RideRow = Prisma.RideGetPayload<{ select: typeof rideSelect }>;
 
 function personName(u: { email: string; associate: { firstName: string; lastName: string } | null }): string {
   return u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email);
+}
+
+function coords(lat: Prisma.Decimal | null, lng: Prisma.Decimal | null): { lat: number; lng: number } | null {
+  return lat === null || lng === null ? null : { lat: Number(lat), lng: Number(lng) };
 }
 
 /** What the rider owes for this ride right now (0 when waived or not due). */
@@ -144,6 +150,8 @@ export function toRideView(r: RideRow) {
     pickup: r.stop
       ? { kind: 'stop' as const, id: r.stop.id, name: r.stop.name, address: r.stop.address }
       : { kind: 'address' as const, id: null, name: null, address: r.address ?? '' },
+    /** The home end's coordinates, when known (the rider's own, or a stop's). */
+    point: coords(r.stop ? r.stop.lat : r.lat, r.stop ? r.stop.lng : r.lng),
     store: {
       id: r.location.id,
       name: r.location.name,

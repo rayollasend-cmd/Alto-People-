@@ -68,7 +68,13 @@ function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
           <span className="text-xs text-silver">
             {a.van ?? 'Waiting on a van'}
             {showStore ? ` · ${a.store.name}` : ''}
+            {a.etaAt && !arrived && <> · here about {fmtTimeTz(a.etaAt)}</>}
           </span>
+          {a.lateMinutes >= 5 && !arrived && (
+            <Badge size="sm" variant="pending">
+              ~{a.lateMinutes} min late
+            </Badge>
+          )}
           <Badge size="sm" variant={arrived || onVan ? 'success' : a.van ? 'accent' : 'default'}>
             {arrived ? 'Arrived' : onVan ? 'On the van' : a.van ? 'Van set' : 'Booked'}
           </Badge>

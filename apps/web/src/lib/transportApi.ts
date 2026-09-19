@@ -21,6 +21,11 @@ export type TransportIssueCategory =
   | 'OTHER';
 export type TransportIssueStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
 
+export interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
 export interface TransportSettings {
   fareCents: number;
   noShowFeeCents: number;
@@ -39,6 +44,8 @@ export interface Ride {
   pickup:
     | { kind: 'stop'; id: string; name: string; address: string }
     | { kind: 'address'; id: null; name: null; address: string };
+  /** The home end's coordinates, when known. */
+  point: GeoPoint | null;
   store: { id: string; name: string; timezone: string; clientId: string; clientName: string };
   rider: { associateId: string; name: string; phone: string | null };
   pickupOrder: number | null;
@@ -109,7 +116,7 @@ export const getMyTransport = () => apiFetch<MyTransport>('/transport/me');
 
 export const giveRideConsent = () => apiFetch<{ ok: true }>('/transport/me/consent', { method: 'POST' });
 
-export const addRidePlace = (body: { label: string; address: string }) =>
+export const addRidePlace = (body: { label: string; address: string; lat?: number; lng?: number }) =>
   apiFetch<{ place: { id: string; label: string; address: string } }>('/transport/me/places', { method: 'POST', body });
 
 export const deleteRidePlace = (id: string) => apiFetch<void>(`/transport/me/places/${id}`, { method: 'DELETE' });
@@ -120,6 +127,9 @@ export interface BookRideInput {
   stopId?: string;
   placeId?: string;
   address?: string;
+  /** "Use where I am now" — the phone's own point for a new address. */
+  lat?: number;
+  lng?: number;
   targetAt: string;
   note?: string;
   shiftId?: string;
@@ -130,6 +140,76 @@ export const bookRide = (body: BookRideInput) =>
 
 export const cancelMyRide = (id: string) =>
   apiFetch<{ ok: true }>(`/transport/me/rides/${id}/cancel`, { method: 'POST' });
+
+/** The street address of the phone's position ("Use where I am now"). */
+export const whereAmI = (p: GeoPoint) =>
+  apiFetch<{ address: string | null }>(`/transport/me/where?lat=${p.lat}&lng=${p.lng}`);
+
+/* ----- The vans live -------------------------------------------------------- */
+
+export interface VanPosition extends GeoPoint {
+  heading: number | null;
+  speedMps: number | null;
+  at: string;
+}
+
+/** The rider's live ride: the van, their own pickup and destination only. */
+export interface MyLiveRide {
+  rideId: string;
+  direction: RideDirection;
+  status: RideStatus;
+  runStatus: RideRunStatus;
+  timezone: string;
+  departAt: string;
+  van: { name: string; plate: string | null };
+  driver: string;
+  position: VanPosition | null;
+  stale: boolean;
+  pickup: { label: string; point: GeoPoint | null; scheduledAt: string | null; etaAt: string | null };
+  destination: { label: string; point: GeoPoint | null; dueAt: string | null; etaAt: string | null };
+  stopsBefore: number;
+  lateMinutes: number;
+}
+
+export const getMyLiveRide = () => apiFetch<{ live: MyLiveRide | null }>('/transport/me/live');
+
+/** A whole run on the map — the desk's and the driver's view. */
+export interface RunMap {
+  runId: string;
+  status: RideRunStatus;
+  direction: RideDirection;
+  serviceDate: string;
+  departAt: string;
+  timezone: string;
+  van: { id: string; name: string; plate: string | null; capacity: number };
+  driver: { userId: string; name: string };
+  position: VanPosition | null;
+  stale: boolean;
+  /** Where the van has been — [lng, lat] pairs. */
+  trail: Array<[number, number]>;
+  waypoints: Array<{ kind: 'pickup' | 'store' | 'drop'; point: GeoPoint | null; etaAt: string | null; label: string; rideIds: string[] }>;
+  stores: Array<{ locationId: string; name: string; point: GeoPoint | null }>;
+  late: Array<{ locationId: string; store: string; minutes: number }>;
+  riders: Array<{
+    rideId: string;
+    name: string;
+    status: RideStatus;
+    pickupAt: string | null;
+    point: GeoPoint | null;
+    pickupEtaAt: string | null;
+    dropEtaAt: string | null;
+  }>;
+}
+
+export const getLiveBoard = (date?: string) =>
+  apiFetch<{ date: string; generatedAt: string; runs: RunMap[] }>(`/transport/live${date ? `?date=${date}` : ''}`);
+
+export const getDriverRunLive = (runId: string) => apiFetch<{ run: RunMap }>(`/transport/driver/runs/${runId}/live`);
+
+export const sendVanLocation = (
+  runId: string,
+  body: { lat: number; lng: number; heading?: number | null; speed?: number | null; accuracy?: number | null },
+) => apiFetch<{ ok: true; skipped?: boolean }>(`/transport/driver/runs/${runId}/location`, { method: 'POST', body });
 
 export const reportTransportIssue = (body: {
   category: TransportIssueCategory;
@@ -294,6 +374,9 @@ export interface VanArrival {
   name: string;
   store: { id: string; name: string };
   arriveBy: string;
+  /** When the van actually gets them here (a van on the road). */
+  etaAt: string | null;
+  lateMinutes: number;
   status: RideStatus;
   van: string | null;
   hasShift: boolean;

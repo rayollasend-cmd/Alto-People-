@@ -241,6 +241,11 @@ export function createApp() {
             'https://*.ingest.sentry.io',
             'https://*.ingest.us.sentry.io',
             'https://*.ingest.de.sentry.io',
+            // The vans' live map: OpenFreeMap serves the map style, vector
+            // tiles, fonts and icons (fetched by MapLibre). The map's web
+            // worker is served from our own origin (MapLibre's CSP build),
+            // so no blob: workers are needed.
+            'https://tiles.openfreemap.org',
           ],
         },
       },

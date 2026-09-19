@@ -39,6 +39,7 @@ import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { startOfferLetterCron } from './lib/offerLetters.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { startNotificationRetentionCron } from './lib/notificationRetention.js';
+import { startVanTrailRetentionCron } from './lib/transportLive.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
@@ -105,6 +106,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startIdempotencyCleanupCron();
   // Daily: read bell rows >90d and email/SMS delivery-audit rows >365d.
   startNotificationRetentionCron();
+  startVanTrailRetentionCron();
 
   // Multi-replica safety check. Three independent per-process subsystems
   // assume a single container today: the kiosk PIN rate limiter (brute-

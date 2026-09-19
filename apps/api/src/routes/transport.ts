@@ -10,6 +10,15 @@ import { notifyAssociate, notifyUser, trackNotificationWork } from '../lib/notif
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
+import { geocode, reverseGeocode } from '../lib/geocode.js';
+import {
+  MIN_PING_GAP_MS,
+  afterPing,
+  computeRunLive,
+  liveRunInclude,
+  type LiveRunRow,
+  type RunLive,
+} from '../lib/transportLive.js';
 import {
   OPEN_RIDE_STATUSES,
   bookableStores,
@@ -173,16 +182,37 @@ transportRouter.post('/me/consent', RIDE, async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+const LatLng = {
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+};
+
 const PlaceInput = z.object({
   label: z.string().trim().min(1).max(40),
   address: z.string().trim().min(5).max(300),
+  // "Use where I am now" — the phone's own coordinates beat a lookup.
+  ...LatLng,
 });
+
+/** The point for an address: the one the phone gave, else looked up. */
+async function pointFor(address: string, lat?: number, lng?: number) {
+  return lat !== undefined && lng !== undefined ? { lat, lng } : await geocode(address);
+}
 
 transportRouter.post('/me/places', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const input = PlaceInput.parse(req.body);
-  const place = await prisma.ridePlace.create({ data: { associateId, ...input } });
+  const at = await pointFor(input.address, input.lat, input.lng);
+  const place = await prisma.ridePlace.create({
+    data: { associateId, label: input.label, address: input.address, lat: at?.lat ?? null, lng: at?.lng ?? null },
+  });
   res.status(201).json({ place: { id: place.id, label: place.label, address: place.address } });
+});
+
+/** "Use where I am now": the street address of the phone's position. */
+transportRouter.get('/me/where', RIDE, async (req, res) => {
+  const q = z.object({ lat: z.coerce.number().min(-90).max(90), lng: z.coerce.number().min(-180).max(180) }).parse(req.query);
+  res.json({ address: await reverseGeocode({ lat: q.lat, lng: q.lng }) });
 });
 
 transportRouter.delete('/me/places/:id', RIDE, async (req, res) => {
@@ -199,6 +229,7 @@ const BookInput = z
     stopId: z.string().uuid().optional(),
     placeId: z.string().uuid().optional(),
     address: z.string().trim().min(5).max(300).optional(),
+    ...LatLng,
     targetAt: z.string().datetime(),
     note: z.string().trim().max(300).optional(),
     shiftId: z.string().uuid().optional(),
@@ -231,6 +262,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   // The home end: a housing complex / stop, a saved address, or a one-off.
   let stopId: string | null = null;
   let address: string | null = null;
+  let at: { lat: number; lng: number } | null = null;
   if (input.stopId) {
     const stop = await prisma.transportStop.findFirst({ where: { id: input.stopId, isActive: true } });
     if (!stop) throw new HttpError(400, 'stop_not_found', 'That pickup stop is not available.');
@@ -239,8 +271,10 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
     const place = await prisma.ridePlace.findFirst({ where: { id: input.placeId, associateId } });
     if (!place) throw new HttpError(400, 'place_not_found', 'That saved address is gone.');
     address = place.address;
+    at = place.lat !== null && place.lng !== null ? { lat: Number(place.lat), lng: Number(place.lng) } : await geocode(place.address);
   } else {
     address = input.address!;
+    at = await pointFor(address, input.lat, input.lng);
   }
   const clash = await prisma.ride.findFirst({
     where: {
@@ -263,6 +297,8 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
       locationId: store.id,
       stopId,
       address,
+      lat: at?.lat ?? null,
+      lng: at?.lng ?? null,
       targetAt,
       serviceDate: serviceDateFor(targetAt, store.timezone),
       shiftId: input.shiftId ?? null,
@@ -515,6 +551,192 @@ transportRouter.post('/driver/rides/:id/undo', DRIVE, async (req, res) => {
     select: rideSelect,
   });
   res.json({ ride: toRideView(updated) });
+});
+
+/* ===== The vans live (phase 2) ========================================= */
+
+const PingInput = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  heading: z.number().min(0).max(360).nullable().optional(),
+  speed: z.number().min(0).max(90).nullable().optional(),
+  accuracy: z.number().min(0).max(100_000).nullable().optional(),
+});
+
+/** The driver's phone: where the van is, every few seconds while on the road. */
+transportRouter.post('/driver/runs/:id/location', DRIVE, async (req, res) => {
+  const run = await ownRun(req, z.string().uuid().parse(req.params.id));
+  if (run.status !== 'ACTIVE') {
+    throw new HttpError(409, 'not_active', 'Start the run to share where the van is.');
+  }
+  const input = PingInput.parse(req.body);
+  const now = new Date();
+  if (run.lastLocationAt && now.getTime() - run.lastLocationAt.getTime() < MIN_PING_GAP_MS) {
+    res.status(202).json({ ok: true, skipped: true });
+    return;
+  }
+  const fields = {
+    heading: input.heading === null || input.heading === undefined ? null : Math.round(input.heading),
+    speedMps: input.speed ?? null,
+    accuracyM: input.accuracy === null || input.accuracy === undefined ? null : Math.round(input.accuracy),
+  };
+  await prisma.$transaction([
+    prisma.rideRun.update({
+      where: { id: run.id },
+      data: {
+        lastLat: input.lat,
+        lastLng: input.lng,
+        lastHeading: fields.heading,
+        lastSpeedMps: fields.speedMps,
+        lastAccuracyM: fields.accuracyM,
+        lastLocationAt: now,
+      },
+    }),
+    prisma.rideRunPing.create({ data: { runId: run.id, lat: input.lat, lng: input.lng, ...fields, at: now } }),
+  ]);
+  await afterPing(run.id, now);
+  res.status(202).json({ ok: true });
+});
+
+const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
+
+/** The whole run on the map — the desk's and the driver's view (they see
+ *  every rider's pickup; a rider never does). */
+async function runMapView(run: LiveRunRow, live: RunLive) {
+  const riderName = (id: string) => {
+    const r = run.rides.find((x) => x.id === id);
+    return r ? `${r.associate.firstName} ${r.associate.lastName}` : '';
+  };
+  const trail =
+    run.status === 'ACTIVE'
+      ? (
+          await prisma.rideRunPing.findMany({
+            where: { runId: run.id },
+            orderBy: { at: 'desc' },
+            take: 120,
+            select: { lat: true, lng: true },
+          })
+        )
+          .reverse()
+          .map((p) => [Number(p.lng), Number(p.lat)] as [number, number])
+      : [];
+  return {
+    runId: run.id,
+    status: run.status,
+    direction: run.direction,
+    serviceDate: run.serviceDate,
+    departAt: run.departAt.toISOString(),
+    timezone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE,
+    van: run.van,
+    driver: { userId: run.driver.id, name: personName(run.driver) },
+    position: live.van,
+    stale: live.stale,
+    trail,
+    waypoints: live.plan.waypoints.map((w) => ({
+      kind: w.kind,
+      point: w.point,
+      etaAt: iso(w.etaAt),
+      label: w.kind === 'store' ? (live.stores.get(w.locationId!)?.location.name ?? '') : w.rideIds.map(riderName).join(', '),
+      rideIds: w.rideIds,
+    })),
+    stores: [...live.stores.values()].map((s) => ({ locationId: s.location.id, name: s.location.name, point: s.point })),
+    late: [...live.plan.lateMinutes.entries()]
+      .filter(([, m]) => m > 0)
+      .map(([locationId, minutes]) => ({ locationId, store: live.stores.get(locationId)?.location.name ?? '', minutes })),
+    riders: run.rides.map((r) => ({
+      rideId: r.id,
+      name: `${r.associate.firstName} ${r.associate.lastName}`,
+      status: r.status,
+      pickupAt: iso(r.pickupAt),
+      point: live.homes.get(r.id) ?? null,
+      pickupEtaAt: iso(live.plan.pickupEta.get(r.id)),
+      dropEtaAt: iso(live.plan.dropEta.get(r.id)),
+    })),
+  };
+}
+
+/** The desk's live map: every van on the road, and the day's planned runs. */
+transportRouter.get('/live', VIEW, async (req, res) => {
+  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const runs = await prisma.rideRun.findMany({
+    where: { OR: [{ status: 'ACTIVE' }, { status: 'PLANNED', serviceDate: date }] },
+    orderBy: { departAt: 'asc' },
+    include: liveRunInclude,
+  });
+  const now = new Date();
+  const views = [];
+  for (const run of runs) views.push(await runMapView(run, await computeRunLive(run, now)));
+  res.json({ date, generatedAt: now.toISOString(), runs: views });
+});
+
+/** The driver's own run on the map. */
+transportRouter.get('/driver/runs/:id/live', DRIVE, async (req, res) => {
+  const own = await ownRun(req, z.string().uuid().parse(req.params.id));
+  const run = (await prisma.rideRun.findUnique({ where: { id: own.id }, include: liveRunInclude }))!;
+  res.json({ run: await runMapView(run, await computeRunLive(run)) });
+});
+
+/**
+ * The rider's live ride: the van (only while it's on the road), their own
+ * pickup and where they're headed, the ETAs, and how many stops come first
+ * — never anyone else's address. A run that hasn't left shows within 3
+ * hours of departure, without a van position.
+ */
+transportRouter.get('/me/live', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const now = new Date();
+  const mine = await prisma.ride.findMany({
+    where: {
+      associateId,
+      status: { in: ['SCHEDULED', 'BOARDED'] },
+      run: {
+        OR: [{ status: 'ACTIVE' }, { status: 'PLANNED', departAt: { lte: new Date(now.getTime() + 3 * 3_600_000) } }],
+      },
+    },
+    orderBy: [{ pickupAt: 'asc' }, { targetAt: 'asc' }],
+    take: 1,
+    select: { id: true, runId: true },
+  });
+  const ride = mine[0];
+  if (!ride?.runId) {
+    res.json({ live: null });
+    return;
+  }
+  const run = (await prisma.rideRun.findUnique({ where: { id: ride.runId }, include: liveRunInclude }))!;
+  const live = await computeRunLive(run, now);
+  const r = run.rides.find((x) => x.id === ride.id)!;
+  const home = live.homes.get(r.id) ?? null;
+  const store = live.stores.get(r.location.id)!;
+  const firstStop = live.plan.waypoints.findIndex((w) => w.rideIds.includes(r.id));
+  const toWork = run.direction === 'TO_WORK';
+  res.json({
+    live: {
+      rideId: r.id,
+      direction: run.direction,
+      status: r.status,
+      runStatus: run.status,
+      timezone: r.location.timezone,
+      departAt: run.departAt.toISOString(),
+      van: { name: run.van.name, plate: run.van.plate },
+      driver: personName(run.driver).split(' ')[0] ?? '',
+      position: live.van,
+      stale: live.stale,
+      pickup: {
+        label: toWork ? (r.stop?.name ?? r.address ?? '') : r.location.name,
+        point: toWork ? home : store.point,
+        scheduledAt: iso(r.pickupAt),
+        etaAt: iso(live.plan.pickupEta.get(r.id)),
+      },
+      destination: {
+        label: toWork ? r.location.name : (r.stop?.name ?? r.address ?? ''),
+        point: toWork ? store.point : home,
+        dueAt: toWork ? r.targetAt.toISOString() : null,
+        etaAt: iso(live.plan.dropEta.get(r.id)),
+      },
+      stopsBefore: firstStop > 0 ? firstStop : 0,
+      lateMinutes: toWork ? (live.plan.lateMinutes.get(r.location.id) ?? 0) : 0,
+    },
+  });
 });
 
 /* ===== The command center (Transportation Director) ===================== */
@@ -871,17 +1093,26 @@ const StopInput = z.object({
   address: z.string().trim().min(5).max(300),
   notes: z.string().trim().max(500).nullable().optional(),
   isActive: z.boolean().optional(),
+  ...LatLng,
 });
 
 transportRouter.post('/stops', MANAGE, async (req, res) => {
   const input = StopInput.parse(req.body);
-  const stop = await prisma.transportStop.create({ data: { name: input.name, address: input.address, notes: input.notes ?? null } });
+  const at = await pointFor(input.address, input.lat, input.lng);
+  const stop = await prisma.transportStop.create({
+    data: { name: input.name, address: input.address, notes: input.notes ?? null, lat: at?.lat ?? null, lng: at?.lng ?? null },
+  });
   res.status(201).json({ stop });
 });
 
 transportRouter.patch('/stops/:id', MANAGE, async (req, res) => {
-  const input = StopInput.partial().parse(req.body);
-  const stop = await prisma.transportStop.update({ where: { id: z.string().uuid().parse(req.params.id) }, data: input });
+  const { lat, lng, ...input } = StopInput.partial().parse(req.body);
+  // A new address (or a pin) moves the stop on the map.
+  const at = input.address ? await pointFor(input.address, lat, lng) : lat !== undefined && lng !== undefined ? { lat, lng } : undefined;
+  const stop = await prisma.transportStop.update({
+    where: { id: z.string().uuid().parse(req.params.id) },
+    data: { ...input, ...(at !== undefined ? { lat: at?.lat ?? null, lng: at?.lng ?? null } : {}) },
+  });
   res.json({ stop });
 });
 
@@ -1053,6 +1284,14 @@ transportRouter.get('/arrivals', requireAuth, async (req, res) => {
         select: { assignedAssociateId: true, startsAt: true },
       })
     : [];
+  // Vans on the road: when each rider actually gets here.
+  const eta = new Map<string, Date | null>();
+  for (const runId of new Set(rides.filter((r) => r.run?.status === 'ACTIVE').map((r) => r.run!.id))) {
+    const run = await prisma.rideRun.findUnique({ where: { id: runId }, include: liveRunInclude });
+    if (!run) continue;
+    const live = await computeRunLive(run, now);
+    for (const [id, at] of live.plan.dropEta) eta.set(id, at);
+  }
   res.json({
     arrivals: rides.map((r) => ({
       rideId: r.id,
@@ -1060,6 +1299,8 @@ transportRouter.get('/arrivals', requireAuth, async (req, res) => {
       name: `${r.associate.firstName} ${r.associate.lastName}`,
       store: { id: r.location.id, name: r.location.name },
       arriveBy: r.targetAt.toISOString(),
+      etaAt: eta.get(r.id)?.toISOString() ?? null,
+      lateMinutes: eta.get(r.id) ? Math.max(0, Math.round((eta.get(r.id)!.getTime() - r.targetAt.getTime()) / 60_000)) : 0,
       status: r.status,
       van: r.run?.van.name ?? null,
       hasShift: shifts.some(

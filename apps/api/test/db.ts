@@ -76,6 +76,7 @@ const TABLES = [
   'Van',
   'TransportStop',
   'TransportSettings',
+  'GeoCache',
   'ExecDecisionState',
   'ExecTarget',
   'LocalTaxRule',

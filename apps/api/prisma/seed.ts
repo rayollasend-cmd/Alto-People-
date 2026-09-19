@@ -490,8 +490,9 @@ async function main() {
   if ((await prisma.transportStop.count()) === 0) {
     await prisma.transportStop.createMany({
       data: [
-        { name: 'Seaside Housing', address: '17751 Panama City Beach Pkwy, Panama City Beach, FL 32413', notes: 'By the front office' },
-        { name: 'Gulf Pines Apartments', address: '7209 Thomas Dr, Panama City Beach, FL 32408', notes: 'Main gate' },
+        // Coordinates from OpenStreetMap, so the map needs no lookup.
+        { name: 'Seaside Housing', address: '17751 Panama City Beach Pkwy, Panama City Beach, FL 32413', notes: 'By the front office', lat: 30.236012, lng: -85.907758 },
+        { name: 'Gulf Pines Apartments', address: '7209 Thomas Dr, Panama City Beach, FL 32408', notes: 'Main gate', lat: 30.177706, lng: -85.799148 },
       ],
     });
   }

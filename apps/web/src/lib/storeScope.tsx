@@ -58,7 +58,11 @@ const storageKey = (userId: string) => `alto:storeScope:${userId}`;
 
 export function StoreScopeProvider({ children }: { children: ReactNode }) {
   const { user, can } = useAuth();
-  const enabled = !!user && !BOUNDED_ROLES.has(user.role);
+  // The store switcher is for roles that read store data. The vans cross
+  // every client and a driver has no store pages — neither transportation
+  // role gets it (their /scheduling/clients read 403'd on every page).
+  const enabled =
+    !!user && !BOUNDED_ROLES.has(user.role) && (can('view:clients') || can('view:scheduling'));
   const userId = user?.id ?? null;
   // Only bounded ROLES pin to the account's clientId — an org-wide role
   // carrying an incidental clientId must not be silently scoped to it.

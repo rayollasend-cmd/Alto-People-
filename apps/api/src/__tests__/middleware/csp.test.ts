@@ -39,6 +39,14 @@ describe('Content-Security-Policy', () => {
     expect(tokens).not.toContain("'unsafe-inline'");
   });
 
+  it('lets the vans map load its tiles, without opening blob: workers', async () => {
+    const res = await request(createApp()).get('/health');
+    const csp = res.headers['content-security-policy'] as string;
+    const connect = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('connect-src '));
+    expect(connect).toContain('https://tiles.openfreemap.org');
+    expect(csp).not.toMatch(/blob:/);
+  });
+
   it('keeps the Sentry ingest hosts on connect-src', async () => {
     const res = await request(createApp()).get('/health');
     const csp = res.headers['content-security-policy'] as string;

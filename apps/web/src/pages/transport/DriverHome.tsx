@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Check, Home, MapPin, Phone, RotateCcw, UserX } from 'lucide-react';
+import { AlertTriangle, Bus, Check, Home, LocateFixed, LocateOff, MapPin, Phone, RotateCcw, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -10,10 +10,12 @@ import { hapticConfirm } from '@/lib/haptics';
 import { fmtMoney, fmtRelativeDayTz, fmtTimeTz, mapsUrl } from '@/lib/format';
 import {
   completeDriverRun,
+  getDriverRunLive,
   getDriverRuns,
   markBoarded,
   markNoShow,
   reportTransportIssue,
+  sendVanLocation,
   startDriverRun,
   undoRideMark,
   type Ride,
@@ -28,6 +30,7 @@ import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
+import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import {
   Dialog,
   DialogContent,
@@ -57,7 +60,8 @@ export function DriverHome() {
   const runs = useQuery({ queryKey: ['transport', 'driver'], queryFn: getDriverRuns, refetchInterval: 60_000 });
   const [reporting, setReporting] = useState<string | null | undefined>(undefined);
   const list = (runs.data?.runs ?? []).filter((r) => r.status !== 'COMPLETED' || isRecent(r));
-  const open = list.filter((r) => r.status === 'ACTIVE' || r.status === 'PLANNED');
+  // The van on the road first, then what leaves next.
+  const open = [...list.filter((r) => r.status === 'ACTIVE'), ...list.filter((r) => r.status === 'PLANNED')];
   const done = list.filter((r) => r.status === 'COMPLETED');
 
   return (
@@ -127,6 +131,7 @@ function RunCard({ run, hero, onReport }: { run: RideRun; hero: boolean; onRepor
   };
 
   const stores = [...new Set(riders.map((r) => r.store.name))];
+  const sharing = useShareVanLocation(run.id, active);
 
   return (
     <section
@@ -168,6 +173,8 @@ function RunCard({ run, hero, onReport }: { run: RideRun; hero: boolean; onRepor
           {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
         </p>
         {run.notes && <p className="mt-2 text-sm text-white">{run.notes}</p>}
+        {active && <SharingPill state={sharing} />}
+        {active && <RunMap runId={run.id} />}
 
         <ol className="mt-4 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
           {riders.map((r, i) => (
@@ -201,6 +208,156 @@ function RunCard({ run, hero, onReport }: { run: RideRun; hero: boolean; onRepor
         </div>
       </div>
     </section>
+  );
+}
+
+/* ----- The van's location, from this phone ------------------------------- */
+
+type SharingState = 'locating' | 'on' | 'denied' | 'unsupported';
+
+const SEND_EVERY_MS = 10_000;
+
+/**
+ * While the run is on the road: watch the phone's GPS and send the van's
+ * position every ~10 seconds (sooner after a big move), and keep the
+ * screen awake so the phone doesn't stop sharing mid-route.
+ */
+export function useShareVanLocation(runId: string, active: boolean): SharingState {
+  const [state, setState] = useState<SharingState>('locating');
+  const latest = useRef<GeolocationPosition | null>(null);
+  const lastSent = useRef<{ at: number; lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setState('unsupported');
+      return;
+    }
+    let stopped = false;
+    const send = (pos: GeolocationPosition) => {
+      const c = pos.coords;
+      lastSent.current = { at: Date.now(), lat: c.latitude, lng: c.longitude };
+      void sendVanLocation(runId, {
+        lat: c.latitude,
+        lng: c.longitude,
+        heading: c.heading !== null && Number.isFinite(c.heading) ? c.heading : null,
+        speed: c.speed !== null && Number.isFinite(c.speed) ? c.speed : null,
+        accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null,
+      }).catch(() => {
+        /* the next tick retries */
+      });
+    };
+    const watch = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (stopped) return;
+        latest.current = pos;
+        setState('on');
+        const prev = lastSent.current;
+        const moved = prev ? Math.hypot(pos.coords.latitude - prev.lat, pos.coords.longitude - prev.lng) > 0.0008 : true;
+        if (!prev || Date.now() - prev.at >= SEND_EVERY_MS || (moved && Date.now() - prev.at >= 5_000)) send(pos);
+      },
+      (err) => {
+        if (!stopped) setState(err.code === err.PERMISSION_DENIED ? 'denied' : 'locating');
+      },
+      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 30_000 },
+    );
+    // Parked at a stop, the GPS may go quiet — keep the riders' map fresh.
+    const tick = window.setInterval(() => {
+      if (latest.current && (!lastSent.current || Date.now() - lastSent.current.at >= SEND_EVERY_MS)) send(latest.current);
+    }, SEND_EVERY_MS);
+
+    // Keep the screen on while driving the route.
+    let lock: { release: () => Promise<void> } | null = null;
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
+    const holdScreen = () => {
+      if (document.visibilityState === 'visible' && nav.wakeLock) {
+        nav.wakeLock
+          .request('screen')
+          .then((l) => {
+            lock = l;
+          })
+          .catch(() => {});
+      }
+    };
+    holdScreen();
+    document.addEventListener('visibilitychange', holdScreen);
+
+    return () => {
+      stopped = true;
+      navigator.geolocation.clearWatch(watch);
+      window.clearInterval(tick);
+      document.removeEventListener('visibilitychange', holdScreen);
+      void lock?.release().catch(() => {});
+    };
+  }, [runId, active]);
+
+  return state;
+}
+
+function SharingPill({ state }: { state: SharingState }) {
+  const { t } = useI18n();
+  const on = state === 'on';
+  return (
+    <p
+      role="status"
+      className={cn(
+        'mt-3 flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs',
+        on ? 'bg-success/10 text-success' : state === 'locating' ? 'bg-navy-secondary/40 text-silver' : 'bg-warning/10 text-warning',
+      )}
+    >
+      {on || state === 'locating' ? (
+        <LocateFixed className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      ) : (
+        <LocateOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      )}
+      {on
+        ? t('drive.sharing')
+        : state === 'locating'
+          ? t('drive.locating')
+          : state === 'denied'
+            ? t('drive.locationOff')
+            : t('drive.locationUnsupported')}
+    </p>
+  );
+}
+
+/** The run on the map: the van, and the stops left in order. */
+function RunMap({ runId }: { runId: string }) {
+  const { t } = useI18n();
+  const live = useQuery({
+    queryKey: ['transport', 'driver', 'live', runId],
+    queryFn: () => getDriverRunLive(runId),
+    refetchInterval: 15_000,
+  });
+  const run = live.data?.run;
+  if (!run) return null;
+  const markers: MapMarker[] = [];
+  if (run.position) markers.push({ id: 'van', kind: 'van', ...run.position, label: run.van.name, stale: run.stale, highlight: true });
+  let n = 0;
+  for (const w of run.waypoints) {
+    if (!w.point) continue;
+    if (w.kind === 'store') markers.push({ id: `s-${w.label}`, kind: 'store', ...w.point, label: w.label });
+    else markers.push({ id: `w-${w.rideIds.join(',')}`, kind: 'stop', ...w.point, order: ++n, label: w.label });
+  }
+  const route: Array<[number, number]> = [
+    ...(run.position ? [[run.position.lng, run.position.lat] as [number, number]] : []),
+    ...run.waypoints.filter((w) => w.point).map((w) => [w.point!.lng, w.point!.lat] as [number, number]),
+  ];
+  const next = run.waypoints.find((w) => w.point);
+  return (
+    <div className="mt-3">
+      {markers.length > 0 && (
+        <LazyLiveMap ariaLabel={t('drive.map')} className="h-56 w-full sm:h-72" markers={markers} route={route.length > 1 ? route : undefined} trail={run.trail} />
+      )}
+      {next?.point && (
+        <Button size="sm" variant="secondary" className="mt-2" asChild>
+          <a href={`https://www.google.com/maps/dir/?api=1&destination=${next.point.lat},${next.point.lng}`} target="_blank" rel="noreferrer">
+            <MapPin className="h-3.5 w-3.5" />
+            {t('drive.navigate')} · {next.label}
+          </a>
+        </Button>
+      )}
+    </div>
   );
 }
 
