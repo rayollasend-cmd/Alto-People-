@@ -256,10 +256,12 @@ describe('<DriverHome> — driver mode', () => {
 
 describe('<TransportHome> — the command center', () => {
   function board(): TransportBoard {
-    const a = ride({ id: 'r1', targetAt: hoursFromNow(20) });
+    // Both inside one half hour — the board groups arrivals by half hour.
+    const slot = Math.ceil((Date.now() + 20 * 3_600_000) / 1_800_000) * 1_800_000;
+    const a = ride({ id: 'r1', targetAt: new Date(slot).toISOString() });
     const b = ride({
       id: 'r2',
-      targetAt: hoursFromNow(20.1),
+      targetAt: new Date(slot + 5 * 60_000).toISOString(),
       rider: { associateId: 'a2', name: 'Kim Nguyen', phone: null },
       pickup: { kind: 'address', id: null, name: null, address: '12 Palm St' },
     });

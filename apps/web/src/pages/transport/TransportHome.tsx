@@ -302,7 +302,7 @@ interface RideGroup {
 function groupWaiting(rides: Ride[]): RideGroup[] {
   const groups = new Map<string, RideGroup>();
   for (const r of rides) {
-    // Half-hour buckets: a 6:45 and a 7:00 arrival share a van.
+    // Half-hour buckets: a 7:00 and a 7:15 arrival land in one group.
     const bucket = Math.floor(new Date(r.targetAt).getTime() / 1_800_000);
     const key = `${r.direction}|${r.store.id}|${bucket}`;
     const g = groups.get(key) ?? {
