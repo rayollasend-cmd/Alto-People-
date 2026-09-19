@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
+import { nextPaydayFor } from '../../lib/associatePayday.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -53,7 +54,7 @@ describe('GET /payroll/me/next-payday', () => {
     expect(res.body).toEqual({ nextPayday: null });
   });
 
-  it('the org default: a Friday, on or after today, paying the Mon–Sun week before it', async () => {
+  it('the org default: a Friday after today, paying the Mon–Sun week before it', async () => {
     const { agent } = await associateAgent();
     await schedule({ name: 'Weekly (org)' });
     const { nextPayday } = (await agent.get('/payroll/me/next-payday')).body;
@@ -61,7 +62,7 @@ describe('GET /payroll/me/next-payday', () => {
     const pay = new Date(`${nextPayday.payDate}T12:00:00Z`);
     expect(pay.getUTCDay()).toBe(5);
     const today = new Date().toISOString().slice(0, 10);
-    expect(nextPayday.payDate >= today).toBe(true);
+    expect(nextPayday.payDate > today).toBe(true);
     const end = new Date(`${nextPayday.periodEnd}T12:00:00Z`);
     expect((pay.getTime() - end.getTime()) / 86_400_000).toBe(5);
   });
@@ -74,5 +75,48 @@ describe('GET /payroll/me/next-payday', () => {
     const own = await schedule({ name: 'Maria special' });
     await prisma.associate.update({ where: { id: associate.id }, data: { payrollScheduleId: own.id } });
     expect((await agent.get('/payroll/me/next-payday')).body.nextPayday.schedule).toBe('Maria special');
+  });
+});
+
+describe("Alto's pay rule — biweekly Sat→Fri, paid the Friday after", () => {
+  async function altoAssociate() {
+    const a = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await prisma.payrollSchedule.create({
+      data: {
+        name: 'Biweekly · Sat–Fri · paid the Friday after',
+        frequency: 'BIWEEKLY',
+        anchorDate: new Date('2026-09-12'),
+        payDateOffsetDays: 7,
+      },
+    });
+    return a.id;
+  }
+
+  it('on payday (Fri Sep 18, paying Aug 29–Sep 11) the next payday is Fri Oct 2, for Sep 12–25', async () => {
+    const id = await altoAssociate();
+    for (const at of ['2026-09-18T13:00:00.000Z', '2026-09-18T23:30:00.000Z', '2026-09-19T01:30:00.000Z']) {
+      expect(await nextPaydayFor(id, new Date(at))).toMatchObject({
+        payDate: '2026-10-02',
+        periodStart: '2026-09-12',
+        periodEnd: '2026-09-25',
+      });
+    }
+  });
+
+  it('the evening before payday, payday is still tomorrow — and mid-period it is the Friday after the period', async () => {
+    const id = await altoAssociate();
+    // Thu Sep 17, 10 PM Eastern (already Sep 18 in UTC).
+    expect(await nextPaydayFor(id, new Date('2026-09-18T02:00:00.000Z'))).toMatchObject({
+      payDate: '2026-09-18',
+      periodStart: '2026-08-29',
+      periodEnd: '2026-09-11',
+    });
+    expect(await nextPaydayFor(id, new Date('2026-09-23T15:00:00.000Z'))).toMatchObject({ payDate: '2026-10-02' });
+    // Oct 2 itself pays Sep 12–25; next is Oct 16 for Sep 26–Oct 9.
+    expect(await nextPaydayFor(id, new Date('2026-10-02T15:00:00.000Z'))).toMatchObject({
+      payDate: '2026-10-16',
+      periodStart: '2026-09-26',
+      periodEnd: '2026-10-09',
+    });
   });
 });
