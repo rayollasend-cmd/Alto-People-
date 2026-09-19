@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   FileSpreadsheet,
+  History as HistoryIcon,
   Lock,
   RefreshCw,
   Search,
@@ -418,7 +419,7 @@ export function TimesheetsView() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Timesheets"
+        title="Fieldglass timesheets"
         subtitle="Fieldglass-ready weekly hours (Saturday → Friday). Approved time only, net of unpaid breaks."
       />
 
@@ -724,14 +725,24 @@ export function TimesheetsView() {
                       {r.fieldglass?.revision ?? 0}
                     </TableCell>
                     <TableCell className="font-medium">
-                      <button
-                        type="button"
-                        onClick={() => void openDetail(r.associateId)}
-                        className="text-left text-gold hover:underline focus:underline focus:outline-none"
-                        title="Open this associate's daily timesheet"
-                      >
-                        {r.worker}
-                      </button>
+                      <span className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void openDetail(r.associateId)}
+                          className="whitespace-nowrap text-left text-gold hover:underline focus:underline focus:outline-none"
+                          title="Open this associate's daily timesheet"
+                        >
+                          {r.worker}
+                        </button>
+                        <Link
+                          to={`/time-attendance/timesheets/history/${r.associateId}`}
+                          aria-label={`${r.worker} — every timesheet, across pay periods`}
+                          title="Every timesheet, across pay periods"
+                          className="rounded text-silver/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                        >
+                          <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                      </span>
                       {r.fieldglass?.workerId && (
                         <div className="font-mono text-xs2 font-normal text-silver/70">{r.fieldglass.workerId}</div>
                       )}
@@ -877,6 +888,15 @@ export function TimesheetsView() {
           </DrawerTitle>
           <DrawerDescription>
             {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
+            {detailAssociateRef.current && (
+              <Link
+                to={`/time-attendance/timesheets/history/${detailAssociateRef.current}`}
+                className="ml-2 inline-flex items-center gap-1 text-gold hover:underline"
+              >
+                <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                Full timesheet history
+              </Link>
+            )}
           </DrawerDescription>
         </DrawerHeader>
         <DrawerBody>

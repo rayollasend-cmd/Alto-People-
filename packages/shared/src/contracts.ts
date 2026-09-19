@@ -1417,6 +1417,12 @@ export const TimesheetFieldglassSchema = z.object({
   revision: z.number().int().nullable(),
   hours: z.number().nullable(),
   syncedAt: z.string().nullable(),
+  /** The buyer's comment on it (a rejection reason), from the import. */
+  comment: z.string().nullable().optional(),
+  /** A rejected timesheet fixed and sent back — when. */
+  resubmittedAt: z.string().nullable().optional(),
+  /** Finance's own note on this week. */
+  note: z.string().nullable().optional(),
 });
 export type TimesheetFieldglass = z.infer<typeof TimesheetFieldglassSchema>;
 
@@ -1615,6 +1621,96 @@ export const TimesheetWeekResponseSchema = z.object({
   generatedAt: z.string(),
 });
 export type TimesheetWeekResponse = z.infer<typeof TimesheetWeekResponseSchema>;
+
+/* One associate's whole timesheet, across pay periods — every Sat→Fri week
+ * they worked, grouped into the pay periods that paid them, each with its
+ * day grid and where it stands in Fieldglass. */
+export const TimesheetHistoryWeekSchema = z.object({
+  /** Saturday, YYYY-MM-DD (store-local). */
+  weekStart: z.string(),
+  /** Friday, YYYY-MM-DD. */
+  weekEnd: z.string(),
+  /** MM/DD/YYYY — the Fieldglass End. */
+  weekEnding: z.string(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  site: z.string(),
+  days: z.array(TimesheetDaySchema).length(7),
+  /** Approved hours — what's billed. */
+  total: z.number().nonnegative(),
+  /** Worked but not approved yet — not in `total`. */
+  pendingHours: z.number().nonnegative(),
+  /** The week isn't over yet. */
+  inProgress: z.boolean(),
+  /** When it's due in Fieldglass, and whether that passed with it not entered. */
+  dueAt: z.string(),
+  overdue: z.boolean(),
+  fieldglass: TimesheetFieldglassSchema.nullable(),
+  /** total × bill rate; null for a store-bound viewer or no rate. */
+  amount: z.number().nonnegative().nullable(),
+});
+export type TimesheetHistoryWeek = z.infer<typeof TimesheetHistoryWeekSchema>;
+
+export const TimesheetHistoryPeriodSchema = z.object({
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  /** Null when no pay schedule is set up (the period is then the week). */
+  payDate: z.string().nullable(),
+  weeks: z.array(TimesheetHistoryWeekSchema),
+  total: z.number().nonnegative(),
+  pendingHours: z.number().nonnegative(),
+  amount: z.number().nonnegative().nullable(),
+});
+export type TimesheetHistoryPeriod = z.infer<typeof TimesheetHistoryPeriodSchema>;
+
+export const TimesheetHistoryResponseSchema = z.object({
+  associate: z.object({
+    id: UuidSchema,
+    name: z.string(),
+    /** "Last, First" — the Fieldglass Worker column. */
+    worker: z.string(),
+    photoUrl: z.string().nullable(),
+    clientName: z.string().nullable(),
+    position: z.string().nullable(),
+    workerId: z.string().nullable(),
+    registeredAt: z.string().nullable(),
+    firstClockIn: z.object({ date: z.string(), time: z.string() }).nullable(),
+    lastWorked: z.string().nullable(),
+    /** Finance only — built from PII, and audited. */
+    securityId: z.string().nullable(),
+  }),
+  schedule: z.object({ name: z.string(), frequency: z.string() }).nullable(),
+  /** Newest first. */
+  periods: z.array(TimesheetHistoryPeriodSchema),
+  totals: z.object({
+    hours: z.number().nonnegative(),
+    weeks: z.number().int().nonnegative(),
+    avgWeekHours: z.number().nonnegative(),
+    year: z.number().int(),
+    yearHours: z.number().nonnegative(),
+    pendingHours: z.number().nonnegative(),
+    fieldglass: z.object({
+      approved: z.number().int().nonnegative(),
+      awaiting: z.number().int().nonnegative(),
+      rejected: z.number().int().nonnegative(),
+      toEnter: z.number().int().nonnegative(),
+      overdue: z.number().int().nonnegative(),
+      notRegistered: z.number().int().nonnegative(),
+      variances: z.number().int().nonnegative(),
+    }),
+    /** Billed dollars — never a store-bound viewer's. */
+    money: z
+      .object({ approved: z.number(), awaiting: z.number(), atRisk: z.number() })
+      .nullable(),
+  }),
+  /** Years with hours, newest first. */
+  years: z.array(z.number().int()),
+  /** Only the newest weeks came back (see `from`). */
+  truncated: z.boolean(),
+  from: z.string().nullable(),
+  generatedAt: z.string(),
+});
+export type TimesheetHistoryResponse = z.infer<typeof TimesheetHistoryResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Scheduling — Phase 7

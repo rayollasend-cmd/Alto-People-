@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlarmClock, Check, ClipboardCopy, FileUp, SkipForward } from 'lucide-react';
+import { AlarmClock, AlertTriangle, Check, ClipboardCopy, FileUp, MessageSquare, RotateCcw, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FieldglassStatus, TimesheetAssociateDetailResponse, TimesheetRow, TimesheetWeekResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -45,6 +45,13 @@ import {
 
 const PT = 'America/Los_Angeles';
 
+/** Waiting on Alto: registered, and not entered yet — or rejected by the
+ *  buyer, to fix and resubmit. */
+function toWork(r: TimesheetRow): boolean {
+  const f = r.fieldglass;
+  return !!f?.registered && ((!f.enteredAt && !f.status) || f.status === 'REJECTED');
+}
+
 const STATUS_CHIP: Record<FieldglassStatus, { label: string; variant: 'success' | 'destructive' | 'info' | 'default' }> = {
   APPROVED: { label: 'Approved', variant: 'success' },
   INVOICED: { label: 'Invoiced', variant: 'success' },
@@ -85,12 +92,15 @@ export function FieldglassStrip({
 
   const due = Date.parse(fg.dueAt);
   const toGo = due - now;
-  const late = toGo <= 0;
-  const urgent = !late && toGo < 12 * 3_600_000;
+  // Past the deadline with nothing left to enter is history, not an alarm.
+  const toEnterNow = data.rows.filter(toWork).length;
+  const late = toGo <= 0 && toEnterNow > 0;
+  const closed = toGo <= 0 && toEnterNow === 0;
+  const urgent = !late && !closed && toGo < 12 * 3_600_000;
   // Only workers registered under the row's client can be entered.
   const registered = data.rows.filter((r) => r.fieldglass?.registered).length;
   const pct = registered > 0 ? Math.round((fg.entered / registered) * 100) : 0;
-  const toEnter = data.rows.filter((r) => r.fieldglass?.registered && !r.fieldglass.enteredAt && !r.fieldglass.status).length;
+  const toEnter = toEnterNow;
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -118,9 +128,9 @@ export function FieldglassStrip({
             )}
           >
             <AlarmClock className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {late ? 'Past due in Fieldglass' : 'Due in Fieldglass'} · {fmtWeekdayTz(fg.dueAt, PT)} {fmtDateTz(fg.dueAt, PT)},{' '}
-            {fmtTimeTz(fg.dueAt, PT)} PT
-            {!late && <span className="font-normal text-silver"> · {left(toGo)}</span>}
+            {late ? 'Past due in Fieldglass' : closed ? 'Was due in Fieldglass' : 'Due in Fieldglass'} · {fmtWeekdayTz(fg.dueAt, PT)}{' '}
+            {fmtDateTz(fg.dueAt, PT)}, {fmtTimeTz(fg.dueAt, PT)} PT
+            {!late && !closed && <span className="font-normal text-silver"> · {left(toGo)}</span>}
           </div>
           <div className="mt-2 flex items-center gap-2">
             <div className="h-1.5 w-40 overflow-hidden rounded-full bg-navy-secondary" aria-hidden="true">
@@ -205,11 +215,13 @@ export function FieldglassStatusCell({
   if (!fg) return <span className="text-silver/40">—</span>;
   const chip = !fg.registered
     ? { label: 'Not in Fieldglass', variant: 'destructive' as const }
-    : fg.status
-      ? STATUS_CHIP[fg.status]
-      : fg.enteredAt
-        ? { label: 'Entered', variant: 'accent' as const }
-        : { label: 'To enter', variant: 'default' as const };
+    : fg.status === 'SUBMITTED' && fg.resubmittedAt
+      ? { label: 'Resubmitted', variant: 'info' as const }
+      : fg.status
+        ? STATUS_CHIP[fg.status]
+        : fg.enteredAt
+          ? { label: 'Entered', variant: 'accent' as const }
+          : { label: 'To enter', variant: 'default' as const };
   const differs = fg.hours !== null && Math.abs(fg.hours - row.total) >= 0.01;
   return (
     <div className="flex flex-col items-start gap-0.5">
@@ -228,7 +240,31 @@ export function FieldglassStatusCell({
         <Badge variant={chip.variant} size="sm">
           {chip.label}
         </Badge>
+        {fg.note && (
+          <span title={fg.note}>
+            <MessageSquare className="h-3.5 w-3.5 text-silver/70" aria-label={`Note: ${fg.note}`} />
+          </span>
+        )}
       </span>
+      {fg.status === 'REJECTED' && (
+        <>
+          {fg.comment && (
+            <span className="max-w-[14rem] truncate text-xs2 text-alert" title={fg.comment}>
+              “{fg.comment}”
+            </span>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onToggle(true)}
+            className="inline-flex items-center gap-1 text-xs2 font-medium text-gold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
+            title="Fixed in Fieldglass and sent back to the buyer"
+          >
+            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+            Mark resubmitted
+          </button>
+        </>
+      )}
       {differs && (
         <span className="text-xs2 tabular-nums text-warning" title="Fieldglass has different hours for this week">
           Fieldglass {fg.hours!.toFixed(2)}h
@@ -307,7 +343,11 @@ export function EnterInFieldglass({
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!open) return;
-    setQueue(data.rows.filter((r) => r.fieldglass?.registered && !r.fieldglass.enteredAt && !r.fieldglass.status));
+    // Rejected ones last — fix, then resubmit.
+    setQueue([
+      ...data.rows.filter((r) => toWork(r) && r.fieldglass?.status !== 'REJECTED'),
+      ...data.rows.filter((r) => toWork(r) && r.fieldglass?.status === 'REJECTED'),
+    ]);
     setAt(0);
     // Only on opening.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -362,6 +402,20 @@ export function EnterInFieldglass({
           </div>
         ) : (
           <div className="space-y-4">
+            {row.fieldglass?.status === 'REJECTED' && (
+              <div className="flex gap-2 rounded-md border border-alert/40 bg-alert/10 p-2.5 text-xs text-alert">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  Rejected by the buyer
+                  {row.fieldglass.comment ? (
+                    <>
+                      : <span className="font-medium">“{row.fieldglass.comment}”</span>
+                    </>
+                  ) : null}
+                  . Open timesheet {row.fieldglass.timesheetId ?? ''} in Fieldglass, fix it, and resubmit.
+                </span>
+              </div>
+            )}
             <div className="rounded-lg border border-navy-secondary p-3">
               <div className="divide-y divide-navy-secondary/60">
                 <CopyValue label="Worker" value={row.worker} />
@@ -405,7 +459,7 @@ export function EnterInFieldglass({
               </Button>
               <Button className="flex-1" onClick={() => void entered()} loading={busy}>
                 <Check className="h-4 w-4" />
-                Entered — next
+                {row.fieldglass?.status === 'REJECTED' ? 'Resubmitted — next' : 'Entered — next'}
               </Button>
             </div>
           </div>

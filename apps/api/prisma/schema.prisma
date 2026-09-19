@@ -945,6 +945,12 @@ model FieldglassTimesheet {
   fgRevision    Int?
   fgHours       Decimal?  @db.Decimal(8, 2)
   fgSyncedAt    DateTime? @db.Timestamptz(6)
+  /// The buyer's comment on the timesheet (a rejection reason), from the import.
+  fgComment     String?   @db.VarChar(500)
+  /// A rejected timesheet fixed and sent back in Fieldglass.
+  resubmittedAt DateTime? @db.Timestamptz(6)
+  /// Finance's own note on this week ("buyer asked for Sunday split").
+  note          String?   @db.VarChar(500)
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -953,6 +959,7 @@ model FieldglassTimesheet {
 
   @@unique([weekStart, associateId, clientId])
   @@index([weekStart, clientId])
+  @@index([associateId, weekStart])
 }
 
 // The client in the loop: a portal user's structured ask — staffing,
@@ -1443,6 +1450,9 @@ model Associate {
   email               String             @unique
   phone               String?
   ssnLast4            String?            @db.VarChar(4)
+  /// Last 4 of a passport / travel document number — the Fieldglass
+  /// Security ID's fallback for a worker with no SSN.
+  travelDocLast4      String?            @db.VarChar(4)
   addressLine1        String?
   addressLine2        String?
   city                String?

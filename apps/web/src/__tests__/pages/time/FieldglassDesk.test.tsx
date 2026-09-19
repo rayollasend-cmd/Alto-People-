@@ -204,6 +204,43 @@ describe('the Fieldglass desk on Timesheets', () => {
     expect(await within(drawer).findByText('All 1 entered.')).toBeInTheDocument();
   });
 
+  it('a rejected week: the buyer’s reason, “Mark resubmitted” — and it’s in enter mode to fix', async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
+      calls.push({ path, body: init?.body });
+      if (path === '/time/admin/timesheets') {
+        return week([
+          row('a1', 'Lee, Ann', 8, fg({ enteredAt: '2026-09-20T15:00:00Z', status: 'REJECTED', timesheetId: 'WALTTS4', comment: 'Missing Sunday', note: 'Called the buyer' })),
+        ]) as never;
+      }
+      if (path === '/time/admin/timesheets/associate') return detail as never;
+      if (path === '/time/admin/timesheets/entered') return { ok: true } as never;
+      if (path === '/clients' || path.startsWith('/clients?')) return { clients: [] } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <TimesheetsView />);
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Rejected')).toBeInTheDocument();
+    expect(within(table).getByText('“Missing Sunday”')).toBeInTheDocument();
+    expect(within(table).getByLabelText('Note: Called the buyer')).toBeInTheDocument();
+    // Every timesheet they've had, a tap away.
+    expect(within(table).getByRole('link', { name: 'Lee, Ann — every timesheet, across pay periods' })).toHaveAttribute(
+      'href',
+      '/time-attendance/timesheets/history/a1',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Enter in Fieldglass (1)' }));
+    const drawer = await screen.findByRole('dialog');
+    expect(within(drawer).getByText(/Rejected by the buyer/)).toHaveTextContent('Missing Sunday');
+    expect(within(drawer).getByRole('button', { name: 'Resubmitted — next' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+
+    await userEvent.click(within(table).getByRole('button', { name: 'Mark resubmitted' }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/time/admin/timesheets/entered')?.body).toMatchObject({ associateId: 'a1', entered: true }),
+    );
+  });
+
   it('imports the buyer’s Fieldglass list — the hours that differ, the rows Alto can’t place', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path: string) => {
       if (path === '/time/admin/timesheets') return week([row('a1', 'Lee, Ann', 8, fg())]) as never;
@@ -278,6 +315,8 @@ describe('registering in Fieldglass, from the finance worklist', () => {
               phone: '850-555-0100',
               dob: '1994-03-02',
               ssnLast4: '4321',
+              travelDocLast4: null,
+              securityId: { value: '0302LE321', source: 'ssn', needs: [] },
               address: { line1: '9 Harbor Rd', line2: null, city: 'Destin', state: 'FL', zip: '32541' },
             },
             engagement: {
@@ -286,8 +325,10 @@ describe('registering in Fieldglass, from the finance worklist', () => {
               site: '1 - Onsite - FL - Destin',
               billRate: 20,
               position: 'Overnight Stocker',
+              shift: { label: 'Overnight', start: '10:00 PM', end: '6:30 AM' },
               firstShiftAt: null,
               startDate: '2026-09-22',
+              firstClockIn: { at: '2026-09-23T02:04:00Z', date: '2026-09-22', time: '10:04 PM' },
               store: { name: 'Store 1234', address: null },
               siteManager: null,
             },
@@ -306,6 +347,13 @@ describe('registering in Fieldglass, from the finance worklist', () => {
     expect(await screen.findByRole('button', { name: 'Copy Date of birth: 03/02/1994' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy Site: 1 - Onsite - FL - Destin' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy Start date: 09/22/2026' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy Position: Overnight Stocker' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy Shift: Overnight · 10:00 PM – 6:30 AM' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy First clock-in: 09/22/2026 10:04 PM' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy Security ID: 0302LE321' })).toBeInTheDocument();
+    expect(screen.getByText(/Birth MMDD \+ LE \+ last 3 of/)).toHaveTextContent('the SSN');
+    // They have an SSN — no travel document to ask for.
+    expect(screen.queryByLabelText('Passport / travel doc (last 4)')).not.toBeInTheDocument();
     expect(screen.getByText(/Fieldglass will ask for something not on file yet/)).toHaveTextContent('I-9 Section 2');
 
     await userEvent.click(screen.getByRole('button', { name: 'Mark added' }));
@@ -314,6 +362,59 @@ describe('registering in Fieldglass, from the finance worklist', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Mark added' }));
     await waitFor(() =>
       expect(calls.find((c) => c.path === '/finance/fieldglass/a1/done')?.body).toEqual({ workerId: 'WKR00012345' }),
+    );
+  });
+
+  it('no SSN: the last 4 of a passport / travel document, and the Security ID says what it still needs', async () => {
+    const calls: Array<{ path: string; method?: string; body?: unknown }> = [];
+    vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
+      calls.push({ path, method: init?.method, body: init?.body });
+      if (path === '/finance/overview') {
+        return {
+          generatedAt: new Date().toISOString(),
+          payday: { next: null, inFlight: null, lastDisbursed: null },
+          close: { pendingEntries: 0, pendingHours: 0, oldestDay: null, byClient: [] },
+          payrollCases: { open: 0, assignedToMe: 0 },
+          settlements: { count: 0, total: 0 },
+          receivables: { outstandingTotal: 0, outstandingCount: 0, oldestDays: null, avgDaysToPay: null, draftStatements: 0 },
+          fieldglassQueue: [
+            { kind: 'add', associateId: 'a2', name: 'Jo Ng', clientName: 'Walmart Destin', fromClientName: null, position: null, firstShiftAt: null, approvedAt: null, email: 'jo@example.com', phone: null, hireDate: null },
+          ],
+          billedVsPaid: null,
+        } as never;
+      }
+      if (path === '/finance/fieldglass/a2/packet') {
+        return {
+          packet: {
+            associateId: 'a2',
+            worker: {
+              firstName: 'Jo', middleInitial: null, lastName: 'Ng', listName: 'Ng, Jo', email: 'jo@example.com', phone: null,
+              dob: '1999-07-04', ssnLast4: null, travelDocLast4: null,
+              securityId: { value: null, source: null, needs: ['Last 4 of SSN — or of a passport / travel document'] },
+              address: null,
+            },
+            engagement: { clientId: 'c1', clientName: 'Walmart Destin', site: null, billRate: null, position: null, shift: null, firstShiftAt: null, startDate: null, firstClockIn: null, store: null, siteManager: null },
+            screening: { backgroundCheck: null, drugTest: null, i9: null, eVerify: null },
+            registration: null,
+            separatedAt: null,
+            missing: ['Last 4 of SSN — or of a passport / travel document'],
+          },
+        } as never;
+      }
+      if (path === '/finance/fieldglass/a2/travel-doc') return { ok: true } as never;
+      return {} as never;
+    });
+    renderAs('FINANCE_ACCOUNTANT', <FinanceDashboard />);
+    await userEvent.click(await screen.findByRole('button', { name: /Jo Ng/ }));
+    expect(await screen.findByText(/Needs last 4 of ssn/i)).toBeInTheDocument();
+    const field = screen.getByLabelText('Passport / travel doc (last 4)');
+    await userEvent.type(field, 'ab');
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'x987');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === '/finance/fieldglass/a2/travel-doc')).toMatchObject({ method: 'PATCH', body: { last4: 'X987' } }),
     );
   });
 });

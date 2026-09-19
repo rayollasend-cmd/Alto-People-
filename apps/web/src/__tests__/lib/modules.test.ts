@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
-import { visibleModules, type ModuleKey } from '@/lib/modules';
+import { MODULES, visibleModules, type ModuleKey } from '@/lib/modules';
 
 /** A `can()` backed by the real capability matrix for a given role — the
  *  same source of truth the app's AuthProvider derives `can` from. */
@@ -69,6 +69,19 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
   });
 });
 
+describe('Fieldglass timesheets — its own sidebar entry', () => {
+  it('for everyone who works the weekly sheet; never the watch-only, the associate, the client or the exec', () => {
+    for (const role of ['FINANCE_ACCOUNTANT', 'HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'SHIFT_SUPERVISOR'] as Role[]) {
+      expect(keysFor(role), role).toContain('fieldglass');
+    }
+    for (const role of ['FLOOR_SUPERVISOR', 'ASSOCIATE', 'CLIENT_PORTAL', 'EXECUTIVE_CHAIRMAN'] as Role[]) {
+      expect(keysFor(role), role).not.toContain('fieldglass');
+    }
+    const entry = MODULES.find((m) => m.key === 'fieldglass')!;
+    expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Fieldglass timesheets', group: 'time-and-pay' });
+  });
+});
+
 describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
   // The role had no curation branch, so its capability slice rendered 24
   // rows — employee perks, a 403ing Reimbursements page, the company
@@ -84,6 +97,7 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
         'scheduling',
         'approvals',
         'time-attendance',
+        'fieldglass',
         'ops',
         'marketplace',
         'time-off',

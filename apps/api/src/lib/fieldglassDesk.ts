@@ -58,6 +58,30 @@ export function normalizeFieldglassStatus(raw: string | null | undefined): Field
 type Db = Pick<PrismaClient, 'fieldglassRegistration' | 'fieldglassTimesheet' | 'client' | 'user'>;
 
 /**
+ * A worker's week in billing terms, in hours: approved by the buyer (what's
+ * invoiced — Fieldglass's hours once it has them), awaiting the buyer, and
+ * at risk — not registered, rejected, not entered yet, or fewer hours in
+ * Fieldglass than worked.
+ */
+export function fieldglassHours(w: {
+  registered: boolean;
+  status: FieldglassStatus | null;
+  entered: boolean;
+  fgHours: number | null;
+  total: number;
+}): { approved: number; awaiting: number; atRisk: number } {
+  const out = { approved: 0, awaiting: 0, atRisk: 0 };
+  const billed = w.fgHours ?? w.total;
+  if (!w.registered || w.status === 'REJECTED') out.atRisk = w.total;
+  else if (w.status === 'APPROVED' || w.status === 'INVOICED') {
+    out.approved = billed;
+    if (billed < w.total) out.atRisk = w.total - billed;
+  } else if (w.entered || w.status === 'SUBMITTED' || w.status === 'DRAFT') out.awaiting = w.total;
+  else out.atRisk = w.total;
+  return out;
+}
+
+/**
  * Attach each row's Fieldglass state, the NOT_IN_FIELDGLASS issues, and the
  * week's Fieldglass summary. `money` only when the sheet is one client with
  * a bill rate and the caller may see revenue.
@@ -138,14 +162,10 @@ export async function attachFieldglass(
     if (status === 'REJECTED') rejected += 1;
     const differs = fgHours !== null && Math.abs(fgHours - row.total) >= 0.01;
     if (differs) variances += 1;
-    // The money: billed hours are Fieldglass's once it has them.
-    const billed = fgHours ?? row.total;
-    if (!registered || status === 'REJECTED') hoursBy.atRisk += row.total;
-    else if (status === 'APPROVED' || status === 'INVOICED') {
-      hoursBy.approved += billed;
-      if (billed < row.total) hoursBy.atRisk += row.total - billed;
-    } else if (sheet?.enteredAt || status === 'SUBMITTED' || status === 'DRAFT') hoursBy.awaiting += row.total;
-    else hoursBy.atRisk += row.total;
+    const h = fieldglassHours({ registered, status, entered: !!sheet?.enteredAt, fgHours, total: row.total });
+    hoursBy.approved += h.approved;
+    hoursBy.awaiting += h.awaiting;
+    hoursBy.atRisk += h.atRisk;
     return {
       ...row,
       fieldglass: {
@@ -159,6 +179,9 @@ export async function attachFieldglass(
         revision: sheet?.fgRevision ?? null,
         hours: fgHours,
         syncedAt: sheet?.fgSyncedAt?.toISOString() ?? null,
+        comment: sheet?.fgComment ?? null,
+        resubmittedAt: sheet?.resubmittedAt?.toISOString() ?? null,
+        note: sheet?.note ?? null,
       },
     };
   });
@@ -203,6 +226,8 @@ export interface FieldglassListRow {
   /** The week-ending date, YYYY-MM-DD. */
   weekEnd: string;
   hours: number;
+  /** The buyer's comment — often why it was rejected. */
+  comment: string | null;
 }
 
 /** The list's columns, by the names Fieldglass (and buyers' custom
@@ -216,6 +241,7 @@ const HEADERS = {
   site: /^site$|location/,
   end: /^end$|end date|week ending|period end|period$/,
   total: /^total$|total hours|billable hours|^hours$/,
+  comment: /comment|reason|^notes?$/,
 };
 
 function cellText(v: unknown): string {
@@ -305,6 +331,7 @@ export async function parseFieldglassList(buf: Buffer, filename: string): Promis
     site: col(HEADERS.site),
     end: col(HEADERS.end),
     total: col(HEADERS.total),
+    comment: col(HEADERS.comment),
   };
   const out: FieldglassListRow[] = [];
   for (const r of grid.slice(headerAt + 1)) {
@@ -324,6 +351,7 @@ export async function parseFieldglassList(buf: Buffer, filename: string): Promis
       site: at.site >= 0 ? cellText(r[at.site]) || null : null,
       weekEnd,
       hours: round2(Number(hoursText)),
+      comment: at.comment >= 0 ? cellText(r[at.comment]).slice(0, 500) || null : null,
     });
   }
   return out;

@@ -74,6 +74,10 @@ const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'S
 
 // Time / scheduling / payroll
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
+const TimesheetHistory = lazyNamed(
+  () => import('@/pages/time/TimesheetHistory'),
+  'TimesheetHistory',
+);
 const TimesheetsView = lazyNamed(
   () => import('@/pages/time/TimesheetsView'),
   'TimesheetsView',
@@ -465,6 +469,7 @@ const LAYOUT_ROUTES = [
   { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
   { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
   { path: 'time-attendance/timesheets', element: <RequireCapability cap="manage:time"><TimesheetsView /></RequireCapability> },
+  { path: 'time-attendance/timesheets/history/:associateId', element: <RequireCapability cap="manage:time"><TimesheetHistory /></RequireCapability> },
 ];
 
 // Modules whose key has no explicit route above get a generic

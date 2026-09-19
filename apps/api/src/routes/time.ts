@@ -28,7 +28,7 @@ import {
   type TimeEntry,
   type TimeEntryListResponse,
 } from '@alto-people/shared';
-import { csvCell as sharedCsvCell, isClientBoundedRole } from '@alto-people/shared';
+import { csvCell as sharedCsvCell, hasCapability, isClientBoundedRole } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
@@ -75,7 +75,9 @@ import {
   buildTimesheetWeek,
   buildAssociateTimesheetDetail,
   fileTimesheetWeek,
+  saturdayWeek,
 } from '../lib/timesheetWeek.js';
+import { buildTimesheetHistory, timesheetHistoryCsv, timesheetHistoryFilename } from '../lib/timesheetHistory.js';
 import { parseFieldglassList, workerKey } from '../lib/fieldglassDesk.js';
 import multer from 'multer';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
@@ -3172,9 +3174,23 @@ timeRouter.post('/admin/timesheets/entered', MANAGE, async (req, res, next) => {
     }
     const weekStart = new Date(`${week.weekStart}T00:00:00Z`);
     const key = { weekStart_associateId_clientId: { weekStart, associateId: row.associateId, clientId } };
+    // A rejected timesheet, fixed and sent back: it's with the buyer again
+    // until the next import says otherwise. Undoing that puts it back.
+    const rejected = row.fieldglass?.status === 'REJECTED';
+    const resubmitted = !!row.fieldglass?.resubmittedAt && row.fieldglass.status === 'SUBMITTED';
     const data = parsed.data.entered
-      ? { enteredAt: new Date(), enteredById: req.user!.id, enteredHours: row.total }
-      : { enteredAt: null, enteredById: null, enteredHours: null };
+      ? {
+          enteredAt: new Date(),
+          enteredById: req.user!.id,
+          enteredHours: row.total,
+          ...(rejected ? { fgStatus: 'SUBMITTED', resubmittedAt: new Date() } : {}),
+        }
+      : {
+          enteredAt: null,
+          enteredById: null,
+          enteredHours: null,
+          ...(resubmitted ? { fgStatus: 'REJECTED', resubmittedAt: null } : {}),
+        };
     await prisma.fieldglassTimesheet.upsert({
       where: key,
       create: { weekStart, associateId: row.associateId, clientId, ...data },
@@ -3184,7 +3200,11 @@ timeRouter.post('/admin/timesheets/entered', MANAGE, async (req, res, next) => {
       {
         actorUserId: req.user!.id,
         clientId,
-        action: parsed.data.entered ? 'timesheet.fieldglass_entered' : 'timesheet.fieldglass_unentered',
+        action: parsed.data.entered
+          ? rejected
+            ? 'timesheet.fieldglass_resubmitted'
+            : 'timesheet.fieldglass_entered'
+          : 'timesheet.fieldglass_unentered',
         entityType: 'Associate',
         entityId: row.associateId,
         metadata: { weekStart: week.weekStart, hours: row.total },
@@ -3192,6 +3212,58 @@ timeRouter.post('/admin/timesheets/entered', MANAGE, async (req, res, next) => {
       'timesheet.fieldglass',
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /time/admin/timesheets/note
+ * Body: { weekStart: ISO, associateId, clientId, note }
+ *
+ * Finance's note on one worker's Fieldglass week ("buyer asked for the
+ * Sunday split"), kept with the week in their timesheet history. Empty
+ * clears it.
+ */
+const NoteInputSchema = z.object({
+  weekStart: z.string().datetime(),
+  associateId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  note: z.string().trim().max(500),
+});
+
+timeRouter.put('/admin/timesheets/note', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = NoteInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const clientId = timesheetClientId(req.user!, parsed.data.clientId) ?? parsed.data.clientId;
+    const week = saturdayWeek(new Date(parsed.data.weekStart), DEFAULT_TIMEZONE);
+    const weekStart = new Date(`${week.weekStart}T00:00:00Z`);
+    // Only a week that exists for this worker and client — a note never
+    // conjures a week (or a client) out of nothing.
+    const worked = await prisma.timeEntry.findFirst({
+      where: {
+        ...scopeTimeEntries(req.user!),
+        associateId: parsed.data.associateId,
+        clientId,
+        clockInAt: { gte: new Date(weekStart.getTime() - 86_400_000), lt: new Date(weekStart.getTime() + 8 * 86_400_000) },
+      },
+      select: { id: true },
+    });
+    const existing = await prisma.fieldglassTimesheet.findUnique({
+      where: { weekStart_associateId_clientId: { weekStart, associateId: parsed.data.associateId, clientId } },
+      select: { id: true },
+    });
+    if (!worked && !existing) throw new HttpError(404, 'not_on_sheet', 'That worker has no hours for this client that week.');
+    const note = parsed.data.note || null;
+    await prisma.fieldglassTimesheet.upsert({
+      where: { weekStart_associateId_clientId: { weekStart, associateId: parsed.data.associateId, clientId } },
+      create: { weekStart, associateId: parsed.data.associateId, clientId, note },
+      update: { note },
+    });
+    res.json({ ok: true, note });
   } catch (err) {
     next(err);
   }
@@ -3281,6 +3353,7 @@ timeRouter.post('/admin/timesheets/fieldglass-import', MANAGE, fgUpload.single('
         fgRevision: fg.revision,
         fgHours: fg.hours,
         fgSyncedAt: now,
+        ...(fg.comment !== null ? { fgComment: fg.comment } : {}),
       };
       await prisma.fieldglassTimesheet.upsert({
         where: { weekStart_associateId_clientId: { weekStart, associateId: row.associateId, clientId: row.clientId } },
@@ -3346,6 +3419,56 @@ timeRouter.post('/admin/timesheets/associate', MANAGE, async (req, res, next) =>
     res.json(
       isClientBoundedRole(req.user!.role) ? { ...result, billRate: null, amount: null } : result,
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /time/admin/timesheets/history/:associateId[?format=csv]
+ *
+ * One associate's whole timesheet, across pay periods: every week they
+ * worked (three years back), grouped into the pay periods that paid them,
+ * each week's day grid and where it stands in Fieldglass. A store-bound
+ * viewer gets only their client's weeks and never the money; the Security
+ * ID only reaches finance, and that look is audited. `format=csv` is the
+ * same history as a spreadsheet, one row per worked day.
+ */
+timeRouter.get('/admin/timesheets/history/:associateId', MANAGE, async (req, res, next) => {
+  try {
+    const associateId = z.string().uuid().safeParse(req.params.associateId);
+    if (!associateId.success) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    const user = req.user!;
+    const bounded = isClientBoundedRole(user.role);
+    const showSecurityId = !bounded && hasCapability(user.role, 'process:payroll');
+    const history = await buildTimesheetHistory({
+      associateId: associateId.data,
+      clientId: bounded ? timesheetClientId(user, undefined) : undefined,
+      scopeWhere: scopeTimeEntries(user),
+      bounded,
+      showMoney: !bounded,
+      showSecurityId,
+    });
+    if (!history) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    if (showSecurityId && history.associate.securityId) {
+      enqueueAudit(
+        {
+          actorUserId: user.id,
+          action: 'associate.pii_viewed',
+          entityType: 'Associate',
+          entityId: history.associate.id,
+          metadata: { purpose: 'timesheet_history', fields: ['securityId'] },
+        },
+        'associate.pii',
+      );
+    }
+    if (req.query.format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${timesheetHistoryFilename(history)}"`);
+      res.send(timesheetHistoryCsv(history));
+      return;
+    }
+    res.json(history);
   } catch (err) {
     next(err);
   }

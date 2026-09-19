@@ -16,6 +16,43 @@ import { dateKeyInZone } from './timeAnomalies.js';
  * is the org's calendar day, not UTC's — from 8 PM Eastern the UTC date is
  * already tomorrow, which flipped the answer a few hours early.
  */
+export interface ResolvedPaySchedule {
+  name: string;
+  frequency: PayrollFrequency;
+  anchorDate: Date;
+  payDateOffsetDays: number;
+}
+
+/** The pay schedule an associate is paid on — their own, else their
+ *  client's, else the org default; null when none is set up. */
+export async function payScheduleFor(associateId: string): Promise<ResolvedPaySchedule | null> {
+  const live = { isActive: true, deletedAt: null } as const;
+  const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
+  const own = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: { payrollSchedule: { select: { ...scheduleSelect, isActive: true, deletedAt: true } } },
+  });
+  if (own?.payrollSchedule && own.payrollSchedule.isActive && !own.payrollSchedule.deletedAt) {
+    const { isActive: _a, deletedAt: _d, ...schedule } = own.payrollSchedule;
+    return schedule;
+  }
+  const clientIds = await placedClientIds(associateId);
+  return (
+    (clientIds.length
+      ? await prisma.payrollSchedule.findFirst({
+          where: { ...live, clientId: { in: clientIds } },
+          orderBy: { createdAt: 'asc' },
+          select: scheduleSelect,
+        })
+      : null) ??
+    (await prisma.payrollSchedule.findFirst({
+      where: { ...live, clientId: null },
+      orderBy: { createdAt: 'asc' },
+      select: scheduleSelect,
+    }))
+  );
+}
+
 export async function nextPaydayFor(
   associateId: string,
   now: Date = new Date(),
@@ -27,30 +64,7 @@ export async function nextPaydayFor(
   /** Today is a payday: the days it pays for (until midnight). */
   paidToday: { periodStart: string; periodEnd: string } | null;
 } | null> {
-  const live = { isActive: true, deletedAt: null } as const;
-  const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
-  const own = await prisma.associate.findUnique({
-    where: { id: associateId },
-    select: { payrollSchedule: { select: { ...scheduleSelect, isActive: true, deletedAt: true } } },
-  });
-  let schedule: { name: string; frequency: PayrollFrequency; anchorDate: Date; payDateOffsetDays: number } | null =
-    own?.payrollSchedule && own.payrollSchedule.isActive && !own.payrollSchedule.deletedAt ? own.payrollSchedule : null;
-  if (!schedule) {
-    const clientIds = await placedClientIds(associateId);
-    schedule =
-      (clientIds.length
-        ? await prisma.payrollSchedule.findFirst({
-            where: { ...live, clientId: { in: clientIds } },
-            orderBy: { createdAt: 'asc' },
-            select: scheduleSelect,
-          })
-        : null) ??
-      (await prisma.payrollSchedule.findFirst({
-        where: { ...live, clientId: null },
-        orderBy: { createdAt: 'asc' },
-        select: scheduleSelect,
-      }));
-  }
+  const schedule = await payScheduleFor(associateId);
   if (!schedule) return null;
   const today = dateKeyInZone(now, DEFAULT_TIMEZONE);
   let w = getNextPayday(schedule, new Date(`${today}T12:00:00.000Z`));

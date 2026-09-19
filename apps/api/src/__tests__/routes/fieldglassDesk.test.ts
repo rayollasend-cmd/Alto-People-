@@ -3,7 +3,8 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import ExcelJS from 'exceljs';
 import { createApp } from '../../app.js';
-import { fieldglassDueAt, normalizeFieldglassStatus, workerKey } from '../../lib/fieldglassDesk.js';
+import { fieldglassDueAt, normalizeFieldglassStatus, parseFieldglassList, workerKey } from '../../lib/fieldglassDesk.js';
+import { fieldglassSecurityId } from '../../lib/fieldglassSecurityId.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -76,13 +77,20 @@ describe('the registration packet', () => {
       },
     });
     const loc = await prisma.location.findFirstOrThrow({ where: { clientId: w.client.id } });
+    // The store's Overnight window, 10 PM → 6 AM; their shift starts in it
+    // (03:00 UTC is 10 or 11 PM Eastern).
+    await prisma.staffingTarget.create({
+      data: { locationId: loc.id, targetCount: 10, effectiveFrom: new Date('2026-01-01'), label: 'Overnight', startMinute: 22 * 60, endMinute: 6 * 60 },
+    });
+    const startsAt = new Date(Date.now() + 3 * 86_400_000);
+    startsAt.setUTCHours(3, 0, 0, 0);
     await prisma.shift.create({
       data: {
         clientId: w.client.id,
         locationId: loc.id,
         position: 'Overnight Stocker',
-        startsAt: new Date(Date.now() + 3 * 86_400_000),
-        endsAt: new Date(Date.now() + 3 * 86_400_000 + 8 * 3600_000),
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 8 * 3600_000),
         status: 'ASSIGNED',
         assignedAssociateId: w.ann.id,
         publishedAt: new Date(),
@@ -96,13 +104,20 @@ describe('the registration packet', () => {
     const p = res.body.packet;
     expect(p.worker).toMatchObject({ listName: 'Lee, Ann', dob: '1994-03-02', ssnLast4: '4321', address: { city: 'Destin', zip: '32541' } });
     expect(p.engagement).toMatchObject({ clientName: 'Walmart Destin', site: '1 - Onsite - FL - Destin', billRate: 20, position: 'Overnight Stocker' });
-    expect(p.engagement.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(p.engagement.startDate).toBe('2026-06-15'); // the first day worked, not the next shift
+    expect(p.engagement.shift).toMatchObject({ label: 'Overnight', start: expect.stringMatching(/^1[01]:00 PM$/) });
+    expect(p.engagement.firstClockIn).toMatchObject({ date: '2026-06-15', time: '9:00 AM' });
+    // MMDD of birth + LE + the SSN's last three.
+    expect(p.worker.securityId).toEqual({ value: '0302LE321', source: 'ssn', needs: [] });
     expect(p.screening.backgroundCheck.status).toBe('PASSED');
     expect(p.missing).toEqual(['I-9 Section 2']);
 
     // Bo has almost nothing yet — the form would stall; the packet says so first.
     const bo = (await w.finance.get(`/finance/fieldglass/${w.bo.id}/packet`)).body.packet;
-    expect(bo.missing).toEqual(expect.arrayContaining(['Date of birth', 'Last 4 of SSN', 'Home address', 'Background check']));
+    expect(bo.missing).toEqual(
+      expect.arrayContaining(['Date of birth', 'Last 4 of SSN — or of a passport / travel document', 'Home address', 'Background check']),
+    );
+    expect(bo.worker.securityId.value).toBeNull();
 
     const audit = await prisma.auditLog.findFirst({ where: { action: 'associate.pii_viewed', entityId: w.ann.id } });
     expect(audit).not.toBeNull();
@@ -126,6 +141,24 @@ describe('the registration packet', () => {
     expect((await w.finance.patch(`/finance/fieldglass/${w.ann.id}`).send({ workerId: 'WKR-99' })).body.workerId).toBe('WKR-99');
     expect((await w.finance.patch(`/finance/fieldglass/${w.ann.id}`).send({ workerId: 'no spaces' })).status).toBe(400);
     expect((await w.finance.patch(`/finance/fieldglass/${w.bo.id}`).send({ workerId: 'WKR1' })).status).toBe(409);
+  });
+});
+
+describe('the Security ID without an SSN', () => {
+  it('takes the last of a passport / travel document number — set by finance, audited, never shown to a supervisor', async () => {
+    const w = await world();
+    await prisma.associate.update({ where: { id: w.bo.id }, data: { dob: new Date('1990-11-07') } });
+    expect((await w.finance.patch(`/finance/fieldglass/${w.bo.id}/travel-doc`).send({ last4: 'ab' })).status).toBe(400);
+    expect((await w.finance.patch(`/finance/fieldglass/${w.bo.id}/travel-doc`).send({ last4: 'k4567' })).status).toBe(400);
+    expect((await w.finance.patch(`/finance/fieldglass/${w.bo.id}/travel-doc`).send({ last4: 'x987' })).status).toBe(200);
+    const p = (await w.finance.get(`/finance/fieldglass/${w.bo.id}/packet`)).body.packet;
+    expect(p.worker.travelDocLast4).toBe('X987');
+    expect(p.worker.securityId).toEqual({ value: '1107RA987', source: 'travel_doc', needs: [] });
+    expect(p.missing).not.toContain('Last 4 of SSN — or of a passport / travel document');
+    const audit = await prisma.auditLog.findFirst({ where: { action: 'associate.travel_doc_set', entityId: w.bo.id } });
+    expect(audit?.metadata).toEqual({ cleared: false }); // never the number itself
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: w.client.id });
+    expect((await (await loginAs(sup.email)).patch(`/finance/fieldglass/${w.bo.id}/travel-doc`).send({ last4: '1234' })).status).toBe(403);
   });
 });
 
@@ -261,5 +294,25 @@ describe('the desk’s rules', () => {
     expect(normalizeFieldglassStatus('Rejected')).toBe('REJECTED');
     expect(normalizeFieldglassStatus('Draft')).toBe('DRAFT');
     expect(workerKey('Nelson, Aaliyah M.')).toBe(workerKey('Aaliyah Nelson'));
+  });
+
+  it('the Security ID: MMDD of birth, two letters of the last name, the last three of the SSN — or of the travel document', () => {
+    expect(fieldglassSecurityId({ dob: '1994-03-02', lastName: "O'Neil", ssnLast4: '4321', travelDocLast4: 'Z999' }).value).toBe('0302ON321');
+    expect(fieldglassSecurityId({ dob: new Date('1988-12-25'), lastName: 'Núñez', ssnLast4: null, travelDocLast4: 'p456' })).toEqual({
+      value: '1225NU456',
+      source: 'travel_doc',
+      needs: [],
+    });
+    expect(fieldglassSecurityId({ dob: null, lastName: 'Lee', ssnLast4: null, travelDocLast4: null })).toEqual({
+      value: null,
+      source: null,
+      needs: ['Date of birth', 'Last 4 of SSN — or of a passport / travel document'],
+    });
+  });
+
+  it('reads the buyer’s comment off the list — why a timesheet was rejected', async () => {
+    const csv = 'Status,Worker,End,Total,Comments\nRejected,"Lee, Ann",06/19/2026,8,Missing Sunday\n';
+    const [row] = await parseFieldglassList(Buffer.from(csv), 'list.csv');
+    expect(row).toMatchObject({ status: 'REJECTED', comment: 'Missing Sunday', hours: 8 });
   });
 });

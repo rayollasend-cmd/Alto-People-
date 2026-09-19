@@ -23,6 +23,7 @@ import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailInput,
   TimesheetAssociateDetailResponse,
+  TimesheetHistoryResponse,
   ClockInRequestListResponse,
   AttendanceListResponse,
 } from '@alto-people/shared';
@@ -498,6 +499,40 @@ export function markFieldglassEntered(body: {
   entered: boolean;
 }): Promise<{ ok: true }> {
   return apiFetch<{ ok: true }>('/time/admin/timesheets/entered', { method: 'POST', body });
+}
+
+/** Finance's note on one worker's Fieldglass week; empty clears it. */
+export function setTimesheetNote(body: {
+  weekStart: string;
+  associateId: string;
+  clientId: string;
+  note: string;
+}): Promise<{ ok: true; note: string | null }> {
+  return apiFetch<{ ok: true; note: string | null }>('/time/admin/timesheets/note', { method: 'PUT', body });
+}
+
+/** One associate's whole timesheet, across pay periods. */
+export function getTimesheetHistory(associateId: string): Promise<TimesheetHistoryResponse> {
+  return apiFetch<TimesheetHistoryResponse>(`/time/admin/timesheets/history/${associateId}`);
+}
+
+/** The same history as a spreadsheet — one row per worked day. */
+export async function downloadTimesheetHistoryCsv(associateId: string): Promise<void> {
+  const res = await fetch(`/api/time/admin/timesheets/history/${associateId}?format=csv`, { credentials: 'include' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? 'Export failed.');
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '');
+  const a = document.createElement('a');
+  a.href = objUrl;
+  a.download = m?.[1] ?? 'timesheet-history.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
 }
 
 /** What the buyer's Fieldglass list said, matched to Alto's weeks. */

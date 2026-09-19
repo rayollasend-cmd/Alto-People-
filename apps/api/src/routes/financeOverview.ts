@@ -642,7 +642,10 @@ financeOverviewRouter.get(
           action: 'associate.pii_viewed',
           entityType: 'Associate',
           entityId: packet.associateId,
-          metadata: { purpose: 'fieldglass_registration', fields: ['dob', 'ssnLast4', 'address'] },
+          metadata: {
+            purpose: 'fieldglass_registration',
+            fields: ['dob', 'ssnLast4', 'travelDocLast4', 'securityId', 'address'],
+          },
         },
         'associate.pii',
       );
@@ -669,6 +672,50 @@ financeOverviewRouter.patch(
         throw new HttpError(409, 'not_registered', 'Mark them added to Fieldglass first.');
       }
       res.json({ ok: true, workerId: workerId ?? null });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** PATCH /finance/fieldglass/:associateId/travel-doc — { last4 }: the last
+ *  4 of a passport / travel document, for a worker with no SSN — what
+ *  their Fieldglass Security ID ends in. Empty clears it. Audited. */
+const TravelDocSchema = z.object({
+  last4: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^([A-Z0-9]{3,4})?$/, 'The last 3 or 4 letters or digits of the document number.'),
+});
+
+financeOverviewRouter.patch(
+  '/finance/fieldglass/:associateId/travel-doc',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const associateId = z.string().uuid().parse(req.params.associateId);
+      const parsed = TravelDocSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', parsed.error.issues[0]?.message ?? 'Invalid request body');
+      }
+      const updated = await prisma.associate.updateMany({
+        where: { id: associateId, deletedAt: null },
+        data: { travelDocLast4: parsed.data.last4 || null },
+      });
+      if (updated.count === 0) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'associate.travel_doc_set',
+          entityType: 'Associate',
+          entityId: associateId,
+          // Never the value itself — only that it changed.
+          metadata: { cleared: !parsed.data.last4 },
+        },
+        'associate.pii',
+      );
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

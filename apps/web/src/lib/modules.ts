@@ -16,6 +16,7 @@ export type ModuleKey =
   | 'relay'
   | 'statements'
   | 'timesheets'
+  | 'fieldglass'
   | 'onboarding'
   | 'time-attendance'
   | 'kiosk'
@@ -213,6 +214,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'billing',
   'people',
   'timesheets',
+  'fieldglass',
   'time-off',
   'scheduling',
   // Comes with full scheduling authority: swap requests, pickup claims,
@@ -246,6 +248,7 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   // shift planning. The payroll-PII sheet is NOT part of either family
   // and stays HR-admin-only.
   'time-attendance',
+  'fieldglass',
   'kiosk',
   'time-off',
   'holidays',
@@ -306,6 +309,7 @@ const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'scheduling',
   'approvals',
   'time-attendance',
+  'fieldglass', // their store's weekly sheet — statuses, never the money
   'ops',
   'marketplace', // pending claims + the qualifications catalog
   'time-off',
@@ -946,6 +950,18 @@ export const MODULES: ModuleNav[] = [
     description:
       'Review and approve worked hours, run the corrections window, and export the payroll hours sheets.',
     requires: 'view:time',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'fieldglass',
+    path: '/time-attendance/timesheets',
+    label: 'Fieldglass timesheets',
+    // The weekly sheet that gets Alto paid — its own entry, not a button
+    // inside Time & attendance. Store-bound roles see the statuses; the
+    // money is finance's (the API nulls it for them).
+    description:
+      'Fieldglass-ready weekly hours (Saturday → Friday): enter each worker’s week before Monday 2 PM Pacific, import what the buyer approved, and open any associate’s timesheet history across pay periods.',
+    requires: 'manage:time',
     group: 'time-and-pay',
   },
   {

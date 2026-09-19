@@ -1,17 +1,22 @@
+import { inShiftWindow, minuteOfDayInZone } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { localDateKey } from './timezone.js';
+import { formatTimeInZone, localDateKey } from './timezone.js';
 import { currentClientOf } from './fieldglassNotify.js';
+import { currentStoreWindows, type StoreWindow } from './shiftWindows.js';
+import { fieldglassSecurityId, type SecurityId } from './fieldglassSecurityId.js';
 
 /**
  * The Fieldglass registration packet — everything the buyer's "new SOW
  * worker" form asks for, in the order it asks, so finance registers a
  * worker in one sitting without hunting through the People record:
  *
- *   the worker     legal name, email, phone, date of birth, last 4 of SSN,
+ *   the worker     legal name, email, phone, date of birth, last 4 of SSN
+ *                  (or of a passport / travel document), the Security ID,
  *                  home address
  *   the engagement the client (SOW), the Site exactly as Fieldglass spells
- *                  it, the bill rate, the job (their first shift's
- *                  position), the start date, the store and its manager
+ *                  it, the bill rate, the position and shift (their next
+ *                  shift there, else their first), the start date, their
+ *                  first clock-in, the store and its manager
  *   the screening  background check, drug test, I-9, E-Verify — what the
  *                  buyer's onboarding checklist attests
  *
@@ -31,6 +36,10 @@ export interface FieldglassPacket {
     phone: string | null;
     dob: string | null;
     ssnLast4: string | null;
+    /** Last 4 of a passport / travel document — the SSN's stand-in. */
+    travelDocLast4: string | null;
+    /** MMDD + first two letters of last name + last 3 of SSN (or travel document). */
+    securityId: SecurityId;
     address: { line1: string; line2: string | null; city: string; state: string; zip: string } | null;
   };
   engagement: {
@@ -40,9 +49,14 @@ export interface FieldglassPacket {
     site: string | null;
     billRate: number | null;
     position: string | null;
+    /** The shift they work: the store's window it starts in ("Overnight"),
+     *  and its hours, store-local ("10:00 PM", "6:30 AM"). */
+    shift: { label: string | null; start: string; end: string } | null;
     firstShiftAt: string | null;
-    /** The first shift's store-local date, YYYY-MM-DD. */
+    /** The first day worked there (else the first shift), store-local YYYY-MM-DD. */
     startDate: string | null;
+    /** Their very first clock-in there, store-local. */
+    firstClockIn: { at: string; date: string; time: string } | null;
     store: { name: string; address: string | null } | null;
     /** The store's manager on the client side — often the timesheet approver. */
     siteManager: { name: string; email: string } | null;
@@ -59,6 +73,7 @@ export interface FieldglassPacket {
 }
 
 const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
+const DEFAULT_TZ = 'America/New_York';
 
 export async function buildFieldglassPacket(associateId: string): Promise<FieldglassPacket | null> {
   const a = await prisma.associate.findFirst({
@@ -72,6 +87,7 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
       phone: true,
       dob: true,
       ssnLast4: true,
+      travelDocLast4: true,
       addressLine1: true,
       addressLine2: true,
       city: true,
@@ -99,6 +115,7 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
       take: 60,
       select: {
         startsAt: true,
+        endsAt: true,
         position: true,
         locationRel: {
           select: { id: true, name: true, timezone: true, addressLine1: true, city: true, state: true, zip: true },
@@ -118,13 +135,22 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
   const now = Date.now();
   const first = shifts.find((s) => s.startsAt.getTime() >= now) ?? shifts[0] ?? null;
   const loc = first?.locationRel ?? null;
-  const firstWorked = client
-    ? await prisma.timeEntry.findFirst({
-        where: { associateId: a.id, clientId: client.id, status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] } },
-        orderBy: { clockInAt: 'asc' },
-        select: { clockInAt: true, location: { select: { timezone: true } } },
-      })
-    : null;
+  const [firstWorked, windows] = await Promise.all([
+    client
+      ? prisma.timeEntry.findFirst({
+          where: { associateId: a.id, clientId: client.id, status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] } },
+          orderBy: { clockInAt: 'asc' },
+          select: { clockInAt: true, location: { select: { timezone: true } } },
+        })
+      : Promise.resolve(null),
+    loc ? currentStoreWindows(prisma, [loc.id]) : Promise.resolve(new Map<string, StoreWindow>()),
+  ]);
+  // The shift: the store's labeled window their shift starts in.
+  const shiftTz = loc?.timezone ?? DEFAULT_TZ;
+  const shiftWindow = first
+    ? [...windows.values()].find((w) => inShiftWindow(minuteOfDayInZone(first.startsAt, shiftTz), w))
+    : undefined;
+  const firstClockTz = firstWorked?.location?.timezone ?? loc?.timezone ?? DEFAULT_TZ;
   const startAt =
     firstWorked && (!shifts[0] || firstWorked.clockInAt < shifts[0].startsAt) ? firstWorked.clockInAt : (shifts[0]?.startsAt ?? null);
   const startTz = firstWorked && startAt === firstWorked.clockInAt ? (firstWorked.location?.timezone ?? loc?.timezone) : loc?.timezone;
@@ -143,7 +169,7 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
   const missing: string[] = [];
   if (!a.phone) missing.push('Phone');
   if (!a.dob) missing.push('Date of birth');
-  if (!a.ssnLast4) missing.push('Last 4 of SSN');
+  if (!a.ssnLast4 && !a.travelDocLast4) missing.push('Last 4 of SSN — or of a passport / travel document');
   if (!address) missing.push('Home address');
   if (!startAt) missing.push('A first shift (their start date)');
   if (client && !clientRow?.fieldglassSiteName) missing.push(`The Fieldglass Site label for ${client.name}`);
@@ -162,6 +188,8 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
       phone: a.phone,
       dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
       ssnLast4: a.ssnLast4,
+      travelDocLast4: a.travelDocLast4,
+      securityId: fieldglassSecurityId(a),
       address,
     },
     engagement: {
@@ -170,8 +198,22 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
       site: clientRow?.fieldglassSiteName ?? null,
       billRate,
       position: first?.position ?? null,
+      shift: first
+        ? {
+            label: shiftWindow?.label ?? null,
+            start: formatTimeInZone(first.startsAt, shiftTz),
+            end: formatTimeInZone(first.endsAt, shiftTz),
+          }
+        : null,
       firstShiftAt: iso(first?.startsAt),
-      startDate: startAt ? localDateKey(startAt, startTz ?? 'America/New_York') : null,
+      startDate: startAt ? localDateKey(startAt, startTz ?? DEFAULT_TZ) : null,
+      firstClockIn: firstWorked
+        ? {
+            at: firstWorked.clockInAt.toISOString(),
+            date: localDateKey(firstWorked.clockInAt, firstClockTz),
+            time: formatTimeInZone(firstWorked.clockInAt, firstClockTz),
+          }
+        : null,
       store: loc
         ? { name: loc.name, address: [loc.addressLine1, loc.city, [loc.state, loc.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null }
         : null,
