@@ -23,6 +23,8 @@ import {
 } from '@alto-people/shared';
 import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
 import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
+import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
+import { clearPersistedQueries, startQueryPersistence } from './queryPersist';
 
 /**
  * How long a network failure must go un-contradicted (no request getting
@@ -141,17 +143,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
         if (cancelled) return;
         setUser(me.user);
+        saveOfflineSession(me.user);
         setIsOffline(false);
       } catch (err) {
         if (cancelled || ac.signal.aborted) return;
         if (err instanceof ApiError && err.status === 401) {
-          // Cookie was present but stale. Server cleared it; we clear local state.
+          // Cookie was present but stale. Server cleared it; we clear local
+          // state — including the offline copy, so a dead session can't be
+          // resurrected by pulling the network cable.
+          clearOfflineSession();
+          void clearPersistedQueries();
           setUser(null);
         } else if (err instanceof NetworkError || err instanceof TimeoutError) {
           // Offline OR a cold-backend timeout — keep the user's session and
           // show the "reconnecting" affordance. Critically, do NOT fall to the
           // else branch, which clears the user and bounces them to login: a
           // slow cold start must never look like a logout.
+          //
+          // On a COLD start there is no session in memory to keep, though —
+          // `user` is still null and RequireAuth would bounce to /login. So
+          // restore the last known identity, which unlocks the shell and the
+          // persisted cache. It is not a credential: every call still needs
+          // the httpOnly cookie, and the moment we reach the server again a
+          // dead session logs out as usual.
+          const remembered = readOfflineSession();
+          if (remembered) setUser(remembered);
           setIsOffline(true);
         } else {
           setUser(null);
@@ -188,6 +204,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) deathToastShownRef.current = false;
   }, [user]);
 
+  // Mirror the query cache to IndexedDB for whoever is signed in, so the
+  // installed app reopened without signal shows yesterday's schedule
+  // instead of a wall of error banners. Keyed by user id: a shared store
+  // tablet never restores one person's cache into another's session.
+  const persistUserId = user?.id ?? null;
+  useEffect(() => {
+    if (!persistUserId) return;
+    return startQueryPersistence(persistUserId);
+  }, [persistUserId]);
+
   // Mid-session 401 → verify with ONE /auth/me re-probe (the 401 might be
   // a one-off, e.g. a race with a just-rotated token) before logging out.
   useEffect(() => {
@@ -205,6 +231,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const die = () => {
         // Clearing the user makes RequireAuth bounce to /login with the
         // current location preserved in state.from — no hard navigation.
+        // The offline copy and the persisted cache go with it: a session
+        // the server has killed must not survive as readable cached data.
+        clearOfflineSession();
+        void clearPersistedQueries();
         setUser(null);
         if (!deathToastShownRef.current) {
           deathToastShownRef.current = true;
@@ -223,6 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // endpoint 401s under the old grant. Same update-in-place
             // refreshUser does: chrome + capability gates re-render.
             setUser(me.user);
+            saveOfflineSession(me.user);
           } else {
             die();
           }
@@ -298,6 +329,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: input,
     });
     setUser(res.user);
+    saveOfflineSession(res.user);
     setIsOffline(false);
   }, []);
 
@@ -308,6 +340,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Ignore — clear local state regardless so user lands at /login.
     }
     clearUserScopedStorage();
+    // clearUserScopedStorage sweeps the `alto` localStorage namespace, which
+    // takes the offline session with it; the query cache lives in IndexedDB
+    // and needs its own call.
+    void clearPersistedQueries();
     setUser(null);
   }, []);
 
@@ -315,6 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await apiFetch<MeResponse>('/auth/me');
       setUser(me.user);
+      saveOfflineSession(me.user);
       setIsOffline(false);
     } catch {
       // Soft fail — keep the cached user. Network/server errors here

@@ -19,6 +19,8 @@ import { moduleKeyForPath } from '@/lib/modules';
 import { recordRecentModule } from '@/lib/navPersonalization';
 import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
+import { useChunkLoading } from '@/lib/chunkLoading';
+import { cn } from '@/lib/cn';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -57,6 +59,8 @@ export function Layout() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const mainRef = useRef<HTMLElement>(null);
+  // True while a page chunk is still on the wire — see lib/chunkLoading.
+  const chunkLoading = useChunkLoading();
   const prevKey = useRef(location.key);
 
   // Feed the sidebar's "Recent" section — every module navigation bumps
@@ -186,11 +190,34 @@ export function Layout() {
             <div className="mx-auto w-full max-w-[1600px]">
               <InstallPrompt />
             </div>
-            <div key={location.pathname} className="route-fade mx-auto w-full max-w-[1600px]">
-              <Suspense fallback={<RouteFallback />}>
+            {/* The Suspense boundary sits ABOVE the keyed div on purpose.
+                It used to be inside, so every navigation mounted a brand
+                new boundary with no content and React had no choice but to
+                paint the fallback — the screen blanked to a skeleton even
+                when the next page was 80ms away. Hoisted, the boundary
+                persists across navigations, and with v7_startTransition
+                (see App.tsx) React keeps the page you're on painted until
+                the next chunk lands. The key stays on the inner div so the
+                route fade still replays when the swap actually happens. */}
+            <Suspense fallback={<RouteFallback />}>
+              <div
+                key={location.pathname}
+                // While we're holding the old page, say so quietly: a small
+                // dip in opacity after a beat, so a fast navigation never
+                // flickers but a slow one doesn't look frozen. The chrome
+                // stays at full strength and fully interactive — only the
+                // outgoing content dims.
+                aria-busy={chunkLoading || undefined}
+                className={cn(
+                  'route-fade mx-auto w-full max-w-[1600px]',
+                  chunkLoading
+                    ? 'opacity-60 transition-opacity duration-200 delay-150'
+                    : 'opacity-100 transition-opacity duration-100',
+                )}
+              >
                 <Outlet />
-              </Suspense>
-            </div>
+              </div>
+            </Suspense>
           </main>
           <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>

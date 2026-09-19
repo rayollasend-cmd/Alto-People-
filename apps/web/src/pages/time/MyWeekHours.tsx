@@ -7,6 +7,8 @@ import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { workweekBounds } from '@/lib/workweek';
+import { QueryError } from '@/components/ui/QueryError';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * The week at a glance, on the Time page: hours worked (every punch this
@@ -19,15 +21,31 @@ const OT_MIN = 40 * 60;
 export function MyWeekHours() {
   const { t } = useI18n();
   const { start, end } = workweekBounds();
+  // No `.catch(() => null)` on these. Swallowing the error made the query
+  // *succeed* with null, so React Query never retried, nothing was ever
+  // shown, and the tile simply wasn't there — an associate checking their
+  // hours couldn't tell a failed request from a week they hadn't worked.
   const entries = useQuery({
     queryKey: ['me', 'timeEntries', 'week', start.toISOString()],
-    queryFn: () => listMyTimeEntries({ from: start.toISOString(), to: end.toISOString() }).catch(() => null),
+    queryFn: () => listMyTimeEntries({ from: start.toISOString(), to: end.toISOString() }),
     refetchInterval: 5 * 60_000,
   });
   const shifts = useQuery({
     queryKey: ['me', 'shifts'],
-    queryFn: () => listMyShifts().catch(() => null),
+    queryFn: () => listMyShifts(),
   });
+  if (entries.isError || shifts.isError) {
+    return (
+      <QueryError
+        className="mb-5"
+        what="your hours this week"
+        query={entries.isError ? entries : shifts}
+      />
+    );
+  }
+  // The tile is the page's hero number; a bar of the right height keeps the
+  // rest of the page from jumping when it lands.
+  if (entries.isLoading || shifts.isLoading) return <Skeleton className="mb-5 h-36" />;
   if (!entries.data || !shifts.data) return null;
 
   const worked = entries.data.entries

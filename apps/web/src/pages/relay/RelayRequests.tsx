@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useOptimisticMutation } from '@/lib/optimistic';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtRelativeDate } from '@/lib/format';
@@ -434,10 +435,36 @@ export function RequestThread({ id, onClose, myDesk }: { id: string | null; onCl
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not send that.'),
   });
-  const setStatus = useMutation({
+  // Picking a request up, answering it, closing it — the desk saying what
+  // happened. The chip and the button should change on the tap, not after
+  // the round-trip; the settle invalidation reconciles whatever the server
+  // decided (who really holds it, the answeredAt stamp).
+  const setStatus = useOptimisticMutation({
     mutationFn: (body: { status?: RequestStatus; claim?: boolean }) => workApi.update(id!, body),
-    onSuccess: () => refresh(),
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not update it.'),
+    keys: [['relay', 'request', id], ['relay', 'requests']],
+    errorMessage: 'Could not update it.',
+    apply: (body, c) => {
+      const mine = user ? { userId: user.id, name: user.email, photoUrl: null } : null;
+      const patch = (req: WorkRequest): WorkRequest => ({
+        ...req,
+        ...(body.status ? { status: body.status } : null),
+        // A claim both assigns it and moves it out of OPEN, which is what
+        // the server does too.
+        ...(body.claim === true ? { status: 'IN_PROGRESS' as RequestStatus, claimedBy: mine } : null),
+        ...(body.claim === false ? { claimedBy: null } : null),
+      });
+      c.setQueryData(['relay', 'request', id], (prev: { request: WorkRequest } | undefined) =>
+        prev ? { ...prev, request: patch(prev.request) } : prev,
+      );
+      for (const [key, data] of c.getQueriesData({ queryKey: ['relay', 'requests'] })) {
+        const list = data as { requests?: WorkRequest[] } | undefined;
+        if (!list?.requests) continue;
+        c.setQueryData(key, {
+          ...list,
+          requests: list.requests.map((row) => (row.id === id ? patch(row) : row)),
+        });
+      }
+    },
   });
 
   const onDesk = !!r && (r.toDesk === myDesk || r.toUser?.userId === user?.id);

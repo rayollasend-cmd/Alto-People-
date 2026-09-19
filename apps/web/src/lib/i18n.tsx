@@ -37,6 +37,7 @@ const en = {
 
   // Common
   'common.retry': 'Retry',
+  'dash.checkFailed': 'We couldn’t check everything just now — this list may be incomplete.',
   'common.cancel': 'Cancel',
   'common.search': 'Search…',
   'common.language': 'Language',
@@ -2608,6 +2609,7 @@ const es: Record<MessageKey, string> = {
   'tabs.moreAria': 'Más — abrir la navegación completa',
 
   'common.retry': 'Reintentar',
+  'dash.checkFailed': 'No pudimos revisarlo todo en este momento: puede que falten cosas en esta lista.',
   'common.cancel': 'Cancelar',
   'common.search': 'Buscar…',
   'common.language': 'Idioma',

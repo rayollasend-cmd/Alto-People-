@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 
 /**
@@ -81,7 +82,9 @@ export function ShiftMapDrawer({ trip, open, onClose }: { trip: TripKey | null; 
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody>
-        {q.isLoading || !data ? (
+        {q.isError ? (
+          <QueryError what="this shift's stops" query={q} />
+        ) : q.isLoading || !data ? (
           <div className="space-y-3">
             <Skeleton className="h-56 w-full" />
             <Skeleton className="h-32 w-full" />

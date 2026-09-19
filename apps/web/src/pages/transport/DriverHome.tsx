@@ -60,6 +60,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
 import { Textarea } from '@/components/ui/Input';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import {
@@ -236,8 +237,8 @@ export function DriverHome() {
           <Skeleton className="h-20" />
           <Skeleton className="h-64" />
         </div>
-      ) : runs.error ? (
-        <p className="text-sm text-alert">{runs.error instanceof ApiError ? runs.error.message : String(runs.error)}</p>
+      ) : runs.isError ? (
+        <QueryError what="today's runs" query={runs} />
       ) : active.length + planned.length + done.length === 0 ? (
         <EmptyState icon={Bus} title={t('drive.none')} description={t('drive.noneBody')} />
       ) : (
@@ -277,6 +278,7 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
   const today = zonedDayKey(new Date(), localTz);
   const q = useQuery({ queryKey: ['transport', 'driver', 'week', today], queryFn: () => getDriverWeek(today, 7), refetchInterval: 60_000 });
   const [picked, setPicked] = useState(today);
+  if (q.isError) return <QueryError what="your week" query={q} />;
   if (!q.data) return null;
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${today}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
   const runsOn = (d: string) => q.data.runs.filter((r) => r.serviceDate === d);
@@ -523,6 +525,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
   const van = q.data?.van ?? null;
   // A new seat request: buzz, chime — the ride-share "ding".
   useNewKeys(q.data ? requests.map((r) => `req:${r.id}`) : null, () => rideAlert('request'));
+  if (q.isError) return <QueryError what="seat requests" query={q} />;
   if (!q.data) return null;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
@@ -655,8 +658,8 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
         <DialogHeader>
           <DialogTitle>{t('drive.riderProfile')}</DialogTitle>
         </DialogHeader>
-        {q.error ? (
-          <p className="text-sm text-alert">{q.error instanceof ApiError ? q.error.message : String(q.error)}</p>
+        {q.isError ? (
+          <QueryError what="this rider" query={q} />
         ) : !r ? (
           <Skeleton className="h-32" />
         ) : (
@@ -1188,6 +1191,7 @@ function RunMap({ runId }: { runId: string }) {
     refetchInterval: 15_000,
   });
   const run = live.data?.run;
+  if (live.isError) return <QueryError what="this run" query={live} />;
   if (!run) return null;
   const markers: MapMarker[] = [];
   if (run.position) markers.push({ id: 'van', kind: 'van', ...run.position, label: run.van.name, stale: run.stale, highlight: true });

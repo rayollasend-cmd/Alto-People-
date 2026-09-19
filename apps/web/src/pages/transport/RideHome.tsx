@@ -63,6 +63,7 @@ import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TripMap, tripStage } from './TripMap';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
 import {
   Dialog,
   DialogContent,
@@ -154,12 +155,8 @@ export function RideHome() {
         }
       />
       {me.isLoading || !data ? (
-        me.error ? (
-          <Card>
-            <CardContent className="p-5 text-sm text-alert">
-              {me.error instanceof ApiError ? me.error.message : String(me.error)}
-            </CardContent>
-          </Card>
+        me.isError ? (
+          <QueryError what="your rides" query={me} />
         ) : (
           <Card>
             <CardContent className="space-y-3 p-5">
@@ -710,7 +707,9 @@ function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }
         <DialogHeader>
           <DialogTitle>{t('ride.crewTitle')}</DialogTitle>
         </DialogHeader>
-        {!crew ? (
+        {q.isError ? (
+          <QueryError what="who else is on this ride" query={q} />
+        ) : !crew ? (
           <Skeleton className="h-40" />
         ) : (
           <div className="space-y-4">
@@ -1599,6 +1598,10 @@ export function BookRideDialog({
             </Field>
           </div>
 
+          {/* Without this, a failed trip lookup just showed every shift as
+              having no seats taken — a rider would book into a van that
+              was already full. */}
+          {trips.isError && <QueryError what="seats left on these shifts" query={trips} />}
           {windows.length > 0 && (
             <ShiftPicker
               windows={windows}

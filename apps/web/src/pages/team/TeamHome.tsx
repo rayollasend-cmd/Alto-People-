@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Target, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -47,6 +47,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { toast } from 'sonner';
+import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
 import { usePrompt } from '@/lib/confirm';
 
 // Query keys are tuples so invalidateQueries({ queryKey: ['team'] }) can
@@ -243,55 +244,49 @@ const KIND_META: Record<
 };
 
 function InboxTab() {
-  const qc = useQueryClient();
   const prompt = usePrompt();
   const q = useQuery({
     queryKey: teamKeys.inbox(),
     queryFn: getTeamInbox,
   });
 
-  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
 
   // Same API mutations as the Timesheets/Time off queue tabs, so a
   // decision made from the inbox behaves identically (invalidates the
   // whole team namespace → counts, queues, and this list all refresh).
-  const approveTsM = useMutation({
+  // A decision is the manager saying what happens — the server almost
+  // never disagrees. So the row leaves the moment they tap, and comes back
+  // only if the request actually fails. Clearing a morning's queue used to
+  // mean forty round-trips watched one at a time.
+  const approveTsM = useOptimisticMutation({
     mutationFn: approveTeamTimesheet,
-    onSuccess: () => {
-      toast.success('Timesheet approved.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+    keys: [teamKeys.all],
+    apply: (id: string, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Approve failed.',
+    onSuccess: () => toast.success('Timesheet approved.'),
   });
-  const rejectTsM = useMutation({
+  const rejectTsM = useOptimisticMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectTeamTimesheet(id, reason),
-    onSuccess: () => {
-      toast.success('Timesheet rejected.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
+    keys: [teamKeys.all],
+    apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Reject failed.',
+    onSuccess: () => toast.success('Timesheet rejected.'),
   });
-  const approvePtoM = useMutation({
+  const approvePtoM = useOptimisticMutation({
     mutationFn: (id: string) => approveTeamTimeOff(id),
-    onSuccess: () => {
-      toast.success('Time off approved.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+    keys: [teamKeys.all],
+    apply: (id: string, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Approve failed.',
+    onSuccess: () => toast.success('Time off approved.'),
   });
-  const denyPtoM = useMutation({
+  const denyPtoM = useOptimisticMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       denyTeamTimeOff(id, note),
-    onSuccess: () => {
-      toast.success('Time off denied.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
+    keys: [teamKeys.all],
+    apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Deny failed.',
+    onSuccess: () => toast.success('Time off denied.'),
   });
 
   const rejectTs = async (id: string) => {
@@ -561,7 +556,6 @@ const TS_STATUS_LABELS: Record<TeamTimeEntry['status'], string> = {
 };
 
 function TimesheetsTab() {
-  const qc = useQueryClient();
   const prompt = usePrompt();
   const [status, setStatus] = useState<TeamTimeEntry['status']>('COMPLETED');
   const isQueue = status === 'COMPLETED';
@@ -574,46 +568,44 @@ function TimesheetsTab() {
   // dashboard counts, inbox tab, and timesheet list all re-fetch
   // together. Tradeoff: a few redundant calls vs. one inconsistent
   // counter on screen — keeping the UI honest is worth the extra GETs.
-  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
 
-  const approveM = useMutation({
+  const approveM = useOptimisticMutation({
     mutationFn: approveTeamTimesheet,
-    onSuccess: () => {
-      toast.success('Approved.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+    keys: [teamKeys.all],
+    apply: (id: string, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Approve failed.',
+    onSuccess: () => toast.success('Approved.'),
   });
 
-  const rejectM = useMutation({
+  const rejectM = useOptimisticMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectTeamTimesheet(id, reason),
-    onSuccess: () => {
-      toast.success('Rejected.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
+    keys: [teamKeys.all],
+    apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Reject failed.',
+    onSuccess: () => toast.success('Rejected.'),
   });
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const bulkM = useMutation({
+  // Bulk clears every selected row at once. Some may come back — the
+  // endpoint skips rows that raced to APPROVED elsewhere — and the settle
+  // invalidation brings exactly those back while the toast says how many.
+  const bulkM = useOptimisticMutation({
     mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
+    keys: [teamKeys.all],
+    apply: (ids: string[], c) => removeFromLists(c, [teamKeys.all], ids),
+    errorMessage: 'Bulk approve failed.',
     onSuccess: (r) => {
       toast.success(
         `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
-      invalidateTeam();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
   });
   // No bulk-reject endpoint exists, so mirror the bulk approve by looping
   // the single reject with one shared reason. allSettled: one bad row
   // (e.g. raced to APPROVED elsewhere) shouldn't sink the batch.
-  const bulkRejectM = useMutation({
+  const bulkRejectM = useOptimisticMutation({
     mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
       const results = await Promise.allSettled(
         ids.map((id) => rejectTeamTimesheet(id, reason)),
@@ -623,6 +615,9 @@ function TimesheetsTab() {
         failed: results.filter((r) => r.status === 'rejected').length,
       };
     },
+    keys: [teamKeys.all],
+    apply: ({ ids }, c) => removeFromLists(c, [teamKeys.all], ids),
+    errorMessage: 'Bulk reject failed.',
     onSuccess: (r) => {
       if (r.failed > 0) {
         toast.error(`Rejected ${r.rejected} · ${r.failed} failed.`);
@@ -630,10 +625,7 @@ function TimesheetsTab() {
         toast.success(`Rejected ${r.rejected}.`);
       }
       setSelected(new Set());
-      invalidateTeam();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk reject failed.'),
   });
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -960,34 +952,28 @@ function TimesheetsTab() {
 }
 
 function TimeOffTab() {
-  const qc = useQueryClient();
   const prompt = usePrompt();
   const q = useQuery({
     queryKey: teamKeys.timeoff('PENDING'),
     queryFn: async () => (await listTeamTimeOff('PENDING')).requests,
   });
 
-  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
 
-  const approveM = useMutation({
+  const approveM = useOptimisticMutation({
     mutationFn: (id: string) => approveTeamTimeOff(id),
-    onSuccess: () => {
-      toast.success('Approved.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+    keys: [teamKeys.all],
+    apply: (id: string, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Approve failed.',
+    onSuccess: () => toast.success('Approved.'),
   });
 
-  const denyM = useMutation({
+  const denyM = useOptimisticMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       denyTeamTimeOff(id, note),
-    onSuccess: () => {
-      toast.success('Denied.');
-      invalidateTeam();
-    },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
+    keys: [teamKeys.all],
+    apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
+    errorMessage: 'Deny failed.',
+    onSuccess: () => toast.success('Denied.'),
   });
 
   const deny = async (id: string) => {
@@ -1004,21 +990,21 @@ function TimeOffTab() {
   };
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const bulkM = useMutation({
+  const bulkM = useOptimisticMutation({
     mutationFn: (ids: string[]) => bulkApproveTeamTimeOff(ids),
+    keys: [teamKeys.all],
+    apply: (ids: string[], c) => removeFromLists(c, [teamKeys.all], ids),
+    errorMessage: 'Bulk approve failed.',
     onSuccess: (r) => {
       toast.success(
         `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
-      invalidateTeam();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
   });
   // No bulk-deny endpoint — loop the single deny with one shared note,
   // allSettled so one already-decided row doesn't sink the batch.
-  const bulkDenyM = useMutation({
+  const bulkDenyM = useOptimisticMutation({
     mutationFn: async ({ ids, note }: { ids: string[]; note: string }) => {
       const results = await Promise.allSettled(
         ids.map((id) => denyTeamTimeOff(id, note)),
@@ -1028,6 +1014,9 @@ function TimeOffTab() {
         failed: results.filter((r) => r.status === 'rejected').length,
       };
     },
+    keys: [teamKeys.all],
+    apply: ({ ids }, c) => removeFromLists(c, [teamKeys.all], ids),
+    errorMessage: 'Bulk deny failed.',
     onSuccess: (r) => {
       if (r.failed > 0) {
         toast.error(`Denied ${r.denied} · ${r.failed} failed.`);
@@ -1035,10 +1024,7 @@ function TimeOffTab() {
         toast.success(`Denied ${r.denied}.`);
       }
       setSelected(new Set());
-      invalidateTeam();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk deny failed.'),
   });
   const bulkDeny = async () => {
     const ids = Array.from(selected);

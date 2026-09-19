@@ -75,6 +75,7 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import {
@@ -223,8 +224,8 @@ export function TransportHome() {
         <TabsContent value="today">
           {board.isLoading ? (
             <Skeleton className="h-64" />
-          ) : board.error ? (
-            <p className="text-sm text-alert">{errMsg(board.error)}</p>
+          ) : board.isError ? (
+            <QueryError what="today's board" query={board} />
           ) : board.data ? (
             <TodayBoard board={board.data} manage={manage} />
           ) : null}
@@ -934,8 +935,8 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
         </DialogHeader>
         {plan.isLoading ? (
           <Skeleton className="h-48" />
-        ) : plan.error ? (
-          <p className="text-sm text-alert">{errMsg(plan.error)}</p>
+        ) : plan.isError ? (
+          <QueryError what="the plan for this day" query={plan} />
         ) : proposals.length === 0 ? (
           <p className="text-sm text-silver">Nothing to plan — every booking this day has a van.</p>
         ) : (
@@ -1378,7 +1379,7 @@ function LiveTab() {
     : [];
 
   if (live.isLoading) return <Skeleton className="h-96" />;
-  if (live.error) return <p className="text-sm text-alert">{errMsg(live.error)}</p>;
+  if (live.isError) return <QueryError what="the live board" query={live} />;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1502,6 +1503,8 @@ function RidesTab({ manage }: { manage: boolean }) {
       </div>
       {rides.isLoading ? (
         <Skeleton className="h-48" />
+      ) : rides.isError ? (
+        <QueryError what="these rides" query={rides} />
       ) : (rides.data?.rides.length ?? 0) === 0 ? (
         <EmptyState icon={Bus} title="No rides" description="Nothing matches — widen the dates or clear the search." />
       ) : (
@@ -1614,6 +1617,8 @@ function IssuesTab({ manage }: { manage: boolean }) {
       />
       {issues.isLoading ? (
         <Skeleton className="h-40" />
+      ) : issues.isError ? (
+        <QueryError what="the reported issues" query={issues} />
       ) : (issues.data?.issues.length ?? 0) === 0 ? (
         <EmptyState icon={AlertTriangle} title={view === 'open' ? 'Nothing open' : 'Nothing resolved yet'} description="Riders and drivers report problems from their app." />
       ) : (
@@ -1774,6 +1779,8 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
       </div>
       {fleet.isLoading ? (
         <Skeleton className="h-64" />
+      ) : fleet.isError ? (
+        <QueryError what="the fleet" query={fleet} />
       ) : vans.length === 0 ? (
         <EmptyState icon={Bus} title="No vans yet" description="Add the fleet — name, plate, seats, and who drives it." />
       ) : (
@@ -2020,6 +2027,8 @@ function StopsTab({ manage }: { manage: boolean }) {
       </div>
       {stops.isLoading ? (
         <Skeleton className="h-32" />
+      ) : stops.isError ? (
+        <QueryError what="the stops" query={stops} />
       ) : (stops.data?.stops.length ?? 0) === 0 ? (
         <EmptyState icon={MapPin} title="No stops yet" description="Add the housing complexes your riders live at." />
       ) : (
@@ -2151,6 +2160,8 @@ function ChargesTab() {
       )}
       {charges.isLoading ? (
         <Skeleton className="h-40" />
+      ) : charges.isError ? (
+        <QueryError what="the charges" query={charges} />
       ) : rows.length === 0 ? (
         <EmptyState icon={Bus} title="No charges in these dates" />
       ) : (
@@ -2189,6 +2200,7 @@ function ChargesTab() {
 
 function SettingsTab({ manage }: { manage: boolean }) {
   const settings = useQuery({ queryKey: ['transport', 'settings'], queryFn: getTransportSettings });
+  if (settings.isError) return <QueryError what="the transport settings" query={settings} />;
   if (settings.isLoading || !settings.data) return <Skeleton className="h-40 max-w-md" />;
   return <SettingsForm key={JSON.stringify(settings.data.settings)} initial={settings.data.settings} manage={manage} />;
 }

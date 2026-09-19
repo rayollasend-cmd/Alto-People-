@@ -35,6 +35,7 @@ import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import {
@@ -417,8 +418,46 @@ function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
     inboxQuery.data === null ||
     shifts === null;
 
+  // Of those, the three this card fetches itself are the ones with no other
+  // voice on the page. A failed shifts fetch already renders its own
+  // "Couldn't load this" card with its own Retry just below, and two retry
+  // buttons for one outage is worse than one.
+  const ownSourceFailed =
+    agreementsQuery.data === null ||
+    documentsQuery.data === null ||
+    inboxQuery.data === null;
+
   if (rows.length === 0) {
-    if (!settled || anySourceFailed) return null;
+    if (!settled) return null;
+    // Vanishing on failure was still a kind of all-clear — the card just
+    // wasn't there, and nothing said why. Say it plainly instead, and give
+    // them the one control that helps.
+    if (ownSourceFailed) {
+      return (
+        <ErrorBanner
+          severity="warning"
+          className="mb-4"
+          action={
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() => {
+                void agreementsQuery.refetch();
+                void documentsQuery.refetch();
+                void inboxQuery.refetch();
+              }}
+            >
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {t('dash.checkFailed')}
+        </ErrorBanner>
+      );
+    }
+    // Shifts failed but this card's own sources are fine: stay silent
+    // rather than claim they're clear. The shifts card says what happened.
+    if (anySourceFailed) return null;
     return (
       <p className="mb-4 text-xs text-silver/70">{t('dash.allCaughtUp')}</p>
     );

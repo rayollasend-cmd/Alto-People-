@@ -6,6 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { ROLE_LABELS } from '@/lib/roles';
 import { useHeroHidden, usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
+import { offlineSessionSavedAt } from '@/lib/offlineSession';
+import { fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -99,6 +101,9 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
   const pageTitle = usePageTitle();
   const breadcrumbs = usePageBreadcrumbs();
   const heroHidden = useHeroHidden();
+  // When the last confirmed sync happened, so the offline pill can date
+  // what's on screen rather than just apologise.
+  const savedAt = isOffline ? offlineSessionSavedAt() : null;
   // Only a page that published a title has a hero to hand off from; the
   // wordmark fallback must never fade.
   const hasHero = !!pageTitle || !!(breadcrumbs && breadcrumbs.length > 0);
@@ -238,7 +243,15 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
               <span className="hidden sm:inline">Reconnecting…</span>
             </span>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Lost connection. Trying again.</TooltipContent>
+          <TooltipContent side="bottom">
+            {/* Say what they're looking at, not just that something is wrong.
+                Offline used to mean a wall of error banners; now the pages
+                fill from the saved cache, and a number nobody can date is
+                worse than a number labelled "from this morning". */}
+            {savedAt
+              ? `Lost connection. Showing what was saved ${fmtRelativeDate(new Date(savedAt))} — still trying.`
+              : 'Lost connection. Trying again.'}
+          </TooltipContent>
         </Tooltip>
       )}
 

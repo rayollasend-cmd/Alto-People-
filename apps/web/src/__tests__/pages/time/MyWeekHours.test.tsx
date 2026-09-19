@@ -52,8 +52,21 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [] });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
     const { container } = renderIt();
-    await vi.waitFor(() => expect(listMyShifts).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+    // Waiting on the CALL isn't enough any more: the tile now holds a
+    // skeleton of its own height while the two queries are in flight, so
+    // the page doesn't jump when the hero number lands. Empty is the
+    // resting state, not the loading one.
+    await vi.waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it('says so — with a way to retry — when the hours cannot be loaded', async () => {
+    // It used to swallow the error, which made the query *succeed* with
+    // null: no retry, no message, and a tile that simply wasn't there.
+    vi.mocked(listMyTimeEntries).mockRejectedValue(new Error('network'));
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
+    renderIt();
+    expect(await screen.findByText(/Couldn’t load your hours this week/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 });
 

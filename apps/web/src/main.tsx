@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { initSentry } from '@/lib/sentry';
+import { readOfflineSession } from '@/lib/offlineSession';
+import { restorePersistedQueries } from '@/lib/queryPersist';
 
 // Initialise error tracking before any render path can throw. No-op
 // when VITE_SENTRY_DSN is unset; safe in dev.
@@ -146,6 +148,30 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   });
 }
 
+/**
+ * Put the saved query cache back BEFORE the first render.
+ *
+ * Ordering is everything here: pages fire their queries on mount, so a
+ * restore that lands even a tick late arrives after those queries have
+ * already failed offline and painted their error states — blank tiles with
+ * good data sitting unused in IndexedDB. Reading the remembered user from
+ * localStorage is synchronous, so we know whose cache to open without
+ * waiting on /auth/me.
+ *
+ * Capped at 1.5s: persistence is a bonus and must never hold the app
+ * hostage to a wedged IndexedDB. index.html is already showing the branded
+ * splash, so on a normal boot this read is invisible.
+ */
+async function restoreCacheBeforeRender(): Promise<void> {
+  const remembered = readOfflineSession();
+  if (!remembered) return;
+  await Promise.race([
+    restorePersistedQueries(remembered.id),
+    new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+  ]);
+}
+
+void restoreCacheBeforeRender().finally(() => {
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
@@ -160,7 +186,15 @@ ReactDOM.createRoot(rootEl).render(
                 <StoreScopeProvider>
                   <PageTitleProvider>
                     <ConfirmProvider>
-                      <RouterProvider router={router} />
+                      {/* v7_startTransition wraps router state updates in
+                          React.startTransition. That is what lets the page
+                          you're on stay painted while the next one's chunk
+                          streams: Layout's Suspense boundary already has
+                          content, and inside a transition React keeps
+                          showing it instead of swapping to a fallback.
+                          Without it every navigation blanked to a skeleton
+                          even when the next page was 80ms away. */}
+                      <RouterProvider router={router} future={{ v7_startTransition: true }} />
                       <Toaster />
                     </ConfirmProvider>
                   </PageTitleProvider>
@@ -173,3 +207,4 @@ ReactDOM.createRoot(rootEl).render(
     </GlobalErrorBoundary>
   </React.StrictMode>
 );
+});

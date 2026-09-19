@@ -228,6 +228,18 @@ describe('<AssociateDashboard>', () => {
     expect(await screen.findByText(/Nothing scheduled/)).toBeInTheDocument();
   });
 
+  it('says the check was incomplete rather than vanishing, when its own source fails', async () => {
+    // Silently disappearing was still a kind of all-clear: an associate
+    // with an unsigned agreement saw nothing at all and no reason why.
+    vi.mocked(listMyAgreements).mockRejectedValue(new Error('network down'));
+    renderDashboard();
+    expect(
+      await screen.findByText(/couldn’t check everything just now/i),
+    ).toBeInTheDocument();
+    // And never the false all-clear.
+    expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
+  });
+
   it('an expected 403 still renders as a plain empty state', async () => {
     vi.mocked(listMyShifts).mockRejectedValue(
       new ApiError(403, 'forbidden', 'Forbidden'),
