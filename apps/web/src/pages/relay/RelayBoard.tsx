@@ -5,6 +5,7 @@ import { RefreshCw, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ClockStrip } from '@/components/ClockStrip';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -15,6 +16,9 @@ import { RelayPipeline } from './RelayPipeline';
 import { LaneDrawer } from './LaneDrawer';
 import { ActivityFeed, DecisionsPanel, MondayPack } from './RelayRail';
 import { ClientRequestsSection, WavesSection } from './RelayRequestsWaves';
+import { RelayRequests } from './RelayRequests';
+import { RelayFiles } from './RelayFiles';
+import { workApi, workDeskOf } from './workTypes';
 import {
   DESK_BAR,
   DESK_LABELS,
@@ -144,6 +148,8 @@ export function RelayBoard() {
   useTick(30_000);
 
   const board = useQuery({ queryKey: ['relay', 'board'], queryFn: relayApi.board, refetchInterval: 60_000 });
+  // What's waiting on this person's desk — the badge on the Requests tab.
+  const inbox = useQuery({ queryKey: ['relay', 'requests', 'inbox', 'open'], queryFn: () => workApi.requests('inbox'), refetchInterval: 60_000 });
   const activity = useQuery({ queryKey: ['relay', 'activity'], queryFn: relayApi.activity, refetchInterval: 60_000 });
   const requests = useQuery({ queryKey: ['relay', 'client-requests'], queryFn: relayApi.requests, refetchInterval: 60_000 });
   const data = board.data;
@@ -191,6 +197,17 @@ export function RelayBoard() {
     if (id) window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   }, [data, location.hash]);
 
+  const tab = (params.get('tab') as 'board' | 'requests' | 'files' | null) ?? 'board';
+  const setTab = (t: 'board' | 'requests' | 'files') =>
+    setParams(
+      (p) => {
+        if (t === 'board') p.delete('tab');
+        else p.set('tab', t);
+        return p;
+      },
+      { replace: true },
+    );
+  const myWorkDesk = workDeskOf(user?.role);
   const claims = data?.claims ?? {};
   const decisions = activity.data?.decisions ?? [];
   const lane = useMemo(() => data?.lanes.find((l) => l.associateId === laneId), [data, laneId]);
@@ -198,7 +215,7 @@ export function RelayBoard() {
   if (board.isError) {
     return (
       <div className="space-y-4">
-        <PageHeader title="The relay" subtitle="Every handoff between HR, Workforce, and Finance — one shared picture, with names on it." />
+        <PageHeader title="The relay" subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on." />
         <ErrorBanner
           action={
             <Button size="sm" variant="secondary" onClick={() => void board.refetch()}>
@@ -231,7 +248,7 @@ export function RelayBoard() {
       <div>
         <PageHeader
           title="The relay"
-          subtitle="Every handoff between HR, Workforce, and Finance — one shared picture, with names on it."
+          subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on."
           secondaryActions={
             <span className="flex items-center gap-2 text-xs text-silver/70">
               <span className="relative flex h-2 w-2" aria-hidden="true">
@@ -248,6 +265,39 @@ export function RelayBoard() {
         <ClockStrip className="mt-1" />
       </div>
 
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'board' | 'requests' | 'files')}>
+        <TabsList>
+          <TabsTrigger value="board">The board</TabsTrigger>
+          <TabsTrigger value="requests">
+            Requests
+            {(inbox.data?.counts.inbox ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-gold/20 px-1.5 text-2xs font-semibold text-gold tabular-nums">{inbox.data!.counts.inbox}</span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="files">Documents</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {tab === 'requests' ? (
+        <RelayRequests
+          desks={data.desks}
+          myDesk={myWorkDesk}
+          openId={params.get('request')}
+          onOpen={(id) =>
+            setParams(
+              (p) => {
+                if (id) p.set('request', id);
+                else p.delete('request');
+                return p;
+              },
+              { replace: true },
+            )
+          }
+        />
+      ) : tab === 'files' ? (
+        <RelayFiles myDesk={myWorkDesk} />
+      ) : (
+        <>
       <DeskScoreboard data={data} decisions={decisions} lens={lens} myDesk={myDesk} onLens={setLens} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -279,6 +329,8 @@ export function RelayBoard() {
           />
         </aside>
       </div>
+        </>
+      )}
 
       <LaneDrawer
         associateId={laneId}

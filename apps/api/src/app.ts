@@ -76,6 +76,7 @@ import { financeOverviewRouter } from './routes/financeOverview.js';
 import { workforceOverviewRouter } from './routes/workforceOverview.js';
 import { companyClockRouter } from './routes/companyClock.js';
 import { relayRouter } from './routes/relay.js';
+import { relayWorkRouter } from './routes/relayWork.js';
 import { clientRequestsRouter } from './routes/clientRequests.js';
 import { messagesRouter } from './routes/messages.js';
 import { regionRouter, regionsAdminRouter } from './routes/region.js';
@@ -451,6 +452,7 @@ export function createApp() {
   app.use('/', workforceOverviewRouter);
   app.use('/', companyClockRouter);
   app.use('/', relayRouter);
+  app.use('/', relayWorkRouter);
   app.use('/', clientRequestsRouter);
   // Phase 99 — kiosk-mode clock in/out. Admin endpoints self-gate with
   // view:time / manage:time; the public /kiosk/punch endpoint authenticates

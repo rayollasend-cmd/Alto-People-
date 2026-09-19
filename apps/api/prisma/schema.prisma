@@ -585,6 +585,12 @@ model User {
   fieldglassRegistrations           FieldglassRegistration[]      @relation("FieldglassRegistrar")
   relayClaims                       RelayClaim[]                  @relation("RelayClaimHolder")
   relayClaimsHandedOff              RelayClaim[]                  @relation("RelayClaimAssigner")
+  relayRequestsSent                 RelayRequest[]                @relation("RelayRequestFrom")
+  relayRequestsReceived             RelayRequest[]                @relation("RelayRequestTo")
+  relayRequestsClaimed              RelayRequest[]                @relation("RelayRequestClaimer")
+  relayRequestsClosed               RelayRequest[]                @relation("RelayRequestCloser")
+  relayMessages                     RelayMessage[]                @relation("RelayMessageAuthor")
+  relayFiles                        RelayFile[]                   @relation("RelayFileUploader")
   workNotes                         WorkNote[]                    @relation("WorkNoteAuthor")
   workNoteDecisions                 WorkNote[]                    @relation("WorkNoteDecider")
   clientRequestsAuthored            ClientRequest[]               @relation("ClientRequestAuthor")
@@ -1193,6 +1199,110 @@ model WorkNote {
   @@index([decisionStatus, decisionDesk])
 }
 
+/// The workstation's four desks — the board's three, plus Recruiting.
+enum RelayDesk {
+  HR
+  RECRUITING
+  WORKFORCE
+  FINANCE
+}
+
+enum RelayRequestKind {
+  ASK
+  SEND
+  TASK
+}
+
+enum RelayRequestStatus {
+  OPEN
+  IN_PROGRESS
+  ANSWERED
+  CLOSED
+}
+
+/// What one desk sends another: a question, a document, or a task. It
+/// lands on the desk (or on one person there), anyone on that desk can
+/// pick it up, and the thread keeps the answer where the next person
+/// will look for it.
+model RelayRequest {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind             RelayRequestKind
+  status           RelayRequestStatus @default(OPEN)
+  fromUserId       String             @db.Uuid
+  toDesk           RelayDesk
+  /// Set: it was addressed to one person, not the whole desk.
+  toUserId         String?            @db.Uuid
+  subject          String             @db.VarChar(200)
+  body             String
+  dueAt            DateTime?          @db.Timestamptz(6)
+  /// The person it's about, when it is about someone.
+  aboutAssociateId String?            @db.Uuid
+  claimedById      String?            @db.Uuid
+  answeredAt       DateTime?          @db.Timestamptz(6)
+  closedAt         DateTime?          @db.Timestamptz(6)
+  closedById       String?            @db.Uuid
+  createdAt        DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime           @updatedAt @db.Timestamptz(6)
+
+  from      User           @relation("RelayRequestFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser    User?          @relation("RelayRequestTo", fields: [toUserId], references: [id], onDelete: SetNull)
+  claimedBy User?          @relation("RelayRequestClaimer", fields: [claimedById], references: [id], onDelete: SetNull)
+  closedBy  User?          @relation("RelayRequestCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  about     Associate?     @relation("RelayRequestAbout", fields: [aboutAssociateId], references: [id], onDelete: SetNull)
+  messages  RelayMessage[]
+  files     RelayFile[]
+
+  @@index([toDesk, status])
+  @@index([toUserId, status])
+  @@index([fromUserId])
+  @@index([updatedAt(sort: Desc)])
+}
+
+model RelayMessage {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId    String   @db.Uuid
+  authorUserId String?  @db.Uuid
+  body         String
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  request RelayRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  author  User?        @relation("RelayMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  files   RelayFile[]
+
+  @@index([requestId, createdAt])
+}
+
+/// The working shelf: the forms, spreadsheets, photos and PDFs the desks
+/// run on. NOT the associate's document vault (DocumentRecord) — that
+/// keeps its own retention and verification rules.
+model RelayFile {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String     @db.VarChar(200)
+  /// Blob key (the same store the document vault writes to).
+  key              String
+  mime             String     @db.VarChar(160)
+  size             Int
+  uploadedById     String?    @db.Uuid
+  /// Whose shelf: a desk's, or everyone's when null.
+  desk             RelayDesk?
+  tags             String[]   @default([])
+  aboutAssociateId String?    @db.Uuid
+  requestId        String?    @db.Uuid
+  messageId        String?    @db.Uuid
+  deletedAt        DateTime?  @db.Timestamptz(6)
+  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+
+  uploadedBy User?         @relation("RelayFileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  about      Associate?    @relation("RelayFileAbout", fields: [aboutAssociateId], references: [id], onDelete: SetNull)
+  request    RelayRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  message    RelayMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([desk])
+  @@index([uploadedById])
+  @@index([requestId])
+  @@index([createdAt(sort: Desc)])
+}
+
 /// Who holds a piece of the relay — a first-paycheck lane (subjectKey =
 /// the associate), a baton (its key, "timesheets"), or a client request
 /// (its id). One holder at a time; claiming it yourself or handing it to a
@@ -1704,6 +1814,8 @@ model Associate {
   kbFeedback               KbFeedback[]
   // Finance's Fieldglass worklist completion marker.
   fieldglassRegistration   FieldglassRegistration?
+  relayRequestsAbout       RelayRequest[]                 @relation("RelayRequestAbout")
+  relayFilesAbout          RelayFile[]                    @relation("RelayFileAbout")
   fieldglassTimesheets     FieldglassTimesheet[]
   // Phase 125 — new-hire ramp plans.
   rampPlans                RampPlan[]
