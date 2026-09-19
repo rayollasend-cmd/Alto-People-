@@ -482,7 +482,7 @@ function TeamFaces({ teammates, timezone }: { teammates: ShiftTeammate[]; timezo
   const extra = teammates.length - FACES_SHOWN;
   return (
     <div>
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center">
         <div className="flex -space-x-2">
           {teammates.slice(0, FACES_SHOWN).map((m) => (
             <button
@@ -506,9 +506,6 @@ function TeamFaces({ teammates, timezone }: { teammates: ShiftTeammate[]; timezo
             </span>
           )}
         </div>
-        <span className="text-xs text-silver">
-          {t(teammates.length === 1 ? 'hero.withYouOne' : 'hero.withYouMany', { count: teammates.length })}
-        </span>
       </div>
       <p className="mt-1.5 text-xs text-silver tabular-nums" aria-live="polite">
         {mate ? (

@@ -133,8 +133,7 @@ describe('<AssociateScheduleView> shift detail', () => {
     // Teammates from the detail endpoint — as faces, not a list of names;
     // tapping one says who it is and when they work.
     const face = await screen.findByRole('button', { name: 'Pat Nguyen' });
-    // (The hero on top says it too — this is the card's own line.)
-    expect(within(card.closest('li')!).getByText('1 teammate on with you')).toBeInTheDocument();
+    expect(within(card.closest('li')!).getByText(/Working with you \(1\)/)).toBeInTheDocument();
     expect(screen.queryByText(/Cashier/)).not.toBeInTheDocument();
     await user.click(face);
     expect(face).toHaveAttribute('aria-pressed', 'true');
