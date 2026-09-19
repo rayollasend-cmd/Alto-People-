@@ -71,6 +71,11 @@ const TABLES = [
   // testIsolation.test.ts fails when a new table lands here unlisted.
   'Asset',
   'ClientProspect',
+  // Transportation: vans, stops and the fare settings are parents nothing
+  // cascades into (runs and rides point AT them).
+  'Van',
+  'TransportStop',
+  'TransportSettings',
   'ExecDecisionState',
   'ExecTarget',
   'LocalTaxRule',

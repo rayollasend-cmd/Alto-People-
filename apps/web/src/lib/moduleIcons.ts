@@ -18,7 +18,7 @@ import {
   Timer,
   UserPlus,
 } from 'lucide-react';
-import { ClipboardCheck as ClipboardCheckIcon, Waypoints as RelayIcon, Inbox as ApprovalsIcon, Receipt as ReimbursementsIcon, GraduationCap as LearningIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon, Map as RegionIcon } from 'lucide-react';
+import { ClipboardCheck as ClipboardCheckIcon, Waypoints as RelayIcon, Inbox as ApprovalsIcon, Receipt as ReimbursementsIcon, GraduationCap as LearningIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon, Map as RegionIcon, Bus as BusIcon } from 'lucide-react';
 import type { ModuleKey } from './modules';
 
 /**
@@ -85,6 +85,8 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'time-attendance': Timer,
   'kiosk': Smartphone,
   'time-off': CalendarOff,
+  'rides': BusIcon,
+  'transport': BusIcon,
   'scheduling': Calendar,
   'ops': ClipboardCheck,
   'approvals': ApprovalsIcon,

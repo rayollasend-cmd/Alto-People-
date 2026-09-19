@@ -92,6 +92,7 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
         'hr-cases',
         'agreements',
         'learning',
+        'rides',
       ]),
     );
   });
@@ -122,8 +123,27 @@ describe('visibleModules — FLOOR_SUPERVISOR curation', () => {
   // approve, schedule, or spend.
   it('shows exactly the floor, the SOP, and the personal baseline', () => {
     expect(new Set(keysFor('FLOOR_SUPERVISOR'))).toEqual(
-      new Set<ModuleKey>(['me', 'messages', 'floor-today', 'time-attendance', 'ops']),
+      new Set<ModuleKey>(['me', 'messages', 'floor-today', 'time-attendance', 'ops', 'rides']),
     );
+  });
+});
+
+describe('visibleModules — transportation', () => {
+  it('puts Ride in the associate nav', () => {
+    expect(keysFor('ASSOCIATE')).toContain('rides');
+    expect(keysFor('ASSOCIATE')).not.toContain('transport');
+  });
+
+  it("gives the director the command center and the personal baseline only", () => {
+    expect(new Set(keysFor('TRANSPORTATION_DIRECTOR'))).toEqual(new Set<ModuleKey>(['me', 'messages', 'transport']));
+  });
+
+  it('gives the driver the personal baseline — their runs are Home', () => {
+    expect(new Set(keysFor('DRIVER'))).toEqual(new Set<ModuleKey>(['me', 'messages']));
+  });
+
+  it('gives the workforce manager the command center', () => {
+    expect(keysFor('WORKFORCE_MANAGER')).toContain('transport');
   });
 });
 

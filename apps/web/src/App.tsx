@@ -82,6 +82,8 @@ const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'Time
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
 const LaborCostsHome = lazyNamed(() => import('@/pages/scheduling/LaborCostsHome'), 'LaborCostsHome');
 const OpsHome = lazyNamed(() => import('@/pages/ops/OpsHome'), 'OpsHome');
+const RideHome = lazyNamed(() => import('@/pages/transport/RideHome'), 'RideHome');
+const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'), 'TransportHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
@@ -382,6 +384,8 @@ const LAYOUT_ROUTES = [
   // cost is org economics — the API refuses bounded roles on every read here.
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
   { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops', 'assist:ops-shifts']}><OpsHome /></RequireCapability> },
+  { path: 'rides', element: <RequireCapability cap="ride:transport"><RideHome /></RequireCapability> },
+  { path: 'transport', element: <RequireCapability cap="view:transport"><TransportHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
   { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },

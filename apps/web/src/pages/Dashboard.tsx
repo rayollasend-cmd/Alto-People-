@@ -30,6 +30,8 @@ const FinanceDashboard = lazy(() =>
 const WorkforceDashboard = lazy(() =>
   import('./WorkforceDashboard').then((m) => ({ default: m.WorkforceDashboard })),
 );
+const DriverHome = lazy(() => import('./transport/DriverHome').then((m) => ({ default: m.DriverHome })));
+const TransportHome = lazy(() => import('./transport/TransportHome').then((m) => ({ default: m.TransportHome })));
 
 function DashboardFallback() {
   return (
@@ -52,6 +54,8 @@ function DashboardFallback() {
  *   MANAGER          → team-scoped (direct reports, pending approvals)
  *   SHIFT_SUPERVISOR → client-site-scoped ("your site today")
  *   FLOOR_SUPERVISOR → the same floor, watch-only (no scheduling reads)
+ *   DRIVER           → their van runs today: on board / no-show
+ *   TRANSPORTATION_DIRECTOR → the transportation command center
  *   anyone else      → org-wide AdminDashboard, role-filtered internally
  */
 export function Dashboard() {
@@ -73,7 +77,11 @@ export function Dashboard() {
                 ? FinanceDashboard
                 : user?.role === 'WORKFORCE_MANAGER'
                   ? WorkforceDashboard
-                  : AdminDashboard;
+                  : user?.role === 'DRIVER'
+                    ? DriverHome
+                    : user?.role === 'TRANSPORTATION_DIRECTOR'
+                      ? TransportHome
+                      : AdminDashboard;
   return (
     <Suspense fallback={<DashboardFallback />}>
       <Variant />

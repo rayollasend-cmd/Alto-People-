@@ -6,6 +6,7 @@ import { onLiveEvent } from '@/lib/liveEvents';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import {
   Briefcase,
+  Bus,
   Calendar,
   CalendarOff,
   DollarSign,
@@ -31,9 +32,9 @@ import { cn } from '@/lib/cn';
  * the sidebar takes over.
  *
  * Tab sets are role-aware rather than a blind capability slice:
- *   - ASSOCIATE: Home / Schedule / Pay / Time off. (No "Clock" tab — the
+ *   - ASSOCIATE: Home / Schedule / Pay / Ride. (No "Clock" tab — the
  *     /time-attendance admin page dead-ends for associates, whose clock
- *     in/out lives on their dashboard.)
+ *     in/out lives on their dashboard. Time off is in More.)
  *   - manage:scheduling holders (shift supervisors, managers, admins):
  *     Home / Schedule / Approvals / Time — the daily ops loop.
  *   - Everyone else: the legacy capability-filtered list.
@@ -63,12 +64,25 @@ const HOME_TAB: TabDef = {
   requires: null,
 };
 
-/** Associate daily loop: schedule, paystubs, time off. */
+/** Associate daily loop: schedule, paystubs, the van to work. Time off
+ *  lives in More. */
 const ASSOCIATE_TABS: TabDef[] = [
   HOME_TAB,
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/payroll', labelKey: 'tabs.pay', icon: DollarSign, requires: 'view:payroll' },
-  { path: '/time-off', labelKey: 'tabs.timeOff', icon: CalendarOff, requires: 'view:time' },
+  { path: '/rides', labelKey: 'tabs.ride', icon: Bus, requires: 'ride:transport' },
+];
+
+/** The driver: their runs (home), and messages. */
+const DRIVER_TABS: TabDef[] = [
+  { path: DASHBOARD_NAV.path, labelKey: 'drive.title', icon: Bus, requires: null },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+];
+
+/** The Transportation Director: the command center (home), and messages. */
+const TRANSPORT_TABS: TabDef[] = [
+  { path: DASHBOARD_NAV.path, label: 'Command center', icon: Bus, requires: null },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
 ];
 
 /** Ops daily loop for anyone who runs a schedule (supervisor/manager/admin). */
@@ -136,6 +150,10 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const tabSet =
     user?.role === 'ASSOCIATE'
       ? ASSOCIATE_TABS
+      : user?.role === 'DRIVER'
+        ? DRIVER_TABS
+      : user?.role === 'TRANSPORTATION_DIRECTOR'
+        ? TRANSPORT_TABS
       : user?.role === 'EXECUTIVE_CHAIRMAN'
         ? EXEC_TABS
         : user?.role === 'FLOOR_SUPERVISOR'

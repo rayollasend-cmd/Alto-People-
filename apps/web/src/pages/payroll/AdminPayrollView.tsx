@@ -2604,7 +2604,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
               />
               {item.postTaxDeductions > 0 && (
                 <DrillRow
-                  label="Garnishments"
+                  label="Post-tax deductions"
                   value={`−${fmtMoney(item.postTaxDeductions)}`}
                   accent
                 />

@@ -740,6 +740,7 @@ function PaystubCard({
     staleTime: 5 * 60_000,
   });
   const ytd = ytdQuery.data ?? null;
+  const transportAmount = item.transport?.amount ?? 0;
   const [downloading, setDownloading] = useState(false);
 
   const onDownload = async () => {
@@ -884,7 +885,9 @@ function PaystubCard({
                     `−${fmtMoney(ytd.stateWithholding)}`,
                   ],
                 },
-                ...(item.postTaxDeductions > 0
+                // Van rides ride inside post-tax deductions; they get their
+                // own line so a ride charge never reads as a garnishment.
+                ...(item.postTaxDeductions - transportAmount > 0.004
                   ? [
                       {
                         key: 'posttax',
@@ -892,8 +895,25 @@ function PaystubCard({
                           t('pay.garnishments'),
                           '',
                           '',
-                          `−${fmtMoney(item.postTaxDeductions)}`,
-                          `−${fmtMoney(ytd.postTaxDeductions)}`,
+                          `−${fmtMoney(item.postTaxDeductions - transportAmount)}`,
+                          `−${fmtMoney(ytd.postTaxDeductions - (ytd.transport ?? 0))}`,
+                        ],
+                      },
+                    ]
+                  : []),
+                ...(transportAmount > 0
+                  ? [
+                      {
+                        key: 'transport',
+                        cells: [
+                          t('pay.transport', {
+                            rides: item.transport?.rides ?? 0,
+                            noShows: item.transport?.noShows ?? 0,
+                          }),
+                          '',
+                          '',
+                          `−${fmtMoney(transportAmount)}`,
+                          `−${fmtMoney(ytd.transport ?? transportAmount)}`,
                         ],
                       },
                     ]

@@ -21,6 +21,7 @@ import {
   zonedMinutesOfDay,
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { VanArrivalsCard } from '@/components/VanArrivals';
 import { enterStagger } from '@/lib/motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -766,6 +767,9 @@ export function SupervisorDashboard() {
 
       {/* ---- The floor team: who reports to them / who's in charge -------- */}
       {watchOnly ? <MyLeadStrip /> : <FloorTeamStrip />}
+
+      {/* ---- Who's coming in on the vans (heads-up only) ----------------- */}
+      <VanArrivalsCard />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- What's waiting on them -------------------------------------- */}

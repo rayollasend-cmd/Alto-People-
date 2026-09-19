@@ -75,6 +75,7 @@ function renderPage(
     clockedIn?: boolean;
     role?: 'SHIFT_SUPERVISOR' | 'FLOOR_SUPERVISOR';
     floorTeam?: Record<string, unknown>;
+    arrivals?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const role = opts.role ?? 'SHIFT_SUPERVISOR';
@@ -106,6 +107,7 @@ function renderPage(
         ]),
         ...(opts.onFloorNow ? { onFloorNow: opts.onFloorNow } : {}),
       };
+    if (path === '/transport/arrivals') return { arrivals: opts.arrivals ?? [] };
     if (path === '/approvals/count')
       return { swaps: 1, pickups: 2, timeOff: 2, timesheets: 6, clockIns: 1, total: 12 };
     throw new Error(`unexpected ${path}`);
@@ -452,5 +454,46 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
       },
     });
     expect(await screen.findByText("You're running Dana's Swing SOP")).toBeInTheDocument();
+  });
+});
+
+describe('<SupervisorDashboard> — arriving by van', () => {
+  it('gives a heads-up of who is coming in on the vans, flagging anyone without a shift', async () => {
+    renderPage({
+      arrivals: [
+        {
+          rideId: 'r1',
+          associateId: 'a1',
+          name: 'Maria Lopez',
+          store: { id: 'l1', name: 'Front Beach 218' },
+          arriveBy: at(2),
+          status: 'SCHEDULED',
+          van: 'Van 1',
+          hasShift: true,
+        },
+        {
+          rideId: 'r2',
+          associateId: 'a2',
+          name: 'Kim Nguyen',
+          store: { id: 'l1', name: 'Front Beach 218' },
+          arriveBy: at(3),
+          status: 'REQUESTED',
+          van: null,
+          hasShift: false,
+        },
+      ],
+    });
+    expect(await screen.findByText('Arriving by van')).toBeInTheDocument();
+    expect(screen.getByText('Maria Lopez')).toBeInTheDocument();
+    expect(screen.getByText('Kim Nguyen')).toBeInTheDocument();
+    expect(screen.getByText('1 without a shift here')).toBeInTheDocument();
+    expect(screen.getByText('No shift')).toBeInTheDocument();
+    expect(screen.getByText('Waiting on a van')).toBeInTheDocument();
+  });
+
+  it('stays out of the way when nobody is coming by van', async () => {
+    renderPage();
+    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    expect(screen.queryByText('Arriving by van')).not.toBeInTheDocument();
   });
 });

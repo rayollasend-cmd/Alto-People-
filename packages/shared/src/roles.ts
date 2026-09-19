@@ -12,6 +12,8 @@ export const ROLES = {
   MARKETING_MANAGER: 'MARKETING_MANAGER',
   SHIFT_SUPERVISOR: 'SHIFT_SUPERVISOR',
   FLOOR_SUPERVISOR: 'FLOOR_SUPERVISOR',
+  TRANSPORTATION_DIRECTOR: 'TRANSPORTATION_DIRECTOR',
+  DRIVER: 'DRIVER',
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -30,6 +32,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   MARKETING_MANAGER: 'Marketing Manager',
   SHIFT_SUPERVISOR: 'Shift Supervisor',
   FLOOR_SUPERVISOR: 'Floor Supervisor',
+  TRANSPORTATION_DIRECTOR: 'Transportation Director',
+  DRIVER: 'Driver',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -54,6 +58,9 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
     'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
   FLOOR_SUPERVISOR:
     "Watches one client's floor and helps on their shift's SOP; reports to a shift supervisor and runs the SOP when covering for them. No time approvals, edits, or walk-in decisions — assign the client, shift and shift supervisor in Users & access",
+  TRANSPORTATION_DIRECTOR:
+    'Runs the Alto vans: the transportation command center — ride bookings, dispatching van runs, cancellations, vans, drivers, stops, fares, ride charges, and riders’ issues. No HR, payroll or scheduling surface',
+  DRIVER: "Drives an Alto van: today's runs, the pickups in order, and each rider marked on board or no-show",
 };
 
 export type Capability =
@@ -149,7 +156,17 @@ export type Capability =
   | 'run:ops-shifts'
   | 'assist:ops-shifts'
   | 'view:ops'
-  | 'manage:ops-library';
+  | 'manage:ops-library'
+  // Transportation — the Alto vans:
+  //  - ride:transport     book my own seat on a van (to or from work)
+  //  - drive:transport    run my van runs: pickups, on board / no-show
+  //  - view:transport     read the transportation command center
+  //  - manage:transport   dispatch runs, cancel rides, vans, drivers,
+  //    stops, fares, waive charges, work riders' issues
+  | 'ride:transport'
+  | 'drive:transport'
+  | 'view:transport'
+  | 'manage:transport';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -204,6 +221,13 @@ const FULL_ADMIN: Capability[] = [
   'run:ops-shifts',
   'assist:ops-shifts',
   'manage:ops-library',
+  // The admin roles hold every transport capability, so they can staff
+  // the Transportation Director and drivers (a role can only be granted
+  // by someone who holds all of its capabilities).
+  'ride:transport',
+  'drive:transport',
+  'view:transport',
+  'manage:transport',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -215,6 +239,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Store-ops oversight + the chairman's ONE write: the SOP standard.
     'view:ops',
     'manage:ops-library',
+    'view:transport',
   ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
@@ -247,6 +272,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:communications',
     // Gap 10 — submit own reimbursement requests.
     'submit:reimbursement',
+    // Book a seat on an Alto van, to or from work.
+    'ride:transport',
   ]),
   CLIENT_PORTAL: new Set<Capability>([
     'view:dashboard',
@@ -330,6 +357,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Store Ops: shift plans, checklists, handover; the Site Playbook
     // (SOP standards library) is THIS role's manual.
     'view:ops', 'run:ops-shifts', 'assist:ops-shifts', 'manage:ops-library',
+    // Field leadership covers the vans too — and staffs the drivers.
+    'ride:transport', 'drive:transport', 'view:transport', 'manage:transport',
   ]),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
@@ -351,6 +380,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // handover). Client-clamped; the library and board stay above them.
     'run:ops-shifts',
     'assist:ops-shifts',
+    // They ride the vans too.
+    'ride:transport',
     // The in-app inbox/bell. Without it, notifications routed to
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.
@@ -367,6 +398,24 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:time-live',
     'view:communications',
     'assist:ops-shifts',
+    'ride:transport',
+  ]),
+  // Runs the Alto vans end to end — the transportation command center.
+  // Org-wide (every client and store); no HR, payroll or scheduling.
+  TRANSPORTATION_DIRECTOR: new Set<Capability>([
+    'view:dashboard',
+    'view:communications',
+    'view:transport',
+    'manage:transport',
+    // Can take a run themselves in a pinch.
+    'drive:transport',
+    'ride:transport',
+  ]),
+  // Drives an Alto van: their own runs only.
+  DRIVER: new Set<Capability>([
+    'view:dashboard',
+    'view:communications',
+    'drive:transport',
   ]),
 };
 

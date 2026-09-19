@@ -33,6 +33,10 @@ export const MESSAGING_ROLES: Role[] = [
   'MARKETING_MANAGER',
   'SHIFT_SUPERVISOR',
   'FLOOR_SUPERVISOR',
+  // Transportation: the director and the drivers reach the desks and the
+  // store supervisors ("Van 2 is running 15 late").
+  'TRANSPORTATION_DIRECTOR',
+  'DRIVER',
 ];
 const STORE_ROLES: Role[] = ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'];
 const DESK_ROLES: Role[] = [

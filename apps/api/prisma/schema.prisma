@@ -50,6 +50,11 @@ enum Role {
   // live clocked-in board for a single client, nothing else. No time
   // approvals, edits, or walk-in decisions.
   FLOOR_SUPERVISOR
+  // Runs the Alto vans: bookings, dispatch, vans, drivers, stops, fares,
+  // ride charges, riders' issues. Org-wide.
+  TRANSPORTATION_DIRECTOR
+  // Drives an Alto van: their own runs only.
+  DRIVER
 }
 
 enum UserStatus {
@@ -439,6 +444,9 @@ model User {
   shiftCoversTaken                  ShiftCover[]                  @relation("ShiftCoverCover")
   shiftCoversCreated                ShiftCover[]                  @relation("ShiftCoverCreator")
   opsShiftsCoveredFor               OpsShift[]                    @relation("OpsShiftCoveredFor")
+  // Transportation — the Alto vans.
+  rideRunsDriven                    RideRun[]                     @relation("RideRunDriver")
+  transportIssuesReported           TransportIssue[]              @relation("TransportIssueReporter")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
@@ -784,6 +792,7 @@ model Location {
 
   @@index([clientId, isActive])
   @@index([deletedAt])
+  rides                  Ride[]
 }
 
 // A standing crew at a work site — "Front Beach Morning", "Overnight team".
@@ -1525,6 +1534,9 @@ model Associate {
   w4Submission             W4Submission?
   payoutMethods            PayoutMethod[]
   timeEntries              TimeEntry[]
+  rides                    Ride[]
+  ridePlaces               RidePlace[]
+  rideConsent              RideConsent?
   assignedShifts           Shift[]
   payrollItems             PayrollItem[]
   externalPayments         ExternalPayment[]
@@ -7305,4 +7317,217 @@ model SupervisorShiftWindow {
 
   @@unique([userId, locationId, label])
   @@index([locationId, label])
+}
+
+// ===== Transportation — the Alto vans ======================================
+//
+// Associates book a seat on an Alto van to or from work — independent of
+// the schedule (people come in without a shift too). The Transportation
+// Director dispatches the bookings onto van runs (a van, a driver, a
+// departure, the pickups in order); the driver marks each rider on board
+// or no-show; the fare ($5 a ride) or the no-show fee ($1) is taken from
+// the paycheck of the pay period the ride was in.
+
+enum RideDirection {
+  TO_WORK
+  FROM_WORK
+}
+
+enum RideStatus {
+  REQUESTED // booked, waiting for a van
+  SCHEDULED // on a van run, with a pickup time
+  BOARDED // the driver has them on board
+  COMPLETED // dropped off
+  NO_SHOW // wasn't there at pickup
+  CANCELLED
+}
+
+enum RideRunStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum TransportIssueCategory {
+  LATE_VAN
+  MISSED_PICKUP
+  CHARGE_DISPUTE
+  SAFETY
+  VEHICLE
+  CONDUCT
+  OTHER
+}
+
+enum TransportIssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+/// A fixed pickup point — a housing complex, a meeting spot.
+model TransportStop {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @db.VarChar(120)
+  address   String   @db.VarChar(300)
+  lat       Decimal? @db.Decimal(9, 6)
+  lng       Decimal? @db.Decimal(9, 6)
+  notes     String?  @db.VarChar(500)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  rides     Ride[]
+}
+
+model Van {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String    @db.VarChar(60)
+  plate     String?   @db.VarChar(20)
+  capacity  Int
+  isActive  Boolean   @default(true)
+  notes     String?   @db.VarChar(500)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  runs      RideRun[]
+}
+
+/// An associate's saved pickup address ("Home").
+model RidePlace {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String    @db.Uuid
+  label       String    @db.VarChar(40)
+  address     String    @db.VarChar(300)
+  lat         Decimal?  @db.Decimal(9, 6)
+  lng         Decimal?  @db.Decimal(9, 6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId])
+}
+
+/// The associate's authorization to take ride charges from their pay —
+/// given once, in the Ride tab, before their first booking.
+model RideConsent {
+  associateId    String    @id @db.Uuid
+  fareCents      Int
+  noShowFeeCents Int
+  acceptedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  ip             String?   @db.VarChar(64)
+  associate      Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+}
+
+model Ride {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String         @db.Uuid
+  direction      RideDirection
+  /// The store: where a TO_WORK ride goes, where a FROM_WORK ride starts.
+  locationId     String         @db.Uuid
+  /// The home end — a stop, or an address (snapshotted at booking).
+  stopId         String?        @db.Uuid
+  address        String?        @db.VarChar(300)
+  lat            Decimal?       @db.Decimal(9, 6)
+  lng            Decimal?       @db.Decimal(9, 6)
+  /// TO_WORK: arrive at the store by. FROM_WORK: picked up at the store at.
+  targetAt       DateTime       @db.Timestamptz(6)
+  /// The store-local day of targetAt — the board's day and the pay period.
+  serviceDate    String         @db.VarChar(10)
+  status         RideStatus     @default(REQUESTED)
+  /// Informational only — rides never depend on the schedule.
+  shiftId        String?        @db.Uuid
+  note           String?        @db.VarChar(300)
+  // Dispatch: the run, the pickup order and time.
+  runId          String?        @db.Uuid
+  pickupOrder    Int?
+  pickupAt       DateTime?      @db.Timestamptz(6)
+  // Charges, snapshotted at booking; chargeCents is what's owed (the fare
+  // once on board, the fee on a no-show). chargedRunId stamps the payroll
+  // run that took it — the same apply/un-apply rule as clawbacks.
+  fareCents      Int
+  noShowFeeCents Int
+  chargeCents    Int            @default(0)
+  waivedAt       DateTime?      @db.Timestamptz(6)
+  waivedById     String?        @db.Uuid
+  waiveReason    String?        @db.VarChar(300)
+  chargedRunId   String?        @db.Uuid
+  chargedItemId  String?        @db.Uuid
+  chargedAt      DateTime?      @db.Timestamptz(6)
+  boardedAt      DateTime?      @db.Timestamptz(6)
+  completedAt    DateTime?      @db.Timestamptz(6)
+  noShowAt       DateTime?      @db.Timestamptz(6)
+  cancelledAt    DateTime?      @db.Timestamptz(6)
+  cancelledById  String?        @db.Uuid
+  cancelReason   String?        @db.VarChar(300)
+  createdById    String         @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+
+  associate Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  location  Location       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  stop      TransportStop? @relation(fields: [stopId], references: [id], onDelete: SetNull)
+  run       RideRun?       @relation(fields: [runId], references: [id], onDelete: SetNull)
+  issues    TransportIssue[]
+
+  @@index([serviceDate, status])
+  @@index([associateId, targetAt])
+  @@index([runId])
+  @@index([chargedRunId])
+}
+
+/// One van trip: a van, a driver, a direction, a departure, the riders.
+model RideRun {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vanId        String        @db.Uuid
+  driverUserId String        @db.Uuid
+  direction    RideDirection
+  serviceDate  String        @db.VarChar(10)
+  departAt     DateTime      @db.Timestamptz(6)
+  status       RideRunStatus @default(PLANNED)
+  startedAt    DateTime?     @db.Timestamptz(6)
+  endedAt      DateTime?     @db.Timestamptz(6)
+  notes        String?       @db.VarChar(500)
+  createdById  String        @db.Uuid
+  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+
+  van    Van              @relation(fields: [vanId], references: [id], onDelete: Restrict)
+  driver User             @relation("RideRunDriver", fields: [driverUserId], references: [id], onDelete: Restrict)
+  rides  Ride[]
+  issues TransportIssue[]
+
+  @@index([serviceDate])
+  @@index([driverUserId, serviceDate])
+}
+
+/// A rider's, driver's or supervisor's problem with a ride — the
+/// Transportation Director's queue.
+model TransportIssue {
+  id           String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportedById String                 @db.Uuid
+  rideId       String?                @db.Uuid
+  runId        String?                @db.Uuid
+  category     TransportIssueCategory
+  body         String                 @db.VarChar(2000)
+  status       TransportIssueStatus   @default(OPEN)
+  resolution   String?                @db.VarChar(2000)
+  resolvedAt   DateTime?              @db.Timestamptz(6)
+  resolvedById String?                @db.Uuid
+  createdAt    DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime               @updatedAt @db.Timestamptz(6)
+
+  reportedBy User     @relation("TransportIssueReporter", fields: [reportedById], references: [id], onDelete: Cascade)
+  ride       Ride?    @relation(fields: [rideId], references: [id], onDelete: SetNull)
+  run        RideRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+}
+
+/// The fares and the booking cutoff — one row, the director's to set.
+model TransportSettings {
+  id             String   @id @default("default") @db.VarChar(20)
+  fareCents      Int      @default(500)
+  noShowFeeCents Int      @default(100)
+  cutoffHours    Int      @default(10)
+  updatedById    String?  @db.Uuid
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 }

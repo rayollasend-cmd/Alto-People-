@@ -438,6 +438,8 @@ export const RoleSchema = z.enum([
   'MARKETING_MANAGER',
   'SHIFT_SUPERVISOR',
   'FLOOR_SUPERVISOR',
+  'TRANSPORTATION_DIRECTOR',
+  'DRIVER',
 ]);
 
 export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
@@ -2623,6 +2625,11 @@ export const PayrollItemSchema = z.object({
   failureReason: z.string().nullable(),
   // Wave 1.2 — per-kind breakdown that sums to grossPay.
   earnings: z.array(PayrollItemEarningSchema),
+  /** Van rides taken from this check (part of postTaxDeductions) — the
+   *  paystub's own "Transportation" line. Associate-facing reads only. */
+  transport: z
+    .object({ amount: z.number().nonnegative(), rides: z.number().int(), noShows: z.number().int() })
+    .optional(),
 });
 export type PayrollItem = z.infer<typeof PayrollItemSchema>;
 
@@ -2812,6 +2819,8 @@ export const PayrollItemYtdResponseSchema = z.object({
   employerSuta: z.number(),
   /** Earning kind → YTD amount, for the earnings table's YTD column. */
   byKind: z.record(PayrollEarningKindSchema, z.number()),
+  /** Van ride charges inside postTaxDeductions, YTD. */
+  transport: z.number().optional(),
 });
 export type PayrollItemYtdResponse = z.infer<typeof PayrollItemYtdResponseSchema>;
 

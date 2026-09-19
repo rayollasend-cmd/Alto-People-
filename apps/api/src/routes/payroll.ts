@@ -36,7 +36,8 @@ import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
-import { placedClientIds } from '../lib/openShiftEligibility.js';
+import { nextPaydayFor } from '../lib/associatePayday.js';
+import { applyRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported } from '../lib/payrollTax.js';
 import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggregator.js';
@@ -60,7 +61,7 @@ import {
 } from '../lib/garnishmentRemittance.js';
 import { decryptString, tryDecryptString } from '../lib/crypto.js';
 import { readRoutingNumber } from '../lib/payoutMethod.js';
-import type { PayoutMethod, PayrollFrequency } from '@prisma/client';
+import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
@@ -746,6 +747,8 @@ async function aggregateAndPersistRun(
     where: { appliedRunId: run.id },
     data: { appliedRunId: null, appliedItemId: null, appliedAt: null },
   });
+  // Ride charges too — re-applied fresh below (lib/transport).
+  await releaseRideCharges(tx, run.id);
 
   // Same idempotency rule for garnishments: remove THIS run's ledger rows
   // and roll each garnishment's amountWithheld back BEFORE projecting.
@@ -877,6 +880,30 @@ async function aggregateAndPersistRun(
                 Number(upserted.postTaxDeductions) + consumed.totalApplied
               ),
               netPay: round2(Number(upserted.netPay) - consumed.totalApplied),
+            },
+          });
+        }
+
+        // Van rides: every $5 fare and $1 no-show fee owed up to this
+        // period's last day, whole rides only, never below $0 net — what
+        // doesn't fit waits for the next check.
+        const netAfterClawbacks = round2(Number(upserted.netPay) - consumed.totalApplied);
+        const rides = await applyRideCharges(tx, {
+          associateId: p.associateId,
+          availableNet: netAfterClawbacks,
+          payrollRunId: run.id,
+          payrollItemId: upserted.id,
+          periodEnd: run.periodEnd.toISOString().slice(0, 10),
+          clientId: run.clientId,
+        });
+        if (rides.totalApplied > 0) {
+          await tx.payrollItem.update({
+            where: { id: upserted.id },
+            data: {
+              postTaxDeductions: round2(
+                Number(upserted.postTaxDeductions) + consumed.totalApplied + rides.totalApplied,
+              ),
+              netPay: round2(netAfterClawbacks - rides.totalApplied),
             },
           });
         }
@@ -1277,6 +1304,8 @@ payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
         where: { appliedRunId: run.id },
         data: { appliedRunId: null, appliedItemId: null, appliedAt: null },
       });
+      // …and the van-ride charges it took.
+      await releaseRideCharges(tx, run.id);
 
       // Items + their earnings cascade on the run delete, but delete
       // explicitly for clarity, then the run.
@@ -2980,44 +3009,7 @@ payrollRouter.post(
 payrollRouter.get('/me/next-payday', async (req, res, next) => {
   try {
     const user = req.user!;
-    if (!user.associateId) {
-      res.json({ nextPayday: null });
-      return;
-    }
-    const live = { isActive: true, deletedAt: null } as const;
-    const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
-    const own = await prisma.associate.findUnique({
-      where: { id: user.associateId },
-      select: { payrollSchedule: { select: { ...scheduleSelect, isActive: true, deletedAt: true } } },
-    });
-    let schedule: { name: string; frequency: PayrollFrequency; anchorDate: Date; payDateOffsetDays: number } | null =
-      own?.payrollSchedule && own.payrollSchedule.isActive && !own.payrollSchedule.deletedAt
-        ? own.payrollSchedule
-        : null;
-    if (!schedule) {
-      const clientIds = await placedClientIds(user.associateId);
-      schedule =
-        (clientIds.length
-          ? await prisma.payrollSchedule.findFirst({
-              where: { ...live, clientId: { in: clientIds } },
-              orderBy: { createdAt: 'asc' },
-              select: scheduleSelect,
-            })
-          : null) ??
-        (await prisma.payrollSchedule.findFirst({
-          where: { ...live, clientId: null },
-          orderBy: { createdAt: 'asc' },
-          select: scheduleSelect,
-        }));
-    }
-    if (!schedule) {
-      res.json({ nextPayday: null });
-      return;
-    }
-    const w = getNextPayday(schedule);
-    res.json({
-      nextPayday: { payDate: w.payDate, periodStart: w.periodStart, periodEnd: w.periodEnd, schedule: schedule.name },
-    });
+    res.json({ nextPayday: user.associateId ? await nextPaydayFor(user.associateId) : null });
   } catch (err) {
     next(err);
   }
@@ -3051,8 +3043,24 @@ payrollRouter.get('/me/items', async (req, res, next) => {
         earnings: true,
       },
     });
+    // Van rides taken from each check — their own paystub line.
+    const rideRows = rows.length
+      ? await prisma.ride.findMany({
+          where: { chargedItemId: { in: rows.map((r) => r.id) } },
+          select: { chargedItemId: true, chargeCents: true, status: true },
+        })
+      : [];
+    const transportFor = (itemId: string) => {
+      const mine = rideRows.filter((r) => r.chargedItemId === itemId);
+      if (mine.length === 0) return undefined;
+      return {
+        amount: mine.reduce((n, r) => n + r.chargeCents, 0) / 100,
+        rides: mine.filter((r) => r.status !== 'NO_SHOW').length,
+        noShows: mine.filter((r) => r.status === 'NO_SHOW').length,
+      };
+    };
     const payload: PayrollItemListResponse = PayrollItemListResponseSchema.parse({
-      items: rows.map(toItem),
+      items: rows.map((r) => ({ ...toItem(r), transport: transportFor(r.id) })),
     });
     res.json(payload);
   } catch (err) {
@@ -3100,7 +3108,7 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
       disbursedAt: { gte: yearStart, lt: yearEndExclusive, lte: asOf },
     };
 
-    const [agg, earnings] = await Promise.all([
+    const [agg, earnings, rides] = await Promise.all([
       prisma.payrollItem.aggregate({
         where,
         _sum: {
@@ -3124,6 +3132,14 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
         where: { payrollItem: where },
         _sum: { amount: true },
       }),
+      prisma.payrollItem
+        .findMany({ where, select: { id: true } })
+        .then((items) =>
+          prisma.ride.aggregate({
+            where: { associateId: user.associateId!, chargedItemId: { in: items.map((i) => i.id) } },
+            _sum: { chargeCents: true },
+          }),
+        ),
     ]);
 
     const n = (v: Prisma.Decimal | null | undefined) => (v ? Number(v) : 0);
@@ -3143,6 +3159,7 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
       employerFuta: n(agg._sum.employerFuta),
       employerSuta: n(agg._sum.employerSuta),
       byKind: Object.fromEntries(earnings.map((e) => [e.kind, n(e._sum.amount)])),
+      transport: (rides._sum.chargeCents ?? 0) / 100,
     });
     res.json(payload);
   } catch (err) {

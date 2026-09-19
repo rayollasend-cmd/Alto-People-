@@ -19,6 +19,8 @@ export type ModuleKey =
   | 'time-attendance'
   | 'kiosk'
   | 'time-off'
+  | 'rides'
+  | 'transport'
   | 'scheduling'
   | 'ops'
   | 'labor-costs'
@@ -149,6 +151,7 @@ const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'floor-today',
   'time-attendance',
   'ops',
+  'rides', // they ride the vans too
 ]);
 
 /**
@@ -164,6 +167,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'scheduling',
   'marketplace', // open shifts to pick up
   'time-attendance', // my timesheet + kiosk explainer
+  'rides', // the Alto vans — book a seat to or from work
   'time-off',
   'payroll',
   'documents',
@@ -244,6 +248,7 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'time-off',
   'holidays',
   'ops',
+  'transport',
   'performance',
   'compliance',
   'skills',
@@ -307,6 +312,21 @@ const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'hr-cases',
   'agreements',
   'learning',
+  'rides', // they ride the vans too
+]);
+
+/** The Transportation Director's nav: the command center, and the
+ *  personal baseline. Their day is dispatch — nothing else competes. */
+const TRANSPORT_DIRECTOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'messages',
+  'transport',
+]);
+
+/** The driver's nav: their runs live on Home; messages and their profile. */
+const DRIVER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'messages',
 ]);
 
 /** Capability-filtered module list, with per-role curation applied.
@@ -358,6 +378,10 @@ export function visibleModules(
   if (role === 'ASSOCIATE') {
     return base.filter((m) => ASSOCIATE_MODULE_KEYS.has(m.key));
   }
+  if (role === 'TRANSPORTATION_DIRECTOR') {
+    return base.filter((m) => TRANSPORT_DIRECTOR_MODULE_KEYS.has(m.key));
+  }
+  if (role === 'DRIVER') return base.filter((m) => DRIVER_MODULE_KEYS.has(m.key));
   return base;
 }
 
@@ -801,6 +825,24 @@ export const MODULES: ModuleNav[] = [
       'PTO requests, sick-leave balances, and HR approval queue.',
     requires: 'view:time',
     group: 'time-and-pay',
+  },
+  {
+    key: 'rides',
+    path: '/rides',
+    label: 'Ride',
+    description:
+      'Book a seat on an Alto van to or from work — your rides, pickups, and what comes out of pay.',
+    requires: 'ride:transport',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'transport',
+    path: '/transport',
+    label: 'Transportation',
+    description:
+      'The van command center — bookings, dispatch, drivers, vans, stops, issues, and ride charges.',
+    requires: 'view:transport',
+    group: 'workforce',
   },
   {
     key: 'scheduling',

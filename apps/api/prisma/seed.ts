@@ -27,6 +27,20 @@ const MANAGEMENT_USERS: ReadonlyArray<{
   { email: 'finance@altohr.com', password: 'finance-dev-2026!', role: 'FINANCE_ACCOUNTANT', label: 'Finance / Accountant' },
 ];
 
+// Transportation logins carry a person (the driver's name is what riders
+// see on their van notification).
+const TRANSPORT_USERS: ReadonlyArray<{
+  email: string;
+  password: string;
+  role: Role;
+  label: string;
+  firstName: string;
+  lastName: string;
+}> = [
+  { email: 'transport@altohr.com', password: 'transport-dev-2026!', role: 'TRANSPORTATION_DIRECTOR', label: 'Transportation Director', firstName: 'Tasha', lastName: 'Grant' },
+  { email: 'driver@altohr.com', password: 'driver-dev-2026!', role: 'DRIVER', label: 'Driver', firstName: 'Mike', lastName: 'Chen' },
+];
+
 /**
  * Phase 2 seed.
  *
@@ -446,6 +460,42 @@ async function main() {
     }
   }
 
+  // ---- Transportation: the Alto vans — a director, a driver, the fleet,
+  //      and the housing complexes riders get picked up at ---------------
+  for (const t of TRANSPORT_USERS) {
+    const person =
+      (await prisma.associate.findUnique({ where: { email: t.email } })) ??
+      (await prisma.associate.create({ data: { firstName: t.firstName, lastName: t.lastName, email: t.email } }));
+    await prisma.user.upsert({
+      where: { email: t.email },
+      create: {
+        email: t.email,
+        passwordHash: await hashPassword(t.password),
+        role: t.role,
+        status: 'ACTIVE',
+        associateId: person.id,
+      },
+      update: { role: t.role, status: 'ACTIVE', associateId: person.id },
+    });
+  }
+  if ((await prisma.van.count()) === 0) {
+    await prisma.van.createMany({
+      data: [
+        { name: 'Van 1', plate: 'ALT 101', capacity: 12 },
+        { name: 'Van 2', plate: 'ALT 102', capacity: 12 },
+        { name: 'Van 3', plate: 'ALT 103', capacity: 7, notes: 'Minivan' },
+      ],
+    });
+  }
+  if ((await prisma.transportStop.count()) === 0) {
+    await prisma.transportStop.createMany({
+      data: [
+        { name: 'Seaside Housing', address: '17751 Panama City Beach Pkwy, Panama City Beach, FL 32413', notes: 'By the front office' },
+        { name: 'Gulf Pines Apartments', address: '7209 Thomas Dr, Panama City Beach, FL 32408', notes: 'Main gate' },
+      ],
+    });
+  }
+
   // ---- Application + Checklist (instantiated from template) --------------
   const existingApp = await prisma.application.findFirst({
     where: { associateId: associate.id, clientId: client.id },
@@ -485,7 +535,7 @@ async function main() {
   console.log(`[seed]   admin user: ${adminUser.email} / ${ADMIN_DEV_PASSWORD}`);
   console.log(`[seed]   associate user: ${associateUser.email} / ${ASSOCIATE_DEV_PASSWORD}`);
   console.log(`[seed]   portal user: ${portalUser.email} / ${PORTAL_DEV_PASSWORD}`);
-  for (const m of MANAGEMENT_USERS) {
+  for (const m of [...MANAGEMENT_USERS, ...TRANSPORT_USERS]) {
     console.log(`[seed]   ${m.label}: ${m.email} / ${m.password}`);
   }
   console.log(`[seed]   client (primary): ${client.name} (${client.id})`);
