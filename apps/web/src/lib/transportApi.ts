@@ -54,7 +54,7 @@ export interface Ride {
     id: string;
     status: RideRunStatus;
     departAt: string;
-    van: { id: string; name: string; plate: string | null };
+    van: VanLook & { id: string; name: string; plate: string | null };
     driver: { userId: string; name: string; associateId: string | null };
   } | null;
   fareCents: number;
@@ -72,7 +72,25 @@ export interface Ride {
   vanArrivedAt: string | null;
   /** The rider's word to the driver. */
   riderSignal: { kind: RiderSignal; at: string } | null;
+  /** A driver (or the director) put the seat on a van. */
+  acceptedAt: string | null;
+  /** Drivers who declined the seat request; all of them have. */
+  declines: number;
+  allDeclined: boolean;
   createdAt: string;
+}
+
+/** What a rider looks for at the curb. */
+export interface VanLook {
+  make?: string | null;
+  model?: string | null;
+  color?: string | null;
+  year?: number | null;
+}
+
+/** "White Ford Transit 2023" */
+export function vanLookText(v: VanLook): string {
+  return [v.color, v.make, v.model, v.year].filter((x) => x !== null && x !== undefined && x !== '').join(' ');
 }
 
 export type RiderSignal = 'OUTSIDE' | 'LATE';
@@ -282,7 +300,7 @@ export interface TransportBoard {
   };
   rides: Ride[];
   runs: RideRun[];
-  vans: Array<{ id: string; name: string; plate: string | null; capacity: number }>;
+  vans: Array<{ id: string; name: string; plate: string | null; capacity: number; driverUserId: string | null }>;
   drivers: Array<{ userId: string; name: string; role: string; phone: string | null }>;
 }
 
@@ -329,13 +347,87 @@ export interface Van {
   capacity: number;
   isActive: boolean;
   notes: string | null;
+  make: string | null;
+  model: string | null;
+  color: string | null;
+  year: number | null;
+  look: string;
+  /** The van's driver — they accept seat requests in it. */
+  driver: { userId: string; name: string; associateId: string | null; phone: string | null } | null;
+}
+
+export interface VanInput {
+  name: string;
+  plate?: string | null;
+  capacity: number;
+  notes?: string | null;
+  make?: string | null;
+  model?: string | null;
+  color?: string | null;
+  year?: number | null;
+  isActive?: boolean;
+  /** null takes the van off its driver. */
+  driverUserId?: string | null;
 }
 
 export const listVans = () => apiFetch<{ vans: Van[] }>('/transport/vans');
-export const createVan = (body: { name: string; plate?: string | null; capacity: number; notes?: string | null }) =>
-  apiFetch<{ van: Van }>('/transport/vans', { method: 'POST', body });
-export const updateVan = (id: string, body: Partial<Omit<Van, 'id'>>) =>
+export const createVan = (body: VanInput) => apiFetch<{ van: Van }>('/transport/vans', { method: 'POST', body });
+export const updateVan = (id: string, body: Partial<VanInput>) =>
   apiFetch<{ van: Van }>(`/transport/vans/${id}`, { method: 'PATCH', body });
+
+/** The fleet by the numbers, for a date range. */
+export interface FleetVan extends Van {
+  stats: {
+    revenueCents: number;
+    waivedCents: number;
+    runs: number;
+    riders: number;
+    noShows: number;
+    seatFill: number | null;
+    miles: number;
+    daily: Array<{ date: string; cents: number }>;
+  };
+  now: { onTheRoad: boolean; driver: string; lastSeenAt: string | null; position: GeoPoint | null } | null;
+}
+
+export const getFleet = (from: string, to: string) =>
+  apiFetch<{ from: string; to: string; vans: FleetVan[] }>(`/transport/fleet?from=${from}&to=${to}`);
+
+/** Put a seat every driver declined back in front of them. */
+export const reofferRide = (id: string) => apiFetch<{ ok: true }>(`/transport/rides/${id}/reoffer`, { method: 'POST' });
+
+/* ----- Seat requests (drivers) and profiles ---------------------------------- */
+
+export interface SeatRequest extends Ride {
+  /** It fits a run the driver already has. */
+  fits: { runId: string; departAt: string } | null;
+}
+
+export const getSeatRequests = () =>
+  apiFetch<{ van: { id: string; name: string; plate: string | null; capacity: number; look: string } | null; requests: SeatRequest[] }>(
+    '/transport/driver/requests',
+  );
+export const acceptSeat = (rideId: string) =>
+  apiFetch<{ run: RideRun }>(`/transport/driver/requests/${rideId}/accept`, { method: 'POST' });
+export const declineSeat = (rideId: string, reason?: string) =>
+  apiFetch<{ ok: true }>(`/transport/driver/requests/${rideId}/decline`, { method: 'POST', body: reason ? { reason } : {} });
+
+export interface RideCrew {
+  van: VanLook & { name: string; plate: string | null; capacity: number; look: string };
+  driver: { name: string; associateId: string | null; since: string; trips: number; riders: number };
+}
+export const getMyCrew = (rideId: string) => apiFetch<{ crew: RideCrew | null }>(`/transport/me/rides/${rideId}/crew`);
+
+export interface RiderProfile {
+  associateId: string;
+  name: string;
+  phone: string | null;
+  since: string;
+  rides: number;
+  noShows: number;
+  cancelled: number;
+}
+export const getRiderProfile = (associateId: string) => apiFetch<{ rider: RiderProfile }>(`/transport/riders/${associateId}`);
 
 export interface TransportStop {
   id: string;

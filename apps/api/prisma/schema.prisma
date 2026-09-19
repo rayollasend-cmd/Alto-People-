@@ -447,6 +447,8 @@ model User {
   // Transportation — the Alto vans.
   rideRunsDriven                    RideRun[]                     @relation("RideRunDriver")
   transportIssuesReported           TransportIssue[]              @relation("TransportIssueReporter")
+  assignedVans                      Van[]                         @relation("VanDriver")
+  rideRejections                    RideRejection[]               @relation("RideRejectionDriver")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
@@ -7386,9 +7388,35 @@ model Van {
   capacity  Int
   isActive  Boolean   @default(true)
   notes     String?   @db.VarChar(500)
+  // What riders look for at the curb: "White Ford Transit 2023 · ALT 101".
+  make      String?   @db.VarChar(40)
+  model     String?   @db.VarChar(40)
+  color     String?   @db.VarChar(30)
+  year      Int?
+  /// The van's driver — the one who accepts seat requests in it. One van
+  /// per driver; the director assigns and unassigns.
+  driverUserId String?  @db.Uuid
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
   runs      RideRun[]
+  driver    User?     @relation("VanDriver", fields: [driverUserId], references: [id], onDelete: SetNull)
+
+  @@index([driverUserId])
+}
+
+/// A driver turned down a seat request — it stays open for the others, and
+/// the director hears when every driver has.
+model RideRejection {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rideId       String   @db.Uuid
+  driverUserId String   @db.Uuid
+  reason       String?  @db.VarChar(200)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  ride         Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  driver       User     @relation("RideRejectionDriver", fields: [driverUserId], references: [id], onDelete: Cascade)
+
+  @@unique([rideId, driverUserId])
+  @@index([driverUserId])
 }
 
 /// An associate's saved pickup address ("Home").
@@ -7467,6 +7495,12 @@ model Ride {
   /// minutes late" (LATE).
   riderSignal    String?        @db.VarChar(20)
   riderSignalAt  DateTime?      @db.Timestamptz(6)
+  /// Who put the seat on a van: a driver accepting the request, or the
+  /// director dispatching it (their word overrides).
+  acceptedAt     DateTime?      @db.Timestamptz(6)
+  acceptedById   String?        @db.Uuid
+  /// Every driver has declined — the director has been told (once).
+  allDeclinedAt  DateTime?      @db.Timestamptz(6)
   createdById    String         @db.Uuid
   createdAt      DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
@@ -7476,6 +7510,7 @@ model Ride {
   stop      TransportStop? @relation(fields: [stopId], references: [id], onDelete: SetNull)
   run       RideRun?       @relation(fields: [runId], references: [id], onDelete: SetNull)
   issues    TransportIssue[]
+  rejections RideRejection[]
 
   @@index([serviceDate, status])
   @@index([associateId, targetAt])

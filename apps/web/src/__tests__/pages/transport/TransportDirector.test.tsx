@@ -171,7 +171,7 @@ describe('<TransportHome> — what needs attention, first', () => {
     renderAs('TRANSPORTATION_DIRECTOR');
     const panel = await screen.findByRole('region', { name: 'Needs attention' });
     expect(await within(panel).findByText('Van 1 is running about 12 min late')).toBeInTheDocument();
-    expect(within(panel).getByText('2 riders need a van')).toBeInTheDocument();
+    expect(within(panel).getByText('2 seat requests are waiting for a driver')).toBeInTheDocument();
 
     await userEvent.click(within(panel).getByRole('button', { name: 'Message riders' }));
     const dialog = await screen.findByRole('dialog');

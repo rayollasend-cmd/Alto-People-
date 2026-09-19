@@ -20,14 +20,17 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
-import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm } from '@/lib/haptics';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import {
   NO_SHOW_WAIT_MS,
+  acceptSeat,
   completeDriverRun,
+  declineSeat,
   driverArrived,
+  getRiderProfile,
+  getSeatRequests,
   getDriverRunLive,
   getDriverRuns,
   markBoarded,
@@ -38,8 +41,12 @@ import {
   undoRideMark,
   type Ride,
   type RideRun,
+  type SeatRequest,
   type TransportIssueCategory,
 } from '@/lib/transportApi';
+import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
+import { useConfirm, usePrompt } from '@/lib/confirm';
+import { SoundToggle } from '@/components/transport/SoundToggle';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -154,7 +161,19 @@ export function DriverHome() {
     [queryClient],
   );
   const [reporting, setReporting] = useState<string | null | undefined>(undefined);
+  const [rider, setRider] = useState<string | null>(null);
   const all = runs.data?.runs ?? [];
+  // A rider's "I'm outside" / "running late", and a run the desk put on
+  // them: buzz, chime.
+  useNewKeys(
+    runs.data
+      ? [
+          ...all.flatMap((r) => r.rides.filter((x) => x.riderSignal).map((x) => `signal:${x.id}:${x.riderSignal!.at}`)),
+          ...all.map((r) => `run:${r.id}`),
+        ]
+      : null,
+    (fresh) => rideAlert(fresh.some((k) => k.startsWith('signal:')) ? 'signal' : 'confirmed'),
+  );
   const active = all.filter((r) => r.status === 'ACTIVE');
   const planned = all.filter((r) => r.status === 'PLANNED');
   const done = all.filter((r) => r.status === 'COMPLETED' && isRecent(r));
@@ -165,12 +184,16 @@ export function DriverHome() {
         title={t('drive.title')}
         subtitle={t('drive.subtitle')}
         secondaryActions={
-          <Button variant="ghost" size="sm" onClick={() => setReporting(null)}>
-            <AlertTriangle className="h-4 w-4" />
-            {t('ride.report')}
-          </Button>
+          <>
+            <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />
+            <Button variant="ghost" size="sm" onClick={() => setReporting(null)}>
+              <AlertTriangle className="h-4 w-4" />
+              {t('ride.report')}
+            </Button>
+          </>
         }
       />
+      <SeatRequests onRider={setRider} />
       {runs.isLoading ? (
         <div className="space-y-3">
           <Skeleton className="h-20" />
@@ -184,7 +207,7 @@ export function DriverHome() {
         <div className="space-y-4">
           <DayStats runs={[...active, ...planned, ...done]} />
           {active.map((run) => (
-            <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} />
+            <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} onRider={setRider} />
           ))}
           {planned.map((run, i) => (
             <UpNext key={run.id} run={run} hero={active.length === 0 && i === 0} onReport={() => setReporting(run.id)} />
@@ -197,6 +220,7 @@ export function DriverHome() {
       {reporting !== undefined && (
         <DriverReportDialog runId={reporting} open onOpenChange={(o) => !o && setReporting(undefined)} />
       )}
+      {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
     </div>
   );
 }
@@ -281,9 +305,188 @@ function RunHeader({ run, tone }: { run: RideRun; tone: 'success' | 'gold' | 'qu
   );
 }
 
+/* ----- Seat requests: accept or decline, ride-share style -------------------- */
+
+function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const prompt = usePrompt();
+  const q = useQuery({ queryKey: ['transport', 'driver', 'requests'], queryFn: getSeatRequests, refetchInterval: 30_000 });
+  const [busy, setBusy] = useState<string | null>(null);
+  const requests = q.data?.requests ?? [];
+  const van = q.data?.van ?? null;
+  // A new seat request: buzz, chime — the ride-share "ding".
+  useNewKeys(q.data ? requests.map((r) => `req:${r.id}`) : null, () => rideAlert('request'));
+  if (!q.data) return null;
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
+  const accept = async (r: SeatRequest) => {
+    setBusy(r.id);
+    try {
+      await acceptSeat(r.id);
+      hapticConfirm();
+      toast.success(t('drive.accepted', { name: r.rider.name.split(' ')[0] ?? r.rider.name }));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+  const decline = async (r: SeatRequest) => {
+    const reason = await prompt({
+      title: t('drive.declineTitle', { name: r.rider.name.split(' ')[0] ?? r.rider.name }),
+      description: t('drive.declineBody'),
+      reasonLabel: t('drive.declineReason'),
+      required: false,
+      confirmLabel: t('drive.decline'),
+    });
+    if (reason === null) return;
+    setBusy(r.id);
+    try {
+      await declineSeat(r.id, reason || undefined);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+
+  return (
+    <section aria-label={t('drive.requests')} className="mb-4 space-y-3">
+      {van ? (
+        <div className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy px-3.5 py-2.5 text-sm">
+          <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-silver">{t('drive.yourVan')} · </span>
+            <span className="font-medium text-white">{van.name}</span>
+            {van.look && <span className="text-silver"> · {van.look}</span>}
+          </span>
+          {van.plate && (
+            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
+              {van.plate}
+            </span>
+          )}
+        </div>
+      ) : (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">{t('drive.noVan')}</p>
+      )}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
+          {t('drive.requests')} <span className="text-white">{requests.length}</span>
+        </h2>
+      </div>
+      {requests.length === 0 ? (
+        <p className="text-sm text-silver">{t('drive.requestsNone')}</p>
+      ) : (
+        <ul className="space-y-2">
+          {requests.map((r) => {
+            const tz = r.store.timezone;
+            return (
+              <li key={r.id} className="rounded-lg border border-gold/40 bg-gold/[0.05] p-3.5 animate-enter">
+                <div className="flex items-start gap-3">
+                  <button type="button" onClick={() => onRider(r.rider.associateId)} aria-label={`${t('drive.riderProfile')}: ${r.rider.name}`} className="rounded-full">
+                    <Avatar src={`/api/associates/${r.rider.associateId}/photo`} name={r.rider.name} email="" size="md" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <button type="button" onClick={() => onRider(r.rider.associateId)} className="truncate text-left font-semibold text-white hover:underline">
+                        {r.rider.name}
+                      </button>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums text-gold">{fmtRelativeDayTz(r.targetAt, tz)}</span>
+                    </div>
+                    <div className="text-sm text-white tabular-nums">
+                      {r.direction === 'TO_WORK'
+                        ? t('drive.arriveBy', { store: r.store.name, time: fmtTimeTz(r.targetAt, tz) })
+                        : t('drive.leaveStore', { store: r.store.name, time: fmtTimeTz(r.targetAt, tz) })}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1 text-xs text-silver">
+                      {r.direction === 'TO_WORK' ? <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> : <Home className="h-3 w-3 shrink-0" aria-hidden="true" />}
+                      <span className="truncate">{r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address}</span>
+                    </div>
+                    {r.note && <div className="text-xs text-gold">{r.note}</div>}
+                    {r.fits && (
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-2xs font-semibold text-success">
+                        <Check className="h-3 w-3" aria-hidden="true" />
+                        {t('drive.fits', { time: fmtTimeTz(r.fits.departAt, tz) })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button variant="secondary" onClick={() => void decline(r)} disabled={busy === r.id}>
+                    {t('drive.decline')}
+                  </Button>
+                  <Button onClick={() => void accept(r)} loading={busy === r.id} disabled={busy === r.id || !van}>
+                    <Check className="h-4 w-4" />
+                    {t('drive.accept')}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** A rider's profile — who they are, how to reach them, how they ride. */
+function RiderDialog({ associateId, onClose }: { associateId: string; onClose: () => void }) {
+  const { t } = useI18n();
+  const q = useQuery({ queryKey: ['transport', 'rider', associateId], queryFn: () => getRiderProfile(associateId) });
+  const r = q.data?.rider;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t('drive.riderProfile')}</DialogTitle>
+        </DialogHeader>
+        {q.error ? (
+          <p className="text-sm text-alert">{q.error instanceof ApiError ? q.error.message : String(q.error)}</p>
+        ) : !r ? (
+          <Skeleton className="h-32" />
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Avatar src={`/api/associates/${r.associateId}/photo`} name={r.name} email="" size="xl" />
+              <div className="min-w-0">
+                <div className="text-lg font-semibold text-white">{r.name}</div>
+                <div className="text-xs text-silver">
+                  {t('drive.riderSince', { date: new Date(r.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) })}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {[
+                t('drive.riderRides', { count: r.rides }),
+                t('drive.riderNoShows', { count: r.noShows }),
+                t('drive.riderCancelled', { count: r.cancelled }),
+              ].map((x) => (
+                <div key={x} className="rounded-md border border-navy-secondary px-2 py-2 text-xs text-white">
+                  {x}
+                </div>
+              ))}
+            </div>
+            {r.phone && (
+              <Button className="w-full" variant="secondary" asChild>
+                <a href={`tel:${r.phone}`}>
+                  <Phone className="h-4 w-4" />
+                  {t('drive.call')} · {r.phone}
+                </a>
+              </Button>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ----- On the road: the stop you're driving to ----------------------------------- */
 
-function OnTheRoad({ run, onReport }: { run: RideRun; onReport: () => void }) {
+function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => void; onRider: (associateId: string) => void }) {
   const { t } = useI18n();
   const { act, busy } = useAct();
   const sharing = useShareVanLocation(run.id, true);
@@ -305,7 +508,7 @@ function OnTheRoad({ run, onReport }: { run: RideRun; onReport: () => void }) {
         <RunMap runId={run.id} />
 
         {current ? (
-          <StopCard run={run} stop={current} n={n} total={pickups.length} act={act} busy={busy} />
+          <StopCard run={run} stop={current} n={n} total={pickups.length} act={act} busy={busy} onRider={onRider} />
         ) : (
           <DropCard run={run} drops={drops} act={act} busy={busy} />
         )}
@@ -357,6 +560,7 @@ function StopCard({
   total,
   act,
   busy,
+  onRider,
 }: {
   run: RideRun;
   stop: Stop;
@@ -364,6 +568,7 @@ function StopCard({
   total: number;
   act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
   busy: boolean;
+  onRider: (associateId: string) => void;
 }) {
   const { t } = useI18n();
   const tz = runTz(run);
@@ -429,7 +634,7 @@ function StopCard({
 
       <ul className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
         {stop.rides.map((r) => (
-          <RiderAtStop key={r.id} ride={r} now={now} act={act} busy={busy} />
+          <RiderAtStop key={r.id} ride={r} now={now} act={act} busy={busy} onRider={onRider} />
         ))}
       </ul>
     </div>
@@ -441,11 +646,13 @@ function RiderAtStop({
   now,
   act,
   busy,
+  onRider,
 }: {
   ride: Ride;
   now: number;
   act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
   busy: boolean;
+  onRider: (associateId: string) => void;
 }) {
   const { t } = useI18n();
   const confirm = useConfirm();
@@ -464,7 +671,9 @@ function RiderAtStop({
   return (
     <li className="py-3">
       <div className="flex items-center gap-3">
-        <Avatar src={`/api/associates/${ride.rider.associateId}/photo`} name={ride.rider.name} email="" size="sm" />
+        <button type="button" onClick={() => onRider(ride.rider.associateId)} aria-label={`${t('drive.riderProfile')}: ${ride.rider.name}`} className="rounded-full">
+          <Avatar src={`/api/associates/${ride.rider.associateId}/photo`} name={ride.rider.name} email="" size="sm" />
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-medium text-white">{ride.rider.name}</span>
@@ -783,7 +992,7 @@ function RunMap({ runId }: { runId: string }) {
   return (
     <div className="mt-3">
       {markers.length > 0 && (
-        <LazyLiveMap ariaLabel={t('drive.map')} className="h-56 w-full sm:h-72" markers={markers} route={route.length > 1 ? route : undefined} trail={run.trail} />
+        <LazyLiveMap ariaLabel={t('drive.map')} className="h-72 w-full sm:h-80" markers={markers} route={route.length > 1 ? route : undefined} trail={run.trail} />
       )}
 
     </div>

@@ -24,6 +24,7 @@ import {
   cancelMyRide,
   deleteRidePlace,
   getMyTransport,
+  getMyCrew,
   getMyLiveRide,
   giveRideConsent,
   NO_SHOW_WAIT_MS,
@@ -39,7 +40,10 @@ import {
   type RideStatus,
   type RiderSignal,
   type TransportIssueCategory,
+  vanLookText,
 } from '@/lib/transportApi';
+import { SoundToggle } from '@/components/transport/SoundToggle';
+import { useRiderAlerts } from './useRiderAlerts';
 import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
@@ -123,12 +127,14 @@ export function RideHome() {
   const [reporting, setReporting] = useState<{ rideId?: string } | null>(null);
   const data = me.data;
   const canBook = !!data?.consent && (data?.stores.length ?? 0) > 0;
+  useRiderAlerts(data, useMyLiveRide());
 
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title={t('ride.title')}
         subtitle={t('ride.subtitle')}
+        secondaryActions={<SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />}
         primaryAction={
           canBook ? (
             <Button onClick={() => setBooking({})}>
@@ -328,6 +334,7 @@ function NextRideHero({
   const cancel = useCancelRide();
   const queryClient = useQueryClient();
   const [signalling, setSignalling] = useState(false);
+  const [crewOpen, setCrewOpen] = useState(false);
   const next = sortedLive(data.rides, Date.now())[0];
   const live = useMyLiveRide();
   const liveHere = live && next && live.rideId === next.id ? live : null;
@@ -447,22 +454,31 @@ function NextRideHero({
 
         <div className="mt-4 space-y-2.5 border-t border-navy-secondary/60 pt-3">
           {next.run ? (
-            <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setCrewOpen(true)}
+              className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-2.5 rounded-md px-2 py-1 text-left hover:bg-navy-secondary/30"
+              aria-label={t('ride.crewOpen')}
+            >
               <Avatar
                 src={next.run.driver.associateId ? `/api/associates/${next.run.driver.associateId}/photo` : undefined}
                 name={next.run.driver.name}
                 email=""
-                size="sm"
+                size="md"
               />
-              <div className="min-w-0 flex-1 text-sm">
-                <span className="text-silver/70">{t('ride.driverLabel')} · </span>
-                <span className="text-white">{driverFirst}</span>
-                <span className="text-silver">
-                  {' '}· {next.run.van.name}
-                  {next.run.van.plate ? ` · ${next.run.van.plate}` : ''}
-                </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm">
+                  <span className="font-medium text-white">{driverFirst}</span>
+                  <span className="text-silver"> · {next.run.van.name}</span>
+                </div>
+                <div className="truncate text-xs text-silver">{vanLookText(next.run.van) || t('ride.driverLabel')}</div>
               </div>
-            </div>
+              {next.run.van.plate && (
+                <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
+                  {next.run.van.plate}
+                </span>
+              )}
+            </button>
           ) : (
             next.status === 'REQUESTED' && <p className="text-sm text-silver">{t('ride.waitingVanBody')}</p>
           )}
@@ -487,6 +503,8 @@ function NextRideHero({
             </div>
           )}
         </div>
+
+        {crewOpen && <CrewDialog rideId={next.id} onClose={() => setCrewOpen(false)} />}
 
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
           {(onTheWay || here) &&
@@ -521,6 +539,59 @@ function NextRideHero({
         </div>
       </div>
     </section>
+  );
+}
+
+/** The van to look for and who's driving it — the ride-hailing card. */
+function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }) {
+  const { t } = useI18n();
+  const q = useQuery({ queryKey: ['transport', 'me', 'crew', rideId], queryFn: () => getMyCrew(rideId) });
+  const crew = q.data?.crew;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t('ride.crewTitle')}</DialogTitle>
+        </DialogHeader>
+        {!crew ? (
+          <Skeleton className="h-40" />
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 text-center">
+              <div className="text-2xs font-medium uppercase tracking-wider text-silver">{t('ride.lookFor')}</div>
+              {crew.van.plate && (
+                <div className="mx-auto mt-2 inline-block rounded-md border-2 border-[#0B1832] bg-white px-4 py-1.5 font-mono text-2xl font-bold tracking-widest text-[#0B1832]">
+                  {crew.van.plate}
+                </div>
+              )}
+              <div className="mt-2 text-lg font-semibold text-white">{crew.van.look || crew.van.name}</div>
+              <div className="text-sm text-silver">
+                {crew.van.name} · {t('ride.crewSeats', { count: crew.van.capacity })}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Avatar
+                src={crew.driver.associateId ? `/api/associates/${crew.driver.associateId}/photo` : undefined}
+                name={crew.driver.name}
+                email=""
+                size="lg"
+              />
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-white">{crew.driver.name}</div>
+                <div className="text-xs text-silver">
+                  {t('ride.crewSince', {
+                    date: new Date(crew.driver.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+                  })}
+                </div>
+                <div className="mt-0.5 text-xs text-silver">
+                  {t('ride.crewTrips', { count: crew.driver.trips })} · {t('ride.crewRiders', { count: crew.driver.riders })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -729,7 +800,7 @@ export function LiveRideBlock({ live }: { live: MyLiveRide }) {
       {markers.length > 0 && (
         <LazyLiveMap
           ariaLabel={t('ride.liveMap')}
-          className="mt-3 h-56 w-full sm:h-64"
+          className="mt-3 h-72 w-full sm:h-80"
           markers={markers}
           route={route.length > 1 ? route : undefined}
         />

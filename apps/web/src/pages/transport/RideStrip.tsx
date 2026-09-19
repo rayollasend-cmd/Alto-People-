@@ -12,6 +12,7 @@ import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import { getMyLiveRide, getMyTransport, type Ride } from '@/lib/transportApi';
 import { Button } from '@/components/ui/Button';
 import { bookShifts, coverageFor } from './rideShifts';
+import { useRiderAlerts } from './useRiderAlerts';
 
 /**
  * The van, on Home — where the associate already looks. One line under the
@@ -41,6 +42,7 @@ function RideStripInner() {
     retry: false,
   });
   const data = me.data;
+  useRiderAlerts(data?.consent ? data : undefined, live.data?.live ?? null);
   if (!data?.consent) return null;
   const now = Date.now();
 

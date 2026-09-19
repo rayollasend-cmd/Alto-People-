@@ -33,13 +33,14 @@ import {
   createRun,
   createStop,
   createVan,
+  getFleet,
   getLiveBoard,
   getTransportBoard,
   getTransportCharges,
   getTransportSettings,
   listStops,
   listTransportIssues,
-  listVans,
+  reofferRide,
   saveTransportSettings,
   searchRides,
   updateRun,
@@ -59,8 +60,11 @@ import {
 } from '@/lib/transportApi';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { messageRun, planDay, routeRides } from '@/lib/transportDispatchApi';
+import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
+import { SoundToggle } from '@/components/transport/SoundToggle';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -105,7 +109,7 @@ const TAB_LABEL: Record<Tab, string> = {
   live: 'Live map',
   rides: 'Rides',
   issues: 'Issues',
-  vans: 'Vans & drivers',
+  vans: 'Fleet',
   stops: 'Stops',
   charges: 'Charges',
   settings: 'Fares',
@@ -179,6 +183,7 @@ export function TransportHome() {
         title="Transportation"
         topbarTitle="Transportation"
         subtitle="The Alto vans — bookings, dispatch, drivers, and everything that comes up."
+        secondaryActions={<SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" />}
         primaryAction={
           tab === 'today' ? (
             <div className="flex items-center gap-1">
@@ -234,7 +239,7 @@ export function TransportHome() {
           <IssuesTab manage={manage} />
         </TabsContent>
         <TabsContent value="vans">
-          <VansTab manage={manage} drivers={board.data?.drivers ?? []} />
+          <FleetTab manage={manage} drivers={board.data?.drivers ?? []} />
         </TabsContent>
         <TabsContent value="stops">
           <StopsTab manage={manage} />
@@ -509,13 +514,36 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
       });
     }
   }
+  for (const r of waiting.filter((x) => x.allDeclined)) {
+    attention.push({
+      key: `declined-${r.id}`,
+      tone: 'alert',
+      title: `No driver took ${r.rider.name.split(' ')[0]}'s seat`,
+      body: `${r.direction === 'TO_WORK' ? 'To' : 'Home from'} ${r.store.name} · ${fmtTimeTz(r.targetAt, r.store.timezone)} · every driver declined`,
+      actions: manage
+        ? [
+            { label: 'Dispatch', onClick: () => setDispatch({ rides: [r] }) },
+            {
+              label: 'Offer again',
+              onClick: () =>
+                void reofferRide(r.id)
+                  .then(() => {
+                    toast.success('Back in front of every driver');
+                    return queryClient.invalidateQueries({ queryKey: ['transport'] });
+                  })
+                  .catch((err) => toast.error(errMsg(err))),
+            },
+          ]
+        : [],
+    });
+  }
   if (waiting.length > 0) {
     const first = [...waiting].sort((a, b) => a.targetAt.localeCompare(b.targetAt))[0]!;
     const soon = Date.parse(first.targetAt) - now < 18 * 3_600_000;
     attention.push({
       key: 'waiting',
       tone: soon ? 'warning' : 'info',
-      title: `${waiting.length} ${waiting.length === 1 ? 'rider needs' : 'riders need'} a van`,
+      title: `${waiting.length} seat ${waiting.length === 1 ? 'request is' : 'requests are'} waiting for a driver`,
       body: `First: ${first.rider.name} · ${first.direction === 'TO_WORK' ? 'arrive by' : 'leaving'} ${fmtTimeTz(first.targetAt, first.store.timezone)} · ${first.store.name}`,
       actions: manage ? [{ label: 'Plan runs', onClick: () => setPlanning(true) }] : [],
     });
@@ -528,6 +556,12 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
       actions: [{ label: 'Open issues', onClick: () => setParams({ tab: 'issues' }) }],
     });
   }
+
+  // Something new needs the desk: buzz, chime.
+  useNewKeys(
+    live.data ? attention.filter((a) => a.tone !== 'info').map((a) => a.key) : null,
+    () => rideAlert('attention'),
+  );
 
   return (
     <div className="space-y-5">
@@ -615,7 +649,14 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                               />
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="text-sm text-white">{r.rider.name}</div>
+                              <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
+                                {r.rider.name}
+                                {r.declines > 0 && (
+                                  <Badge size="sm" variant={r.allDeclined ? 'destructive' : 'pending'}>
+                                    {r.allDeclined ? 'Every driver declined' : `Declined by ${r.declines}`}
+                                  </Badge>
+                                )}
+                              </div>
                               <div className="flex items-center gap-1 truncate text-xs text-silver">
                                 <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
                                 <span className="truncate">{homeEnd(r)}</span>
@@ -1007,8 +1048,20 @@ function DispatchDialog({
       ? addMinutes(wall(sortedStart[0]!.targetAt, tz), -(STOP_GAP_MIN * sortedStart.length + 20))
       : wall(sortedStart[sortedStart.length - 1]!.targetAt, tz);
 
-  const [vanId, setVanId] = useState(editing?.van.id ?? board.vans.find((v) => v.capacity >= startRides.length)?.id ?? board.vans[0]?.id ?? '');
-  const [driverUserId, setDriverUserId] = useState(editing?.driver.userId ?? board.drivers.find((d) => d.role === 'DRIVER')?.userId ?? '');
+  const firstVan = editing?.van.id ?? board.vans.find((v) => v.capacity >= startRides.length)?.id ?? board.vans[0]?.id ?? '';
+  const [vanId, setVanIdState] = useState(firstVan);
+  // Each van's own driver by default.
+  const [driverUserId, setDriverUserId] = useState(
+    editing?.driver.userId ??
+      board.vans.find((v) => v.id === firstVan)?.driverUserId ??
+      board.drivers.find((d) => d.role === 'DRIVER')?.userId ??
+      '',
+  );
+  const setVanId = (id: string) => {
+    setVanIdState(id);
+    const own = board.vans.find((v) => v.id === id)?.driverUserId;
+    if (own) setDriverUserId(own);
+  };
   const [depart, setDepart] = useState(defaultDepart);
   const [notes, setNotes] = useState(editing?.notes ?? '');
   const [order, setOrder] = useState<Array<{ ride: Ride; pickup: string }>>(() => {
@@ -1603,103 +1656,251 @@ function IssuesTab({ manage }: { manage: boolean }) {
 
 /* ===== Vans & drivers ======================================================= */
 
-function VansTab({ manage, drivers }: { manage: boolean; drivers: TransportBoard['drivers'] }) {
-  const vans = useQuery({ queryKey: ['transport', 'vans'], queryFn: listVans });
-  const [editing, setEditing] = useState<Van | 'new' | null>(null);
-  const queryClient = useQueryClient();
-  const toggle = async (v: Van) => {
-    try {
-      await updateVan(v.id, { isActive: !v.isActive });
-      await queryClient.invalidateQueries({ queryKey: ['transport'] });
-    } catch (err) {
-      toast.error(errMsg(err));
-    }
-  };
+function periodDates(days: number): { from: string; to: string } {
+  const to = ymdLocal();
+  return { from: shiftDay(to, -(days - 1)), to };
+}
+
+/** A tiny bar chart of daily revenue. */
+function Spark({ daily, from, to }: { daily: Array<{ date: string; cents: number }>; from: string; to: string }) {
+  const days: string[] = [];
+  for (let d = from; d <= to && days.length < 62; d = shiftDay(d, 1)) days.push(d);
+  const by = new Map(daily.map((x) => [x.date, x.cents]));
+  const max = Math.max(1, ...daily.map((x) => x.cents));
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-      <section className="lg:col-span-2" aria-label="Vans">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">Vans</h2>
-          {manage && (
-            <Button size="sm" onClick={() => setEditing('new')}>
-              <Plus className="h-3.5 w-3.5" />
-              Add van
-            </Button>
-          )}
-        </div>
-        {vans.isLoading ? (
-          <Skeleton className="h-32" />
-        ) : (vans.data?.vans.length ?? 0) === 0 ? (
-          <EmptyState icon={Bus} title="No vans yet" description="Add the fleet — name, plate and seats." />
-        ) : (
-          <Card>
-            <CardContent className="pt-2">
-              <ul className="divide-y divide-navy-secondary/60">
-                {vans.data!.vans.map((v) => (
-                  <li key={v.id} className={cn('flex items-center gap-3 py-3', !v.isActive && 'opacity-60')}>
-                    <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-white">
-                        {v.name} {v.plate && <span className="text-silver">· {v.plate}</span>}
-                      </div>
-                      <div className="text-xs text-silver">
-                        {v.capacity} seats{v.notes ? ` · ${v.notes}` : ''}
-                      </div>
-                    </div>
-                    {!v.isActive && <Badge>Out of service</Badge>}
-                    {manage && (
-                      <>
-                        <Button size="xs" variant="ghost" onClick={() => setEditing(v)}>
-                          Edit
-                        </Button>
-                        <Button size="xs" variant="ghost" onClick={() => void toggle(v)}>
-                          {v.isActive ? 'Take out of service' : 'Back in service'}
-                        </Button>
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        )}
-      </section>
-      <section aria-label="Drivers">
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-silver">Drivers</h2>
-        <Card>
-          <CardContent className="pt-4">
-            {drivers.length === 0 ? (
-              <p className="text-sm text-silver">No drivers yet.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {drivers.map((d) => (
-                  <li key={d.userId} className="text-sm text-white">
-                    {d.name}
-                    {d.role === 'TRANSPORTATION_DIRECTOR' && <span className="text-silver"> · director</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-3 text-xs text-silver">Drivers are people with the Driver role — invite them from Users.</p>
-          </CardContent>
-        </Card>
-      </section>
-      {editing && <VanDialog van={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+    <div className="flex h-10 items-end gap-px" aria-hidden="true">
+      {days.map((d) => (
+        <div
+          key={d}
+          className={cn('flex-1 rounded-sm', (by.get(d) ?? 0) > 0 ? 'bg-gold/70' : 'bg-navy-secondary')}
+          style={{ height: `${Math.max(6, ((by.get(d) ?? 0) / max) * 100)}%` }}
+        />
+      ))}
     </div>
   );
 }
 
-function VanDialog({ van, onClose }: { van: Van | null; onClose: () => void }) {
+function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoard['drivers'] }) {
+  const [days, setDays] = useState<7 | 30 | 90>(30);
+  const { from, to } = periodDates(days);
+  const fleet = useQuery({ queryKey: ['transport', 'fleet', from, to], queryFn: () => getFleet(from, to), refetchInterval: 60_000 });
+  const [editing, setEditing] = useState<Van | 'new' | null>(null);
+  const [, setParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const vans = fleet.data?.vans ?? [];
+  const totals = vans.reduce(
+    (t, v) => ({
+      revenue: t.revenue + v.stats.revenueCents,
+      riders: t.riders + v.stats.riders,
+      runs: t.runs + v.stats.runs,
+      miles: t.miles + v.stats.miles,
+    }),
+    { revenue: 0, riders: 0, runs: 0, miles: 0 },
+  );
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport'] });
+  const setDriver = async (v: Van, driverUserId: string | null) => {
+    try {
+      await updateVan(v.id, { driverUserId });
+      toast.success(driverUserId ? `${v.name} assigned` : `${v.name} is off its driver`);
+      await refresh();
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
+  const toggle = async (v: Van) => {
+    try {
+      await updateVan(v.id, { isActive: !v.isActive });
+      await refresh();
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
+  const now = Date.now();
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SegmentedControl
+          ariaLabel="Period"
+          value={days}
+          onChange={setDays}
+          options={[
+            { value: 7, label: 'Last 7 days' },
+            { value: 30, label: 'Last 30 days' },
+            { value: 90, label: 'Last 90 days' },
+          ]}
+        />
+        {manage && (
+          <Button size="sm" onClick={() => setEditing('new')}>
+            <Plus className="h-3.5 w-3.5" />
+            Add van
+          </Button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          { label: 'Earned', value: cents(totals.revenue) },
+          { label: 'Riders carried', value: totals.riders },
+          { label: 'Runs', value: totals.runs },
+          { label: 'Miles', value: Math.round(totals.miles) },
+        ].map((x) => (
+          <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
+            <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
+            <div className="mt-0.5 text-xl font-bold tabular-nums text-white">{x.value}</div>
+          </div>
+        ))}
+      </div>
+      {fleet.isLoading ? (
+        <Skeleton className="h-64" />
+      ) : vans.length === 0 ? (
+        <EmptyState icon={Bus} title="No vans yet" description="Add the fleet — name, plate, seats, and who drives it." />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {vans.map((v) => {
+            const st = v.stats;
+            const status = !v.isActive ? 'Out of service' : v.now ? 'On the road' : 'Parked';
+            return (
+              <Card key={v.id} className={cn(!v.isActive && 'opacity-70', v.now && 'border-success/40')}>
+                <CardContent className="pt-4">
+                  <div className="flex items-start gap-3">
+                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', v.now ? 'bg-success/15 text-success' : 'bg-gold/15 text-gold')}>
+                      <Bus className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-white">{v.name}</span>
+                        {v.plate && (
+                          <span className="rounded border border-silver/40 bg-white px-1.5 font-mono text-2xs font-bold tracking-wider text-[#0B1832]">{v.plate}</span>
+                        )}
+                        <Badge size="sm" variant={v.now ? 'success' : v.isActive ? 'default' : 'destructive'}>
+                          {status}
+                        </Badge>
+                      </div>
+                      <div className="truncate text-xs text-silver">
+                        {v.look || 'Add make, model and color'} · {v.capacity} seats
+                      </div>
+                      {v.now && (
+                        <div className="text-xs text-success">
+                          {v.now.driver} · {v.now.lastSeenAt ? `seen ${ago(v.now.lastSeenAt, now)}` : 'no signal yet'}
+                        </div>
+                      )}
+                    </div>
+                    {manage && (
+                      <Button size="xs" variant="ghost" onClick={() => setEditing(v)}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    {v.driver ? (
+                      <Avatar src={v.driver.associateId ? `/api/associates/${v.driver.associateId}/photo` : undefined} name={v.driver.name} email="" size="sm" />
+                    ) : (
+                      <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-silver/50 text-silver" aria-hidden="true">
+                        ?
+                      </span>
+                    )}
+                    {manage ? (
+                      <Select
+                        size="sm"
+                        aria-label={`Driver for ${v.name}`}
+                        value={v.driver?.userId ?? ''}
+                        onChange={(e) => void setDriver(v, e.target.value || null)}
+                        className="w-full"
+                      >
+                        <option value="">No driver — unassigned</option>
+                        {drivers.map((d) => (
+                          <option key={d.userId} value={d.userId}>
+                            {d.name}
+                            {d.role === 'TRANSPORTATION_DIRECTOR' ? ' (director)' : ''}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-white">{v.driver?.name ?? 'No driver'}</span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center sm:grid-cols-6">
+                    {[
+                      ['Earned', cents(st.revenueCents)],
+                      ['Riders', st.riders],
+                      ['Seat fill', st.seatFill === null ? '—' : `${st.seatFill}%`],
+                      ['Runs', st.runs],
+                      ['Miles', st.miles],
+                      ['No-shows', st.noShows],
+                    ].map(([label, value]) => (
+                      <div key={label as string} className="rounded-md bg-navy-secondary/30 px-1.5 py-1.5">
+                        <div className="text-2xs uppercase tracking-wider text-silver">{label}</div>
+                        <div className="text-sm font-semibold tabular-nums text-white">{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3">
+                    <Spark daily={st.daily} from={fleet.data!.from} to={fleet.data!.to} />
+                  </div>
+                  {manage && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {v.now && (
+                        <Button size="xs" variant="secondary" onClick={() => setParams({ tab: 'live' })}>
+                          <MapPin className="h-3.5 w-3.5" />
+                          On the map
+                        </Button>
+                      )}
+                      {v.driver?.phone && (
+                        <Button size="xs" variant="secondary" asChild>
+                          <a href={`tel:${v.driver.phone}`}>
+                            <Phone className="h-3.5 w-3.5" />
+                            Call {v.driver.name.split(' ')[0]}
+                          </a>
+                        </Button>
+                      )}
+                      <Button size="xs" variant="ghost" onClick={() => void toggle(v)}>
+                        {v.isActive ? 'Take out of service' : 'Back in service'}
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-xs text-silver">
+        Earned is fares and no-show fees charged in the period, less waivers. Seat fill is riders carried over seats run. Miles come from each van’s
+        trail. Drivers are people with the Driver role — invite them from Users.
+      </p>
+      {editing && <VanDialog van={editing === 'new' ? null : editing} drivers={drivers} onClose={() => setEditing(null)} />}
+    </div>
+  );
+}
+
+function VanDialog({ van, drivers, onClose }: { van: Van | null; drivers: TransportBoard['drivers']; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(van?.name ?? '');
   const [plate, setPlate] = useState(van?.plate ?? '');
   const [capacity, setCapacity] = useState(String(van?.capacity ?? 12));
+  const [make, setMake] = useState(van?.make ?? '');
+  const [model, setModel] = useState(van?.model ?? '');
+  const [color, setColor] = useState(van?.color ?? '');
+  const [year, setYear] = useState(van?.year ? String(van.year) : '');
+  const [driverUserId, setDriverUserId] = useState(van?.driver?.userId ?? '');
   const [notes, setNotes] = useState(van?.notes ?? '');
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
     try {
-      const body = { name: name.trim(), plate: plate.trim() || null, capacity: Number(capacity), notes: notes.trim() || null };
+      const body = {
+        name: name.trim(),
+        plate: plate.trim() || null,
+        capacity: Number(capacity),
+        make: make.trim() || null,
+        model: model.trim() || null,
+        color: color.trim() || null,
+        year: year ? Number(year) : null,
+        notes: notes.trim() || null,
+        driverUserId: driverUserId || null,
+      };
       if (van) await updateVan(van.id, body);
       else await createVan(body);
       toast.success(van ? 'Van saved' : 'Van added');
@@ -1711,22 +1912,47 @@ function VanDialog({ van, onClose }: { van: Van | null; onClose: () => void }) {
       setBusy(false);
     }
   };
-  const valid = name.trim().length > 0 && Number(capacity) >= 1 && Number(capacity) <= 60;
+  const valid = name.trim().length > 0 && Number(capacity) >= 1 && Number(capacity) <= 60 && (!year || (Number(year) >= 1990 && Number(year) <= 2100));
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{van ? `Edit ${van.name}` : 'Add a van'}</DialogTitle>
+          <DialogDescription>What riders look for at the curb, and who drives it.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Name" required className="col-span-2">
+          <Field label="Name" required>
             {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="Van 1" maxLength={60} />}
           </Field>
           <Field label="Plate">
-            {(p) => <Input {...p} value={plate} onChange={(e) => setPlate(e.target.value)} maxLength={20} />}
+            {(p) => <Input {...p} value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} maxLength={20} />}
+          </Field>
+          <Field label="Make">
+            {(p) => <Input {...p} value={make} onChange={(e) => setMake(e.target.value)} placeholder="Ford" maxLength={40} />}
+          </Field>
+          <Field label="Model">
+            {(p) => <Input {...p} value={model} onChange={(e) => setModel(e.target.value)} placeholder="Transit" maxLength={40} />}
+          </Field>
+          <Field label="Color">
+            {(p) => <Input {...p} value={color} onChange={(e) => setColor(e.target.value)} placeholder="White" maxLength={30} />}
+          </Field>
+          <Field label="Year">
+            {(p) => <Input {...p} type="number" min={1990} max={2100} value={year} onChange={(e) => setYear(e.target.value)} placeholder="2023" />}
           </Field>
           <Field label="Seats" required>
             {(p) => <Input {...p} type="number" min={1} max={60} value={capacity} onChange={(e) => setCapacity(e.target.value)} />}
+          </Field>
+          <Field label="Driver">
+            {(p) => (
+              <Select {...p} value={driverUserId} onChange={(e) => setDriverUserId(e.target.value)}>
+                <option value="">No driver</option>
+                {drivers.map((d) => (
+                  <option key={d.userId} value={d.userId}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </Field>
           <Field label="Notes" className="col-span-2">
             {(p) => <Input {...p} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />}

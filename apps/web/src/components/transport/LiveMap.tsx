@@ -79,13 +79,20 @@ function paint(root: HTMLElement, m: MapMarker) {
   const el = root.firstElementChild as HTMLElement;
   const ring = m.highlight ? 'box-shadow:0 0 0 4px rgba(212,160,23,.35);' : '';
   if (m.kind === 'van') {
-    el.style.cssText = `width:34px;height:34px;border-radius:9999px;display:grid;place-items:center;background:#D4A017;color:#0B1832;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);${ring}opacity:${m.stale ? 0.55 : 1};transition:opacity .3s`;
-    el.innerHTML = BUS_SVG;
-    if (m.heading !== null && m.heading !== undefined) {
-      const arrow = document.createElement('span');
-      arrow.style.cssText = `position:absolute;top:-9px;left:50%;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid #D4A017;transform-origin:50% 26px;transform:translateX(-50%) rotate(${m.heading}deg)`;
-      el.style.position = 'relative';
-      el.appendChild(arrow);
+    // Built once, then only updated — so the heading arrow turns smoothly
+    // and the pulse doesn't restart on every refresh.
+    if (el.dataset.kind !== 'van') {
+      el.dataset.kind = 'van';
+      el.innerHTML = `<span data-pulse style="position:absolute;inset:-6px;border-radius:9999px;background:rgba(212,160,23,.35)" class="animate-ping motion-reduce:hidden"></span><span style="position:relative;display:grid;place-items:center">${BUS_SVG}</span><span data-arrow style="position:absolute;top:-9px;left:50%;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid #D4A017;transform-origin:50% 26px;transition:transform .9s ease"></span>`;
+    }
+    el.style.cssText = `position:relative;width:34px;height:34px;border-radius:9999px;display:grid;place-items:center;background:#D4A017;color:#0B1832;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);${ring}opacity:${m.stale ? 0.55 : 1};transition:opacity .3s`;
+    const pulse = el.querySelector<HTMLElement>('[data-pulse]');
+    if (pulse) pulse.style.display = m.stale ? 'none' : '';
+    const arrow = el.querySelector<HTMLElement>('[data-arrow]');
+    if (arrow) {
+      const has = m.heading !== null && m.heading !== undefined;
+      arrow.style.display = has ? '' : 'none';
+      if (has) arrow.style.transform = `translateX(-50%) rotate(${m.heading}deg)`;
     }
   } else if (m.kind === 'store') {
     el.style.cssText = `width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#0B1832;color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
@@ -107,10 +114,43 @@ function lineSource(coords: Array<[number, number]>) {
   };
 }
 
+const GLIDE_MS = 1_600;
+/** Further than this in one refresh is a jump (a reconnect), not a drive. */
+const SNAP_M = 5_000;
+
+function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const x = rad(b.lng - a.lng) * Math.cos(rad((a.lat + b.lat) / 2));
+  return Math.hypot(x, rad(b.lat - a.lat)) * 6_371_000;
+}
+
 export default function LiveMap({ markers, route, trail, ariaLabel, className }: LiveMapProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pins = useRef(new Map<string, { marker: Marker; el: HTMLElement; kind: MapMarker['kind'] }>());
+  const glides = useRef(new Map<string, number>());
+
+  /** The van drives to its new spot instead of jumping — eased over
+   *  ~1.6s — and the map follows it if it leaves the view. */
+  function glide(m: MapLibreMap, id: string, marker: Marker, to: { lat: number; lng: number }) {
+    const from = marker.getLngLat();
+    const start = { lat: from.lat, lng: from.lng };
+    cancelAnimationFrame(glides.current.get(id) ?? 0);
+    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || metersBetween(start, to) > SNAP_M || metersBetween(start, to) < 1) {
+      marker.setLngLat([to.lng, to.lat]);
+      return;
+    }
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / GLIDE_MS);
+      const e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      marker.setLngLat([start.lng + (to.lng - start.lng) * e, start.lat + (to.lat - start.lat) * e]);
+      if (t < 1) glides.current.set(id, requestAnimationFrame(step));
+      else if (!m.getBounds().contains([to.lng, to.lat])) m.easeTo({ center: [to.lng, to.lat], duration: 800 });
+    };
+    glides.current.set(id, requestAnimationFrame(step));
+  }
   const fittedFor = useRef('');
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -152,7 +192,9 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
     });
     map.current = m;
     const markersNow = pins.current;
+    const glidesNow = glides.current;
     return () => {
+      for (const id of glidesNow.values()) cancelAnimationFrame(id);
       markersNow.clear();
       m.remove();
       map.current = null;
@@ -170,7 +212,8 @@ export default function LiveMap({ markers, route, trail, ariaLabel, className }:
       seen.add(mk.id);
       const have = pins.current.get(mk.id);
       if (have && have.kind === mk.kind) {
-        have.marker.setLngLat([mk.lng, mk.lat]);
+        if (mk.kind === 'van') glide(m, mk.id, have.marker, { lat: mk.lat, lng: mk.lng });
+        else have.marker.setLngLat([mk.lng, mk.lat]);
         paint(have.el, mk);
       } else {
         have?.marker.remove();

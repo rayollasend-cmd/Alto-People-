@@ -207,7 +207,9 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
       const load = left.slice(0, cap);
       left = left.slice(cap);
       const timed = await orderAndTime(load);
-      const driver = drivers.find((d) => free(from, to, 'driverUserId', d.id)) ?? null;
+      // The van's own driver when they're free, else any free driver.
+      const own = van?.driverUserId ? drivers.find((d) => d.id === van.driverUserId && free(from, to, 'driverUserId', d.id)) : undefined;
+      const driver = own ?? drivers.find((d) => free(from, to, 'driverUserId', d.id)) ?? null;
       busy.push({ vanId: van?.id ?? null, driverUserId: driver?.id ?? null, from, to });
       const warnings: string[] = [];
       if (!van) warnings.push('No van is free then — pick one.');

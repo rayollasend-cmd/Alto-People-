@@ -120,10 +120,13 @@ export const rideSelect = {
       id: true,
       status: true,
       departAt: true,
-      van: { select: { id: true, name: true, plate: true } },
+      van: { select: { id: true, name: true, plate: true, make: true, model: true, color: true, year: true } },
       driver: { select: { id: true, email: true, associate: { select: { id: true, firstName: true, lastName: true } } } },
     },
   },
+  acceptedAt: true,
+  allDeclinedAt: true,
+  _count: { select: { rejections: true } },
 } satisfies Prisma.RideSelect;
 
 export type RideRow = Prisma.RideGetPayload<{ select: typeof rideSelect }>;
@@ -194,11 +197,21 @@ export function toRideView(r: RideRow) {
     vanArrivedAt: r.vanArrivedAt?.toISOString() ?? null,
     /** The rider's word to the driver: "I'm outside" / "running late". */
     riderSignal: r.riderSignal ? { kind: r.riderSignal as RiderSignal, at: r.riderSignalAt!.toISOString() } : null,
+    /** A driver (or the director) put the seat on a van. */
+    acceptedAt: r.acceptedAt?.toISOString() ?? null,
+    /** Drivers who declined this seat request, and whether all of them have. */
+    declines: r._count.rejections,
+    allDeclined: !!r.allDeclinedAt,
     createdAt: r.createdAt.toISOString(),
   };
 }
 
 export type RiderSignal = 'OUTSIDE' | 'LATE';
+
+/** "White Ford Transit 2023" — what a rider looks for at the curb. */
+export function vanLook(v: { make: string | null; model: string | null; color: string | null; year: number | null }): string {
+  return [v.color, v.make, v.model, v.year].filter((x) => x !== null && x !== '').join(' ');
+}
 
 /** How long a driver waits after arriving before a rider can be marked a
  *  no-show — the rider isn't charged for a van that never stopped. */

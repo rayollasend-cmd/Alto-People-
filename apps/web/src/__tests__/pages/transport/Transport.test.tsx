@@ -162,10 +162,11 @@ describe('<RideHome> — the associate’s Ride tab', () => {
       new Date(pickupAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     );
     // The driver and the van, and where the ride is: van set, not yet on the way.
+    // Who and what to look for — the plate, big, like a ride-hailing app.
     expect(within(hero).getByText('Mike')).toBeInTheDocument();
-    expect(within(hero).getByText(/Van 1 · ALT 101/)).toBeInTheDocument();
+    expect(within(hero).getByText('ALT 101')).toBeInTheDocument();
     expect(within(hero).getByText('Seaside Housing')).toBeInTheDocument();
-    expect(within(hero).getByRole('list', { name: 'Van set' })).toBeInTheDocument();
+    expect(within(hero).getByRole('list', { name: 'Accepted' })).toBeInTheDocument();
     expect(within(hero).getByText(/Pickup in 1[89]h/)).toBeInTheDocument();
     await userEvent.click(within(hero).getByRole('button', { name: 'Cancel ride' }));
     const dialog = await screen.findByRole('dialog');
@@ -176,14 +177,14 @@ describe('<RideHome> — the associate’s Ride tab', () => {
   it('won’t book inside the 10-hour cutoff', async () => {
     routes((path) => (path === '/transport/me' ? me() : undefined));
     renderAs('ASSOCIATE', <RideHome />);
-    await userEvent.click((await screen.findAllByRole('button', { name: 'Book a ride' }))[0]!);
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Request a seat' }))[0]!);
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText(/^Day/), { target: { value: zonedDayKey(new Date(), tz) } });
     fireEvent.change(within(dialog).getByLabelText(/Be at work by/), { target: { value: '00:00' } });
     expect(within(dialog).getByRole('alert')).toHaveTextContent(/Too soon — book at least 10 hours ahead/);
     // Both ways is the default — most rides are there and back.
     expect(within(dialog).getByRole('radio', { name: 'Both ways' })).toHaveAttribute('aria-checked', 'true');
-    expect(within(dialog).getByRole('button', { name: 'Book both rides' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Request both seats' })).toBeDisabled();
   });
 
   it('books both ways from a shift on their schedule — arrive by the start, leave at the end', async () => {
@@ -196,12 +197,12 @@ describe('<RideHome> — the associate’s Ride tab', () => {
       if (path === '/transport/me/rides' && init?.method === 'POST') return { ride: ride({ id: 'new' }) };
     });
     renderAs('ASSOCIATE', <RideHome />);
-    await userEvent.click((await screen.findAllByRole('button', { name: 'Book a ride' }))[0]!);
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Request a seat' }))[0]!);
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('radio', { name: 'Both ways' }));
     await userEvent.click(within(dialog).getByRole('button', { pressed: false, name: /–/ }));
     expect(within(dialog).getByText('$10.00, taken from your pay')).toBeInTheDocument();
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Book both rides' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Request both seats' }));
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides', {
         method: 'POST',
