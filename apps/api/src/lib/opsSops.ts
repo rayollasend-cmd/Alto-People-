@@ -48,8 +48,9 @@ export const OPS_DEPARTMENTS = [
 ] as const;
 
 /* Food-safety temperature bounds (°F). */
-const COOLER = { tempMin: 33, tempMax: 41 };
-const COLD_CASE = { tempMin: 32, tempMax: 41 };
+// Walmart's limits: refrigerated at or below 40°F (see lib/opsSopsWalmart).
+const COOLER = { tempMin: 32, tempMax: 40 };
+const COLD_CASE = { tempMin: 32, tempMax: 40 };
 const HOT_HOLD = { tempMin: 135, tempMax: 165 };
 
 const t = (

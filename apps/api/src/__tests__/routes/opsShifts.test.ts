@@ -77,7 +77,7 @@ describe('store ops', () => {
     );
     expect(tempTask).toBeTruthy();
 
-    // 22°F in a 33–41°F dairy cooler → flagged + alert.
+    // 22°F in a 32–40°F dairy cooler → flagged + alert.
     const res = await agent
       .patch(`/ops/tasks/${tempTask.id}`)
       .send({ answerNumber: 22, status: 'DONE' });

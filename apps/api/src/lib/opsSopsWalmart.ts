@@ -30,9 +30,12 @@ import type { OpsPeriod, OpsResponseType } from '@prisma/client';
  *   - Weekly leadership work (meetings, sales/shrink reviews, training)
  *     isn't a shift task and stays out of the shift SOP.
  *
- * Temperatures (°F): freezer cases run at 0°F and flag above 10°F; dairy
- * and produce coolers 33–41°F; fresh meat 28–40°F; on the truck, frozen
- * loads at or below 10°F and refrigerated loads 28–41°F.
+ * Temperatures are Walmart's: refrigerated food at or below 40°F, frozen
+ * at or below 0°F (Walmart's published policy — 0–5°C refrigerated, below
+ * −18°C frozen — held to the USDA's 40°F its US stores cite). The floors
+ * keep product from freezing: dairy and produce coolers 32–40°F, fresh
+ * meat 28–40°F (meat freezes below 28°F); freezers and frozen loads down
+ * to −30°F.
  */
 
 export interface WalmartTask {
@@ -59,11 +62,11 @@ export interface WalmartTemplate {
   tasks: WalmartTask[];
 }
 
-const FREEZER = { tempMin: -20, tempMax: 10 };
-const COOLER = { tempMin: 33, tempMax: 41 };
+const FREEZER = { tempMin: -30, tempMax: 0 };
+const COOLER = { tempMin: 32, tempMax: 40 };
 const MEAT_CASE = { tempMin: 28, tempMax: 40 };
-const FROZEN_LOAD = { tempMin: -20, tempMax: 10 };
-const COLD_LOAD = { tempMin: 28, tempMax: 41 };
+const FROZEN_LOAD = { tempMin: -30, tempMax: 0 };
+const COLD_LOAD = { tempMin: 28, tempMax: 40 };
 
 type Extra = Omit<Partial<WalmartTask>, 'title' | 'section' | 'dueTime'>;
 

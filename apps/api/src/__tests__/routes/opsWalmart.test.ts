@@ -82,6 +82,13 @@ describe('the Walmart SOP library', () => {
     expect(overnight.tasks.every((t) => /^\d\d:\d\d$/.test(t.dueTime ?? ''))).toBe(true);
     expect(overnight.tasks[0]!.dueTime).toBe('22:30');
     expect(overnight.tasks.at(-1)!.dueTime).toBe('07:00');
+    // Walmart's limits: frozen at or below 0°F, refrigerated at or below 40°F.
+    const temps = overnight.tasks.filter((t) => t.responseType === 'TEMPERATURE') as unknown as Array<{
+      tempLabel: string;
+      tempMax: number;
+    }>;
+    expect(temps.find((t) => t.tempLabel === 'Freezer °F')?.tempMax).toBe(0);
+    expect(temps.find((t) => t.tempLabel === 'Dairy cooler °F')?.tempMax).toBe(40);
     const metrics = new Set(overnight.tasks.map((t) => t.metricKey).filter(Boolean));
     expect(metrics).toEqual(new Set(['pallets_received', 'cases_stocked', 'items_discarded', 'claims_processed']));
   });
@@ -186,7 +193,7 @@ describe('store operations, in the portal', () => {
     const reading = (res.body.temps as Array<{ taskId: string; value: number; outOfRange: boolean }>).find(
       (t) => t.taskId === cooler.id,
     );
-    expect(reading).toMatchObject({ value: 44, outOfRange: true, min: 33, max: 41 });
+    expect(reading).toMatchObject({ value: 44, outOfRange: true, min: 32, max: 40 });
     const pallets = (res.body.metrics as Array<{ key: string; total: number; byDepartment: Record<string, number> }>).find(
       (m) => m.key === 'pallets_received',
     );
