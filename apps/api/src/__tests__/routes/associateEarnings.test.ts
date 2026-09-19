@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { dateKeyInZone, startOfWeekUTC } from '../../lib/timeAnomalies.js';
 import { notifyClockOutEarnings } from '../../lib/associateEarnings.js';
 import {
   DEFAULT_TEST_PASSWORD,
@@ -53,12 +54,16 @@ describe('associate earnings', () => {
       },
     });
     const now = Date.now();
-    // 2h completed today (in the current org week by construction).
+    // Up to 2h completed just now — clipped to the org week (Saturday
+    // 00:00 Eastern): run in the first hours of a Saturday, "2h ago" is
+    // last week's money.
+    const clockIn = Math.max(now - 2 * 3600_000, startOfWeekUTC(new Date(now)).getTime());
+    const hours = (now - clockIn) / 3600_000;
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,
         clientId: client.id,
-        clockInAt: new Date(now - 2 * 3600_000),
+        clockInAt: new Date(clockIn),
         clockOutAt: new Date(now),
         status: 'COMPLETED',
       },
@@ -85,14 +90,19 @@ describe('associate earnings', () => {
     expect(res.status).toBe(200);
     expect(res.body.hourlyRate).toBe(16);
     expect(res.body.rateSource).toBe('comp');
-    expect(res.body.earnedSoFar).toBeCloseTo(32, 1); // 2h × $16
-    expect(res.body.todayShift).not.toBeNull();
-    expect(res.body.todayShift.inProgress).toBe(false);
+    // ≤2h × $16, counted in whole minutes (a minute is ~$0.27).
+    expect(Math.abs(res.body.earnedSoFar - hours * 16)).toBeLessThan(0.3);
+    // The shift an hour out is "today" unless that hour crosses midnight
+    // (Eastern).
+    if (dateKeyInZone(new Date(now + 3600_000), 'America/New_York') === dateKeyInZone(new Date(now), 'America/New_York')) {
+      expect(res.body.todayShift).not.toBeNull();
+      expect(res.body.todayShift.inProgress).toBe(false);
+    }
     // Projection = earned + remaining schedule (the shift may straddle
     // the week boundary on a Friday-evening run, so bound it instead of
     // pinning: never less than earned, never more than earned + 4h.
     expect(res.body.projectedWeek).toBeGreaterThanOrEqual(res.body.earnedSoFar);
-    expect(res.body.projectedWeek).toBeLessThanOrEqual(32 + 4 * 16 + 0.5);
+    expect(res.body.projectedWeek).toBeLessThanOrEqual(hours * 16 + 4 * 16 + 0.5);
   });
 
   it("clock-out fires the private 'you just added' notification at the associate's rate", async () => {
