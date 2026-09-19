@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Trash2, Wallet } from 'lucide-react';
+import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Trash2, UserRound, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -9,9 +9,11 @@ import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm } from '@/lib/haptics';
 import {
+  fmtDayHeaderTz,
   fmtMoney,
   fmtRelativeDayTz,
   fmtTimeTz,
+  fmtWeekdayTz,
   localInputToUtcIso,
   mapsUrl,
   parseYmd,
@@ -26,6 +28,7 @@ import {
   getMyTransport,
   getMyCrew,
   getMyLiveRide,
+  getShiftTrips,
   giveRideConsent,
   NO_SHOW_WAIT_MS,
   reportTransportIssue,
@@ -39,12 +42,15 @@ import {
   type RideDirection,
   type RideStatus,
   type RiderSignal,
+  type ShiftTrip,
+  type StoreShiftWindow,
   type TransportIssueCategory,
   vanLookText,
 } from '@/lib/transportApi';
 import { SoundToggle } from '@/components/transport/SoundToggle';
 import { useRiderAlerts } from './useRiderAlerts';
 import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
+import { fmtWindow, shiftTargetIso, windowForShift } from './shiftTrips';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -169,7 +175,7 @@ export function RideHome() {
         <>
           <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
           <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
-          <UpcomingRides data={data} />
+          <RideCalendar data={data} />
           <ChargesCard data={data} />
           <PastRides
             data={data}
@@ -383,7 +389,14 @@ function NextRideHero({
       : t('ride.leaveAt', { time: fmtTimeTz(next.targetAt, tz) });
   const green = onVan || here;
   const waitLeft = arrivedAt ? Date.parse(arrivedAt) + NO_SHOW_WAIT_MS - now : 0;
-  const tripLine = `${next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · ${next.store.name} · ${targetLine}`;
+  const shift = next.windowLabel ?? null;
+  const waitlist = next.status === 'REQUESTED' ? (next.waitlist ?? null) : null;
+  const tripLine = [
+    next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork'),
+    next.store.name,
+    ...(shift ? [t('ride.shiftTag', { shift })] : []),
+    targetLine,
+  ].join(' · ');
   // The live numbers, once the van is out.
   const liveOut = liveHere?.runStatus === 'ACTIVE' ? liveHere : null;
   const eta = liveOut ? (onVan ? liveOut.destination.etaAt : liveOut.pickup.etaAt) : null;
@@ -405,7 +418,11 @@ function NextRideHero({
 
   // The one line a rider reads first, per stage.
   const headline =
-    stage === 'FINDING' ? (
+    stage === 'FINDING' && waitlist ? (
+      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+        {t('ride.waitlistTitle', { position: waitlist.position })}
+      </div>
+    ) : stage === 'FINDING' ? (
       <div className="mt-2 flex items-baseline gap-1 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
         {t('ride.findingDriver')}
         <FindingDots />
@@ -449,7 +466,15 @@ function NextRideHero({
       <p className="mt-1.5 text-sm text-silver">
         {fmtRelativeDayTz(headlineAt, tz, now)} · {tripLine}
       </p>
-      <p className="mt-1 text-xs text-silver/80">{t('ride.waitingVanBody')}</p>
+      {waitlist ? (
+        <p className="mt-1 text-xs text-warning">
+          {t('ride.waitlistBody', { shift: shift ?? '', position: waitlist.position, of: waitlist.of })}
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-silver/80">
+          {next.seats ? t('ride.seatsWaiting') : t('ride.waitingVanBody')}
+        </p>
+      )}
     </>
   ) : (
     <>
@@ -523,7 +548,7 @@ function NextRideHero({
               {next.pickupAt ? t('ride.pickupIn', { time: fmtIn(untilPickup) }) : t('ride.leavesIn', { time: fmtIn(untilPickup) })}
             </span>
           ) : (
-            <Badge variant={statusVariant(next.status)}>{t(`ride.status.${next.status}` as MessageKey)}</Badge>
+            <RideBadge ride={next} />
           )}
         </div>
 
@@ -556,6 +581,7 @@ function NextRideHero({
               {vanChip}
             </button>
           ) : null}
+          {next.coRiders && next.coRiders.length > 0 && <RidingWith ride={next} />}
           <div className="flex items-center gap-2 text-sm text-silver">
             <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{pickupPlace(next)}</span>
@@ -907,12 +933,12 @@ function RideRow({ ride, action }: { ride: Ride; action?: React.ReactNode }) {
         </div>
         <div className="truncate text-xs text-silver">
           {ride.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {ride.store.name}
+          {ride.windowLabel ? ` · ${t('ride.shiftTag', { shift: ride.windowLabel })}` : ''}
           {ride.run ? ` · ${ride.run.van.name}` : ''}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Badge variant={statusVariant(ride.status)} size="sm">
-            {t(`ride.status.${ride.status}` as MessageKey)}
-          </Badge>
+          <RideBadge ride={ride} size="sm" />
+          {ride.coRiders && ride.coRiders.length > 0 && <FaceStack faces={ride.coRiders} size={20} max={5} />}
           {ride.owedCents > 0 && <span className="text-xs tabular-nums text-silver">{cents(ride.owedCents)}</span>}
           {ride.waived && <span className="text-xs text-success">{t('ride.waived')}</span>}
         </div>
@@ -922,32 +948,165 @@ function RideRow({ ride, action }: { ride: Ride; action?: React.ReactNode }) {
   );
 }
 
-function UpcomingRides({ data }: { data: MyTransport }) {
+/**
+ * Their rides like the schedule — a strip of days, each with a dot per
+ * ride, and the day's rides under it: which shift, the van, where they
+ * stand in line, and the faces they ride with.
+ */
+function RideCalendar({ data }: { data: MyTransport }) {
   const { t } = useI18n();
   const cancel = useCancelRide();
-  const rest = sortedLive(data.rides, Date.now()).slice(1);
-  if (rest.length === 0) return null;
+  const now = Date.now();
+  const live = sortedLive(data.rides, now);
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dayOf = (r: Ride) => zonedDayKey(r.pickupAt ?? r.targetAt, r.store.timezone);
+  const today = zonedDayKey(new Date(now), localTz);
+  const last = live.reduce((m, r) => (dayOf(r) > m ? dayOf(r) : m), today);
+  const span = Math.min(31, Math.max(7, (Date.parse(`${last}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000 + 1));
+  const days = Array.from({ length: span }, (_, i) => addDays(today, i));
+  const firstWithRide = days.find((d) => live.some((r) => dayOf(r) === d)) ?? today;
+  const [picked, setPicked] = useState<string | null>(null);
+  const day = picked && days.includes(picked) ? picked : firstWithRide;
+  if (live.length === 0) return null;
+  const onDay = live.filter((r) => dayOf(r) === day);
+  const label = (d: string) => {
+    const at = parseYmd(d)!;
+    return {
+      dow: fmtWeekdayTz(at),
+      num: at.getDate(),
+      long: fmtDayHeaderTz(at),
+    };
+  };
   return (
     <Card className="mb-4">
       <CardContent className="pt-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.upcoming')}</h2>
-        <ul className="divide-y divide-navy-secondary/60">
-          {rest.map((r) => (
-            <RideRow
-              key={r.id}
-              ride={r}
-              action={
-                OPEN.includes(r.status) && r.run?.status !== 'ACTIVE' ? (
-                  <Button size="icon-sm" variant="ghost" aria-label={t('ride.cancel')} onClick={() => void cancel(r)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                ) : undefined
-              }
-            />
-          ))}
-        </ul>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.calendar')}</h2>
+        <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1 scrollbar-none" role="tablist" aria-label={t('ride.calendar')}>
+          {days.map((d) => {
+            const rides = live.filter((r) => dayOf(r) === d);
+            const on = d === day;
+            const l = label(d);
+            return (
+              <button
+                key={d}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                aria-label={`${l.long}${rides.length ? ` · ${rides.length}` : ''}`}
+                onClick={() => setPicked(d)}
+                className={cn(
+                  'flex w-12 shrink-0 flex-col items-center rounded-lg border py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  on ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
+                )}
+              >
+                <span className={cn('text-2xs uppercase', on ? 'text-gold' : 'text-silver')}>{l.dow}</span>
+                <span className={cn('text-base font-semibold tabular-nums', on ? 'text-white' : 'text-silver')}>{l.num}</span>
+                <span className="mt-1 flex h-1.5 gap-0.5" aria-hidden="true">
+                  {rides.slice(0, 3).map((r) => (
+                    <span
+                      key={r.id}
+                      className={cn(
+                        'h-1.5 w-1.5 rounded-full',
+                        r.status === 'REQUESTED' ? (r.waitlist ? 'bg-warning' : 'bg-silver/60') : 'bg-success',
+                      )}
+                    />
+                  ))}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 text-xs font-medium text-silver">{label(day).long}</div>
+        {onDay.length === 0 ? (
+          <p className="py-3 text-sm text-silver/70">{t('ride.calendarNone')}</p>
+        ) : (
+          <ul className="divide-y divide-navy-secondary/60">
+            {onDay.map((r) => (
+              <RideRow
+                key={r.id}
+                ride={r}
+                action={
+                  OPEN.includes(r.status) && r.run?.status !== 'ACTIVE' ? (
+                    <Button size="icon-sm" variant="ghost" aria-label={t('ride.cancel')} onClick={() => void cancel(r)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ))}
+          </ul>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/** A ride's status — "On the waitlist · #2" when its shift's vans are full. */
+function RideBadge({ ride, size }: { ride: Ride; size?: 'sm' }) {
+  const { t } = useI18n();
+  if (ride.status === 'REQUESTED' && ride.waitlist) {
+    return (
+      <Badge variant="pending" size={size}>
+        {t('ride.waitlistBadge', { position: ride.waitlist.position })}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant={statusVariant(ride.status)} size={size}>
+      {t(`ride.status.${ride.status}` as MessageKey)}
+    </Badge>
+  );
+}
+
+/** Faces, overlapping — a photo, else a plain head. Never a name. */
+export function FaceStack({ faces, size = 28, max = 6 }: { faces: Array<{ photoUrl: string | null }>; size?: number; max?: number }) {
+  const extra = faces.length - max;
+  return (
+    <span className="flex -space-x-1.5" aria-hidden="true">
+      {faces.slice(0, max).map((f, i) =>
+        f.photoUrl ? (
+          <img
+            key={i}
+            src={f.photoUrl}
+            alt=""
+            loading="lazy"
+            className="rounded-full object-cover ring-2 ring-navy"
+            style={{ width: size, height: size }}
+          />
+        ) : (
+          <span
+            key={i}
+            className="grid place-items-center rounded-full bg-navy-secondary text-silver ring-2 ring-navy"
+            style={{ width: size, height: size }}
+          >
+            <UserRound style={{ width: size * 0.55, height: size * 0.55 }} />
+          </span>
+        ),
+      )}
+      {extra > 0 && (
+        <span
+          className="grid place-items-center rounded-full bg-navy-secondary text-2xs font-semibold text-white ring-2 ring-navy"
+          style={{ width: size, height: size }}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Who they ride with — the van's other riders as faces, and its seats. */
+function RidingWith({ ride }: { ride: Ride }) {
+  const { t } = useI18n();
+  const n = ride.coRiders?.length ?? 0;
+  return (
+    <div className="flex items-center gap-2.5 text-sm text-silver">
+      <FaceStack faces={ride.coRiders ?? []} />
+      <span className="min-w-0 truncate">
+        {n === 1 ? t('ride.ridingWithOne') : t('ride.ridingWith', { count: n })}
+        {ride.seats ? ` · ${t('ride.seatsFilled', { taken: ride.seats.taken, capacity: ride.seats.capacity })}` : ''}
+      </span>
+    </div>
   );
 }
 
@@ -1088,6 +1247,8 @@ function addDays(ymd: string, n: number): string {
 /** What the booking form opens with — a shift, a past ride, or nothing. */
 export interface BookPrefill {
   way?: Way;
+  /** A store shift to open on. */
+  windowLabel?: string;
   storeId?: string;
   date?: string;
   arrive?: string;
@@ -1177,6 +1338,25 @@ export function BookRideDialog({
   const [arrive, setArrive] = useState(initial.arrive ?? '07:00');
   const [leave, setLeave] = useState(initial.leave ?? '15:30');
   const [shiftId, setShiftId] = useState<string | null>(initial.shiftId ?? null);
+  // By shift (the store's shifts — how the vans are planned), or at an
+  // other time. A prefill that lands on a store shift opens on it.
+  const windows = store?.windows ?? [];
+  const startWindow =
+    initial.arrive && windows.length > 0
+      ? (windows.find((w) => Math.abs(w.startMinute - minutesOf(initial.arrive!)) <= 30)?.label ?? null)
+      : null;
+  const [mode, setMode] = useState<'shift' | 'time'>(
+    windows.length > 0 && (!initial.arrive || startWindow || initial.leave === undefined) ? 'shift' : 'time',
+  );
+  const [windowLabel, setWindowLabel] = useState<string | null>(initial.windowLabel ?? startWindow);
+  const byShift = mode === 'shift' && windows.length > 0;
+  const picked = byShift ? (windows.find((w) => w.label === windowLabel) ?? null) : null;
+  const trips = useQuery({
+    queryKey: ['transport', 'trips', storeId, date],
+    queryFn: () => getShiftTrips(storeId, date),
+    enabled: byShift && !!storeId && !!date,
+    staleTime: 20_000,
+  });
   const start = initial.pickup ? { pickup: initial.pickup, address: initial.address } : defaultPickupKey(data);
   const [pickup, setPickup] = useState(start.pickup);
   const [address, setAddress] = useState(start.address ?? '');
@@ -1202,16 +1382,37 @@ export function BookRideDialog({
     const z = st?.timezone ?? tz;
     setShiftId(sh.id);
     setStoreId(sh.locationId!);
-    setDate(zonedDayKey(sh.startsAt, z));
+    // The store's shift it is, when there is one — else its own hours.
+    const match = windowForShift(st, sh.startsAt);
+    if (match) {
+      setMode('shift');
+      setWindowLabel(match.window.label);
+      setDate(match.date);
+    } else {
+      setMode('time');
+      setDate(zonedDayKey(sh.startsAt, z));
+    }
     setArrive(hhmm(sh.startsAt, z));
     setLeave(hhmm(sh.endsAt, z));
   };
 
   // The instants, in the store's zone. A leave time at or before the arrive
   // time on a round trip is the next morning (an overnight shift).
-  const toWorkAt = date && arrive ? localInputToUtcIso(`${date}T${arrive}`, tz) : null;
   const leaveDate = way === 'BOTH' && leave <= arrive ? addDays(date, 1) : date;
-  const fromWorkAt = date && leave ? localInputToUtcIso(`${leaveDate}T${leave}`, tz) : null;
+  const toWorkAt = byShift
+    ? picked && date
+      ? shiftTargetIso(picked, date, 'TO_WORK', tz)
+      : null
+    : date && arrive
+      ? localInputToUtcIso(`${date}T${arrive}`, tz)
+      : null;
+  const fromWorkAt = byShift
+    ? picked && date
+      ? shiftTargetIso(picked, date, 'FROM_WORK', tz)
+      : null
+    : date && leave
+      ? localInputToUtcIso(`${leaveDate}T${leave}`, tz)
+      : null;
   const legs: Array<{ direction: RideDirection; at: string | null }> =
     way === 'TO_WORK'
       ? [{ direction: 'TO_WORK', at: toWorkAt }]
@@ -1223,6 +1424,9 @@ export function BookRideDialog({
           ];
   const tooSoon = legs.some((l) => l.at && new Date(l.at) < earliest);
   const total = legs.length * s.fareCents;
+  // Where each leg of the picked shift stands: seats left, or its line.
+  const tripOf = (w: string, d: RideDirection) => trips.data?.trips.find((x) => x.windowLabel === w && x.direction === d);
+  const fullLegs = picked ? legs.filter((l) => tripOf(picked.label, l.direction)?.full) : [];
   const pickupLabel = way === 'TO_WORK' ? t('ride.pickupTo') : way === 'FROM_WORK' ? t('ride.pickupFrom') : t('ride.pickupBoth');
 
   const useWhereIAm = () => {
@@ -1254,6 +1458,7 @@ export function BookRideDialog({
   const submit = async () => {
     if (!store) return setError(t('ride.pickStore'));
     if (pickup === 'new' && address.trim().length < 5) return setError(t('ride.pickPickup'));
+    if (byShift && !picked) return setError(t('ride.pickShift'));
     if (tooSoon || legs.some((l) => !l.at)) return;
     setBusy(true);
     setError(null);
@@ -1269,16 +1474,18 @@ export function BookRideDialog({
         } else home = { address: address.trim(), ...(point ?? {}) };
       }
       let booked = 0;
+      let inLine: { position: number; direction: RideDirection } | null = null;
       for (const leg of legs) {
         try {
-          await bookRide({
+          const { ride } = await bookRide({
             direction: leg.direction,
             locationId: store.id,
             ...home,
-            targetAt: leg.at!,
+            ...(picked ? { windowLabel: picked.label, date } : { targetAt: leg.at! }),
             ...(note.trim() ? { note: note.trim() } : {}),
             ...(shiftId ? { shiftId } : {}),
           });
+          if (ride.waitlist) inLine = { position: ride.waitlist.position, direction: leg.direction };
           booked += 1;
         } catch (err) {
           const msg = err instanceof ApiError ? err.message : String(err);
@@ -1290,8 +1497,13 @@ export function BookRideDialog({
         }
       }
       hapticConfirm();
-      toast.success(legs.length === 2 ? t('ride.bookedBoth') : t('ride.booked'));
+      if (inLine && picked) {
+        toast.success(t('ride.bookedWaitlist', { position: inLine.position, shift: picked.label }));
+      } else {
+        toast.success(legs.length === 2 ? t('ride.bookedBoth') : t('ride.booked'));
+      }
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'trips'] });
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -1351,7 +1563,17 @@ export function BookRideDialog({
           {data.stores.length > 1 && (
             <Field label={t('ride.store')} required>
               {(p) => (
-                <Select {...p} value={storeId} onChange={(e) => { setStoreId(e.target.value); setShiftId(null); }}>
+                <Select
+                  {...p}
+                  value={storeId}
+                  onChange={(e) => {
+                    const next = data.stores.find((x) => x.id === e.target.value);
+                    setStoreId(e.target.value);
+                    setShiftId(null);
+                    setWindowLabel(null);
+                    setMode(next?.windows?.length ? 'shift' : 'time');
+                  }}
+                >
                   <option value="">{t('ride.pickStore')}</option>
                   {data.stores.map((st) => (
                     <option key={st.id} value={st.id}>
@@ -1375,17 +1597,50 @@ export function BookRideDialog({
                 />
               )}
             </Field>
-            {way !== 'FROM_WORK' && (
-              <Field label={t('ride.arriveByLabel')} required>
-                {(p) => <Input {...p} type="time" value={arrive} onChange={(e) => { setArrive(e.target.value); setShiftId(null); }} />}
-              </Field>
-            )}
-            {way !== 'TO_WORK' && (
-              <Field label={t('ride.leaveAtLabel')} required>
-                {(p) => <Input {...p} type="time" value={leave} onChange={(e) => { setLeave(e.target.value); setShiftId(null); }} />}
-              </Field>
-            )}
           </div>
+
+          {windows.length > 0 && (
+            <ShiftPicker
+              windows={windows}
+              way={way}
+              mode={mode}
+              picked={windowLabel}
+              tripOf={tripOf}
+              loading={trips.isLoading}
+              onPick={(label) => {
+                setMode('shift');
+                setWindowLabel(label);
+                setShiftId(null);
+              }}
+              onOther={() => {
+                setMode('time');
+                setWindowLabel(null);
+              }}
+            />
+          )}
+          {picked && fullLegs.length > 0 && (
+            <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+              {t('ride.waitlistNote', {
+                shift: picked.label,
+                position: (tripOf(picked.label, fullLegs[0]!.direction)?.waiting ?? 0) + 1,
+              })}
+            </p>
+          )}
+
+          {!byShift && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {way !== 'FROM_WORK' && (
+                <Field label={t('ride.arriveByLabel')} required>
+                  {(p) => <Input {...p} type="time" value={arrive} onChange={(e) => { setArrive(e.target.value); setShiftId(null); }} />}
+                </Field>
+              )}
+              {way !== 'TO_WORK' && (
+                <Field label={t('ride.leaveAtLabel')} required>
+                  {(p) => <Input {...p} type="time" value={leave} onChange={(e) => { setLeave(e.target.value); setShiftId(null); }} />}
+                </Field>
+              )}
+            </div>
+          )}
 
           <Field label={pickupLabel} required>
             {(p) => (
@@ -1461,12 +1716,112 @@ export function BookRideDialog({
         </div>
         <DialogFooter className="items-center sm:justify-between">
           <span className="text-sm text-silver tabular-nums">{t('ride.total', { amount: cents(total) })}</span>
-          <Button onClick={() => void submit()} loading={busy} disabled={busy || tooSoon || !store}>
-            {legs.length === 2 ? t('ride.bookBoth') : t('ride.bookOne')}
+          <Button onClick={() => void submit()} loading={busy} disabled={busy || tooSoon || !store || (byShift && !picked)}>
+            {fullLegs.length === legs.length && fullLegs.length > 0
+              ? t('ride.joinWaitlist')
+              : legs.length === 2
+                ? t('ride.bookBoth')
+                : t('ride.bookOne')}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** "07:30" → 450. */
+function minutesOf(hhmmText: string): number {
+  const [h, m] = hhmmText.split(':').map(Number) as [number, number];
+  return h * 60 + m;
+}
+
+/**
+ * The store's shifts as cards — pick the one you work. Each says where its
+ * seats stand, each way you're booking: seats left, open (no van on it yet
+ * — a driver takes it), or full with the line you'd join. "Other time"
+ * is for the exceptions: leaving early, a late start.
+ */
+function ShiftPicker({
+  windows,
+  way,
+  mode,
+  picked,
+  tripOf,
+  loading,
+  onPick,
+  onOther,
+}: {
+  windows: StoreShiftWindow[];
+  way: Way;
+  mode: 'shift' | 'time';
+  picked: string | null;
+  tripOf: (w: string, d: RideDirection) => ShiftTrip | undefined;
+  loading: boolean;
+  onPick: (label: string) => void;
+  onOther: () => void;
+}) {
+  const { t } = useI18n();
+  const dirs: RideDirection[] = way === 'BOTH' ? ['TO_WORK', 'FROM_WORK'] : [way];
+  const line = (w: string, d: RideDirection) => {
+    const trip = tripOf(w, d);
+    const lead = way === 'BOTH' ? `${d === 'TO_WORK' ? t('ride.legThere') : t('ride.legHome')} · ` : '';
+    if (!trip) return { text: loading ? '…' : '', tone: 'text-silver/60' };
+    if (!trip.bookable) return { text: lead + t('ride.seatTooSoon'), tone: 'text-silver/60' };
+    if (trip.full) return { text: lead + t('ride.seatFull', { position: trip.waiting + 1 }), tone: 'text-warning' };
+    if (trip.seats) {
+      const left = trip.seats.capacity - trip.seats.taken;
+      return { text: lead + (left === 1 ? t('ride.seatLeftOne') : t('ride.seatsLeft', { count: left })), tone: 'text-success' };
+    }
+    return { text: lead + t('ride.seatOpen'), tone: 'text-silver' };
+  };
+  return (
+    <div>
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-silver">{t('ride.whichShift')}</div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('ride.whichShift')}>
+        {windows.map((w) => {
+          const on = mode === 'shift' && picked === w.label;
+          return (
+            <button
+              key={w.label}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onPick(w.label)}
+              className={cn(
+                'rounded-lg border p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
+                on ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
+              )}
+            >
+              <span className="flex items-baseline justify-between gap-2">
+                <span className={cn('text-sm font-semibold', on ? 'text-gold' : 'text-white')}>{w.label}</span>
+                <span className="text-xs tabular-nums text-silver">{fmtWindow(w)}</span>
+              </span>
+              {dirs.map((d) => {
+                const l = line(w.label, d);
+                return (
+                  <span key={d} className={cn('mt-0.5 block text-xs tabular-nums', l.tone)}>
+                    {l.text}
+                  </span>
+                );
+              })}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'time'}
+          onClick={onOther}
+          className={cn(
+            'rounded-lg border border-dashed p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
+            mode === 'time' ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
+          )}
+        >
+          <span className={cn('block text-sm font-semibold', mode === 'time' ? 'text-gold' : 'text-white')}>{t('ride.otherTime')}</span>
+          <span className="mt-0.5 block text-xs text-silver">{t('ride.otherTimeBody')}</span>
+        </button>
+      </div>
+    </div>
   );
 }
 

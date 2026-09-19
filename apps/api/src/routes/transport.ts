@@ -13,6 +13,16 @@ import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { geocode, reverseGeocode } from '../lib/geocode.js';
 import { orderAndTime, planDay, planRideSelect } from '../lib/transportPlan.js';
+import {
+  announceWaitlist,
+  seatTheLine,
+  seatView,
+  shiftTargetAt,
+  storeShiftWindows,
+  tripKeyOf,
+  tripState,
+  tripStates,
+} from '../lib/transportSeats.js';
 import { haversineM } from '../lib/transportLive.js';
 import {
   MIN_PING_GAP_MS,
@@ -59,6 +69,8 @@ const MANAGE = requireCapability('manage:transport');
 const MAX_DAYS_AHEAD = 30;
 const DUPLICATE_WINDOW_MS = 3 * 3_600_000;
 
+type RideRowOf = Prisma.RideGetPayload<{ select: typeof rideSelect }>;
+
 function personName(u: { email: string; associate: { firstName: string; lastName: string } | null }): string {
   return u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email);
 }
@@ -86,6 +98,28 @@ function requireAssociate(req: Request): string {
   const id = req.user!.associateId;
   if (!id) throw new HttpError(403, 'no_associate', 'Your login is not linked to an associate record yet.');
   return id;
+}
+
+/** Who else is on each rider's van — their faces (a photo, else nothing),
+ *  never their names: riders see who they ride with, like the schedule's
+ *  crew, without a roster of who lives where. */
+async function coRiders(pairs: Array<{ rideId: string; runId: string }>) {
+  const out = new Map<string, Array<{ photoUrl: string | null }>>();
+  if (pairs.length === 0) return out;
+  const onboard = await prisma.ride.findMany({
+    where: { runId: { in: [...new Set(pairs.map((p) => p.runId))] }, status: { in: ['SCHEDULED', 'BOARDED'] } },
+    orderBy: { pickupOrder: 'asc' },
+    select: { id: true, runId: true, associate: { select: { id: true, photoS3Key: true } } },
+  });
+  for (const p of pairs) {
+    out.set(
+      p.rideId,
+      onboard
+        .filter((x) => x.runId === p.runId && x.id !== p.rideId)
+        .map((x) => ({ photoUrl: x.associate.photoS3Key ? `/api/associates/${x.associate.id}/photo` : null })),
+    );
+  }
+  return out;
 }
 
 /** The people who run transportation — they hear about issues. */
@@ -165,6 +199,14 @@ transportRouter.get('/me', RIDE, async (req, res) => {
           : null;
   const defaultStoreId =
     last && stores.some((x) => x.id === last.locationId) ? last.locationId : (stores[0]?.id ?? null);
+  // Each store's shifts (what riders book by), each open shift ride's seats
+  // and place in line, and who they ride with — faces only, never names.
+  const open = rides.filter((r) => (OPEN_RIDE_STATUSES as readonly string[]).includes(r.status) || r.status === 'BOARDED');
+  const [windows, trips, crew] = await Promise.all([
+    storeShiftWindows(stores.map((s) => s.id)),
+    tripStates(open.map((r) => ({ ...r, locationId: r.location.id }))),
+    coRiders(open.filter((r) => r.run).map((r) => ({ rideId: r.id, runId: r.run!.id }))),
+  ]);
   res.json({
     settings,
     consent: consent ? { acceptedAt: consent.acceptedAt.toISOString() } : null,
@@ -176,6 +218,7 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       timezone: s.timezone,
       clientName: s.client.name,
       address: [s.addressLine1, s.city, s.state].filter(Boolean).join(', ') || null,
+      windows: windows.get(s.id) ?? [],
     })),
     shifts: shifts.map((s) => ({
       id: s.id,
@@ -184,7 +227,11 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       position: s.position,
       locationId: s.locationId,
     })),
-    rides: rides.map(toRideView),
+    rides: rides.map((r) => ({
+      ...toRideView(r),
+      ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })),
+      coRiders: crew.get(r.id) ?? [],
+    })),
     defaultPickup,
     defaultStoreId,
     charges: {
@@ -265,12 +312,22 @@ const BookInput = z
     placeId: z.string().uuid().optional(),
     address: z.string().trim().min(5).max(300).optional(),
     ...LatLng,
-    targetAt: z.string().datetime(),
+    /** An other time: arrive by (to work) / leave at (home). */
+    targetAt: z.string().datetime().optional(),
+    /** Or by shift: the store shift and its day. */
+    windowLabel: z.string().trim().min(1).max(80).optional(),
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
     note: z.string().trim().max(300).optional(),
     shiftId: z.string().uuid().optional(),
   })
   .refine((v) => [v.stopId, v.placeId, v.address].filter(Boolean).length === 1, {
     message: 'Pick one pickup: a stop, a saved address, or an address.',
+  })
+  .refine((v) => (v.windowLabel ? !!v.date && !v.targetAt : !!v.targetAt), {
+    message: 'Pick a shift and its day, or a time.',
   });
 
 transportRouter.post('/me/rides', RIDE, async (req, res) => {
@@ -282,7 +339,17 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   }
   const store = (await bookableStores(associateId, req.user!.clientId ?? null)).find((s) => s.id === input.locationId);
   if (!store) throw new HttpError(403, 'store_not_allowed', 'You can book rides to your own stores only.');
-  const targetAt = new Date(input.targetAt);
+  // By shift: the ride's time is the shift's — to work by its start, home at its end.
+  let windowLabel: string | null = null;
+  let targetAt: Date;
+  if (input.windowLabel) {
+    const w = (await storeShiftWindows([store.id])).get(store.id)?.find((x) => x.label === input.windowLabel);
+    if (!w) throw new HttpError(400, 'shift_not_found', `${store.name} has no ${input.windowLabel} shift.`);
+    windowLabel = w.label;
+    targetAt = shiftTargetAt(w, input.date!, input.direction, store.timezone);
+  } else {
+    targetAt = new Date(input.targetAt!);
+  }
   const now = Date.now();
   if (targetAt.getTime() - now < settings.cutoffHours * 3_600_000) {
     throw new HttpError(
@@ -337,6 +404,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
       targetAt,
       serviceDate: serviceDateFor(targetAt, store.timezone),
       shiftId: input.shiftId ?? null,
+      windowLabel,
       note: input.note || null,
       fareCents: settings.fareCents,
       noShowFeeCents: settings.noShowFeeCents,
@@ -361,7 +429,47 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
     select: { id: true },
   });
   for (const u of watchers) emitLiveEvent(u.id, 'transport');
-  res.status(201).json({ ride: toRideView(ride) });
+  // A shift whose vans are full: they're in line, and told their place.
+  const key = tripKeyOf({ ...ride, locationId: ride.location.id });
+  const state = key ? await tripState(key) : null;
+  res.status(201).json({ ride: { ...toRideView(ride), ...seatView(ride, state), coRiders: [] } });
+});
+
+/**
+ * GET /transport/me/trips?locationId=&date= — a store's shifts that day,
+ * each way: the seats its vans have (none yet: a driver will take it), how
+ * many are in line, and whether it's still bookable (the 10-hour cutoff).
+ */
+transportRouter.get('/me/trips', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const q = z
+    .object({ locationId: z.string().uuid(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+    .parse(req.query);
+  const store = (await bookableStores(associateId, req.user!.clientId ?? null)).find((x) => x.id === q.locationId);
+  if (!store) throw new HttpError(403, 'store_not_allowed', 'You can book rides to your own stores only.');
+  const [windows, settings] = await Promise.all([storeShiftWindows([store.id]), getTransportSettings()]);
+  const now = Date.now();
+  const trips = await Promise.all(
+    (windows.get(store.id) ?? []).flatMap((w) =>
+      (['TO_WORK', 'FROM_WORK'] as const).map(async (direction) => {
+        const targetAt = shiftTargetAt(w, q.date, direction, store.timezone);
+        const state = await tripState({ locationId: store.id, direction, windowLabel: w.label, targetAt });
+        return {
+          windowLabel: w.label,
+          direction,
+          targetAt: targetAt.toISOString(),
+          bookable:
+            targetAt.getTime() - now >= settings.cutoffHours * 3_600_000 &&
+            targetAt.getTime() - now <= MAX_DAYS_AHEAD * 86_400_000,
+          vans: state.runs.length,
+          seats: state.runs.length > 0 ? { capacity: state.capacity, taken: state.taken } : null,
+          full: state.full,
+          waiting: state.queue.length,
+        };
+      }),
+    ),
+  );
+  res.json({ windows: windows.get(store.id) ?? [], trips });
 });
 
 transportRouter.post('/me/rides/:id/cancel', RIDE, async (req, res) => {
@@ -379,6 +487,11 @@ transportRouter.post('/me/rides/:id/cancel', RIDE, async (req, res) => {
     where: { id },
     data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledById: req.user!.id, cancelReason: 'Cancelled by the rider' },
   });
+  // Their seat goes to the first in line for that shift.
+  if (ride.run && ride.status === 'SCHEDULED') {
+    const key = tripKeyOf({ ...ride, locationId: ride.location.id });
+    if (key) await seatTheLine(key);
+  }
   if (ride.run) {
     const tz = ride.location.timezone;
     void trackNotificationWork(
@@ -981,10 +1094,125 @@ transportRouter.get('/driver/requests', DRIVE, async (req, res) => {
     );
   res.json({
     van: van ? { id: van.id, name: van.name, plate: van.plate, capacity: van.capacity, look: vanLook(van) } : null,
-    requests: open.map((r) => {
-      const run = fits(r);
-      return { ...toRideView(r), fits: run ? { runId: run.id, departAt: run.departAt.toISOString() } : null };
+    requests: await (async () => {
+      const trips = await tripStates(open.map((r) => ({ ...r, locationId: r.location.id })));
+      return open.map((r) => {
+        const run = fits(r);
+        return {
+          ...toRideView(r),
+          ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })),
+          fits: run ? { runId: run.id, departAt: run.departAt.toISOString() } : null,
+        };
+      });
+    })(),
+  });
+});
+
+/**
+ * GET /transport/driver/schedule?from=&days= — the driver's week, like the
+ * schedule: each day's runs (the shift, the store, when they leave, seats
+ * filled) with the riders in pickup order — names and faces — and how
+ * many are still asking for a seat on each shift.
+ */
+transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
+  const me = req.user!.id;
+  const q = z
+    .object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      days: z.coerce.number().int().min(1).max(14).default(7),
+    })
+    .parse(req.query);
+  const from = q.from ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const to = new Date(Date.parse(`${from}T00:00:00Z`) + (q.days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const now = new Date();
+  const [van, runs, asks] = await Promise.all([
+    myVan(me),
+    prisma.rideRun.findMany({
+      where: { driverUserId: me, serviceDate: { gte: from, lte: to }, status: { not: 'CANCELLED' } },
+      orderBy: { departAt: 'asc' },
+      select: {
+        id: true,
+        status: true,
+        direction: true,
+        serviceDate: true,
+        departAt: true,
+        van: { select: { name: true, plate: true, capacity: true } },
+        rides: {
+          where: { status: { in: ['SCHEDULED', 'BOARDED', 'COMPLETED', 'NO_SHOW'] } },
+          orderBy: [{ pickupOrder: 'asc' }, { targetAt: 'asc' }],
+          select: {
+            id: true,
+            status: true,
+            pickupAt: true,
+            targetAt: true,
+            windowLabel: true,
+            address: true,
+            stop: { select: { name: true } },
+            location: { select: { id: true, name: true, timezone: true } },
+            associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true } },
+          },
+        },
+      },
     }),
+    prisma.ride.findMany({
+      where: {
+        status: 'REQUESTED',
+        runId: null,
+        serviceDate: { gte: from, lte: to },
+        targetAt: { gt: now },
+        rejections: { none: { driverUserId: me } },
+      },
+      select: { serviceDate: true, direction: true, windowLabel: true, targetAt: true, location: { select: { id: true, name: true, timezone: true } } },
+    }),
+  ]);
+  const asking = new Map<string, { serviceDate: string; direction: string; windowLabel: string | null; targetAt: Date; store: { id: string; name: string; timezone: string }; count: number }>();
+  for (const a of asks) {
+    const k = `${a.serviceDate}|${a.location.id}|${a.direction}|${a.windowLabel ?? a.targetAt.toISOString()}`;
+    const row = asking.get(k) ?? { serviceDate: a.serviceDate, direction: a.direction, windowLabel: a.windowLabel, targetAt: a.targetAt, store: a.location, count: 0 };
+    row.count += 1;
+    asking.set(k, row);
+  }
+  res.json({
+    from,
+    to,
+    van: van ? { name: van.name, plate: van.plate, capacity: van.capacity } : null,
+    runs: runs.map((run) => {
+      const labels = run.rides.map((r) => r.windowLabel).filter((x): x is string => !!x);
+      const shift = labels.sort((a, b) => labels.filter((x) => x === b).length - labels.filter((x) => x === a).length)[0] ?? null;
+      const stores = [...new Map(run.rides.map((r) => [r.location.id, r.location.name])).values()];
+      const aboard = run.rides.filter((r) => r.status !== 'NO_SHOW');
+      return {
+        id: run.id,
+        status: run.status,
+        direction: run.direction,
+        serviceDate: run.serviceDate,
+        departAt: run.departAt.toISOString(),
+        timezone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE,
+        shift,
+        stores,
+        van: run.van,
+        seats: { taken: aboard.length, capacity: run.van.capacity },
+        riders: run.rides.map((r) => ({
+          rideId: r.id,
+          associateId: r.associate.id,
+          name: `${r.associate.firstName} ${r.associate.lastName}`,
+          photoUrl: r.associate.photoS3Key ? `/api/associates/${r.associate.id}/photo` : null,
+          pickupAt: iso(r.pickupAt),
+          place: run.direction === 'TO_WORK' ? (r.stop?.name ?? r.address ?? '') : r.location.name,
+          status: r.status,
+        })),
+      };
+    }),
+    asking: [...asking.values()]
+      .sort((a, b) => a.targetAt.getTime() - b.targetAt.getTime())
+      .map((a) => ({
+        serviceDate: a.serviceDate,
+        direction: a.direction,
+        windowLabel: a.windowLabel,
+        targetAt: a.targetAt.toISOString(),
+        store: a.store,
+        count: a.count,
+      })),
   });
 });
 
@@ -1049,6 +1277,9 @@ transportRouter.post('/driver/requests/:rideId/accept', DRIVE, async (req, res) 
     { actorUserId: me, action: 'transport.seat_accepted', entityType: 'Ride', entityId: ride.id, metadata: { runId, joined: !!join } },
     'transport',
   );
+  // That filled the shift's vans: the rest asking for it are in line now.
+  const tripKey = tripKeyOf({ ...ride, locationId: ride.location.id });
+  if (tripKey) await announceWaitlist(tripKey);
   const tz = ride.location.timezone;
   const driverFirst = (await prisma.user.findUnique({ where: { id: me }, select: { email: true, associate: { select: { firstName: true, lastName: true } } } }))!;
   const first = personName(driverFirst).split(' ')[0];
@@ -1222,6 +1453,12 @@ transportRouter.get('/riders/:associateId', requireAuth, async (req, res) => {
 
 const DateQuery = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
+/** Rides with their shift's seats and each one's place in line. */
+async function withSeats(rides: RideRowOf[]) {
+  const trips = await tripStates(rides.map((r) => ({ ...r, locationId: r.location.id })));
+  return rides.map((r) => ({ ...toRideView(r), ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })) }));
+}
+
 transportRouter.get('/board', VIEW, async (req, res) => {
   const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
   const [rides, runs, vans, drivers, openIssues, settings] = await Promise.all([
@@ -1251,7 +1488,7 @@ transportRouter.get('/board', VIEW, async (req, res) => {
       runs: runs.filter((r) => r.status !== 'CANCELLED').length,
       openIssues,
     },
-    rides: rides.map(toRideView),
+    rides: await withSeats(rides),
     runs: runs.map(toRunView),
     vans: vans.map((v) => ({ id: v.id, name: v.name, plate: v.plate, capacity: v.capacity, driverUserId: v.driverUserId })),
     drivers: drivers
@@ -1288,7 +1525,7 @@ transportRouter.get('/rides', VIEW, async (req, res) => {
     take: 300,
     select: rideSelect,
   });
-  res.json({ rides: rides.map(toRideView) });
+  res.json({ rides: await withSeats(rides) });
 });
 
 const ReasonInput = z.object({ reason: z.string().trim().min(3).max(300) });
@@ -1309,6 +1546,10 @@ transportRouter.post('/rides/:id/cancel', MANAGE, async (req, res) => {
     { actorUserId: req.user!.id, action: 'transport.ride_cancelled', entityType: 'Ride', entityId: id, metadata: { reason } },
     'transport',
   );
+  if (ride.run && ride.status === 'SCHEDULED') {
+    const key = tripKeyOf({ ...ride, locationId: ride.location.id });
+    if (key) await seatTheLine(key);
+  }
   void trackNotificationWork(
     notifyAssociate(ride.associate.id, {
       subject: 'Your ride was cancelled',

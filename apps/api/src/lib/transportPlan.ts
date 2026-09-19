@@ -35,6 +35,7 @@ export const planRideSelect = {
   runId: true,
   targetAt: true,
   serviceDate: true,
+  windowLabel: true,
   address: true,
   lat: true,
   lng: true,

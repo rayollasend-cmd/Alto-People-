@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Bus,
+  CalendarDays,
   Check,
   CheckCheck,
   Clock,
@@ -22,7 +23,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { onLiveEvent } from '@/lib/liveEvents';
-import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
+import { fmtDayHeaderTz, fmtMoney, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, parseYmd, zonedDayKey } from '@/lib/format';
 import {
   NO_SHOW_WAIT_MS,
   acceptSeat,
@@ -32,6 +33,7 @@ import {
   getRiderProfile,
   getSeatRequests,
   getDriverRunLive,
+  getDriverWeek,
   getDriverRuns,
   markBoarded,
   markNoShow,
@@ -51,6 +53,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
@@ -217,11 +220,147 @@ export function DriverHome() {
           ))}
         </div>
       )}
+      <DriverWeekCalendar onRider={setRider} />
       {reporting !== undefined && (
         <DriverReportDialog runId={reporting} open onOpenChange={(o) => !o && setReporting(undefined)} />
       )}
       {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
     </div>
+  );
+}
+
+/**
+ * The driver's week, like a schedule: a strip of days, each day's runs —
+ * the shift, the store, when they leave, seats filled — with the riders in
+ * pickup order (names and faces; tap one for their profile), and the
+ * shifts still asking for seats that day.
+ */
+function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => void }) {
+  const { t } = useI18n();
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const today = zonedDayKey(new Date(), localTz);
+  const q = useQuery({ queryKey: ['transport', 'driver', 'week', today], queryFn: () => getDriverWeek(today, 7), refetchInterval: 60_000 });
+  const [picked, setPicked] = useState(today);
+  if (!q.data) return null;
+  const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${today}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
+  const runsOn = (d: string) => q.data.runs.filter((r) => r.serviceDate === d);
+  const askingOn = (d: string) => q.data.asking.filter((a) => a.serviceDate === d);
+  const label = (d: string) => {
+    const at = parseYmd(d)!;
+    return {
+      dow: fmtWeekdayTz(at),
+      num: at.getDate(),
+      long: fmtDayHeaderTz(at),
+    };
+  };
+  const runs = runsOn(picked);
+  const asking = askingOn(picked);
+  return (
+    <Card className="mt-6">
+      <CardContent className="pt-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-silver">
+          <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
+          {t('drive.week')}
+        </h2>
+        <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1 scrollbar-none" role="tablist" aria-label={t('drive.week')}>
+          {days.map((d) => {
+            const n = runsOn(d).length;
+            const ask = askingOn(d).reduce((m, a) => m + a.count, 0);
+            const on = d === picked;
+            const l = label(d);
+            return (
+              <button
+                key={d}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                aria-label={l.long}
+                onClick={() => setPicked(d)}
+                className={cn(
+                  'flex w-12 shrink-0 flex-col items-center rounded-lg border py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  on ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
+                )}
+              >
+                <span className={cn('text-2xs uppercase', on ? 'text-gold' : 'text-silver')}>{l.dow}</span>
+                <span className={cn('text-base font-semibold tabular-nums', on ? 'text-white' : 'text-silver')}>{l.num}</span>
+                <span className="mt-1 flex h-1.5 gap-0.5" aria-hidden="true">
+                  {Array.from({ length: Math.min(3, n) }, (_, i) => (
+                    <span key={i} className="h-1.5 w-1.5 rounded-full bg-gold" />
+                  ))}
+                  {ask > 0 && <span className="h-1.5 w-1.5 rounded-full bg-sky" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 text-xs font-medium text-silver">{label(picked).long}</div>
+        {runs.length === 0 && asking.length === 0 && <p className="py-3 text-sm text-silver/70">{t('drive.weekNone')}</p>}
+        <ul className="mt-2 space-y-3">
+          {runs.map((run) => (
+            <li key={run.id} className="rounded-lg border border-navy-secondary p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-white">
+                    {run.shift ? t('ride.shiftTag', { shift: run.shift }) : fmtTimeTz(run.departAt, run.timezone)}
+                    <span className="font-normal text-silver">
+                      {' · '}
+                      {run.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')}
+                    </span>
+                  </div>
+                  <div className="truncate text-xs text-silver">
+                    {run.stores.join(', ')} · {run.van.name} · {t('drive.departs', { time: fmtTimeTz(run.departAt, run.timezone) })}
+                  </div>
+                </div>
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
+                    run.seats.taken >= run.seats.capacity ? 'bg-success/15 text-success' : 'bg-navy-secondary text-white',
+                  )}
+                >
+                  {t('drive.seats', { taken: run.seats.taken, capacity: run.seats.capacity })}
+                </span>
+              </div>
+              <ol className="mt-2.5 space-y-1.5">
+                {run.riders.map((r, i) => (
+                  <li key={r.rideId}>
+                    <button
+                      type="button"
+                      onClick={() => onRider(r.associateId)}
+                      className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-0.5 text-left hover:bg-navy-secondary/30"
+                    >
+                      <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-silver/70">{i + 1}</span>
+                      <Avatar src={r.photoUrl ?? undefined} name={r.name} email="" size="sm" />
+                      <span className="min-w-0 flex-1 truncate text-sm text-white">{r.name}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-silver">
+                        {r.pickupAt ? fmtTimeTz(r.pickupAt, run.timezone) : ''}
+                      </span>
+                    </button>
+                    <div className="ml-[3.35rem] truncate text-2xs text-silver/80">{r.place}</div>
+                  </li>
+                ))}
+              </ol>
+            </li>
+          ))}
+          {asking.map((a) => (
+            <li
+              key={`${a.store.id}|${a.direction}|${a.windowLabel ?? a.targetAt}`}
+              className="flex items-center gap-2.5 rounded-lg border border-dashed border-sky/40 px-3 py-2.5 text-sm"
+            >
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-sky/15 text-xs font-semibold text-sky">{a.count}</span>
+              <span className="min-w-0 flex-1 truncate text-silver">
+                {t('drive.asking', { count: a.count })}
+                {' · '}
+                <span className="text-white">
+                  {a.windowLabel ? t('ride.shiftTag', { shift: a.windowLabel }) : fmtTimeTz(a.targetAt, a.store.timezone)}
+                </span>
+                {' · '}
+                {a.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {a.store.name}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -397,10 +536,16 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
                       <span className="shrink-0 text-sm font-semibold tabular-nums text-gold">{fmtRelativeDayTz(r.targetAt, tz)}</span>
                     </div>
                     <div className="text-sm text-white tabular-nums">
+                      {r.windowLabel && <span className="font-semibold text-gold">{t('ride.shiftTag', { shift: r.windowLabel })} · </span>}
                       {r.direction === 'TO_WORK'
                         ? t('drive.arriveBy', { store: r.store.name, time: fmtTimeTz(r.targetAt, tz) })
                         : t('drive.leaveStore', { store: r.store.name, time: fmtTimeTz(r.targetAt, tz) })}
                     </div>
+                    {r.waitlist && (
+                      <span className="mt-1 inline-flex items-center rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-semibold text-warning">
+                        {t('drive.inLine', { position: r.waitlist.position, shift: r.windowLabel ?? '' })}
+                      </span>
+                    )}
                     <div className="mt-0.5 flex items-center gap-1 text-xs text-silver">
                       {r.direction === 'TO_WORK' ? <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> : <Home className="h-3 w-3 shrink-0" aria-hidden="true" />}
                       <span className="truncate">{r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address}</span>

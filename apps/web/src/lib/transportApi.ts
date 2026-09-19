@@ -40,6 +40,8 @@ export interface Ride {
   serviceDate: string;
   status: RideStatus;
   shiftId: string | null;
+  /** The store shift the seat is for ("Morning"); null: an other time. */
+  windowLabel?: string | null;
   note: string | null;
   pickup:
     | { kind: 'stop'; id: string; name: string; address: string }
@@ -78,6 +80,12 @@ export interface Ride {
   declines: number;
   allDeclined: boolean;
   createdAt: string;
+  /** The shift's vans' seats (null: no van on it yet). */
+  seats?: { capacity: number; taken: number } | null;
+  /** Its place in line when the shift's vans are full. */
+  waitlist?: { position: number; of: number } | null;
+  /** Who else is on the van — faces only, never names. */
+  coRiders?: Array<{ photoUrl: string | null }>;
 }
 
 /** What a rider looks for at the curb. */
@@ -115,12 +123,21 @@ export interface RideRun {
 
 /* ----- The associate's Ride tab ------------------------------------------ */
 
+/** A store's shift, as riders book it: "Morning 6:00 AM–2:00 PM". */
+export interface StoreShiftWindow {
+  label: string;
+  startMinute: number;
+  endMinute: number;
+}
+
 export interface RideStore {
   id: string;
   name: string;
   timezone: string;
   clientName: string;
   address: string | null;
+  /** Its shifts — riders book by these (none: by time only). */
+  windows?: StoreShiftWindow[];
 }
 
 export interface MyTransport {
@@ -164,13 +181,38 @@ export interface BookRideInput {
   /** "Use where I am now" — the phone's own point for a new address. */
   lat?: number;
   lng?: number;
-  targetAt: string;
+  /** An other time: arrive by / leave at. */
+  targetAt?: string;
+  /** Or by shift: the store shift and its day (YYYY-MM-DD). */
+  windowLabel?: string;
+  date?: string;
   note?: string;
   shiftId?: string;
 }
 
 export const bookRide = (body: BookRideInput) =>
   apiFetch<{ ride: Ride }>('/transport/me/rides', { method: 'POST', body });
+
+/** One store shift, one way, one day — its seats and its line. */
+export interface ShiftTrip {
+  windowLabel: string;
+  direction: RideDirection;
+  targetAt: string;
+  /** Outside the 10-hour cutoff and within 30 days. */
+  bookable: boolean;
+  vans: number;
+  /** The seats its vans have — null while no driver has taken it yet. */
+  seats: { capacity: number; taken: number } | null;
+  /** Every van on it is full — a booking joins the waitlist. */
+  full: boolean;
+  /** Asking for a seat and not on a van yet (the line, when full). */
+  waiting: number;
+}
+
+export const getShiftTrips = (locationId: string, date: string) =>
+  apiFetch<{ windows: StoreShiftWindow[]; trips: ShiftTrip[] }>(
+    `/transport/me/trips?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`,
+  );
 
 /** "I'm outside" / "running late" — to the driver, once the van is on its way. */
 export const signalDriver = (rideId: string, kind: RiderSignal) =>
@@ -411,6 +453,49 @@ export const getSeatRequests = () =>
   apiFetch<{ van: { id: string; name: string; plate: string | null; capacity: number; look: string } | null; requests: SeatRequest[] }>(
     '/transport/driver/requests',
   );
+/** The driver's week, like a schedule. */
+export interface DriverWeekRun {
+  id: string;
+  status: RideRunStatus;
+  direction: RideDirection;
+  serviceDate: string;
+  departAt: string;
+  timezone: string;
+  /** The store shift it serves ("Morning"); null for other times. */
+  shift: string | null;
+  stores: string[];
+  van: { name: string; plate: string | null; capacity: number };
+  seats: { taken: number; capacity: number };
+  riders: Array<{
+    rideId: string;
+    associateId: string;
+    name: string;
+    photoUrl: string | null;
+    pickupAt: string | null;
+    place: string;
+    status: RideStatus;
+  }>;
+}
+
+export interface DriverWeek {
+  from: string;
+  to: string;
+  van: { name: string; plate: string | null; capacity: number } | null;
+  runs: DriverWeekRun[];
+  /** Seats still asked for, by shift — what's there to take. */
+  asking: Array<{
+    serviceDate: string;
+    direction: RideDirection;
+    windowLabel: string | null;
+    targetAt: string;
+    store: { id: string; name: string; timezone: string };
+    count: number;
+  }>;
+}
+
+export const getDriverWeek = (from: string, days = 7) =>
+  apiFetch<DriverWeek>(`/transport/driver/schedule?from=${from}&days=${days}`);
+
 export const acceptSeat = (rideId: string) =>
   apiFetch<{ run: RideRun }>(`/transport/driver/requests/${rideId}/accept`, { method: 'POST' });
 export const declineSeat = (rideId: string, reason?: string) =>

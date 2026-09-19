@@ -514,6 +514,22 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
       });
     }
   }
+  // A shift whose vans are full, with riders in line: add a van and they ride.
+  const lines = new Map<string, typeof waiting>();
+  for (const r of waiting.filter((x) => x.waitlist && x.windowLabel)) {
+    const k = `${r.store.id}|${r.direction}|${r.windowLabel}|${r.targetAt}`;
+    lines.set(k, [...(lines.get(k) ?? []), r]);
+  }
+  for (const [k, riders] of lines) {
+    const r = riders[0]!;
+    attention.push({
+      key: `line-${k}`,
+      tone: 'warning',
+      title: `${r.windowLabel} ${r.direction === 'TO_WORK' ? 'to' : 'home from'} ${r.store.name} is full — ${riders.length} on the waitlist`,
+      body: `${fmtTimeTz(r.targetAt, r.store.timezone)} · every van on it is full · add a van and they ride`,
+      actions: manage ? [{ label: 'Add a van', onClick: () => setDispatch({ rides: riders }) }] : [],
+    });
+  }
   for (const r of waiting.filter((x) => x.allDeclined)) {
     attention.push({
       key: `declined-${r.id}`,
@@ -651,6 +667,12 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
                                 {r.rider.name}
+                                {r.windowLabel && <span className="text-xs text-silver">{r.windowLabel} shift</span>}
+                                {r.waitlist && (
+                                  <Badge size="sm" variant="pending">
+                                    Waitlist #{r.waitlist.position}
+                                  </Badge>
+                                )}
                                 {r.declines > 0 && (
                                   <Badge size="sm" variant={r.allDeclined ? 'destructive' : 'pending'}>
                                     {r.allDeclined ? 'Every driver declined' : `Declined by ${r.declines}`}

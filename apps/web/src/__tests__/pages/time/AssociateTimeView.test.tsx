@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { workweekStart } from '@/lib/workweek';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -156,10 +157,10 @@ describe("<AssociateTimeView> overtime nudge", () => {
   }
 
   function finished(id: string, minutes: number, daysAgo = 0) {
-    // Anchored after this week’s Sunday so it lands inside the window.
-    const start = new Date();
-    start.setHours(12, 0, 0, 0);
-    start.setDate(start.getDate() - start.getDay() + daysAgo);
+    // Just inside this workweek (Saturday 00:00 on) — any day it runs,
+    // Saturdays included; a Sunday anchor was last week every Saturday.
+    const start = new Date(workweekStart().getTime() + 60_000);
+    start.setDate(start.getDate() + daysAgo);
     return entry({
       id,
       clockInAt: start.toISOString(),

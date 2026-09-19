@@ -1,4 +1,5 @@
 import { bookRide, type BookRideInput, type MyTransport, type Ride, type RideDirection } from '@/lib/transportApi';
+import { windowForShift } from './shiftTrips';
 
 /**
  * Rides against the schedule — the click-saver. Rides never depend on a
@@ -58,12 +59,20 @@ export async function bookShifts(data: MyTransport, covers: ShiftCoverage[]): Pr
   if (!pickup) return 0;
   let booked = 0;
   for (const c of covers) {
+    // The store's shift it is, when the store books by shift — the seat
+    // then rides with everyone else on that shift.
+    const byShift = windowForShift(
+      data.stores.find((st) => st.id === c.shift.locationId),
+      c.shift.startsAt,
+    );
     for (const direction of c.canBook) {
       await bookRide({
         direction,
         locationId: c.shift.locationId!,
         ...pickup,
-        targetAt: direction === 'TO_WORK' ? c.shift.startsAt : c.shift.endsAt,
+        ...(byShift
+          ? { windowLabel: byShift.window.label, date: byShift.date }
+          : { targetAt: direction === 'TO_WORK' ? c.shift.startsAt : c.shift.endsAt }),
         shiftId: c.shift.id,
       });
       booked += 1;

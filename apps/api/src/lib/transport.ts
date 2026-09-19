@@ -90,6 +90,7 @@ export const rideSelect = {
   serviceDate: true,
   status: true,
   shiftId: true,
+  windowLabel: true,
   note: true,
   address: true,
   lat: true,
@@ -152,6 +153,8 @@ export function toRideView(r: RideRow) {
     serviceDate: r.serviceDate,
     status: r.status,
     shiftId: r.shiftId,
+    /** The store shift the seat is for ("Morning"); null: an other time. */
+    windowLabel: r.windowLabel,
     note: r.note,
     pickup: r.stop
       ? { kind: 'stop' as const, id: r.stop.id, name: r.stop.name, address: r.stop.address }

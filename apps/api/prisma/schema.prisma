@@ -7469,6 +7469,11 @@ model Ride {
   status         RideStatus     @default(REQUESTED)
   /// Informational only — rides never depend on the schedule.
   shiftId        String?        @db.Uuid
+  /// The store shift this seat is for ("Morning") — booked by shift, the
+  /// ride's time is the shift's start (to work) or end (home). Riders on
+  /// the same store shift, way and day share its vans' seats; when they're
+  /// full the rest wait in line. Null: booked at an "other time".
+  windowLabel    String?        @db.VarChar(80)
   note           String?        @db.VarChar(300)
   // Dispatch: the run, the pickup order and time.
   runId          String?        @db.Uuid
@@ -7522,6 +7527,7 @@ model Ride {
   @@index([associateId, targetAt])
   @@index([runId])
   @@index([chargedRunId])
+  @@index([locationId, direction, windowLabel, targetAt])
 }
 
 /// One van trip: a van, a driver, a direction, a departure, the riders.
