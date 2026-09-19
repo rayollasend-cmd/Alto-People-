@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -2110,7 +2110,7 @@ kiosk99Router.post('/kiosk/face-consent', async (req, res) => {
   res.json({ ok: true, status });
 });
 
-kiosk99Router.post('/kiosk/punch', async (req, res) => {
+const punchHandler = async (req: Request, res: Response): Promise<void> => {
   const input = PunchInputSchema.parse(req.body);
 
   // 0. Idempotency short-circuit. If the kiosk is replaying a punch it
@@ -2843,6 +2843,82 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     at: result.timeEntry.updatedAt.toISOString(),
     punchId: result.punchId,
   });
+};
+
+/**
+ * KioskPunch.idempotencyKey is UNIQUE, and the replay short-circuit at the
+ * top of the handler is a read: between that read and the write, a second
+ * replay of the same queued punch can land. The offline queue makes that
+ * ordinary rather than exotic — a tablet coming back onto wifi drains its
+ * queue, and a retry of a request whose response was lost arrives beside
+ * the original.
+ *
+ * The loser of that race used to raise a raw P2002, which the error
+ * middleware turned into a 500 and paged Sentry. Worse than the noise: the
+ * kiosk's queue treats 5xx as retryable, so the same punch came back and
+ * lost the race again.
+ *
+ * The right answer is the one the winner already recorded — that is what
+ * idempotency means, and a 2xx is what lets the queue drop the item as
+ * done. So we re-read the punch the winner wrote and reply with it, which
+ * is exactly what the short-circuit would have returned had it run a
+ * moment later. If the row genuinely isn't there, the conflict was about
+ * something else and the original error stands.
+ */
+function isPunchIdempotencyConflict(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
+    return false;
+  }
+  const target = err.meta?.target;
+  const fields = Array.isArray(target) ? target : typeof target === 'string' ? [target] : [];
+  return fields.some((f) => String(f).includes('idempotencyKey'));
+}
+
+kiosk99Router.post('/kiosk/punch', async (req, res, next) => {
+  try {
+    await punchHandler(req, res);
+  } catch (err) {
+    const key = typeof req.body?.idempotencyKey === 'string' ? req.body.idempotencyKey : null;
+    if (!key || !isPunchIdempotencyConflict(err)) {
+      next(err);
+      return;
+    }
+    const prior = await prisma.kioskPunch.findUnique({
+      where: { idempotencyKey: key },
+      select: {
+        id: true,
+        action: true,
+        rejectReason: true,
+        createdAt: true,
+        timeEntry: { select: { updatedAt: true } },
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!prior) {
+      next(err);
+      return;
+    }
+    if (prior.action === 'REJECTED') {
+      // Same answer the short-circuit gives: a 4xx the queue drops, with
+      // the reason, rather than replaying a punch that was already refused.
+      next(
+        new HttpError(
+          409,
+          'previously_rejected',
+          `This punch was previously rejected: ${prior.rejectReason ?? 'unknown'}`,
+        ),
+      );
+      return;
+    }
+    res.json({
+      action: prior.action,
+      associateName: prior.associate
+        ? `${prior.associate.firstName} ${prior.associate.lastName}`
+        : 'unknown',
+      at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
+      punchId: prior.id,
+    });
+  }
 });
 
 // Attach the selfie + face descriptor to a punch AFTER the fact. The

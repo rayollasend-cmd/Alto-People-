@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { signSession } from '../../lib/jwt.js';
@@ -384,6 +384,43 @@ describe('admin face-consent + enrollment-rejection cleanup', () => {
         where: { associateId: associate.id },
       }),
     ).toBeNull();
+  });
+});
+
+describe('POST /kiosk/punch — the idempotency race', () => {
+  // The replay short-circuit is a READ, so it can miss a row that exists by
+  // the time the write lands: the queue retries a request whose response was
+  // lost while the original is still in flight. (Two *simultaneous* replays
+  // don't get here — the 1/sec punch limit answers the second with a 429 —
+  // so the window is a slow first request, which is exactly the case a
+  // tablet on bad wifi produces.)
+  //
+  // The loser used to raise a raw P2002 → 500, and the queue retries 5xx,
+  // so the same punch came back and lost again. It gets the winner's answer
+  // now, which is what lets the queue drop the item as done.
+  it('answers the loser with the punch the winner recorded, and clocks once', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+    const key = '22222222-2222-4222-8222-222222222222';
+    const body = { deviceToken, pin, selfie: null, idempotencyKey: key };
+
+    const first = await request(app()).post('/kiosk/punch').send(body);
+    expect(first.status).toBe(200);
+
+    // Reproduce the window: the short-circuit read misses the row the
+    // winner has already written, so the handler carries on to the insert.
+    const real = prisma.kioskPunch.findUnique.bind(prisma.kioskPunch);
+    const spy = vi
+      .spyOn(prisma.kioskPunch, 'findUnique')
+      .mockImplementationOnce((() => Promise.resolve(null)) as never)
+      .mockImplementation(real as never);
+
+    await new Promise((r) => setTimeout(r, 1100)); // clear the 1/sec limit
+    const loser = await request(app()).post('/kiosk/punch').send(body);
+    spy.mockRestore();
+
+    expect(loser.status).toBe(200);
+    expect(loser.body.punchId).toBe(first.body.punchId);
+    expect(await prisma.kioskPunch.count({ where: { idempotencyKey: key } })).toBe(1);
   });
 });
 
