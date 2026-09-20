@@ -162,7 +162,7 @@ describe('GET /time-off/me/balance', () => {
  * -------------------------------------------------------------------------- */
 
 async function seedAssociateWithBalance(opts: {
-  category?: 'SICK' | 'VACATION';
+  category?: 'SICK' | 'VACATION' | 'BEREAVEMENT';
   balanceMinutes?: number;
   state?: string | null;
 } = {}) {
@@ -442,6 +442,75 @@ describe('POST /time-off/admin/requests/:id/approve — atomic ledger debit', ()
     expect(useRow.deltaMinutes).toBe(-480);
     expect(useRow.notes).toMatch(/Approved over balance/);
     expect(useRow.notes).toMatch(/covered by Dana/);
+  });
+
+  it('a death in the family is not a withdrawal — bereavement approves with no bank', async () => {
+    // Bereavement is granted by the event, not accrued, so nobody has a
+    // balance for it and the gate refused every single one: "Insufficient
+    // balance. Available 0h, requested 8h."
+    const { associate, assocUser, hr } = await seedAssociateWithBalance();
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/time-off/me/requests').send({
+      category: 'BEREAVEMENT', startDate: '2026-05-04', endDate: '2026-05-04', hours: 8,
+    });
+    const hrAgent = await loginAs(hr.email);
+    // No override reason: it should not need one.
+    const ok = await hrAgent.post(`/time-off/admin/requests/${create.body.request.id}/approve`).send({});
+    expect(ok.status).toBe(200);
+
+    // Taken, and on the record — but no balance row invented to hold -8h,
+    // which is a number nobody can act on and everybody has to explain.
+    const useRow = await prisma.timeOffLedgerEntry.findFirstOrThrow({
+      where: { associateId: associate.id, reason: 'USE', category: 'BEREAVEMENT' },
+    });
+    expect(useRow.deltaMinutes).toBe(-480);
+    // Nothing to be over, so nothing to explain.
+    expect(useRow.notes).toBeNull();
+    expect(
+      await prisma.timeOffBalance.findUnique({
+        where: { associateId_category: { associateId: associate.id, category: 'BEREAVEMENT' } },
+      }),
+    ).toBeNull();
+  });
+
+  it('a summons cannot be declined for want of hours', async () => {
+    const { assocUser, hr } = await seedAssociateWithBalance();
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/time-off/me/requests').send({
+      category: 'JURY_DUTY', startDate: '2026-05-04', endDate: '2026-05-05', hours: 16,
+    });
+    const hrAgent = await loginAs(hr.email);
+    expect(
+      (await hrAgent.post(`/time-off/admin/requests/${create.body.request.id}/approve`).send({})).status,
+    ).toBe(200);
+  });
+
+  it('where an employer does bank bereavement, the balance still moves', async () => {
+    // Some employers do configure it — 8h a year, say. Then it is drawn
+    // down like anything else, and may go negative, but is still never
+    // refused: the funeral happened.
+    const { associate, assocUser, hr } = await seedAssociateWithBalance({
+      category: 'BEREAVEMENT',
+      balanceMinutes: 480,
+    });
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/time-off/me/requests').send({
+      category: 'BEREAVEMENT', startDate: '2026-05-04', endDate: '2026-05-05', hours: 16,
+    });
+    const hrAgent = await loginAs(hr.email);
+    expect(
+      (await hrAgent.post(`/time-off/admin/requests/${create.body.request.id}/approve`).send({})).status,
+    ).toBe(200);
+
+    const balance = await prisma.timeOffBalance.findUniqueOrThrow({
+      where: { associateId_category: { associateId: associate.id, category: 'BEREAVEMENT' } },
+    });
+    expect(balance.balanceMinutes).toBe(-480);
+    // Nobody had to type a reason, so the ledger explains itself.
+    const useRow = await prisma.timeOffLedgerEntry.findFirstOrThrow({
+      where: { associateId: associate.id, reason: 'USE', category: 'BEREAVEMENT' },
+    });
+    expect(useRow.notes).toMatch(/Approved over balance \(480min available, 960min taken\)/);
   });
 
   it('a one-line reason is not a reason', async () => {

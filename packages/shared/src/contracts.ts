@@ -4793,6 +4793,25 @@ export const TimeOffCategorySchema = z.enum([
 ]);
 export type TimeOffCategory = z.infer<typeof TimeOffCategorySchema>;
 
+/**
+ * Leave that an event grants, not a bank.
+ *
+ * Bereavement is given per occurrence — three days for a death in the
+ * family — and jury duty is a summons the employer cannot refuse. Neither
+ * is accrued, so neither has hours to be short of, and an approver who was
+ * told "Insufficient balance. Available 0h, requested 8h" was being asked
+ * to fund a bank that was never going to have anything in it.
+ *
+ * An employer may still choose to bank these (say 24h of bereavement a
+ * year) by giving the associate an entitlement. Where they have, the
+ * balance is drawn down like any other; what never happens is a refusal.
+ */
+export const EVENT_BASED_TIME_OFF_CATEGORIES = ['BEREAVEMENT', 'JURY_DUTY'] as const;
+
+export function isEventBasedTimeOffCategory(category: string): boolean {
+  return (EVENT_BASED_TIME_OFF_CATEGORIES as readonly string[]).includes(category);
+}
+
 export const TimeOffLedgerReasonSchema = z.enum([
   'ACCRUAL',
   'USE',

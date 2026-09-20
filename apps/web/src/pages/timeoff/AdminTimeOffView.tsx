@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CalendarCheck, Check, MessageSquarePlus, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type {
-  TimeOffRequest,
-  TimeOffRequestStatus,
+import {
+  isEventBasedTimeOffCategory,
+  type TimeOffRequest,
+  type TimeOffRequestStatus,
 } from '@alto-people/shared';
 import {
   approveAdminRequest,
@@ -84,8 +85,14 @@ function fmtHours(minutes: number): string {
  *  they never render a day early west of UTC. */
 const fmtYmd = (s: string) => fmtDate(parseYmd(s));
 
-/** Approving would over-draw the associate's balance. */
-const isInsufficient = (r: TimeOffRequest) =>
+/**
+ * Approving would over-draw the associate's balance — which disables the
+ * approve buttons outright, so it must only be true where a balance is
+ * actually what grants the leave. Bereavement and jury duty are granted by
+ * the event; the server will not refuse them, and neither should this.
+ */
+export const isInsufficient = (r: TimeOffRequest) =>
+  !isEventBasedTimeOffCategory(r.category) &&
   r.balanceMinutes !== null &&
   r.balanceMinutes !== undefined &&
   r.balanceMinutes < r.requestedMinutes;

@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, TimeOffCategory } from '@prisma/client';
+import { isEventBasedTimeOffCategory } from '@alto-people/shared';
 import { ensureEntitlementApplied } from './timeOffEntitlement.js';
 import { emitWebhookEvent } from './webhookDispatch.js';
 
@@ -121,9 +122,17 @@ export async function approveRequest(
         },
       },
     });
+    // An event-based category with no entitlement has no bank at all —
+    // which is not the same as a bank holding zero. There is nothing to
+    // check it against and nothing to draw down.
+    const eventBased = isEventBasedTimeOffCategory(req.category);
+    const unbanked = eventBased && !balance;
     const currentMinutes = balance?.balanceMinutes ?? 0;
-    const short = currentMinutes < req.requestedMinutes;
-    if (short && !override) {
+    const short = !unbanked && currentMinutes < req.requestedMinutes;
+    // Bereavement and jury duty are never refused for want of hours. Where
+    // an employer has chosen to bank them the balance still moves, and is
+    // allowed to go negative — the leave happened either way.
+    if (short && !override && !eventBased) {
       throw new InsufficientBalanceError(currentMinutes, req.requestedMinutes);
     }
 
@@ -139,8 +148,10 @@ export async function approveRequest(
         // ledger is what anyone reconciling a negative balance actually
         // reads, and a negative line with no explanation is exactly the
         // thing that turns into an argument months later.
-        notes: short && override
-          ? `Approved over balance (${currentMinutes}min available, ${req.requestedMinutes}min taken) — ${override.reason}${note ? ` · ${note}` : ''}`
+        notes: short
+          ? `Approved over balance (${currentMinutes}min available, ${req.requestedMinutes}min taken)${
+              override ? ` — ${override.reason}` : ''
+            }${note ? ` · ${note}` : ''}`
           : (note ?? null),
       },
     });
@@ -149,7 +160,11 @@ export async function approveRequest(
     // row to decrement, and an override is precisely the case where that
     // is true. Creating it at the negative keeps the arithmetic honest
     // instead of silently starting them at zero.
-    const updatedBalance = await tx.timeOffBalance.upsert({
+    // Unbanked: no row is conjured, because a bereavement balance of
+    // -8h is a number nobody can act on and everybody has to explain.
+    // The ledger still carries what was taken, so it can still be
+    // reported on.
+    const updatedBalance = unbanked ? null : await tx.timeOffBalance.upsert({
       where: {
         associateId_category: {
           associateId: req.associateId,
@@ -188,7 +203,7 @@ export async function approveRequest(
     return {
       status: 'APPROVED' as const,
       ledgerEntryId: ledgerEntry.id,
-      newBalanceMinutes: updatedBalance.balanceMinutes,
+      newBalanceMinutes: updatedBalance?.balanceMinutes ?? 0,
     };
   }, { timeout: 30_000 });
 
