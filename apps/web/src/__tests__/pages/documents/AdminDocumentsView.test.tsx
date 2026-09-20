@@ -1,0 +1,169 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
+import { AuthContext } from '@/lib/auth';
+import { ConfirmProvider } from '@/lib/confirm';
+import { TooltipProvider } from '@/components/ui/Tooltip';
+
+vi.mock('@/lib/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/api')>()),
+  apiFetch: vi.fn(),
+}));
+
+import { apiFetch } from '@/lib/api';
+import { AdminDocumentsView } from '@/pages/documents/AdminDocumentsView';
+
+/**
+ * The vault's job is "clear what has waited longest".
+ *
+ * It could not do that: the list arrived capped and newest-first, the page
+ * sorted whatever it held, and the rows were then regrouped by associate —
+ * so sorting by age ordered the GROUPS by their oldest document, and the
+ * second-oldest thing in the vault could sit halfway down inside someone
+ * else's group. Sorting and paging belong to the server now, and the queue
+ * is flat unless you actually ask for people.
+ */
+
+const doc = (over: { id: string; filename: string; name: string; createdAt: string }) => ({
+  id: over.id,
+  associateId: `a-${over.name}`,
+  associateName: over.name,
+  kind: 'ID' as const,
+  status: 'UPLOADED' as const,
+  filename: over.filename,
+  mimeType: 'image/png',
+  size: 1024,
+  createdAt: over.createdAt,
+  uploadedByName: null,
+  verifiedAt: null,
+  verifiedByName: null,
+  rejectionReason: null,
+  expiresAt: null,
+});
+
+const STATS = {
+  total: 120,
+  uploaded: 90,
+  verified: 20,
+  rejected: 6,
+  expired: 4,
+  oldestPendingAt: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+};
+
+/** Oldest first, and deliberately from three different people — the old
+ *  grouping would have pulled these apart. */
+const PAGE = [
+  doc({ id: 'd1', filename: 'oldest.png', name: 'Ada Lovelace', createdAt: new Date(Date.now() - 9 * 86_400_000).toISOString() }),
+  doc({ id: 'd2', filename: 'middle.png', name: 'Grace Hopper', createdAt: new Date(Date.now() - 5 * 86_400_000).toISOString() }),
+  doc({ id: 'd3', filename: 'newest.png', name: 'Ada Lovelace', createdAt: new Date(Date.now() - 1 * 86_400_000).toISOString() }),
+];
+
+let lastListUrl = '';
+
+function routes(docs = PAGE, total = 120) {
+  lastListUrl = '';
+  vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+    if (path.startsWith('/documents/admin/stats')) return STATS as never;
+    if (path.startsWith('/documents/admin')) {
+      lastListUrl = path;
+      return { documents: docs, total, page: 0, pageSize: 50 } as never;
+    }
+    throw new Error(`unexpected ${path}`);
+  });
+}
+
+function renderVault() {
+  const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
+  return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AuthContext.Provider
+        value={{
+          isInitializing: false,
+          isOffline: false,
+          user: { id: 'u', email: 'hr@altohr.com', role: 'HR_ADMINISTRATOR', status: 'ACTIVE', clientId: null, associateId: null },
+          role: 'HR_ADMINISTRATOR',
+          capabilities: new Set<Capability>(caps),
+          signIn: vi.fn(),
+          signOut: vi.fn(),
+          can: (c: Capability) => caps.has(c),
+        }}
+      >
+        <ConfirmProvider>
+          <TooltipProvider>
+          <MemoryRouter>
+            <AdminDocumentsView canManage />
+          </MemoryRouter>
+          </TooltipProvider>
+        </ConfirmProvider>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.mocked(apiFetch).mockReset();
+});
+
+describe('the document vault', () => {
+  it('asks the server to sort and page, rather than sorting what it was given', async () => {
+    routes();
+    renderVault();
+    await screen.findByText('oldest.png');
+    expect(lastListUrl).toMatch(/sort=uploaded_desc/);
+    expect(lastListUrl).toMatch(/pageSize=50/);
+    // "Action needed" (uploads to review + expired to renew) is ONE query
+    // now. It used to fetch the whole vault and narrow in the browser,
+    // which is what forced the 200-row load in the first place.
+    expect(decodeURIComponent(lastListUrl)).toMatch(/status=UPLOADED,EXPIRED/);
+  });
+
+  it('keeps the queue flat, so the oldest row really is at the top', async () => {
+    routes();
+    renderVault();
+    await screen.findByText('oldest.png');
+
+    const table = screen.getByRole('table');
+    const rows = within(table).getAllByRole('row');
+    // One header row, then one row per document — no per-associate header
+    // rows breaking the age order into person-sized chunks.
+    expect(rows).toHaveLength(1 + PAGE.length);
+    const order = within(table)
+      .getAllByText(/oldest\.png|middle\.png|newest\.png/)
+      .map((n) => n.textContent);
+    expect(order).toEqual(['oldest.png', 'middle.png', 'newest.png']);
+  });
+
+  it('takes its totals from the vault, not from the page it happens to hold', async () => {
+    routes();
+    renderVault();
+    // 90 awaiting review across the whole vault. This page holds exactly
+    // three documents and all three are UPLOADED, so a page-derived tally
+    // would read 3 — which is what it used to do past the row cap.
+    await screen.findByText('oldest.png');
+    // 90 and 20 exist only in the stats response; nothing on this page of
+    // three documents could produce either number.
+    expect(screen.getAllByText('90').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('20').length).toBeGreaterThan(0);
+  });
+
+  it('offers a way through a vault bigger than one page', async () => {
+    routes();
+    renderVault();
+    expect(await screen.findByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(lastListUrl).toMatch(/page=1/);
+  });
+
+  it('offers a retry when the list fails, instead of only a page reload', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/documents/admin/stats')) return STATS as never;
+      throw new Error('nope');
+    });
+    renderVault();
+    expect(await screen.findByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+});

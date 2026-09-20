@@ -260,7 +260,7 @@ async function computeOnboardingSets(clientId?: string | null) {
   // meant ~250 associates holding two drug-test documents exhausted the
   // window and pushed healthy associates into "missing" — a compliance
   // dashboard reporting false criticals.
-  const [drugRows, bgRows, bgDocRows, i9Rows, w4Rows, offerDocs, policyAcks] =
+  const [drugRows, bgRows, bgDocRows, i9Rows, w4Rows, policyAcks] =
     await Promise.all([
       prisma.documentRecord.findMany({
         take: ids.length,
@@ -308,16 +308,6 @@ async function computeOnboardingSets(clientId?: string | null) {
         where: { associateId: { in: ids } },
         select: { associateId: true },
       }),
-      prisma.documentRecord.findMany({
-        take: ids.length,
-        distinct: ['associateId'],
-        where: {
-          associateId: { in: ids },
-          kind: 'OFFER_LETTER',
-          deletedAt: null,
-        },
-        select: { associateId: true },
-      }),
       prisma.policyAcknowledgment.findMany({
         take: ids.length,
         where: { associateId: { in: ids } },
@@ -336,7 +326,19 @@ async function computeOnboardingSets(clientId?: string | null) {
     i9Rows.filter((r) => r.eVerifyStatus === 'EMPLOYMENT_AUTHORIZED').map((r) => r.associateId),
   );
   const w4Set = setOf(w4Rows);
-  const offerSet = setOf(offerDocs);
+  // APPROVAL IS THE STANDARD HERE, NOT A FILED PDF (product decision,
+  // 2026-09-20). This used to count OFFER_LETTER documents, which meant it
+  // read 0% for the life of the system: filing one requires a published
+  // offer-letter template, and none was ever created, so lib/offerLetters
+  // skipped every associate with `no_template` and said nothing about it.
+  //
+  // The population IS "most-recent application APPROVED", so every member
+  // satisfies this by construction and the signal reads 100% — which is
+  // exactly why the label is "Offer approved" and not "Offer letter on
+  // file". It states what it measures. To go back to counting real
+  // letters, restore the documentRecord query above (kind: 'OFFER_LETTER')
+  // and rename the signal with it.
+  const offerSet = new Set(ids);
   const policySet = setOf(policyAcks);
 
   const ageOkSet = new Set(
@@ -445,7 +447,7 @@ export async function buildOnboardingTile(
     buildSignal('I9_BOTH_SECTIONS', 'I-9 Section 1 + Section 2', CLAUSE.I9, sets.I9_BOTH_SECTIONS),
     buildSignal('E_VERIFY', 'E-Verify cleared', CLAUSE.E_VERIFY, sets.E_VERIFY),
     buildSignal('W4_ON_FILE', 'W-4 on file', CLAUSE.W4, sets.W4_ON_FILE),
-    buildSignal('OFFER_LETTER_SIGNED', 'Offer letter on file', CLAUSE.OFFER, sets.OFFER_LETTER_SIGNED),
+    buildSignal('OFFER_LETTER_SIGNED', 'Offer approved', CLAUSE.OFFER, sets.OFFER_LETTER_SIGNED),
     buildSignal('POLICY_ACK_SIGNED', 'Policy acknowledged', CLAUSE.POLICY, sets.POLICY_ACK_SIGNED),
   ];
 
@@ -493,6 +495,9 @@ const NUDGE_COPY: Record<
       'Your W-4 tax withholding form is not on file. It is required before your ' +
       'first paycheck — complete it from your onboarding checklist.',
   },
+  // Unreachable while the signal is satisfied by approval: nobody in the
+  // population can be missing it, so the nudge never has a recipient. Kept
+  // so restoring the document-backed signal restores its nudge with it.
   OFFER_LETTER_SIGNED: {
     subject: 'Action needed: sign your offer letter',
     body:

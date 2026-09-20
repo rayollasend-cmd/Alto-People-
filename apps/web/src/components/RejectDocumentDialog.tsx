@@ -16,10 +16,15 @@ import {
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
 
-// Same canned reasons as the document vault's reject dialogs (REJECT_PRESETS
-// in AdminDocumentsView — not exported there, keep the strings in sync).
-// Clicking one fills the free-text field (still editable).
-const REJECT_PRESETS = [
+/**
+ * The canned reasons, exported so every surface that rejects a document
+ * offers the same three. They used to be copied into AdminDocumentsView
+ * with a comment asking whoever edited one to remember the other — three
+ * copies of a list, kept in step by hope.
+ *
+ * Clicking one fills the free-text field, which stays editable.
+ */
+export const REJECT_PRESETS = [
   'Blurry / unreadable',
   'Expired document',
   'Wrong document type',

@@ -828,3 +828,129 @@ describe('POST /documents/admin/:id/reclassify', () => {
       .expect(403);
   });
 });
+
+describe('GET /documents/admin — the queue has to be sortable across the whole vault', () => {
+  /**
+   * The vault's job is "clear what has waited longest". That was
+   * impossible: the list came back capped and newest-first, and the page
+   * sorted what it had — so "oldest first" ordered the rows of that page,
+   * never the vault. Sorting and paging both belong on the server.
+   */
+  async function seedVault(n: number) {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const associate = await createAssociate({ clientId: client.id });
+    const base = Date.now() - n * 60_000;
+    for (let i = 0; i < n; i++) {
+      await prisma.documentRecord.create({
+        data: {
+          associateId: associate.id,
+          clientId: client.id,
+          kind: 'ID',
+          status: 'UPLOADED',
+          filename: `doc-${String(i).padStart(3, '0')}.png`,
+          mimeType: 'image/png',
+          size: 10,
+          s3Key: `k-${i}.png`,
+          createdAt: new Date(base + i * 60_000),
+        },
+      });
+    }
+    return { hr, associate };
+  }
+
+  it('returns the genuinely oldest rows first, not the oldest of a page', async () => {
+    const { hr } = await seedVault(12);
+    const a = await loginAs(hr.email);
+    const res = await a.get('/documents/admin?sort=uploaded_asc&pageSize=3');
+    expect(res.status).toBe(200);
+    expect(res.body.documents).toHaveLength(3);
+    expect(res.body.total).toBe(12);
+    expect(res.body.documents.map((d: { filename: string }) => d.filename)).toEqual([
+      'doc-000.png',
+      'doc-001.png',
+      'doc-002.png',
+    ]);
+  });
+
+  it('pages without repeating or skipping a row', async () => {
+    const { hr } = await seedVault(10);
+    const a = await loginAs(hr.email);
+    const seen: string[] = [];
+    for (let page = 0; page < 5; page++) {
+      const res = await a.get(`/documents/admin?sort=uploaded_asc&pageSize=2&page=${page}`);
+      seen.push(...res.body.documents.map((d: { filename: string }) => d.filename));
+    }
+    expect(seen).toHaveLength(10);
+    expect(new Set(seen).size).toBe(10);
+  });
+
+  it('expresses "action needed" as one query instead of fetching the vault', async () => {
+    const { hr, associate } = await seedVault(3);
+    await prisma.documentRecord.create({
+      data: {
+        associateId: associate.id,
+        kind: 'ID',
+        status: 'VERIFIED',
+        filename: 'done.png',
+        mimeType: 'image/png',
+        size: 10,
+        s3Key: 'k-done.png',
+      },
+    });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/documents/admin?status=UPLOADED,REJECTED');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(
+      res.body.documents.every((d: { status: string }) => d.status === 'UPLOADED'),
+    ).toBe(true);
+  });
+
+  it('clamps a page size nobody should be asking for', async () => {
+    const { hr } = await seedVault(4);
+    const a = await loginAs(hr.email);
+    const res = await a.get('/documents/admin?pageSize=99999');
+    expect(res.body.pageSize).toBe(200);
+  });
+});
+
+describe('GET /documents/admin/stats', () => {
+  it('counts the whole vault, not the page', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const associate = await createAssociate({ clientId: client.id });
+    const mk = (status: 'UPLOADED' | 'VERIFIED' | 'REJECTED', i: number, at?: Date) =>
+      prisma.documentRecord.create({
+        data: {
+          associateId: associate.id,
+          clientId: client.id,
+          kind: 'ID',
+          status,
+          filename: `f${i}.png`,
+          mimeType: 'image/png',
+          size: 1,
+          s3Key: `s${i}.png`,
+          ...(at ? { createdAt: at } : {}),
+        },
+      });
+    const oldest = new Date(Date.now() - 9 * 24 * 3600 * 1000);
+    await mk('UPLOADED', 1, oldest);
+    await mk('UPLOADED', 2);
+    await mk('VERIFIED', 3);
+    await mk('REJECTED', 4);
+
+    const a = await loginAs(hr.email);
+    const res = await a.get('/documents/admin/stats');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total: 4, uploaded: 2, verified: 1, rejected: 1 });
+    // Drives the SLA banner — the oldest thing still waiting on a human.
+    expect(new Date(res.body.oldestPendingAt).getTime()).toBeCloseTo(oldest.getTime(), -3);
+  });
+
+  it('is not open to a caller without the manage capability', async () => {
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE' });
+    const a = await loginAs(assoc.email);
+    expect((await a.get('/documents/admin/stats')).status).toBe(403);
+  });
+});

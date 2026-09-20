@@ -3,6 +3,8 @@ import type {
   DocumentListResponse,
   DocumentRecord,
   DocumentRejectInput,
+  DocumentSort,
+  DocumentStats,
   DocumentStatus,
   DocumentVaultResponse,
 } from '@alto-people/shared';
@@ -12,17 +14,37 @@ export function listMyDocuments(): Promise<DocumentListResponse> {
   return apiFetch<DocumentListResponse>('/documents/me');
 }
 
-export function listAdminDocuments(filters: {
-  status?: DocumentStatus;
-  kind?: DocumentKind;
-  associateId?: string;
-} = {}): Promise<DocumentListResponse> {
+export function listAdminDocuments(
+  filters: {
+    /** One status, or several — "action needed" is UPLOADED + REJECTED. */
+    status?: DocumentStatus | DocumentStatus[];
+    kind?: DocumentKind;
+    associateId?: string;
+    /** Matches filename or associate name, server-side. Filtering in the
+     *  browser only ever searched whatever the page happened to hold. */
+    q?: string;
+    sort?: DocumentSort;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<DocumentListResponse> {
   const p = new URLSearchParams();
-  if (filters.status) p.set('status', filters.status);
+  if (filters.status) {
+    p.set('status', Array.isArray(filters.status) ? filters.status.join(',') : filters.status);
+  }
   if (filters.kind) p.set('kind', filters.kind);
   if (filters.associateId) p.set('associateId', filters.associateId);
+  if (filters.q) p.set('q', filters.q);
+  if (filters.sort) p.set('sort', filters.sort);
+  if (filters.page) p.set('page', String(filters.page));
+  if (filters.pageSize) p.set('pageSize', String(filters.pageSize));
   const qs = p.toString();
   return apiFetch<DocumentListResponse>(`/documents/admin${qs ? `?${qs}` : ''}`);
+}
+
+/** Vault counts over the whole population, not the page. */
+export function getDocumentStats(): Promise<DocumentStats> {
+  return apiFetch<DocumentStats>('/documents/admin/stats');
 }
 
 /** Vault: every document + a compliance summary from each domain's ledger. */

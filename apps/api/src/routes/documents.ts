@@ -8,6 +8,7 @@ import {
   DocSideSchema,
   DocumentKindSchema,
   DocumentListResponseSchema,
+  DocumentStatsSchema,
   DocumentReclassifyInputSchema,
   DocumentRejectInputSchema,
   DocumentVaultResponseSchema,
@@ -476,24 +477,75 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
 
 /* ===== HR/Ops queue ===================================================== */
 
+/** Pages are cut server-side; 200 was the old hard cap and stays the ceiling. */
+const DOC_PAGE_MAX = 200;
+const DOC_PAGE_DEFAULT = 50;
+
+/** `status` accepts a comma list so "action needed" — UPLOADED plus
+ *  REJECTED — is one query instead of fetching the whole vault and
+ *  narrowing in the browser, which is what forced the old 200-row load. */
+function parseStatuses(raw: string | undefined): Prisma.DocumentRecordWhereInput['status'] {
+  if (!raw) return undefined;
+  const parts = raw.split(',').map((x) => x.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0] as Prisma.DocumentRecordWhereInput['status'];
+  return { in: parts } as Prisma.DocumentRecordWhereInput['status'];
+}
+
+const DOC_ORDER: Record<string, Prisma.DocumentRecordOrderByWithRelationInput[]> = {
+  // Oldest first is the queue's reason to exist: clear what has waited
+  // longest. Tie-broken by id so paging can never repeat or skip a row.
+  uploaded_asc: [{ createdAt: 'asc' }, { id: 'asc' }],
+  uploaded_desc: [{ createdAt: 'desc' }, { id: 'asc' }],
+  associate_asc: [{ associate: { lastName: 'asc' } }, { createdAt: 'asc' }, { id: 'asc' }],
+  associate_desc: [{ associate: { lastName: 'desc' } }, { createdAt: 'asc' }, { id: 'asc' }],
+  kind_asc: [{ kind: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+  kind_desc: [{ kind: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
+  file_asc: [{ filename: 'asc' }, { id: 'asc' }],
+  file_desc: [{ filename: 'desc' }, { id: 'asc' }],
+  size_asc: [{ size: 'asc' }, { id: 'asc' }],
+  size_desc: [{ size: 'desc' }, { id: 'asc' }],
+  status_asc: [{ status: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+  status_desc: [{ status: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
+};
+
 documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
   try {
-    const status = req.query.status?.toString();
     const kind = req.query.kind?.toString();
     const associateId = req.query.associateId?.toString();
+    const q = req.query.q?.toString().trim();
+    const status = parseStatuses(req.query.status?.toString());
     const where: Prisma.DocumentRecordWhereInput = {
       ...scopeDocuments(req.user!),
-      ...(status ? { status: status as Prisma.DocumentRecordWhereInput['status'] } : {}),
+      ...(status ? { status } : {}),
       ...(kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : {}),
       ...(associateId ? { associateId } : {}),
+      // Search belongs here too: filtering a page in the browser searches
+      // only what the page happened to contain.
+      ...(q
+        ? {
+            OR: [
+              { filename: { contains: q, mode: 'insensitive' as const } },
+              { associate: { firstName: { contains: q, mode: 'insensitive' as const } } },
+              { associate: { lastName: { contains: q, mode: 'insensitive' as const } } },
+            ],
+          }
+        : {}),
     };
-    // Total alongside the capped page — past 200 docs the vault used to
-    // present a silently-partial list as authoritative audit truth.
+
+    const pageSize = Math.min(
+      Math.max(Number(req.query.pageSize) || DOC_PAGE_DEFAULT, 1),
+      DOC_PAGE_MAX,
+    );
+    const page = Math.max(Number(req.query.page) || 0, 0);
+    const orderBy = DOC_ORDER[req.query.sort?.toString() ?? ''] ?? DOC_ORDER.uploaded_desc!;
+
     const [rows, total] = await Promise.all([
       prisma.documentRecord.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
-        take: 200,
+        orderBy,
+        skip: page * pageSize,
+        take: pageSize,
         include: DOC_INCLUDE,
       }),
       prisma.documentRecord.count({ where }),
@@ -502,6 +554,47 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
       DocumentListResponseSchema.parse({
         documents: rows.map(toRecord),
         total,
+        page,
+        pageSize,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /documents/admin/stats — vault counts over the WHOLE population.
+ *
+ * The KPI strip used to be derived from the capped list, so once the vault
+ * passed the cap every number on the page was quietly wrong. One grouped
+ * count answers it at any size, and costs one query rather than a 200-row
+ * payload the browser then has to tally.
+ */
+documentsRouter.get('/admin/stats', MANAGE, async (req, res, next) => {
+  try {
+    const base = scopeDocuments(req.user!);
+    const [grouped, oldest] = await Promise.all([
+      prisma.documentRecord.groupBy({
+        by: ['status'],
+        where: base,
+        _count: { _all: true },
+      }),
+      prisma.documentRecord.findFirst({
+        where: { ...base, status: 'UPLOADED' },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+    ]);
+    const by = (s: string) => grouped.find((g) => g.status === s)?._count._all ?? 0;
+    res.json(
+      DocumentStatsSchema.parse({
+        total: grouped.reduce((sum, g) => sum + g._count._all, 0),
+        uploaded: by('UPLOADED'),
+        verified: by('VERIFIED'),
+        rejected: by('REJECTED'),
+        expired: by('EXPIRED'),
+        oldestPendingAt: oldest?.createdAt.toISOString() ?? null,
       }),
     );
   } catch (err) {

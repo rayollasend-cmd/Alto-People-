@@ -646,9 +646,9 @@ function TemplateDrawer({
                     className="rounded-md border border-success/40 bg-success/10 p-3 text-xs text-success"
                   >
                     Offer letter filed as a PDF on the associate&rsquo;s
-                    Documents — it now counts toward the compliance
-                    scorecard&rsquo;s &ldquo;Offer letter on file&rdquo;
-                    signal and travels with the audit packet.
+                    Documents, and it travels with the audit packet. The
+                    scorecard&rsquo;s offer signal tracks approval, not this
+                    file, so the tile will not change.
                   </p>
                 )}
                 {renderResult.unresolvedTokens.length > 0 && (

@@ -170,6 +170,42 @@ describe('onboarding tile — statutory overdue', () => {
   });
 });
 
+describe('onboarding tile — the offer signal', () => {
+  /**
+   * This read 0% for the life of the system. It counted filed
+   * OFFER_LETTER documents, and filing one needs a published offer-letter
+   * template — none was ever created, so lib/offerLetters skipped every
+   * associate with `no_template` and, because the sweep only logged when
+   * it filed something, said nothing about it for months.
+   *
+   * Product decision (2026-09-20): approval is the standard. The label
+   * says "Offer approved" rather than "Offer letter on file" because a
+   * compliance tile must not assert a document that does not exist.
+   */
+  it('counts an approved associate, with no letter on file anywhere', async () => {
+    const client = await createClient();
+    await activeAssociate(client.id);
+    await activeAssociate(client.id);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/compliance-scorecard/onboarding');
+    expect(res.status).toBe(200);
+
+    // Nothing was filed — the point is that it no longer matters.
+    expect(await prisma.documentRecord.count({ where: { kind: 'OFFER_LETTER' } })).toBe(0);
+
+    const offer = res.body.signals.find(
+      (s: { key: string }) => s.key === 'OFFER_LETTER_SIGNED',
+    );
+    expect(offer.label).toBe('Offer approved');
+    expect(offer.missing).toHaveLength(0);
+    expect(offer.completedCount).toBe(2);
+    // Nobody can be missing it: the population IS the approved associates.
+    expect(offer.missingCount).toBe(0);
+  });
+});
+
 describe('client scoping', () => {
   it('?clientId= narrows every population count', async () => {
     const clientA = await createClient('Walmart Frontback');

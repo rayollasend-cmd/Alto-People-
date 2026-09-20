@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import type {
   DocumentKind,
   DocumentRecord,
+  DocumentSort,
   DocumentStatus,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
@@ -33,6 +34,7 @@ import {
   DOCUMENT_KIND_LABEL,
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
+  getDocumentStats,
   listAdminDocuments,
   rejectDocument,
   requestDocumentReupload,
@@ -62,7 +64,8 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
+import { REJECT_PRESETS, RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -77,9 +80,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  useTableSort,
+  type TableSortState,
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -93,6 +97,25 @@ import { useSelection } from '@/lib/useSelection';
 type DocFilter = DocumentStatus | 'ALL' | 'ACTION_NEEDED';
 
 const ACTION_NEEDED_STATUSES: DocumentStatus[] = ['UPLOADED', 'EXPIRED'];
+
+/**
+ * Kinds that carry a printed expiry date — the ones where verifying
+ * without capturing it means the document can never lapse.
+ *
+ * `expiresAt` is what the daily sweep reads to flip a document to EXPIRED
+ * and ask the associate for a fresh copy. The row's one-click Verify used
+ * to pass no expiry at all, and it was the ONLY action offered on the row:
+ * a reviewer working the queue at speed produced a vault of identity
+ * documents that never expire. These kinds now ask; everything else keeps
+ * the single click, because inventing an expiry for a policy PDF is worse
+ * than not having one.
+ */
+const EXPIRING_KINDS = new Set<DocumentKind>([
+  'ID',
+  'I9_SUPPORTING',
+  'J1_DS2019',
+  'J1_VISA',
+]);
 
 const STATUS_FILTERS: Array<{ value: DocFilter; label: string }> = [
   { value: 'ACTION_NEEDED', label: 'Action needed' },
@@ -111,15 +134,6 @@ const STATUS_LABELS: Record<DocumentStatus, string> = {
   REJECTED: 'Rejected',
   EXPIRED: 'Expired',
 };
-
-// Canned reasons shared by the single-row and bulk reject dialogs — the
-// common cases HR types over and over. Clicking one fills the free-text
-// field (still editable).
-const REJECT_PRESETS = [
-  'Blurry / unreadable',
-  'Expired document',
-  'Wrong document type',
-] as const;
 
 // "drug test result", "ID", … for toasts about a document's kind.
 const kindPhrase = (k: DocumentKind): string => {
@@ -143,8 +157,13 @@ interface AdminDocumentsViewProps {
   canManage: boolean;
 }
 
+/** Rows per page. The server clamps at 200; 50 is a screenful that keeps
+ *  the payload small enough to feel instant on a store tablet. */
+const PAGE_SIZE = 50;
+
 export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const { can } = useAuth();
+  const queryClient = useQueryClient();
   // Two ways to slice the same data: a flat queue for daily HR triage, and
   // a per-associate folder view for auditing one person's full history.
   const [view, setView] = useViewMode<'queue' | 'associates'>(
@@ -164,25 +183,16 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
   // Server-filtered slice — only populated when the active filter needs a
   // server-side query (a specific status or kind). The client-expressible
-  // filters (ACTION_NEEDED / ALL with no kind) derive `docs` from allDocs
-  // below instead: the old refresh() hit the exact same unfiltered endpoint
-  // refreshAll() already calls, doubling the mount fetch for nothing.
-  const [serverDocs, setServerDocs] = useState<DocumentRecord[] | null>(null);
-  // Unfiltered roll-up for the KPI / chip counts so they stay stable as
-  // the user filters. Same pattern as the onboarding inbox. Doubles as the
-  // source for the "By associate" view.
-  const [allDocs, setAllDocs] = useState<DocumentRecord[] | null>(null);
-  // Server-side total for the unfiltered list. The list itself is capped
-  // (200), so when total > allDocs.length the KPIs/folders are partial and
-  // we say so instead of presenting the slice as audit truth.
-  const [allTotal, setAllTotal] = useState<number | null>(null);
-  const [allError, setAllError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Which page of the queue. Reset whenever the slice changes — page 4 of
+  // a filter you just left is a guaranteed empty table.
+  const [page, setPage] = useState(0);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  // Deferred so typing stays responsive while the query for the new term
+  // is in flight; the previous page stays on screen meanwhile.
+  const deferredSearch = useDeferredValue(search);
+  // Deferred so typing stays responsive while the query for the new term
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-  const [rejectSubmitting, setRejectSubmitting] = useState(false);
   // Session-local "requested <ago>" markers for EXPIRED rows (doc id →
   // epoch ms). The server doesn't stamp renewal requests on the document
   // row (that'd be a schema change), so the marker only survives as long
@@ -191,113 +201,110 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     Record<string, number>
   >({});
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
-  // The open folder's docs, fetched directly with ?associateId= so the
-  // drawer is complete even when the global list is truncated at the cap.
-  const [folderDocs, setFolderDocs] = useState<DocumentRecord[] | null>(null);
-  const [folderError, setFolderError] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   // Optional expiry captured alongside a single verify in the preview
   // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
   const [verifyExpiresAt, setVerifyExpiresAt] = useState('');
+  // The row-level verify for a kind that expires: hold the document while
+  // the reviewer supplies (or explicitly declines) the date.
+  const [verifyTarget, setVerifyTarget] = useState<DocumentRecord | null>(null);
+  const [rowExpiresAt, setRowExpiresAt] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
   // Bulk-reject panel state — one reason applied to every selected doc.
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkRejectReason, setBulkRejectReason] = useState('');
 
-  // True when the active filter needs data the unfiltered overview can't
-  // answer: a specific status or kind is server-filtered, so past the
-  // server's row cap it can return rows the unfiltered slice doesn't hold.
-  // ACTION_NEEDED / ALL with no kind used to call listAdminDocuments({})
-  // anyway (same request, same cap, narrowed client-side) — those derive
-  // from allDocs instead of refetching.
-  const needsServerFilter =
-    kindFilter !== 'ALL' || (filter !== 'ALL' && filter !== 'ACTION_NEEDED');
-
-  const refresh = useCallback(async () => {
-    if (!needsServerFilter) {
-      // The queue derives from allDocs (refreshAll's data) — nothing to fetch.
-      setError(null);
-      return;
-    }
-    try {
-      setError(null);
-      const kindParam = kindFilter === 'ALL' ? undefined : kindFilter;
-      // 'ACTION_NEEDED' spans two statuses, which the backend's single-status
-      // query can't express — fetch all (kind-scoped; the kind-less case is
-      // handled above) and narrow client-side. The other filters map straight
-      // to status + kind params.
-      if (filter === 'ACTION_NEEDED') {
-        const res = await listAdminDocuments(kindParam ? { kind: kindParam } : {});
-        setServerDocs(
-          res.documents.filter((d) =>
-            ACTION_NEEDED_STATUSES.includes(d.status),
-          ),
-        );
-        return;
-      }
-      const res = await listAdminDocuments({
-        ...(filter === 'ALL' ? {} : { status: filter }),
-        ...(kindParam ? { kind: kindParam } : {}),
-      });
-      setServerDocs(res.documents);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [filter, kindFilter, needsServerFilter]);
-
-  const refreshAll = useCallback(async () => {
-    try {
-      setAllError(null);
-      const res = await listAdminDocuments({});
-      setAllDocs(res.documents);
-      setAllTotal(res.total ?? res.documents.length);
-    } catch (err) {
-      // Don't fake an empty vault — leave allDocs as-is (null on first load)
-      // and surface the failure in a banner instead of zeroed KPIs.
-      setAllError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+  // Column sort, held here rather than by useTableSort: that hook sorts
+  // the rows it is given, which is precisely the bug — it can only order
+  // the page, never the vault.
+  type DocSortKey = 'file' | 'kind' | 'associate' | 'size' | 'uploaded' | 'status';
+  const [docSort, setDocSort] = useState<TableSortState<DocSortKey>>({
+    key: 'uploaded',
+    direction: 'desc',
+  });
+  const toggleDocSort = useCallback((key: DocSortKey) => {
+    setDocSort((prev) =>
+      prev.key === key
+        ? prev.direction === 'asc'
+          ? { key, direction: 'desc' }
+          : // Third click returns to the default: newest first.
+            { key: 'uploaded', direction: 'desc' }
+        : { key, direction: 'asc' },
+    );
   }, []);
 
-  // Per-associate folder fetch — direct, uncapped-by-the-global-list view of
-  // one person's documents.
-  const fetchFolder = useCallback(async (associateId: string) => {
-    try {
-      setFolderError(null);
-      const res = await listAdminDocuments({ associateId });
-      setFolderDocs(res.documents);
-    } catch (err) {
-      setFolderError(
-        err instanceof ApiError ? err.message : 'Failed to load this folder.',
-      );
+  // Sorting and paging are the SERVER's job. A page sorted after it was
+  // cut shows the oldest rows of that page, not of the vault — which is
+  // why "clear what has waited longest", the queue's entire reason to
+  // exist, could not be done here before.
+  const sortParam: DocumentSort = useMemo(() => {
+    const dir = docSort.direction === 'asc' ? 'asc' : 'desc';
+    switch (docSort.key) {
+      case 'file':
+      case 'kind':
+      case 'associate':
+      case 'size':
+      case 'status':
+        return `${docSort.key}_${dir}` as DocumentSort;
+      case 'uploaded':
+        return `uploaded_${dir}` as DocumentSort;
+      default:
+        return 'uploaded_desc';
     }
-  }, []);
+  }, [docSort]);
 
-  // What the queue works from: the server-filtered slice when a server-side
-  // filter is active, otherwise derived client-side from the unfiltered
-  // overview — identical data to what the dropped duplicate fetch returned,
-  // since both hit listAdminDocuments({}) under the same server cap.
-  const docs = useMemo(() => {
-    if (needsServerFilter) return serverDocs;
-    if (!allDocs) return null;
-    if (filter === 'ACTION_NEEDED') {
-      return allDocs.filter((d) => ACTION_NEEDED_STATUSES.includes(d.status));
-    }
-    return allDocs;
-  }, [needsServerFilter, serverDocs, allDocs, filter]);
+  const listParams = useMemo(
+    () => ({
+      ...(filter === 'ACTION_NEEDED'
+        ? { status: [...ACTION_NEEDED_STATUSES] as DocumentStatus[] }
+        : filter === 'ALL'
+          ? {}
+          : { status: filter as DocumentStatus }),
+      ...(kindFilter === 'ALL' ? {} : { kind: kindFilter }),
+      ...(deferredSearch.trim() ? { q: deferredSearch.trim() } : {}),
+      sort: sortParam,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+    [filter, kindFilter, deferredSearch, sortParam, page],
+  );
 
+  const docsQuery = useQuery({
+    queryKey: ['documents', 'admin', listParams],
+    queryFn: () => listAdminDocuments(listParams),
+    // Keeps the previous page on screen while the next one loads, instead
+    // of blanking the table on every sort or page step.
+    placeholderData: (prev) => prev,
+  });
+  const docs = docsQuery.data?.documents ?? null;
+  const pageTotal = docsQuery.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(pageTotal / PAGE_SIZE));
+
+  // Counts over the WHOLE vault. These used to be tallied from the capped
+  // list, so every number on the page was quietly wrong past the cap.
+  const statsQuery = useQuery({
+    queryKey: ['documents', 'admin', 'stats'],
+    queryFn: getDocumentStats,
+  });
+
+  const folderQuery = useQuery({
+    queryKey: ['documents', 'admin', 'folder', selectedAssociateId],
+    queryFn: () => listAdminDocuments({ associateId: selectedAssociateId!, pageSize: 200 }),
+    enabled: !!selectedAssociateId,
+  });
+  const folderDocs = folderQuery.data?.documents ?? null;
+
+  /** One invalidate replaces the three full refetches every action used to
+   *  fire — approving a single document cost three 200-row requests. */
+  const invalidateDocs = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['documents', 'admin'] });
+  }, [queryClient]);
+
+  // A filter change makes the current page meaningless: page 4 of a slice
+  // you just left is a guaranteed empty table.
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
-
-  useEffect(() => {
-    setFolderDocs(null);
-    setFolderError(null);
-    if (selectedAssociateId) fetchFolder(selectedAssociateId);
-  }, [selectedAssociateId, fetchFolder]);
+    setPage(0);
+  }, [filter, kindFilter, deferredSearch, sortParam]);
 
   // The optional expiry date belongs to one document — clear it whenever the
   // preview switches docs or closes.
@@ -305,69 +312,44 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     setVerifyExpiresAt('');
   }, [previewDoc?.id]);
 
-  // Drop any selection when the visible slice changes (filter / kind / view),
-  // so a bulk-verify can never act on rows the user can no longer see.
-  // (clearSelection is a stable callback from useSelection, declared below.)
-  useEffect(() => {
-    clearSelection();
-  }, [filter, kindFilter, view]);
 
   // Day-granularity "now" for the fmtAge labels in the render body. NOT a
   // dependency of the stats memo below — that made the memo's inputs change
   // on every render, so it never cached and re-scanned all docs per keystroke.
   const now = Date.now();
 
-  const stats = useMemo(() => {
-    // Fresh timestamp taken when the memo actually recomputes ([allDocs]
-    // changes) — day-level precision doesn't need one per render.
-    const nowMs = Date.now();
-    const src = allDocs ?? [];
-    const byStatus: Record<string, number> = {};
-    for (const d of src) byStatus[d.status] = (byStatus[d.status] ?? 0) + 1;
-    const oldestUploaded = src
-      .filter((d) => d.status === 'UPLOADED')
-      .reduce<number | null>((acc, d) => {
-        const t = new Date(d.createdAt).getTime();
-        return acc === null || t < acc ? t : acc;
-      }, null);
-    return {
-      total: src.length,
-      byStatus,
-      uploaded: byStatus.UPLOADED ?? 0,
-      verified: byStatus.VERIFIED ?? 0,
-      rejected: byStatus.REJECTED ?? 0,
-      expired: byStatus.EXPIRED ?? 0,
-      oldestUploadedDays:
-        oldestUploaded === null
-          ? null
-          : Math.floor((nowMs - oldestUploaded) / ONE_DAY_MS),
-    };
-  }, [allDocs]);
+  // Straight from the server, over the whole vault. Tallying the capped
+  // list was why every number here went quietly wrong past the cap.
+  const s = statsQuery.data;
+  const stats = {
+    total: s?.total ?? 0,
+    uploaded: s?.uploaded ?? 0,
+    verified: s?.verified ?? 0,
+    rejected: s?.rejected ?? 0,
+    expired: s?.expired ?? 0,
+    oldestUploadedDays: s?.oldestPendingAt
+      ? Math.floor((now - new Date(s.oldestPendingAt).getTime()) / ONE_DAY_MS)
+      : null,
+  };
 
   // Only offer kinds that actually exist in the tenant, sorted, so the
   // dropdown stays short instead of listing all 16 possible kinds.
+  // Derived from the page in hand. It narrows as you page, which is
+  // honest: the alternative is loading the vault to populate a dropdown.
   const availableKinds = useMemo(() => {
     const set = new Set<DocumentKind>();
-    for (const d of allDocs ?? []) set.add(d.kind);
+    for (const d of docs ?? []) set.add(d.kind);
     return Array.from(set).sort();
-  }, [allDocs]);
+  }, [docs]);
 
   // Deferred search term for the heavy derived lists: the input repaints
   // immediately while React filters the doc queue / regroups associates at
   // background priority, keeping the previous results on screen meanwhile.
-  const deferredSearch = useDeferredValue(search);
 
-  const visibleDocs = useMemo(() => {
-    if (!docs) return null;
-    const q = deferredSearch.trim().toLowerCase();
-    if (!q) return docs;
-    return docs.filter(
-      (d) =>
-        d.filename.toLowerCase().includes(q) ||
-        (d.associateName && d.associateName.toLowerCase().includes(q)) ||
-        d.kind.toLowerCase().includes(q)
-    );
-  }, [docs, deferredSearch]);
+  // Search runs on the server (it is part of listParams), so the page it
+  // returns is already the matching page. Filtering here as well would
+  // only ever search what this page happened to contain.
+  const visibleDocs = docs;
 
   // Bulk-verify selection (queue view only). Only docs that can transition to
   // VERIFIED — UPLOADED or REJECTED — are ever selectable; that rule lives
@@ -388,26 +370,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     toggleAll: toggleAllVerifiable,
   } = useSelection(verifiableIds);
 
-  // Click-to-sort for the flat queue table. Operates on the filtered slice
-  // the table renders; third click restores server order (newest first).
-  const {
-    sorted: sortedDocs,
-    sortState: docSort,
-    toggleSort: toggleDocSort,
-  } = useTableSort(visibleDocs ?? [], {
-    file: (d: DocumentRecord) => d.filename,
-    kind: (d: DocumentRecord) => d.kind,
-    associate: (d: DocumentRecord) => d.associateName,
-    size: (d: DocumentRecord) => d.size,
-    uploaded: (d: DocumentRecord) => new Date(d.createdAt).getTime(),
-    status: (d: DocumentRecord) => d.status,
-  });
+  // Drop any selection when the visible slice changes, so a bulk action
+  // can never touch a row the user can no longer see. Lives HERE, below
+  // useSelection, rather than above it with `clearSelection` left out of
+  // the deps to dodge the temporal-dead-zone error — which is how
+  // `search` and `page` came to be missing in the first place.
+  useEffect(() => {
+    clearSelection();
+  }, [filter, kindFilter, view, deferredSearch, page, sortParam, clearSelection]);
 
-  // Group every doc the user can see by associate, so the "By associate"
-  // view can act as a per-person folder. We pull from `allDocs` (not the
-  // status-filtered `docs`) so the folders stay stable as filters change.
+  // The rows arrive already ordered by the server, across the whole vault
+  // rather than within this page. Nothing is re-sorted here.
+  const sortedDocs = visibleDocs ?? [];
+
+  // Folders for the "By associate" view, built from the page in hand.
+  // That page is sorted by associate while this view is active, so a
+  // person's documents arrive together rather than scattered across pages.
   const associateGroups = useMemo(() => {
-    if (!allDocs) return null;
+    if (!docs) return null;
     const map = new Map<
       string,
       {
@@ -422,7 +402,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         docs: DocumentRecord[];
       }
     >();
-    for (const d of allDocs) {
+    for (const d of docs) {
       const id = d.associateId;
       const created = new Date(d.createdAt).getTime();
       const existing = map.get(id);
@@ -462,7 +442,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       return b.lastActivity - a.lastActivity;
     });
     return groups;
-  }, [allDocs]);
+  }, [docs]);
 
   // Filter the associate folders by the same search box so HR can look up a
   // person without flipping views.
@@ -525,11 +505,8 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     try {
       await verifyDocument(d.id, expiresAt ? { expiresAt } : {});
       toast.success(`Verified ${d.filename}.`);
-      await Promise.all([
-        refresh(),
-        refreshAll(),
-        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
-      ]);
+      // One invalidate, not three full list requests to approve one row.
+      invalidateDocs();
       return true;
     } catch (err) {
       toast.error('Verify failed.', {
@@ -572,7 +549,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
       clearSelection();
-      await Promise.all([refresh(), refreshAll()]);
+      invalidateDocs();
     } catch (err) {
       toast.error('Bulk verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
@@ -587,10 +564,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // is already in the associate's court.
   const bulkRejectTargets = useMemo(
     () =>
+      // Must match the rule that decides which rows get a checkbox at all
+      // (UPLOADED or REJECTED). This used to accept VERIFIED — a status
+      // that can never be selected — so the two rules quietly disagreed.
       (docs ?? []).filter(
         (d) =>
           selectedDocs.has(d.id) &&
-          (d.status === 'UPLOADED' || d.status === 'VERIFIED'),
+          (d.status === 'UPLOADED' || d.status === 'REJECTED'),
       ),
     [docs, selectedDocs],
   );
@@ -635,31 +615,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     setBulkRejectOpen(false);
     setBulkRejectReason('');
     clearSelection();
-    await Promise.all([refresh(), refreshAll()]);
+    invalidateDocs();
     setBulkBusy(false);
   };
 
-  const onConfirmReject = async () => {
-    if (!rejectTarget || !rejectReason.trim()) return;
-    setRejectSubmitting(true);
-    try {
-      await rejectDocument(rejectTarget.id, { reason: rejectReason.trim() });
-      toast.success(`Rejected ${rejectTarget.filename}.`);
-      setRejectTarget(null);
-      setRejectReason('');
-      await Promise.all([
-        refresh(),
-        refreshAll(),
-        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
-      ]);
-    } catch (err) {
-      toast.error('Reject failed.', {
-        description: err instanceof ApiError ? err.message : undefined,
-      });
-    } finally {
-      setRejectSubmitting(false);
-    }
-  };
 
   return (
     <div className="mx-auto">
@@ -682,7 +641,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       />
 
       {/* KPI strip */}
-      {canManage && allDocs && allDocs.length > 0 && (
+      {canManage && stats.total > 0 && (
         <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
           <Kpi
             label="Awaiting review"
@@ -809,7 +768,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   ? stats.total
                   : f.value === 'ACTION_NEEDED'
                     ? stats.uploaded + stats.expired
-                    : (stats.byStatus[f.value] ?? 0);
+                    : f.value === 'UPLOADED'
+                      ? stats.uploaded
+                      : f.value === 'VERIFIED'
+                        ? stats.verified
+                        : f.value === 'REJECTED'
+                          ? stats.rejected
+                          : f.value === 'EXPIRED'
+                            ? stats.expired
+                            : 0;
               const active = filter === f.value;
               return (
                 <FilterChip
@@ -819,7 +786,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   className="gap-1.5 rounded-md"
                 >
                   {f.label}
-                  {allDocs && (
+                  {statsQuery.data && (
                     <span className="text-2xs tabular-nums text-silver/70">
                       {count}
                     </span>
@@ -840,27 +807,20 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         </span>
       </div>
 
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-      {/* The overview fetch failed — say so instead of rendering zeroed
-          KPIs and an empty "No documents yet" folder view. */}
-      {allError && (
-        <ErrorBanner className="mb-4">
-          Couldn't load the document overview — KPIs, counts, and the
-          by-associate view are unavailable. {allError}
-        </ErrorBanner>
+      {/* Every failure now offers a way out. These were three bare
+          banners with no retry — a page reload was the only recovery. */}
+      {docsQuery.isError && (
+        <div className="mb-4">
+          <QueryError what="these documents" query={docsQuery} />
+        </div>
+      )}
+      {statsQuery.isError && (
+        <div className="mb-4">
+          <QueryError what="the vault totals" query={statsQuery} />
+        </div>
       )}
 
-      {/* Truncation honesty: the unfiltered list is capped server-side. */}
-      {allDocs && allTotal !== null && allTotal > allDocs.length && (
-        <ErrorBanner severity="warning" className="mb-4">
-          Showing {allDocs.length} of {allTotal} documents — KPIs and folders
-          reflect only what's loaded; filter by status/kind or open a folder
-          to see everything for one person.
-        </ErrorBanner>
-      )}
-
-      {view === 'queue' && !docs && !error && (
+      {view === 'queue' && !docs && !docsQuery.isError && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={5} rowHeight="h-14" />
@@ -896,15 +856,28 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       )}
 
       {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (() => {
-        // Group the queue by associate — one header row per person — in
-        // order of first appearance under the current sort, so column
-        // sorting still decides both group order and order within a group.
+        // THE QUEUE IS FLAT UNLESS YOU ASK FOR PEOPLE.
+        //
+        // This used to group by associate always, in order of first
+        // appearance under the current sort — which meant sorting by age
+        // ordered the GROUPS by their oldest document, not the documents.
+        // The second-oldest thing in the vault could sit halfway down the
+        // page inside somebody else's group, so "clear what has waited
+        // longest" — the queue's entire job, and what the SLA banner tells
+        // you to do — could not actually be done.
+        //
+        // Grouping now happens only when the sort is by associate, where
+        // it is what you asked for and the rows are contiguous anyway.
+        const groupByPerson = docSort.key === 'associate';
         const groups: Array<{
           associateId: string;
           associateName: string;
           docs: DocumentRecord[];
         }> = [];
         const groupIndex = new Map<string, number>();
+        if (!groupByPerson) {
+          groups.push({ associateId: '', associateName: '', docs: [...sortedDocs] });
+        } else
         for (const d of sortedDocs) {
           const at = groupIndex.get(d.associateId);
           if (at === undefined) {
@@ -929,7 +902,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 </span>{' '}
                 selected
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1010,8 +983,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             </TableHeader>
             <TableBody>
               {groups.map((g) => (
-                <Fragment key={g.associateId}>
-                  {/* Associate header row: name + doc count. */}
+                <Fragment key={g.associateId || 'flat'}>
+                  {/* Associate header row: name + doc count. Only when the
+                      rows are actually grouped by person. */}
+                  {groupByPerson && (
                   <TableRow className="hover:bg-transparent bg-navy-secondary/40">
                     <TableCell colSpan={colCount} className="py-1.5">
                       <div className="flex items-center gap-2">
@@ -1027,6 +1002,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       </div>
                     </TableCell>
                   </TableRow>
+                  )}
                   {g.docs.map((d) => {
                     const selectable =
                       d.status === 'UPLOADED' || d.status === 'REJECTED';
@@ -1126,9 +1102,20 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => onVerify(d)}
+                            onClick={() => {
+                              if (EXPIRING_KINDS.has(d.kind)) {
+                                setRowExpiresAt(d.expiresAt?.slice(0, 10) ?? '');
+                                setVerifyTarget(d);
+                              } else {
+                                void onVerify(d);
+                              }
+                            }}
                             loading={pendingId === d.id}
-                            title="Mark verified"
+                            title={
+                              EXPIRING_KINDS.has(d.kind)
+                                ? 'Mark verified — this kind carries an expiry date'
+                                : 'Mark verified'
+                            }
                             className="text-success hover:text-success"
                           >
                             <ShieldCheck className="h-3.5 w-3.5" />
@@ -1141,7 +1128,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                             variant="ghost"
                             onClick={() => {
                               setRejectTarget(d);
-                              setRejectReason('');
                             }}
                             disabled={pendingId === d.id}
                             title="Reject with reason"
@@ -1190,7 +1176,39 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         );
       })()}
 
-      {view === 'associates' && !allDocs && !error && !allError && (
+      {/* Paging. The vault used to stop dead at the server's 200-row cap
+          with a banner apologising that the numbers above were wrong. */}
+      {view === 'queue' && pageTotal > PAGE_SIZE && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-silver tabular-nums">
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, pageTotal)} of{' '}
+            {pageTotal.toLocaleString()}
+          </span>
+          <span className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page === 0 || docsQuery.isFetching}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-silver tabular-nums">
+              Page {page + 1} of {pageCount}
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page + 1 >= pageCount || docsQuery.isFetching}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
+          </span>
+        </div>
+      )}
+
+      {view === 'associates' && !docs && !docsQuery.isError && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={6} rowHeight="h-12" />
@@ -1346,16 +1364,20 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               </div>
             </DrawerHeader>
             <DrawerBody>
-              {folderError && (
-                <ErrorBanner className="mb-3">{folderError}</ErrorBanner>
+              {folderQuery.isError && (
+                <div className="mb-3">
+                  <QueryError what="this folder" query={folderQuery} />
+                </div>
               )}
-              {folder.loading && folder.docs.length === 0 && !folderError && (
+              {folder.loading && folder.docs.length === 0 && !folderQuery.isError && (
                 <SkeletonRows count={4} rowHeight="h-12" />
               )}
-              {!folder.loading && !folderError && folder.docs.length === 0 && (
-                <div className="py-8 text-center text-sm text-silver">
-                  No documents on file for this associate.
-                </div>
+              {!folder.loading && !folderQuery.isError && folder.docs.length === 0 && (
+                <EmptyState
+                  icon={FileText}
+                  title="Nothing on file"
+                  description="This associate has no documents in the vault yet."
+                />
               )}
               {folder.docs.length > 0 && (
               <Table>
@@ -1442,7 +1464,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                                 variant="ghost"
                                 onClick={() => {
                                   setRejectTarget(d);
-                                  setRejectReason('');
                                 }}
                                 disabled={pendingId === d.id}
                                 title="Reject with reason"
@@ -1560,7 +1581,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   variant="ghost"
                   onClick={() => {
                     setRejectTarget(previewDoc);
-                    setRejectReason('');
                     setPreviewDoc(null);
                   }}
                   disabled={pendingId === previewDoc.id}
@@ -1575,85 +1595,100 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         }
       />
 
-      {/* Rejection dialog — replaces the old window.prompt so we can capture
-          a real reason with markdown line breaks etc. and surface validation. */}
+      {/* Verify-with-expiry. Only for kinds that carry a printed expiry
+          date: the row's Verify used to be the only action offered and it
+          passed no expiry at all, so triaging at speed produced identity
+          documents that could never lapse. */}
       <Dialog
-        open={!!rejectTarget}
+        open={!!verifyTarget}
         onOpenChange={(v) => {
           if (!v) {
-            setRejectTarget(null);
-            setRejectReason('');
+            setVerifyTarget(null);
+            setRowExpiresAt('');
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Reject document</DialogTitle>
+            <DialogTitle>Verify document</DialogTitle>
             <DialogDescription>
-              Tell the associate why so they can re-upload. They'll see this
-              message attached to the rejected document.
+              When this lapses it flips to Expired and the associate is asked
+              for a fresh copy.
             </DialogDescription>
           </DialogHeader>
-          {rejectTarget && (
+          {verifyTarget && (
             <div className="space-y-3">
               <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-2.5 text-xs">
-                <div className="font-medium text-white truncate">
-                  {rejectTarget.filename}
+                <div className="truncate font-medium text-white">
+                  {verifyTarget.filename}
                 </div>
-                <div className="text-silver mt-0.5">
-                  {rejectTarget.kind.replace(/_/g, ' ')}
-                  {rejectTarget.associateName ? ` · ${rejectTarget.associateName}` : ''}
+                <div className="mt-0.5 text-silver">
+                  {verifyTarget.kind.replace(/_/g, ' ')}
+                  {verifyTarget.associateName ? ` · ${verifyTarget.associateName}` : ''}
                 </div>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {REJECT_PRESETS.map((r) => (
-                  <Button
-                    key={r}
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={() => setRejectReason(r)}
-                    className={cn(
-                      'rounded-md',
-                      rejectReason === r &&
-                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                    )}
-                  >
-                    {r}
-                  </Button>
-                ))}
-              </div>
-              <Field label="Reason" required>
-                {(p) => (
-                  <Textarea
-                    value={rejectReason}
-                    onChange={(e) => setRejectReason(e.target.value)}
-                    rows={4}
-                    maxLength={500}
-                    placeholder="Pick a preset above or write your own."
-                    className="mt-1"
-                    autoFocus
-                    {...p}
-                  />
-                )}
-              </Field>
+              <label className="block text-sm">
+                <span className="mb-1 block text-silver">Expires on</span>
+                <Input
+                  type="date"
+                  autoFocus
+                  value={rowExpiresAt}
+                  onChange={(e) => setRowExpiresAt(e.target.value)}
+                  aria-label="Expires on"
+                />
+              </label>
             </div>
           )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRejectTarget(null)}>
-              Cancel
+          <DialogFooter className="sm:justify-between">
+            {/* Some IDs genuinely have no expiry — a state ID card, a
+                permanent resident card issued without one. Saying so is
+                a decision; leaving the field blank by accident is not. */}
+            <Button
+              variant="ghost"
+              disabled={!!pendingId}
+              onClick={async () => {
+                const t = verifyTarget;
+                if (!t) return;
+                if (await onVerify(t)) {
+                  setVerifyTarget(null);
+                  setRowExpiresAt('');
+                }
+              }}
+            >
+              No expiry date
             </Button>
             <Button
-              onClick={onConfirmReject}
-              loading={rejectSubmitting}
-              disabled={!rejectReason.trim()}
+              loading={!!verifyTarget && pendingId === verifyTarget.id}
+              disabled={!rowExpiresAt || !!pendingId}
+              onClick={async () => {
+                const t = verifyTarget;
+                if (!t) return;
+                if (await onVerify(t, rowExpiresAt)) {
+                  setVerifyTarget(null);
+                  setRowExpiresAt('');
+                }
+              }}
             >
-              <XCircle className="h-4 w-4" />
-              Reject
+              <ShieldCheck className="h-4 w-4" />
+              Verify
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* One shared dialog, not a third copy of the same three preset
+          reasons and the same POST. The bulk panel below is genuinely
+          different — one reason applied to many — so it keeps its own
+          markup, but it now imports the presets instead of restating
+          them. */}
+      <RejectDocumentDialog
+        doc={rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        onRejected={() => {
+          setRejectTarget(null);
+          invalidateDocs();
+        }}
+      />
 
       {/* Bulk rejection panel — one reason applied to every selected doc.
           Loops the per-id endpoint sequentially so each rejection keeps its

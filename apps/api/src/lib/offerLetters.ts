@@ -260,12 +260,24 @@ export async function runOfferLetterSweep(): Promise<{
   filed: number;
   skipped: Partial<Record<AutoFileOutcome, number>>;
 }> {
+  // Matches the scorecard's own population cap. The old `take: 500` with
+  // `createdAt desc` meant the sweep re-examined the same newest 500
+  // approved applications every six hours forever — anyone older than that
+  // could never be backfilled. The scorecard hit this exact bug and raised
+  // its cap to 5,000 (see ACTIVE_ASSOCIATES_CAP, "silently made associate
+  // #501 invisible"); the sweep never got the same treatment.
+  const SWEEP_POPULATION_CAP = 5_000;
   const apps = await prisma.application.findMany({
-    take: 500,
+    take: SWEEP_POPULATION_CAP,
     where: { status: 'APPROVED', deletedAt: null, associate: { deletedAt: null } },
     select: { associateId: true, clientId: true },
     orderBy: { createdAt: 'desc' },
   });
+  if (apps.length === SWEEP_POPULATION_CAP) {
+    console.error(
+      `[alto-people/api] offer-letter sweep hit its ${SWEEP_POPULATION_CAP}-application cap — paginate it`,
+    );
+  }
   // Most-recent approved application per associate decides the client
   // (and therefore which template applies).
   const clientByAssociate = new Map<string, string>();
@@ -316,6 +328,16 @@ export function startOfferLetterCron(): void {
       .then((r) => {
         if (r.filed > 0) {
           console.log(`[alto-people/api] offer-letter sweep filed ${r.filed} letter(s)`);
+        }
+        // Why it filed NOTHING is the interesting case, and it used to be
+        // the silent one: every associate skipping with `no_template`
+        // looked identical to a healthy no-op, which is how "Offer letter
+        // on file" sat at 0% for the life of the system without anybody
+        // being able to say why.
+        const skipped = Object.entries(r.skipped).filter(([, n]) => (n ?? 0) > 0);
+        if (r.filed === 0 && skipped.length > 0) {
+          const why = skipped.map(([reason, n]) => `${reason}=${n}`).join(' ');
+          console.warn(`[alto-people/api] offer-letter sweep filed nothing — ${why}`);
         }
       })
       .catch((err) => {
