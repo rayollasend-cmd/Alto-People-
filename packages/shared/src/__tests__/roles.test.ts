@@ -49,19 +49,52 @@ describe('hasCapability', () => {
     for (const c of ALL_CAPS) expect(hasCapability('HR_ADMINISTRATOR', c)).toBe(true);
   });
 
-  // Per product policy, OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER,
-  // and WORKFORCE_MANAGER all share the HR_ADMINISTRATOR capability surface.
+  // Per product policy, OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER and
+  // MARKETING_MANAGER all share the HR_ADMINISTRATOR capability surface.
   // The role label still differs so audit logs reflect functional capacity.
+  // WORKFORCE_MANAGER was in this list until `3cf2e12d` gave it its own
+  // charter — see the dedicated test below.
   it.each([
     'OPERATIONS_MANAGER',
     'MANAGER',
     'INTERNAL_RECRUITER',
-    'WORKFORCE_MANAGER',
     'MARKETING_MANAGER',
   ] as const)('%s mirrors HR_ADMINISTRATOR capability set', (role) => {
     for (const c of ALL_CAPS) expect(hasCapability(role, c)).toBe(true);
     expect(hasCapability(role, 'view:hr-admin')).toBe(true);
     expect(hasCapability(role, 'view:audit')).toBe(true);
+  });
+
+  it('WORKFORCE_MANAGER holds the field-leadership charter, not an admin clone', () => {
+    // `3cf2e12d` right-sized this from a FULL_ADMIN clone with a label to
+    // the owner's charter: the corporate connection to the store floor.
+    // The two halves below are the charter's own words — what the role is
+    // for, and what was explicitly handed to somebody else.
+    for (const c of [
+      'view:recruiting', 'manage:recruiting',
+      'view:onboarding', 'manage:onboarding', 'invite:onboarding',
+      'view:org', 'manage:org',
+      'view:scheduling', 'manage:scheduling',
+      'view:time', 'manage:time', 'view:time-live',
+      'view:performance', 'manage:performance',
+      'view:compliance', 'manage:compliance',
+      'view:communications', 'manage:communications',
+      'view:ops', 'manage:ops-library',
+      'manage:transport',
+    ] as const satisfies readonly Capability[]) {
+      expect(hasCapability('WORKFORCE_MANAGER', c)).toBe(true);
+    }
+
+    // Money is Finance's; the keys to the building are HR Admin's.
+    for (const c of [
+      'view:payroll', 'process:payroll', 'void:payroll', 'export:payroll-pii',
+      'view:comp', 'manage:comp',
+      'view:clients', 'manage:clients',
+      'view:hr-admin', 'view:audit', 'view:executive',
+      'view:integrations', 'manage:integrations',
+    ] as const satisfies readonly Capability[]) {
+      expect(hasCapability('WORKFORCE_MANAGER', c)).toBe(false);
+    }
   });
 
   it('LIVE_ASN has zero capabilities', () => {
@@ -95,25 +128,41 @@ describe('hasCapability', () => {
     for (const m of ALL_MANAGE) expect(hasCapability('CLIENT_PORTAL', m)).toBe(false);
   });
 
-  it('FINANCE_ACCOUNTANT is scoped to time + pay only', () => {
-    // In-scope: time, scheduling, payroll, comp, analytics, dashboard.
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:dashboard')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:time')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:scheduling')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:payroll')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'process:payroll')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:comp')).toBe(true);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:analytics')).toBe(true);
-    // Out-of-scope: HR / onboarding / recruiting / comms / clients.
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:onboarding')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:recruiting')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:hr-admin')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:communications')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:clients')).toBe(false);
-    // No write caps on HR-side data either.
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:onboarding')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:scheduling')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:comp')).toBe(false);
+  it('FINANCE_ACCOUNTANT owns the hours→pay cycle end to end', () => {
+    // This role grew by four deliberate owner decisions, each recorded
+    // against the capability in roles.ts: finance runs the whole cycle,
+    // so it holds the schedule that feeds the hours and the hours that
+    // feed the pay — not just read access to the result.
+    for (const c of [
+      'view:dashboard',
+      'view:time', 'manage:time', 'view:time-live',
+      'view:scheduling', 'manage:scheduling',
+      'view:payroll', 'process:payroll',
+      'view:comp',
+      'view:analytics',
+      // SOW bill rates and per-client statements are the client side of
+      // the money cycle; associate lookup starts every pay question.
+      'view:clients', 'view:org',
+      'settle:reimbursement',
+      // Inbox READ only, so payment-failure alerts are deliverable at all.
+      'view:communications',
+    ] as const satisfies readonly Capability[]) {
+      expect(hasCapability('FINANCE_ACCOUNTANT', c)).toBe(true);
+    }
+
+    // The boundaries that still hold. Each read above has a write that
+    // does not come with it — that is the whole shape of this role.
+    for (const c of [
+      'manage:clients', 'manage:org', 'manage:comp', 'manage:communications',
+      // Voiding a disbursed run reverses a QBO entry; the payroll sheet
+      // carries full SSN and bank details. Both are HR_ADMINISTRATOR only.
+      'void:payroll', 'export:payroll-pii',
+      // Nothing on the HR side of the house.
+      'view:onboarding', 'manage:onboarding', 'view:recruiting', 'view:hr-admin',
+      'approve:reimbursement',
+    ] as const satisfies readonly Capability[]) {
+      expect(hasCapability('FINANCE_ACCOUNTANT', c)).toBe(false);
+    }
   });
 
   it('SHIFT_SUPERVISOR can invite + monitor onboarding but not review it', () => {
