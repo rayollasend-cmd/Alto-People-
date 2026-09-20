@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import {
   Hand,
   Inbox,
   Paperclip,
+  Search,
   Send,
   SendHorizonal,
   X,
@@ -31,6 +32,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { QueryError } from '@/components/ui/QueryError';
 import {
   KIND_LABELS,
   STATUS_LABELS,
@@ -344,8 +346,32 @@ export function RelayRequests({
   const [box, setBox] = useState<'inbox' | 'sent' | 'all'>('inbox');
   const [status, setStatus] = useState<'open' | 'all'>('open');
   const [composing, setComposing] = useState(false);
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
   const q = useQuery({ queryKey: ['relay', 'requests', box, status], queryFn: () => workApi.requests(box, status), refetchInterval: 60_000 });
   const counts = q.data?.counts;
+
+  // Finding one request among a desk's traffic meant scrolling. Filtered
+  // here rather than server-side because the box is already bounded by
+  // inbox/sent and status — this searches what is on screen, and says so.
+  const requests = useMemo(() => {
+    const all = q.data?.requests ?? [];
+    const needle = deferredSearch.trim().toLowerCase();
+    if (!needle) return all;
+    return all.filter(
+      (r) =>
+        r.subject.toLowerCase().includes(needle) ||
+        r.body.toLowerCase().includes(needle) ||
+        (r.from?.name?.toLowerCase().includes(needle) ?? false) ||
+        (r.about?.name?.toLowerCase().includes(needle) ?? false),
+    );
+  }, [q.data, deferredSearch]);
+
+  // How many of these actually need somebody — the number a desk runs on.
+  const needsAnswer = useMemo(
+    () => requests.filter((r) => r.status === 'OPEN' || r.status === 'IN_PROGRESS').length,
+    [requests],
+  );
 
   return (
     <div className="space-y-3">
@@ -369,24 +395,74 @@ export function RelayRequests({
             { value: 'all', label: 'Closed too' },
           ]}
         />
-        <Button size="sm" className="ml-auto" onClick={() => setComposing(true)}>
+        <div className="relative min-w-[11rem] flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-silver/60" aria-hidden="true" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search these requests…"
+            aria-label="Search requests"
+            className="h-9 pl-8"
+          />
+        </div>
+        <Button size="sm" onClick={() => setComposing(true)}>
           <Send className="h-3.5 w-3.5" />
           Send to a desk
         </Button>
       </div>
 
+      {/* What the desk actually owes somebody, said once. */}
+      {!q.isError && requests.length > 0 && (
+        <p className="px-0.5 text-xs text-silver">
+          {needsAnswer === 0 ? (
+            <span className="text-success">Nothing here is waiting on an answer.</span>
+          ) : (
+            <>
+              <span className="font-medium text-white tabular-nums">{needsAnswer}</span>{' '}
+              {needsAnswer === 1 ? 'request needs' : 'requests need'} an answer
+              {deferredSearch.trim() ? ' in what you searched' : ''}.
+            </>
+          )}
+        </p>
+      )}
+
       <Card className="overflow-hidden p-0">
-        {q.isLoading ? (
+        {q.isError ? (
+          // An inbox that says "nothing on your desk" because the request
+          // failed is worse than an error: it tells you you are clear.
+          <div className="p-3">
+            <QueryError what="these requests" query={q} />
+          </div>
+        ) : q.isLoading ? (
           <Skeleton className="m-3 h-24" />
-        ) : (q.data?.requests.length ?? 0) === 0 ? (
+        ) : requests.length === 0 ? (
           <EmptyState
             icon={Inbox}
-            title={box === 'inbox' ? 'Nothing on your desk' : box === 'sent' ? 'You haven’t sent anything yet' : 'No requests yet'}
-            description="Ask another desk a question, send them a document, or hand off a task — it lands here with the answer attached."
+            title={
+              deferredSearch.trim()
+                ? 'Nothing matches'
+                : box === 'inbox'
+                  ? 'Nothing on your desk'
+                  : box === 'sent'
+                    ? 'You haven’t sent anything yet'
+                    : 'No requests yet'
+            }
+            description={
+              deferredSearch.trim()
+                ? 'No request in this box matches what you are looking for.'
+                : 'Ask another desk a question, send them a document, or hand off a task — it lands here with the answer attached.'
+            }
+            action={
+              deferredSearch.trim() ? (
+                <Button variant="secondary" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              ) : undefined
+            }
           />
         ) : (
           <ul className="divide-y divide-navy-secondary/60">
-            {q.data!.requests.map((r) => (
+            {requests.map((r) => (
               <RequestRow key={r.id} r={r} onOpen={onOpen} />
             ))}
           </ul>

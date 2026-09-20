@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
+import { ConfirmProvider } from '@/lib/confirm';
 import type { WorkFile, WorkRequest } from '@/pages/relay/workTypes';
 
 vi.mock('@/lib/api', async (orig) => ({
@@ -81,7 +82,9 @@ function harness(ui: React.ReactElement) {
           can: (c: Capability) => caps.has(c),
         }}
       >
-        <MemoryRouter>{ui}</MemoryRouter>
+        <ConfirmProvider>
+          <MemoryRouter>{ui}</MemoryRouter>
+        </ConfirmProvider>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
@@ -164,5 +167,68 @@ describe('the work shelf', () => {
     expect((body.get('file') as File).name).toBe('checklist.pdf');
     expect(body.get('desk')).toBe('WORKFORCE');
     expect(body.get('tags')).toBe('walmart');
+  });
+});
+
+describe('the relay says what it does not know', () => {
+  /**
+   * Both lists rendered an EmptyState on failure. "Nothing on your desk"
+   * when the request actually failed is not a cosmetic problem: it tells
+   * a desk it is clear when nobody has any idea whether it is.
+   */
+  function broken(ui: React.ReactElement) {
+    vi.mocked(apiFetch).mockImplementation(async () => {
+      throw new Error('the network, briefly');
+    });
+    const caps = ROLE_CAPABILITIES.WORKFORCE_MANAGER;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AuthContext.Provider
+          value={{
+            isInitializing: false,
+            isOffline: false,
+            user: { id: 'u-wf', email: 'wes@altohr.com', role: 'WORKFORCE_MANAGER', status: 'ACTIVE' as const, clientId: null, associateId: null },
+            role: 'WORKFORCE_MANAGER',
+            capabilities: new Set<Capability>(caps),
+            signIn: vi.fn(),
+            signOut: vi.fn(),
+            can: (c: Capability) => caps.has(c),
+          }}
+        >
+          <ConfirmProvider>
+          <MemoryRouter>{ui}</MemoryRouter>
+        </ConfirmProvider>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('never reports an empty inbox it could not load', async () => {
+    broken(<RelayRequests desks={undefined} myDesk="HR" openId={null} onOpen={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing on your desk')).not.toBeInTheDocument();
+  });
+
+  it('never reports an empty shelf it could not load', async () => {
+    broken(<RelayFiles myDesk="HR" />);
+    expect(await screen.findByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing on this shelf yet')).not.toBeInTheDocument();
+  });
+});
+
+describe('finding one thing among a desk’s traffic', () => {
+  it('searches the requests on screen, and offers a way back', async () => {
+    harness(<RelayRequests desks={undefined} myDesk="HR" openId={null} onOpen={vi.fn()} />);
+    await screen.findByText('Does Maria need a new I-9?');
+    // It also says what the desk owes somebody, which is the number a
+    // desk actually runs on.
+    expect(screen.getByText(/request needs an answer/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Search requests'), 'payroll');
+    await waitFor(() => expect(screen.getByText('Nothing matches')).toBeInTheDocument());
+    // Not "no requests yet" — the box has one, it just isn't this.
+    expect(screen.queryByText('Nothing on your desk')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(await screen.findByText('Does Maria need a new I-9?')).toBeInTheDocument();
   });
 });

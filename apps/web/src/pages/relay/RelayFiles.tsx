@@ -1,10 +1,20 @@
-import { useRef, useState } from 'react';
+import { useDeferredValue, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileText, FolderOpen, Search, Trash2, Upload } from 'lucide-react';
+import {
+  Download,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FolderOpen,
+  Search,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { Avatar } from '@/components/ui/Avatar';
@@ -12,6 +22,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { QueryError } from '@/components/ui/QueryError';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -32,6 +43,18 @@ import { WORK_DESKS, WORK_DESK_LABELS, fileSize, uploadWorkFile, workApi, type W
  * its own retention. This is the working shelf.
  */
 
+/**
+ * A shelf of identical grey pages tells you nothing. The icon is the
+ * fastest read on a row — a photo of a signed form and a rate spreadsheet
+ * should not look the same from across the desk.
+ */
+function fileIcon(name: string) {
+  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'bmp'].includes(ext)) return FileImage;
+  if (['xls', 'xlsx', 'csv', 'numbers'].includes(ext)) return FileSpreadsheet;
+  return FileText;
+}
+
 export function UploadDialog({
   open,
   onClose,
@@ -48,7 +71,21 @@ export function UploadDialog({
   const [tags, setTags] = useState('');
   const [about, setAbout] = useState<PickedAssociate | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
+  /** Matches the server's body cap. Catching it here means a person who
+   *  drags in a 40MB scan is told so immediately, rather than waiting out
+   *  the upload to be handed a 413. */
+  const MAX_BYTES = 25 * 1024 * 1024;
+  const take = (picked: File | null | undefined) => {
+    if (!picked) return;
+    if (picked.size > MAX_BYTES) {
+      toast.error(`${picked.name} is ${fileSize(picked.size)} — the limit is ${fileSize(MAX_BYTES)}.`);
+      return;
+    }
+    setFile(picked);
+  };
 
   const save = async () => {
     if (!file) return;
@@ -85,12 +122,30 @@ export function UploadDialog({
             type="file"
             className="hidden"
             aria-label="Choose a file"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => take(e.target.files?.[0])}
           />
+          {/* The drop target is the container; the button inside is just
+              the click affordance, so the drag tint is not a gold button. */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              take(e.dataTransfer.files?.[0]);
+            }}
+            className={cn(
+              'rounded-lg border border-dashed transition-colors',
+              dragging ? 'border-gold/70 bg-gold/[0.06]' : 'border-navy-secondary',
+            )}
+          >
           <button
             type="button"
             onClick={() => input.current?.click()}
-            className="flex w-full items-center gap-2.5 rounded-lg border border-dashed border-navy-secondary px-3 py-4 text-left text-sm hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-4 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Upload className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
             {file ? (
@@ -99,9 +154,12 @@ export function UploadDialog({
                 <span className="text-xs text-silver/70">{fileSize(file.size)} · choose another</span>
               </span>
             ) : (
-              <span className="text-silver">Choose a file — PDF, image, spreadsheet, document</span>
+              <span className="text-silver">
+                {dragging ? 'Drop it here' : 'Choose a file, or drag one in — PDF, image, spreadsheet, document'}
+              </span>
             )}
           </button>
+          </div>
           <label className="block text-sm">
             <span className="mb-1 block text-silver">Whose shelf</span>
             <Select value={desk} onChange={(e) => setDesk(e.target.value as WorkDesk | '')}>
@@ -143,7 +201,14 @@ export function RelayFiles({ myDesk }: { myDesk: WorkDesk | null }) {
   const [search, setSearch] = useState('');
   const [tag, setTag] = useState('');
   const [uploading, setUploading] = useState(false);
-  const q = useQuery({ queryKey: ['relay', 'files', scope, search, tag], queryFn: () => workApi.files({ scope, q: search || undefined, tag: tag || undefined }) });
+  // Debounced: the query key used to carry `search` directly, so every
+  // keystroke was a request and the shelf flickered while you typed.
+  const deferredSearch = useDeferredValue(search);
+  const confirm = useConfirm();
+  const q = useQuery({
+    queryKey: ['relay', 'files', scope, deferredSearch, tag],
+    queryFn: () => workApi.files({ scope, q: deferredSearch || undefined, tag: tag || undefined }),
+  });
   const remove = useMutation({
     mutationFn: (id: string) => workApi.remove(id),
     onSuccess: () => {
@@ -153,6 +218,23 @@ export function RelayFiles({ myDesk }: { myDesk: WorkDesk | null }) {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not remove it.'),
   });
   const files = q.data?.files ?? [];
+  // Whether the shelf is empty, or just empty THROUGH THIS FILTER — the
+  // same "nothing here yet" copy for both is how a search with no hits
+  // reads as a shelf somebody forgot to fill.
+  const filtered = Boolean(deferredSearch.trim() || tag || scope !== 'all');
+
+  const removeFile = async (f: { id: string; name: string }) => {
+    // A shared shelf: this is somebody else's working copy as often as
+    // it is yours, and there is no undo behind it.
+    const ok = await confirm({
+      title: `Take ${f.name} off the shelf?`,
+      description:
+        'It disappears for everyone who works from this shelf, and it cannot be put back.',
+      confirmLabel: 'Take it off',
+      destructive: true,
+    });
+    if (ok) remove.mutate(f.id);
+  };
 
   return (
     <div className="space-y-3">
@@ -197,19 +279,52 @@ export function RelayFiles({ myDesk }: { myDesk: WorkDesk | null }) {
       )}
 
       <Card className="overflow-hidden p-0">
-        {q.isLoading ? (
+        {q.isError ? (
+          // Never an empty state on a failure: "nothing here" and "we
+          // could not look" are opposite facts and used to render the same.
+          <div className="p-3">
+            <QueryError what="this shelf" query={q} />
+          </div>
+        ) : q.isLoading ? (
           <Skeleton className="m-3 h-24" />
         ) : files.length === 0 ? (
           <EmptyState
             icon={FolderOpen}
-            title="Nothing on this shelf yet"
-            description="Put the forms, spreadsheets and photos the work runs on here — then send one to another desk without leaving the relay."
+            title={filtered ? 'Nothing matches' : 'Nothing on this shelf yet'}
+            description={
+              filtered
+                ? 'No document on this shelf matches what you are looking for.'
+                : 'Put the forms, spreadsheets and photos the work runs on here — then send one to another desk without leaving the relay.'
+            }
+            action={
+              filtered ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearch('');
+                    setTag('');
+                    setScope('all');
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : undefined
+            }
           />
         ) : (
           <ul className="divide-y divide-navy-secondary/60">
-            {files.map((f) => (
-              <li key={f.id} className="flex items-center gap-3 px-4 py-2.5">
-                <FileText className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+            {files.map((f) => {
+              const Icon = fileIcon(f.name);
+              const removing = remove.isPending && remove.variables === f.id;
+              return (
+              <li
+                key={f.id}
+                className={cn(
+                  'flex items-center gap-3 px-4 py-2.5 transition-opacity',
+                  removing && 'opacity-50',
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
                   <a href={f.url} target="_blank" rel="noreferrer noopener" className="block truncate text-sm text-white hover:text-gold-bright hover:underline">
                     {f.name}
@@ -242,15 +357,17 @@ export function RelayFiles({ myDesk }: { myDesk: WorkDesk | null }) {
                 {f.uploadedBy?.userId === user?.id && (
                   <button
                     type="button"
-                    onClick={() => remove.mutate(f.id)}
+                    onClick={() => void removeFile(f)}
+                    disabled={removing}
                     aria-label={`Take ${f.name} off the shelf`}
-                    className="rounded p-1 text-silver/50 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    className="rounded p-1 text-silver/50 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </Card>
