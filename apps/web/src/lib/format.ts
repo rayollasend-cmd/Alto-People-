@@ -134,6 +134,46 @@ export function fmtMoneyEst(value: number): string {
  * drop ("8h", "7.5h", "7.25h"), locale-aware separators. Before this,
  * Schedule said `7.5h` while Pay said `7.50h` for the same quantity.
  */
+/**
+ * A span of minutes, the way a dispatcher would say it out loud.
+ *
+ *   4    → "4 min"
+ *   95   → "1h 35m"
+ *   1068 → "17h 48m"
+ *   3000 → "2d 2h"
+ *
+ * The vans board was printing the raw number — "Van 1 is running about
+ * 1068 min late", "seen 1529 min ago" — which is technically true and
+ * completely unreadable. Nobody converts 1068 minutes in their head at
+ * 6am, and the number being that large is itself the signal that
+ * something is wrong rather than merely late.
+ */
+export function fmtMinutes(min: number | null | undefined): string {
+  if (min === null || min === undefined || !Number.isFinite(min)) return DASH;
+  const m = Math.max(0, Math.round(min));
+  if (m < 1) return 'under a minute';
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) {
+    const rem = m % 60;
+    return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
+  }
+  const d = Math.floor(h / 24);
+  const remH = h % 24;
+  return remH === 0 ? `${d}d` : `${d}d ${remH}h`;
+}
+
+/**
+ * Past this, a run isn't late — it's stuck.
+ *
+ * Runs only end when a driver taps Complete, and a driver who forgets
+ * leaves the run ACTIVE for ever. The board then reports it as "running
+ * late" in growing numbers, which buries the runs that are genuinely a
+ * few minutes behind and need a message sent. Three hours is past any
+ * real delay on a shuttle route measured in minutes.
+ */
+export const STUCK_RUN_MINUTES = 180;
+
 export function fmtHours(hours: number | null | undefined): string {
   if (hours === null || hours === undefined || !Number.isFinite(hours)) return DASH;
   const s = hours.toLocaleString(displayLocale(), {

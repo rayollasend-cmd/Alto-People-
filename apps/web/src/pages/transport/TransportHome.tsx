@@ -23,13 +23,14 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
-import { usePrompt } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDateTime, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
+import { STUCK_RUN_MINUTES, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
 import { workweekStart } from '@/lib/workweek';
 import {
   cancelRide,
   cancelRun,
+  closeRunFromDispatch,
   createRun,
   createStop,
   createVan,
@@ -411,6 +412,40 @@ function KpiStrip({ k }: { k: TransportBoard['kpis'] }) {
   );
 }
 
+/**
+ * Closing an abandoned run is a write with money implications for people
+ * who aren't in the room, so it names them before it acts: riders already
+ * marked on board complete and keep their fare, anyone never marked is
+ * cancelled and charged nothing.
+ */
+function useCloseRun() {
+  const confirm = useConfirm();
+  const queryClient = useQueryClient();
+  return async (runId: string, vanName: string) => {
+    const ok = await confirm({
+      title: `Close out ${vanName}?`,
+      description:
+        'The driver never completed this run, so it still counts as on the road. ' +
+        'Riders marked on board will be completed as normal. Anyone the driver never ' +
+        'marked will be cancelled and charged nothing — hours later there is no honest ' +
+        'way to say whether they rode, and guessing either way costs them money.',
+      confirmLabel: 'Close the run',
+    });
+    if (!ok) return;
+    try {
+      const { unmarkedCancelled } = await closeRunFromDispatch(runId);
+      toast.success(
+        unmarkedCancelled > 0
+          ? `${vanName} closed — ${unmarkedCancelled} rider${unmarkedCancelled === 1 ? '' : 's'} were never marked and were not charged.`
+          : `${vanName} closed.`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ['transport'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the run.');
+    }
+  };
+}
+
 function useMessageRun() {
   const prompt = usePrompt();
   return async (run: { id: string; van: { name: string } }, suggestion?: string) => {
@@ -439,6 +474,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
   const actions = useRideActions();
   const prompt = usePrompt();
   const message = useMessageRun();
+  const closeRun = useCloseRun();
   const queryClient = useQueryClient();
   const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 15_000 });
   useEffect(
@@ -492,14 +528,31 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
   for (const r of live.data?.runs ?? []) {
     if (r.status !== 'ACTIVE') continue;
     const late = Math.max(0, ...r.late.map((l) => l.minutes));
-    if (late >= 5) {
+    // Past STUCK_RUN_MINUTES this isn't a delay, it's a run nobody closed
+    // — runs only end when a driver taps Complete, so a forgotten one sits
+    // ACTIVE for ever and reports itself as "late" in ever-growing
+    // numbers, burying the runs that are genuinely a few minutes behind.
+    // Different problem, different words, different action: you don't
+    // apologise to riders who went home hours ago, you close the run.
+    if (late >= STUCK_RUN_MINUTES) {
+      attention.push({
+        key: `stuck-${r.runId}`,
+        tone: 'warning',
+        title: `${r.van.name} has been out for ${fmtMinutes(late)} — still open`,
+        body: `${r.driver.name} · the run was never completed, so it still counts as on the road`,
+        actions: [
+          ...(manage ? [{ label: 'Close this run', onClick: () => void closeRun(r.runId, r.van.name) }] : []),
+          { label: 'Live map', onClick: () => setParams({ tab: 'live' }) },
+        ],
+      });
+    } else if (late >= 5) {
       attention.push({
         key: `late-${r.runId}`,
         tone: 'alert',
-        title: `${r.van.name} is running about ${late} min late`,
-        body: r.late.map((l) => `${l.store} · ${l.minutes} min`).join(' · '),
+        title: `${r.van.name} is running about ${fmtMinutes(late)} late`,
+        body: r.late.map((l) => `${l.store} · ${fmtMinutes(l.minutes)}`).join(' · '),
         actions: [
-          ...(manage ? [{ label: 'Message riders', onClick: () => void message({ id: r.runId, van: r.van }, `Running about ${late} minutes late — sorry, we’re on our way.`) }] : []),
+          ...(manage ? [{ label: 'Message riders', onClick: () => void message({ id: r.runId, van: r.van }, `Running about ${fmtMinutes(late)} late — sorry, we’re on our way.`) }] : []),
           { label: 'Live map', onClick: () => setParams({ tab: 'live' }) },
         ],
       });
@@ -788,7 +841,7 @@ function RunPanel({
               {run.seats.taken}/{run.seats.capacity} seats
             </span>
             {active && late >= 5 ? (
-              <Badge variant="destructive">~{late} min late</Badge>
+              <Badge variant="destructive">~{fmtMinutes(late)} late</Badge>
             ) : (
               <Badge variant={active ? 'success' : run.status === 'COMPLETED' ? 'default' : 'accent'}>
                 {run.status === 'PLANNED' ? 'Planned' : active ? 'On the road' : run.status === 'COMPLETED' ? 'Finished' : 'Called off'}
@@ -1336,7 +1389,7 @@ function DispatchDialog({
 
 function ago(iso: string, now: number): string {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`;
+  return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : `${fmtMinutes(s / 60)} ago`;
 }
 
 function LiveTab() {
@@ -1444,7 +1497,7 @@ function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; 
         <span className="ml-auto">
           {active ? (
             late >= 5 ? (
-              <Badge variant="pending">~{late} min late</Badge>
+              <Badge variant="pending">~{fmtMinutes(late)} late</Badge>
             ) : (
               <Badge variant="success">On time</Badge>
             )

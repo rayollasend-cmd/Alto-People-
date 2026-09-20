@@ -467,6 +467,18 @@ export const updateRun = (
 export const cancelRun = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(`/transport/runs/${id}/cancel`, { method: 'POST', body: { reason } });
 
+/**
+ * Close out a run the driver never completed. Riders already marked on
+ * board complete normally; anyone never marked is cancelled and charged
+ * nothing, and comes back in `unmarkedCancelled` so the dispatcher can
+ * see how many were left unaccounted for.
+ */
+export const closeRunFromDispatch = (id: string) =>
+  apiFetch<{ boarded: number; unmarkedCancelled: number }>(
+    `/transport/runs/${id}/complete`,
+    { method: 'POST' },
+  );
+
 export interface Van {
   id: string;
   name: string;

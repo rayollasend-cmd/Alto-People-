@@ -1995,6 +1995,58 @@ transportRouter.patch('/runs/:id', MANAGE, async (req, res) => {
   res.json({ run: toRunView((await prisma.rideRun.findUnique({ where: { id }, include: runInclude }))!) });
 });
 
+/**
+ * Close out a run the driver never completed.
+ *
+ * A run only ends when the driver taps Complete, so one forgotten tap
+ * leaves it ACTIVE for ever: the board keeps reporting the van as on the
+ * road and "running late" by an ever-growing number, the van can't be
+ * counted as parked, and the real few-minutes-behind runs get buried.
+ * Nothing swept those up, and the driver-side endpoint is theirs alone
+ * (DRIVE + ownRun), so a dispatcher had no way to end it.
+ *
+ * Riders are handled the only honest way. Anyone the driver marked BOARDED
+ * rode, and their fare was charged at boarding, so they complete normally.
+ * Anyone still SCHEDULED was never marked — hours later nobody can know
+ * whether they rode, and both guesses cost the rider money (a fare if we
+ * say they rode, a no-show fee if we say they didn't). They're cancelled
+ * instead, which charges nothing, and the count comes back so the
+ * dispatcher can see how many were left in the dark.
+ */
+transportRouter.post('/runs/:id/complete', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const run = await prisma.rideRun.findUnique({ where: { id }, include: runInclude });
+  if (!run) throw new HttpError(404, 'not_found', 'Run not found.');
+  if (run.status !== 'ACTIVE') {
+    throw new HttpError(409, 'not_active', 'Only a run that is out on the road can be closed.');
+  }
+  const now = new Date();
+  const unmarked = run.rides.filter((r) => r.status === 'SCHEDULED').length;
+  const boarded = run.rides.filter((r) => r.status === 'BOARDED').length;
+  await prisma.$transaction([
+    prisma.ride.updateMany({
+      where: { runId: run.id, status: 'BOARDED' },
+      data: { status: 'COMPLETED', completedAt: now },
+    }),
+    prisma.ride.updateMany({
+      where: { runId: run.id, status: 'SCHEDULED' },
+      data: { status: 'CANCELLED', chargeCents: 0 },
+    }),
+    prisma.rideRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', endedAt: now } }),
+  ]);
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'transport.run_closed_by_dispatch',
+      entityType: 'RideRun',
+      entityId: run.id,
+      metadata: { boarded, unmarkedCancelled: unmarked },
+    },
+    'transport',
+  );
+  res.json({ boarded, unmarkedCancelled: unmarked });
+});
+
 transportRouter.post('/runs/:id/cancel', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const { reason } = ReasonInput.parse(req.body);

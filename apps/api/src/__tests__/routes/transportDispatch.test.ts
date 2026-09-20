@@ -154,3 +154,75 @@ describe('POST /transport/runs/:id/message', () => {
     expect(board.body.drivers.find((x: { userId: string }) => x.userId === d.driver.id).phone).toBe('555-0101');
   });
 });
+
+describe('POST /transport/runs/:id/complete — closing a run the driver forgot', () => {
+  /**
+   * Runs only end when the driver taps Complete. One forgotten tap leaves
+   * the run ACTIVE for ever: the board keeps the van "on the road" and
+   * reports it as running late by an ever-growing number, burying the runs
+   * that are genuinely a few minutes behind. The driver's own endpoint is
+   * theirs alone, so a dispatcher had no way to end it.
+   */
+  async function abandonedRun() {
+    const w = await day();
+    const kim = await w.rider('Kim', { lat: 30.39, lng: -86.49 });
+    const jay = await w.rider('Jay', { lat: 30.40, lng: -86.50 });
+    const run = await prisma.rideRun.create({
+      data: {
+        vanId: w.vans[0]!.id,
+        driverUserId: w.driver.id,
+        direction: 'TO_WORK',
+        serviceDate: w.serviceDate,
+        status: 'ACTIVE',
+        departAt: new Date(Date.now() - 18 * 3600_000),
+        startedAt: new Date(Date.now() - 18 * 3600_000),
+        createdById: w.director.id,
+      },
+    });
+    // One rider the driver marked on board, one they never marked at all.
+    await prisma.ride.update({
+      where: { id: kim.id },
+      data: { runId: run.id, status: 'BOARDED', boardedAt: new Date(), chargeCents: 500 },
+    });
+    await prisma.ride.update({
+      where: { id: jay.id },
+      data: { runId: run.id, status: 'SCHEDULED' },
+    });
+    return { ...w, run, kim, jay };
+  }
+
+  it('completes who rode, charges nothing to who was never marked, and parks the van', async () => {
+    const w = await abandonedRun();
+    const res = await w.directorAgent.post(`/transport/runs/${w.run.id}/complete`).send({});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ boarded: 1, unmarkedCancelled: 1 });
+
+    // On board = they rode; the fare was charged at boarding and stands.
+    const kim = await prisma.ride.findUniqueOrThrow({ where: { id: w.kim.id } });
+    expect(kim.status).toBe('COMPLETED');
+    expect(kim.chargeCents).toBe(500);
+
+    // Never marked = hours later nobody can say whether they rode, and
+    // both guesses cost them money. Cancelled, charged nothing.
+    const jay = await prisma.ride.findUniqueOrThrow({ where: { id: w.jay.id } });
+    expect(jay.status).toBe('CANCELLED');
+    expect(jay.chargeCents).toBe(0);
+
+    const run = await prisma.rideRun.findUniqueOrThrow({ where: { id: w.run.id } });
+    expect(run.status).toBe('COMPLETED');
+    expect(run.endedAt).not.toBeNull();
+  });
+
+  it('only closes a run that is actually out, and is the dispatcher’s alone', async () => {
+    const w = await abandonedRun();
+    // A driver cannot reach the dispatch endpoint.
+    const driverAgent = await loginAs(w.driver.email);
+    expect((await driverAgent.post(`/transport/runs/${w.run.id}/complete`).send({})).status).toBe(403);
+
+    expect((await w.directorAgent.post(`/transport/runs/${w.run.id}/complete`).send({})).status).toBe(200);
+    // Closing twice is not a way to cancel more riders.
+    const again = await w.directorAgent.post(`/transport/runs/${w.run.id}/complete`).send({});
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('not_active');
+  });
+});
