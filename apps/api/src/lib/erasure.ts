@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { releaseFutureShifts } from './deactivation.js';
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from './audit.js';
 import { purgeAssociateBiometrics } from './kioskMaintenance.js';
@@ -13,6 +14,8 @@ import { logger } from './logger.js';
  * records for 3. So this is "anonymize + scrub", never row deletion:
  *
  *   KEPT (untouched)     TimeEntry, PayrollItem, PayrollRun, Shift
+ *                        (past shifts only — future ones are released,
+ *                        see releaseFutureShifts below)
  *                        assignments, W-4 numeric elections, DocumentRecord
  *                        rows (kind + timestamps as evidence they existed),
  *                        KioskPunch rows (minus selfies), Notification rows
@@ -182,6 +185,16 @@ export async function eraseAssociate(
         ...(associate.deletedAt ? {} : { deletedAt: now }),
       },
     });
+
+    // The doc comment above says an erased identity cannot keep working
+    // shifts, and until now nothing enforced it: a force-erased live
+    // associate stayed rostered on every future shift under a name that
+    // had just been anonymised. Deactivation and separation have always
+    // released them through this same helper — erasure is the third door
+    // out and was the one left open. Published shifts go back to OPEN so
+    // the slot can be re-covered rather than silently vanishing from the
+    // roster; past shifts are history and stay exactly as they are.
+    await releaseFutureShifts(tx, associateId, now, 'Associate record erased.');
 
     // Emergency contacts are third-party PII with no retention duty —
     // delete the rows outright rather than nulling NOT NULL name/phone.

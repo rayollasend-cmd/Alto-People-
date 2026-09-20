@@ -494,6 +494,35 @@ export function dedupeDrafts(body: DedupeDraftsInput): Promise<DedupeDraftsRespo
   });
 }
 
+/**
+ * Every unpublished draft the caller can see, whatever date range they
+ * happen to be looking at. The page's own Drafts pill counted only the
+ * shifts already loaded, so drafts parked outside the filter were
+ * invisible — which is how weeks of them went missing.
+ */
+export interface DraftSummary {
+  total: number;
+  earliestStartsAt: string | null;
+  latestStartsAt: string | null;
+  byClient: Array<{ clientId: string; clientName: string; count: number }>;
+}
+
+export function getDraftSummary(): Promise<DraftSummary> {
+  return apiFetch<DraftSummary>('/scheduling/drafts/summary');
+}
+
+/**
+ * Throw drafts away in bulk. `expectedCount` is the number the caller was
+ * shown: the server refuses if it has moved, so a colleague's half-built
+ * week can't disappear because two people tidied up at once.
+ */
+export function deleteDrafts(expectedCount: number, clientId?: string) {
+  return apiFetch<{ deleted: number }>('/scheduling/drafts', {
+    method: 'DELETE',
+    body: { expectedCount, ...(clientId ? { clientId } : {}) },
+  });
+}
+
 /* Phase 53 — pivot week view + publish-week ============================== */
 
 export function listSchedulingAssociates(
@@ -556,11 +585,17 @@ export function getShiftTeam(id: string): Promise<ShiftTeamDetailResponse> {
   return apiFetch<ShiftTeamDetailResponse>(`/scheduling/teams/${id}`);
 }
 
+/**
+ * `assignedHere` says the add also recorded this site as their work
+ * location — it does that when nothing on their record pointed anywhere,
+ * which is the case that used to leave someone on a team but missing from
+ * the schedule's roster.
+ */
 export function addShiftTeamMember(
   teamId: string,
   associateId: string,
-): Promise<void> {
-  return apiFetch<void>(`/scheduling/teams/${teamId}/members`, {
+): Promise<{ assignedHere: boolean }> {
+  return apiFetch<{ assignedHere: boolean }>(`/scheduling/teams/${teamId}/members`, {
     method: 'POST',
     body: { associateId },
   });

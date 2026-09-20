@@ -424,6 +424,60 @@ describe('POST /org/associates/:id/erase', () => {
     ).not.toContain(seeded.associate.id);
   });
 
+  it('takes a force-erased associate off every shift still ahead of them', async () => {
+    // The module's own doc said an erased identity cannot keep working
+    // shifts, and nothing enforced it: a force-erased live associate
+    // stayed rostered on future shifts under a name that had just been
+    // anonymised. Deactivation and separation have always released them;
+    // erasure was the third door out and the one left open.
+    const client = await createClient();
+    const seeded = await seedFullAssociate(client.id, { separated: false });
+    const hr = await seedHrAdmin();
+    const location = await prisma.location.create({
+      data: { clientId: client.id, name: 'Site', timezone: 'America/Chicago' },
+    });
+    const shiftAt = (hoursFromNow: number, status: 'ASSIGNED' | 'DRAFT' | 'COMPLETED') =>
+      prisma.shift.create({
+        data: {
+          clientId: client.id,
+          locationId: location.id,
+          position: 'Stocker',
+          startsAt: new Date(Date.now() + hoursFromNow * 3600_000),
+          endsAt: new Date(Date.now() + (hoursFromNow + 8) * 3600_000),
+          status,
+          assignedAssociateId: seeded.associate.id,
+          assignedAt: new Date(),
+        },
+      });
+    const future = await shiftAt(48, 'ASSIGNED');
+    const futureDraft = await shiftAt(72, 'DRAFT');
+    const past = await shiftAt(-48, 'COMPLETED');
+
+    const erased = await hr.post(`/org/associates/${seeded.associate.id}/erase`).send({
+      reason: 'Deletion request, ticket #101',
+      confirmName: 'Gonzalez',
+      force: true,
+    });
+    expect(erased.status).toBe(200);
+
+    // The published shift goes back to OPEN rather than vanishing — the
+    // store still needs it covered, and a silent hole is worse than one
+    // somebody can see.
+    const releasedShift = await prisma.shift.findUniqueOrThrow({ where: { id: future.id } });
+    expect(releasedShift.status).toBe('OPEN');
+    expect(releasedShift.assignedAssociateId).toBeNull();
+
+    // The draft keeps being a draft, minus the person.
+    const releasedDraft = await prisma.shift.findUniqueOrThrow({ where: { id: futureDraft.id } });
+    expect(releasedDraft.status).toBe('DRAFT');
+    expect(releasedDraft.assignedAssociateId).toBeNull();
+
+    // History is history.
+    const untouchedPast = await prisma.shift.findUniqueOrThrow({ where: { id: past.id } });
+    expect(untouchedPast.status).toBe('COMPLETED');
+    expect(untouchedPast.assignedAssociateId).toBe(seeded.associate.id);
+  });
+
   it('409s on a last-name confirmation mismatch and changes nothing', async () => {
     const client = await createClient();
     const seeded = await seedFullAssociate(client.id);

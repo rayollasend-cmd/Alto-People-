@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -43,6 +44,7 @@ import type {
   ShiftTemplate,
 } from '@alto-people/shared';
 import { ShiftTeamsDialog } from './ShiftTeamsDialog';
+import { DraftsDialog } from './DraftsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
 import { listShiftPositions } from '@/lib/orgApi';
@@ -63,6 +65,7 @@ import {
   getSchedulingKpis,
   getShiftConflicts,
   getPublishPreflight,
+  getDraftSummary,
   listSchedulingAssociates,
   listStaffingTargets,
   moveRosterRow,
@@ -1596,6 +1599,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   // Jump to the week containing the earliest draft and switch to week view
   // so the publish ribbon is in front of the manager.
+  // The pill's number comes from the server, not from the shifts this page
+  // happens to have loaded — a draft parked outside the date filter was
+  // invisible, which is how weeks of them went missing.
+  const draftSummary = useQuery({
+    queryKey: ['scheduling', 'drafts', 'summary'],
+    queryFn: getDraftSummary,
+    enabled: canManage,
+    staleTime: 30_000,
+  });
+  const draftTotal = draftSummary.data?.total ?? 0;
+  const [draftsOpen, setDraftsOpen] = useState(false);
+
   const jumpToFirstDraft = useCallback(() => {
     if (allDrafts.length === 0) return;
     const earliest = new Date(allDrafts[0].startsAt);
@@ -2530,16 +2545,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             knows unpublished work exists even when looking at a different
             week. Click → jumps to the earliest draft's week and switches to
             week view so the publish ribbon is in their face. */}
-        {canManage && allDrafts.length > 0 && (
+        {canManage && draftTotal > 0 && (
           <button
             type="button"
-            onClick={jumpToFirstDraft}
+            onClick={() => setDraftsOpen(true)}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-warning/40 bg-warning/[0.08] text-warning hover:bg-warning/15 text-xs"
-            title={`${allDrafts.length} draft shift${allDrafts.length === 1 ? '' : 's'} not yet published — click to review`}
+            title={`${draftTotal} draft shift${draftTotal === 1 ? '' : 's'} not yet published, across every week — click to review`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
-            <span className="font-medium tabular-nums">{allDrafts.length}</span>
-            draft{allDrafts.length === 1 ? '' : 's'} unpublished
+            <span className="font-medium tabular-nums">{draftTotal}</span>
+            draft{draftTotal === 1 ? '' : 's'} unpublished
           </button>
         )}
 
@@ -3622,6 +3637,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Not gated on the site filters: the whole point is that drafts
+          hide outside whatever the manager is currently looking at. */}
+      <DraftsDialog
+        open={draftsOpen}
+        onClose={() => setDraftsOpen(false)}
+        onReview={jumpToFirstDraft}
+        onDeleted={() => {
+          void draftSummary.refetch();
+          refresh();
+        }}
+      />
 
       {/* Manage the standing crews at the selected work site. */}
       {clientFilter && locationFilter && (

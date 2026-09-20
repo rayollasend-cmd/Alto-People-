@@ -1015,6 +1015,88 @@ describe('POST /scheduling/templates/:id/apply — site-timezone times', () => {
   });
 });
 
+describe('drafts: the unpublished work nobody could find', () => {
+  async function seedDraftSite() {
+    const client = await createClient();
+    const location = await prisma.location.create({
+      data: { clientId: client.id, name: 'Front Beach' },
+    });
+    return { client, location };
+  }
+
+  const mkShift = (clientId: string, locationId: string, status: 'DRAFT' | 'OPEN', hours: number) =>
+    prisma.shift.create({
+      data: {
+        clientId,
+        locationId,
+        position: 'Stocker',
+        startsAt: new Date(Date.now() + hours * 3_600_000),
+        endsAt: new Date(Date.now() + (hours + 4) * 3_600_000),
+        status,
+        payRate: 20,
+      },
+    });
+
+  it('keeps drafts out of hours and money, and still counts them', async () => {
+    // A draft is a scratch pad — nobody is rostered and nobody is being
+    // paid — so counting one in "hours scheduled" and "projected labor"
+    // reported work that had not been committed to. Fill rate already
+    // left them out, which was the tell: the count was honest and the
+    // money was not.
+    const { client, location } = await seedDraftSite();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    await mkShift(client.id, location.id, 'OPEN', 2);
+    await mkShift(client.id, location.id, 'DRAFT', 5);
+
+    const window = `from=${new Date(Date.now() - 3_600_000).toISOString()}&to=${new Date(
+      Date.now() + 48 * 3_600_000,
+    ).toISOString()}`;
+    const res = await a.get(`/scheduling/kpis?${window}`);
+    expect(res.status).toBe(200);
+    expect(res.body.draftShifts).toBe(1); // still findable
+    expect(res.body.totalScheduledMinutes).toBe(240); // the OPEN one only
+    expect(res.body.projectedLaborCost).toBe(80); // 4h x $20, draft excluded
+  });
+
+  it('counts every draft org-wide, not just the week being looked at', async () => {
+    const { client, location } = await seedDraftSite();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    await mkShift(client.id, location.id, 'DRAFT', 3);
+    await mkShift(client.id, location.id, 'DRAFT', 24 * 400); // a year out
+
+    const res = await a.get('/scheduling/drafts/summary');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.byClient[0]).toMatchObject({ clientId: client.id, count: 2 });
+    expect(res.body.earliestStartsAt).toBeTruthy();
+  });
+
+  it('bulk delete takes only drafts, and refuses when the count moved', async () => {
+    const { client, location } = await seedDraftSite();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    await mkShift(client.id, location.id, 'DRAFT', 3);
+    await mkShift(client.id, location.id, 'DRAFT', 9);
+    const published = await mkShift(client.id, location.id, 'OPEN', 6);
+
+    // Someone else added a draft since they looked — refuse rather than
+    // quietly take one they never saw.
+    const stale = await a.delete('/scheduling/drafts').send({ expectedCount: 1 });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('draft_count_changed');
+    expect(await prisma.shift.count({ where: { status: 'DRAFT' } })).toBe(2);
+
+    const ok = await a.delete('/scheduling/drafts').send({ expectedCount: 2 });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ deleted: 2 });
+    expect(await prisma.shift.count({ where: { status: 'DRAFT' } })).toBe(0);
+    // A published shift is somebody's rostered day; unreachable from here.
+    expect(await prisma.shift.findUnique({ where: { id: published.id } })).not.toBeNull();
+  });
+});
+
 describe('Shift teams', () => {
   async function seedSite() {
     const client = await createClient();
@@ -1051,12 +1133,26 @@ describe('Shift teams', () => {
     const teamId = created.body.id as string;
 
     // Add Maria (twice — the second must be an idempotent no-op).
+    // Adding now answers 200 with what it did: nobody had recorded a work
+    // site for her, so the add records this one. Without that she would be
+    // on the team and still missing from the location-scoped roster behind
+    // the schedule — added, then not there to schedule.
+    const firstAdd = await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id });
+    expect(firstAdd.status).toBe(200);
+    expect(firstAdd.body).toEqual({ assignedHere: true });
     expect(
-      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
-    ).toBe(204);
+      (await a.get(`/scheduling/associates?locationId=${location.id}`)).body.associates.map(
+        (x: { id: string }) => x.id,
+      ),
+    ).toContain(maria.id);
+
+    // Re-adding stays idempotent, and doesn't open a second assignment.
+    const secondAdd = await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id });
+    expect(secondAdd.status).toBe(200);
+    expect(secondAdd.body).toEqual({ assignedHere: false });
     expect(
-      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
-    ).toBe(204);
+      await prisma.associateAssignment.count({ where: { associateId: maria.id, endedAt: null } }),
+    ).toBe(1);
 
     const list = await a.get(`/scheduling/teams?locationId=${location.id}`);
     expect(list.status).toBe(200);
@@ -1069,13 +1165,15 @@ describe('Shift teams', () => {
     expect(roster.status).toBe(200);
     expect(roster.body.associates.map((x: { id: string }) => x.id)).toEqual([maria.id]);
 
-    // Detail flags Maria as not-at-this-site (no assignment/application there).
+    // No badge: the add itself recorded the site, so she is at it. The
+    // not-at-this-site flag is now reserved for the case it was always
+    // meant for — someone whose record points at a different site.
     const detail = await a.get(`/scheduling/teams/${teamId}`);
     expect(detail.status).toBe(200);
     expect(detail.body.members).toHaveLength(1);
     expect(detail.body.members[0]).toMatchObject({
       associateId: maria.id,
-      atLocation: false,
+      atLocation: true,
     });
 
     // Remove her; the team roster drains.
@@ -1099,9 +1197,19 @@ describe('Shift teams', () => {
       name: 'Morning',
     });
     const teamId = created.body.id as string;
+    // She already works at another site of the same client, so adding her
+    // to this team must NOT move her — silently transferring someone out
+    // of another store's roster is not a side effect a team edit should
+    // have. That is what leaves the badge showing and assign-here for.
+    const otherSite = await prisma.location.create({
+      data: { clientId: client.id, name: 'Other site', timezone: 'America/Chicago' },
+    });
+    await prisma.associateAssignment.create({
+      data: { associateId: maria.id, locationId: otherSite.id, startedAt: new Date() },
+    });
     await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id });
 
-    // Flagged before: nothing on her record points at this location.
+    // Flagged: her record points at a different site of this client.
     const before = await a.get(`/scheduling/teams/${teamId}`);
     expect(before.body.members[0].atLocation).toBe(false);
 

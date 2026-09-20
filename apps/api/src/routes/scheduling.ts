@@ -827,10 +827,19 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
     // Columns are qualified with the `s` alias — the rate-default LEFT
     // JOIN below also carries a "clientId", which would otherwise make
     // the bare column ambiguous.
+    // DRAFT is excluded here, and only here. A draft is a manager's
+    // scratch pad — nobody is rostered, nobody is being paid — so counting
+    // it in "hours scheduled" and "projected labor" reported work that had
+    // not been committed to, and a week of forgotten drafts quietly
+    // inflated both. Fill rate already left them out (fillBase is filled +
+    // open), which is exactly the inconsistency: the count was honest and
+    // the money was not. The Drafts tile still counts them, from `grouped`
+    // below, because finding them is the point.
     const conds: Prisma.Sql[] = [
       Prisma.sql`s."startsAt" >= ${from}`,
       Prisma.sql`s."startsAt" < ${to}`,
       Prisma.sql`s."status" <> 'CANCELLED'::${SHIFT_STATUS_ENUM}`,
+      Prisma.sql`s."status" <> 'DRAFT'::${SHIFT_STATUS_ENUM}`,
     ];
     if (effectiveKpiClient) {
       conds.push(Prisma.sql`s."clientId" = ${effectiveKpiClient}::uuid`);
@@ -2346,6 +2355,100 @@ schedulingRouter.delete('/rate-defaults/:id', MANAGE, async (req, res, next) => 
  * for. Drives the row axis of the pivot week view (rows=people × cols=days).
  * Gated to manage:scheduling, so only HR/Ops reach this endpoint.
  */
+/**
+ * GET /scheduling/drafts/summary
+ *
+ * Every unpublished draft the caller can see, regardless of the date
+ * filter they happen to be looking at.
+ *
+ * The page already had a Drafts pill, but it counted the shifts already
+ * loaded — so a draft parked in a week outside the current range was
+ * invisible, and the honest answer to "do I have unpublished work?" was
+ * "only within the dates you are looking at". That is how weeks of drafts
+ * went missing, inflating hours and projected labor while nobody could
+ * find them.
+ */
+schedulingRouter.get('/drafts/summary', SCHED_READ, async (req, res, next) => {
+  try {
+    const where: Prisma.ShiftWhereInput = { ...scopeShifts(req.user!), status: 'DRAFT' };
+    const [total, oldest, newest, byClient] = await Promise.all([
+      prisma.shift.count({ where }),
+      prisma.shift.findFirst({ where, orderBy: { startsAt: 'asc' }, select: { startsAt: true } }),
+      prisma.shift.findFirst({ where, orderBy: { startsAt: 'desc' }, select: { startsAt: true } }),
+      prisma.shift.groupBy({ by: ['clientId'], where, _count: { _all: true } }),
+    ]);
+    const clients =
+      byClient.length > 0
+        ? await prisma.client.findMany({
+            where: { id: { in: byClient.map((g) => g.clientId) } },
+            select: { id: true, name: true },
+          })
+        : [];
+    const nameOf = new Map(clients.map((c) => [c.id, c.name]));
+    res.json({
+      total,
+      earliestStartsAt: oldest?.startsAt?.toISOString() ?? null,
+      latestStartsAt: newest?.startsAt?.toISOString() ?? null,
+      byClient: byClient
+        .map((g) => ({ clientId: g.clientId, clientName: nameOf.get(g.clientId) ?? '—', count: g._count._all }))
+        .sort((a, b) => b.count - a.count),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /scheduling/drafts
+ *
+ * Throw away unpublished drafts in bulk. Irreversible, so it is deliberately
+ * awkward: the caller must send back the exact count it was shown, which
+ * fails if anything changed since they looked — someone else's half-built
+ * week must not disappear because two people cleaned up at once.
+ *
+ * Only ever DRAFT. A published shift is somebody's rostered day and is not
+ * reachable from here at any count.
+ */
+schedulingRouter.delete('/drafts', MANAGE, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        /** The count the caller was shown; a mismatch aborts. */
+        expectedCount: z.number().int().nonnegative(),
+        /** Narrow the sweep to one client, matching what they reviewed. */
+        clientId: z.string().uuid().optional(),
+      })
+      .parse(req.body ?? {});
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      status: 'DRAFT',
+      ...(body.clientId ? { clientId: body.clientId } : {}),
+    };
+    const actual = await prisma.shift.count({ where });
+    if (actual !== body.expectedCount) {
+      throw new HttpError(
+        409,
+        'draft_count_changed',
+        `This would now delete ${actual} drafts, not ${body.expectedCount}. Someone may have added or published one — take another look.`,
+        { actual, expected: body.expectedCount },
+      );
+    }
+    const { count } = await prisma.shift.deleteMany({ where });
+    enqueueAudit({
+      actorUserId: req.user!.id,
+      clientId: body.clientId ?? null,
+      action: 'scheduling.drafts_bulk_deleted',
+      entityType: 'Shift',
+      entityId: body.clientId ?? 'all',
+      metadata: { count, clientId: body.clientId ?? null },
+    }, 'scheduling.drafts_bulk_deleted');
+    res.json({ deleted: count });
+  } catch (err) {
+    next(err);
+  }
+});
+
 schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
   try {
     let clientId = req.query.clientId?.toString();
@@ -5975,7 +6078,62 @@ schedulingRouter.post('/teams/:id/members', MANAGE, async (req, res, next) => {
       create: { teamId: team.id, associateId: associate.id },
       update: {},
     });
-    res.status(204).end();
+
+    // Putting someone on a team at a site is a manager saying they work
+    // there — but membership alone records nothing, and the roster behind
+    // the schedule is filtered by open assignment. So the person was added
+    // and then simply wasn't there to schedule, with only a small "not at
+    // this site" badge in this dialog to explain it.
+    //
+    // Only the unambiguous case is closed automatically: nobody has
+    // recorded a work site for them at all, which is the class this whole
+    // problem comes from (an invite with no location, so approval never
+    // opened an assignment). Someone already assigned somewhere keeps it —
+    // silently transferring staff out of another store's roster is not a
+    // side effect a team edit should have, and the manual "Assign to this
+    // site" cure still handles that on purpose.
+    let assignedHere = false;
+    const openAssignment = await prisma.associateAssignment.findFirst({
+      where: { associateId: associate.id, endedAt: null },
+      select: { id: true },
+    });
+    if (!openAssignment) {
+      const latestApproved = await prisma.application.findFirst({
+        where: { associateId: associate.id, status: 'APPROVED', deletedAt: null },
+        orderBy: { invitedAt: 'desc' },
+        select: { clientId: true },
+      });
+      // A record pointing at another client is a transfer, not a tidy-up.
+      if (!latestApproved || latestApproved.clientId === team.clientId) {
+        const created = await prisma.associateAssignment.create({
+          data: {
+            associateId: associate.id,
+            locationId: team.locationId,
+            startedAt: new Date(),
+            reason: `Added to shift team "${team.name}"`,
+            notedById: req.user!.id,
+          },
+          select: { id: true },
+        });
+        assignedHere = true;
+        enqueueAudit(
+          {
+            actorUserId: req.user!.id,
+            action: 'scheduling.team_member_assigned',
+            entityType: 'Associate',
+            entityId: associate.id,
+            metadata: {
+              teamId: team.id,
+              locationId: team.locationId,
+              assignmentId: created.id,
+              viaTeamAdd: true,
+            },
+          },
+          'scheduling.team_member_assigned',
+        );
+      }
+    }
+    res.json({ assignedHere });
   } catch (err) {
     next(err);
   }
