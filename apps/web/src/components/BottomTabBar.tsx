@@ -200,7 +200,17 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         // the home indicator the way a native tab bar's does, so the labels
         // clear it. Layout must NOT also pad <main> for that inset while
         // this bar is on screen — see the note there.
-        'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]',
+        //
+        // At 65% rather than the full inset. iOS reports 34pt at the bottom
+        // of an indicator phone, but the indicator itself is a 5pt pill
+        // sitting 8pt up — it occupies 8–13pt, and the rest of that 34 is
+        // Apple being generous. Reserving all of it left a band under the
+        // labels wide enough to read as a mistake. 65% is ~22pt: still
+        // 9pt of clear space above the pill, and nothing interactive down
+        // there either way, since the tap targets live in the row above
+        // this padding. Multiplying (not subtracting) keeps it exactly 0
+        // on hardware with no inset, so Android and desktop are untouched.
+        'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[calc(env(safe-area-inset-bottom)*0.65)]',
       )}
     >
       {tabs.map((tab) => {

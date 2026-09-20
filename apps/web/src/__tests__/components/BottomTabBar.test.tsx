@@ -117,7 +117,7 @@ describe('who owns the bottom safe area', () => {
   it('the bar pads for the inset, and hides at the width the helper names', () => {
     const { container } = renderBar([...ROLE_CAPABILITIES.ASSOCIATE]);
     const nav = container.querySelector('nav[aria-label="Primary"]')!;
-    expect(nav.className).toContain('pb-[env(safe-area-inset-bottom)]');
+    expect(nav.className).toContain('pb-[calc(env(safe-area-inset-bottom)*0.65)]');
     expect(nav.className).toContain('md:hidden');
   });
 
