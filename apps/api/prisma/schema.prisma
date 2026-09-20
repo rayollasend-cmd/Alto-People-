@@ -2241,7 +2241,14 @@ model OpsShift {
   id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId           String         @db.Uuid
   client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  // The primary department — what the shift is filed and displayed under.
   department         String         @db.VarChar(80)
+  /// EVERY department this shift actually carried. A supervisor covering
+  /// Grocery, Front End and Overnight Stocking runs ONE shift across all
+  /// three; until this existed, that fact lived only in their memory.
+  /// Read it to answer "who is carrying how much, how often" — a staffing
+  /// question, a labor-cost question and a liability question at once.
+  departments        String[]
   period             OpsPeriod
   position           String         @db.VarChar(120)
   dateKey            String         @db.VarChar(10)
@@ -2316,7 +2323,13 @@ model StoreShiftSop {
   location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
   template OpsSopTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  @@unique([locationId, label])
+  // One SOP PER DEPARTMENT on a window, not one SOP per window. Alto
+  // staffs several departments in the same store, and a supervisor works
+  // one shift across all of them — the old @@unique([locationId, label])
+  // made the second department's SOP impossible to attach at all, so it
+  // silently never ran.
+  @@unique([locationId, label, templateId])
+  @@index([locationId, label])
   @@index([templateId])
 }
 

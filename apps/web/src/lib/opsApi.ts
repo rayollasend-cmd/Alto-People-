@@ -534,7 +534,15 @@ export interface StoreShiftSops {
   stores: Array<{
     locationId: string;
     locationName: string;
-    windows: Array<{ label: string; startMinute: number; endMinute: number; templateId: string | null }>;
+    windows: Array<{
+      label: string;
+      startMinute: number;
+      endMinute: number;
+      /** One SOP per department Alto staffs in this store. */
+      templateIds: string[];
+      /** The first, kept for older clients. */
+      templateId: string | null;
+    }>;
   }>;
   templates: Array<{ id: string; name: string; department: string; period: OpsPeriod; taskCount: number }>;
 }
@@ -546,7 +554,10 @@ export function getStoreShiftSops(clientId: string): Promise<StoreShiftSops> {
 export function setStoreShiftSop(body: {
   locationId: string;
   label: string;
+  /** Add (or replace within its department). Null clears the window. */
   templateId: string | null;
+  /** Drop one department's SOP, leaving the others in place. */
+  removeTemplateId?: string;
 }): Promise<{ ok: true }> {
   return apiFetch('/ops/store-shifts', { method: 'PUT', body });
 }

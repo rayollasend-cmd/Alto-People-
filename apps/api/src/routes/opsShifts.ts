@@ -1573,7 +1573,14 @@ opsRouter.get('/store-shifts', LIB_READ, async (req, res, next) => {
         orderBy: [{ department: 'asc' }, { name: 'asc' }],
       }),
     ]);
-    const byKey = new Map(assigned.map((a) => [`${a.locationId}|${a.label}`, a.templateId]));
+    // A window carries one SOP per department now, so this is a list.
+    const byKey = new Map<string, string[]>();
+    for (const a of assigned) {
+      const key = `${a.locationId}|${a.label}`;
+      const list = byKey.get(key);
+      if (list) list.push(a.templateId);
+      else byKey.set(key, [a.templateId]);
+    }
     res.json({
       stores: stores.map((st) => ({
         locationId: st.id,
@@ -1585,7 +1592,9 @@ opsRouter.get('/store-shifts', LIB_READ, async (req, res, next) => {
             label: w.label,
             startMinute: w.startMinute,
             endMinute: w.endMinute,
-            templateId: byKey.get(`${st.id}|${w.label}`) ?? null,
+            templateIds: byKey.get(`${st.id}|${w.label}`) ?? [],
+            /** The first, so an older client keeps working. */
+            templateId: byKey.get(`${st.id}|${w.label}`)?.[0] ?? null,
           })),
       })),
       templates: templates.map((t) => ({
@@ -1608,12 +1617,15 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
         locationId: z.string().uuid(),
         label: z.string().trim().min(1).max(80),
         templateId: z.string().uuid().nullable(),
+        /** Drop ONE department's SOP. `templateId: null` still clears the
+         *  whole window — both are wanted, and they are not the same act. */
+        removeTemplateId: z.string().uuid().optional(),
       })
       .safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { locationId, label, templateId } = parsed.data;
+    const { locationId, label, templateId, removeTemplateId } = parsed.data;
     const store = await prisma.location.findFirst({
       where: { id: locationId, deletedAt: null },
       select: { id: true, clientId: true },
@@ -1623,18 +1635,37 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
     if (!defs.has(`${locationId}|${label}`)) {
       throw new HttpError(400, 'window_not_found', "That isn't one of this store's shift windows.");
     }
-    if (templateId === null) {
+    if (removeTemplateId) {
+      await prisma.storeShiftSop.deleteMany({
+        where: { locationId, label, templateId: removeTemplateId },
+      });
+    } else if (templateId === null) {
+      // Null still clears the window — the "no SOP here" case.
       await prisma.storeShiftSop.deleteMany({ where: { locationId, label } });
     } else {
       const template = await prisma.opsSopTemplate.findFirst({
         where: { id: templateId, active: true, retiredAt: null },
-        select: { id: true },
+        select: { id: true, department: true },
       });
       if (!template) throw new HttpError(400, 'template_not_found', 'Pick an active SOP from the library.');
+      // A window carries one SOP PER DEPARTMENT. Assigning a second
+      // department's SOP used to overwrite the first, because the row was
+      // unique on (locationId, label) alone — which is how a store where
+      // Alto staffs three departments ended up running one checklist.
+      // Replacing within a department still replaces.
+      const sameDepartment = await prisma.storeShiftSop.findMany({
+        where: { locationId, label, template: { department: template.department } },
+        select: { id: true },
+      });
+      if (sameDepartment.length > 0) {
+        await prisma.storeShiftSop.deleteMany({
+          where: { id: { in: sameDepartment.map((r) => r.id) } },
+        });
+      }
       await prisma.storeShiftSop.upsert({
-        where: { locationId_label: { locationId, label } },
+        where: { locationId_label_templateId: { locationId, label, templateId } },
         create: { locationId, label, templateId, updatedById: req.user!.id },
-        update: { templateId, updatedById: req.user!.id },
+        update: { updatedById: req.user!.id },
       });
     }
     enqueueAudit(
@@ -1644,7 +1675,7 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
         action: 'ops.store_shift_sop_set',
         entityType: 'Location',
         entityId: locationId,
-        metadata: { label, templateId },
+        metadata: { label, templateId, ...(removeTemplateId ? { removed: removeTemplateId } : {}) },
       },
       'ops.library',
     );

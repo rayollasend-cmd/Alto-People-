@@ -315,3 +315,155 @@ describe('assigning each store shift its SOP', () => {
     expect(await prisma.storeShiftSop.count()).toBe(0);
   });
 });
+
+describe('a supervisor covering more than one department', () => {
+  /**
+   * Alto staffs several departments in the same store, and one supervisor
+   * works the floor across all of them. StoreShiftSop was unique on
+   * (locationId, label), so the second department's SOP could not be
+   * attached at all — assigning it overwrote the first — and storeShiftAt
+   * took candidates[0] and dropped the rest without a word. The checklist
+   * looked complete because it was complete for ONE department.
+   */
+  async function secondDepartment(storeId: string, opsAgent: TestAgent<Test>) {
+    const grocery = await prisma.opsSopTemplate.create({
+      data: {
+        name: 'Grocery Swing',
+        department: 'Grocery',
+        period: 'EVENING',
+        tasks: {
+          create: [
+            { section: 'Open', order: 1, title: 'Face the aisles', responseType: 'CHECK', required: true },
+          ],
+        },
+      },
+    });
+    const put = await opsAgent
+      .put('/ops/store-shifts')
+      .send({ locationId: storeId, label: 'Swing', templateId: grocery.id });
+    expect(put.status).toBe(200);
+    return grocery;
+  }
+
+  it('keeps both SOPs on the window instead of the second replacing the first', async () => {
+    const { store, template, opsAgent } = await seed();
+    const grocery = await secondDepartment(store.id, opsAgent);
+
+    const rows = await prisma.storeShiftSop.findMany({
+      where: { locationId: store.id, label: 'Swing' },
+      select: { templateId: true },
+    });
+    expect(rows.map((r) => r.templateId).sort()).toEqual([template.id, grocery.id].sort());
+  });
+
+  it('opens ONE shift carrying every department, sectioned by department', async () => {
+    const { store, sup, kiosk, opsAgent } = await seed();
+    await secondDepartment(store.id, opsAgent);
+
+    const punchIn = await request(app()).post('/kiosk/punch').send(kiosk);
+    expect(punchIn.body.action).toBe('CLOCK_IN');
+    const agent = await loginAs(sup.email);
+    const sop = (await agent.get('/ops/my-sop')).body.sop;
+
+    // One tour of the floor is one shift — not one per department.
+    expect(await prisma.opsShift.count({ where: { locationId: store.id } })).toBe(1);
+
+    const shift = await prisma.opsShift.findUniqueOrThrow({
+      where: { id: sop.id },
+      include: { tasks: { select: { title: true, section: true, required: true } } },
+    });
+    // The coverage ledger: what this shift actually carried.
+    expect(shift.departments.slice().sort()).toEqual(['F&D', 'Grocery']);
+    // Every department's work is on the one checklist...
+    expect(shift.tasks).toHaveLength(3);
+    expect(shift.tasks.map((t) => t.title)).toContain('Face the aisles');
+    expect(shift.tasks.map((t) => t.title)).toContain('Check the coolers');
+    // ...told apart by section, so it reads as a floor rather than a pile.
+    expect(new Set(shift.tasks.map((t) => t.section))).toEqual(
+      new Set(['F&D · Open', 'Grocery · Open']),
+    );
+    // And the portal is told what ran, not one template's name for three.
+    expect(shift.templateName).toMatch(/\+1 more/);
+  });
+
+  it('will not let a shift close with one department finished and the other untouched', async () => {
+    const { store, sup, kiosk, opsAgent } = await seed();
+    await secondDepartment(store.id, opsAgent);
+    await request(app()).post('/kiosk/punch').send(kiosk);
+    const agent = await loginAs(sup.email);
+    const sopId = (await agent.get('/ops/my-sop')).body.sop.id;
+
+    // Clear only the F&D half.
+    const tasks = await prisma.opsTask.findMany({ where: { opsShiftId: sopId } });
+    for (const t of tasks.filter((x) => x.section?.startsWith('F&D'))) {
+      expect((await agent.patch(`/ops/tasks/${t.id}`).send({ status: 'DONE' })).status).toBe(200);
+    }
+
+    const res = await agent.post(`/ops/shifts/${sopId}/close`).send({ handoverNone: true });
+    // Closing is still possible — it just takes saying why, and the count
+    // spans the whole floor rather than the department that finished.
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('reason_required');
+    expect(res.body.error.message).toMatch(/1 required item is still open/);
+  });
+
+  it('lists every SOP on a window, and drops one without clearing the rest', async () => {
+    const { store, template, opsAgent } = await seed();
+    const grocery = await secondDepartment(store.id, opsAgent);
+
+    const listed = await opsAgent.get(`/ops/store-shifts?clientId=${store.clientId}`);
+    expect(listed.status).toBe(200);
+    const win = listed.body.stores
+      .flatMap((st: { windows: { label: string; templateIds: string[] }[] }) => st.windows)
+      .find((w: { label: string }) => w.label === 'Swing');
+    expect(win.templateIds.sort()).toEqual([template.id, grocery.id].sort());
+
+    // Taking Grocery off must not take F&D with it — clearing the whole
+    // window is a different act and still has its own path.
+    const drop = await opsAgent
+      .put('/ops/store-shifts')
+      .send({ locationId: store.id, label: 'Swing', templateId: null, removeTemplateId: grocery.id });
+    expect(drop.status).toBe(200);
+    const left = await prisma.storeShiftSop.findMany({
+      where: { locationId: store.id, label: 'Swing' },
+      select: { templateId: true },
+    });
+    expect(left.map((r) => r.templateId)).toEqual([template.id]);
+  });
+
+  it('replacing within a department swaps it, rather than stacking two', async () => {
+    const { store, template, opsAgent } = await seed();
+    const newer = await prisma.opsSopTemplate.create({
+      data: { name: 'Swing Standard v2', department: 'F&D', period: 'EVENING' },
+    });
+    const put = await opsAgent
+      .put('/ops/store-shifts')
+      .send({ locationId: store.id, label: 'Swing', templateId: newer.id });
+    expect(put.status).toBe(200);
+    const rows = await prisma.storeShiftSop.findMany({
+      where: { locationId: store.id, label: 'Swing' },
+      select: { templateId: true },
+    });
+    // One SOP per department still holds — this is a newer F&D SOP, not
+    // a second one, and a supervisor must not run both.
+    expect(rows.map((r) => r.templateId)).toEqual([newer.id]);
+    expect(rows.map((r) => r.templateId)).not.toContain(template.id);
+  });
+
+  it('a single-department store is untouched — no section is renamed', async () => {
+    const { store, sup, kiosk } = await seed();
+    await request(app()).post('/kiosk/punch').send(kiosk);
+    const agent = await loginAs(sup.email);
+    const sopId = (await agent.get('/ops/my-sop')).body.sop.id;
+    const shift = await prisma.opsShift.findUniqueOrThrow({
+      where: { id: sopId },
+      include: { tasks: { select: { section: true } } },
+    });
+    expect(shift.departments).toEqual(['F&D']);
+    // Qualifying a section only earns its keep when there is something to
+    // tell apart; one department keeps the template's own wording.
+    expect(new Set(shift.tasks.map((t) => t.section))).toEqual(new Set(['Open']));
+    expect(shift.templateName).toBe('Swing Standard');
+    expect(store.id).toBeTruthy();
+  });
+});

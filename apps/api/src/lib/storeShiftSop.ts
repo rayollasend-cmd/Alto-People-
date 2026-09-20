@@ -64,6 +64,14 @@ export const FALLBACK_MIN = 30;
 /** Roles whose clock-out an SOP can gate — whoever is running one. */
 const SOP_ROLES: ReadonlySet<string> = new Set(['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR']);
 
+/** One SOP a supervisor is carrying on this window. */
+export interface StoreShiftSopRef {
+  templateId: string;
+  templateName: string;
+  department: string;
+  period: OpsPeriod;
+}
+
 export interface StoreShift {
   locationId: string;
   locationName: string;
@@ -71,6 +79,13 @@ export interface StoreShift {
   label: string;
   startMinute: number;
   endMinute: number;
+  /**
+   * EVERY SOP on this window — one per department Alto staffs in this
+   * store. A supervisor works one shift across all of them; this used to
+   * be a single template, which made the rest structurally impossible.
+   */
+  sops: StoreShiftSopRef[];
+  /** The first, for the shift's filed department and display name. */
   templateId: string;
   templateName: string;
   department: string;
@@ -118,13 +133,16 @@ export async function storeShiftAt(
     }),
   ]);
   if (!loc) return null;
-  const sopByLabel = new Map(
-    assigned
-      .filter((a) => a.template.active && !a.template.retiredAt)
-      .map((a) => [a.label, a.template]),
-  );
+  // A label can now carry several SOPs — one per department.
+  const sopsByLabel = new Map<string, typeof assigned[number]['template'][]>();
+  for (const a of assigned) {
+    if (!a.template.active || a.template.retiredAt) continue;
+    const list = sopsByLabel.get(a.label);
+    if (list) list.push(a.template);
+    else sopsByLabel.set(a.label, [a.template]);
+  }
   const minute = minuteOfDayInZone(new Date(input.at.getTime() + EARLY_MIN * MIN_MS), loc.timezone);
-  const candidates = [...defs.values()].filter((w) => sopByLabel.has(w.label) && inShiftWindow(minute, w));
+  const candidates = [...defs.values()].filter((w) => sopsByLabel.has(w.label) && inShiftWindow(minute, w));
   if (candidates.length === 0) return null;
   const mine = new Set(
     (await ledWindows(db, { userId: input.userId }, input.at))
@@ -132,7 +150,18 @@ export async function storeShiftAt(
       .map((w) => w.label),
   );
   const pick = candidates.find((w) => mine.has(w.label)) ?? candidates[0]!;
-  const t = sopByLabel.get(pick.label)!;
+  // Every SOP on the window they are working, ordered so the shift is
+  // filed under the same department run to run rather than whichever row
+  // the database happened to return first.
+  const sops = [...sopsByLabel.get(pick.label)!]
+    .sort((a, b) => a.department.localeCompare(b.department))
+    .map((t) => ({
+      templateId: t.id,
+      templateName: t.name,
+      department: t.department,
+      period: t.period,
+    }));
+  const primary = sops[0]!;
   return {
     locationId: loc.id,
     locationName: loc.name,
@@ -140,10 +169,11 @@ export async function storeShiftAt(
     label: pick.label,
     startMinute: pick.startMinute,
     endMinute: pick.endMinute,
-    templateId: t.id,
-    templateName: t.name,
-    department: t.department,
-    period: t.period,
+    sops,
+    templateId: primary.templateId,
+    templateName: primary.templateName,
+    department: primary.department,
+    period: primary.period,
   };
 }
 
@@ -162,6 +192,12 @@ export async function createOpsShift(
     position: string;
     /** A specific template (store shift); else the department/period default. */
     templateId?: string | null;
+    /**
+     * Every SOP this shift carries — one per department the supervisor is
+     * covering in this store. Supersedes `templateId` when present; the
+     * first is the primary the shift is filed under.
+     */
+    templateIds?: string[] | null;
     locationId?: string | null;
     windowLabel?: string | null;
     timeEntryId?: string | null;
@@ -179,7 +215,7 @@ export async function createOpsShift(
 ): Promise<OpsShift> {
   const now = input.now ?? new Date();
   const dateKey = orgDateKey(now);
-  const [scheduledHeadcount, actualHeadcount, template, location] = await Promise.all([
+  const [scheduledHeadcount, actualHeadcount, templates, location] = await Promise.all([
     input.scheduledBetween
       ? db.shift.count({
           where: {
@@ -198,69 +234,115 @@ export async function createOpsShift(
         status: 'ACTIVE',
       },
     }),
-    input.templateId
-      ? db.opsSopTemplate.findUnique({
-          where: { id: input.templateId },
-          include: { tasks: { orderBy: { order: 'asc' } } },
-        })
-      : db.opsSopTemplate.findFirst({
-          where: { department: input.department, period: input.period, active: true, retiredAt: null },
-          orderBy: { createdAt: 'asc' },
-          include: { tasks: { orderBy: { order: 'asc' } } },
-        }),
+    input.templateIds?.length
+      ? db.opsSopTemplate
+          .findMany({
+            where: { id: { in: input.templateIds } },
+            include: { tasks: { orderBy: { order: 'asc' } } },
+          })
+          // findMany does not preserve the order asked for, and the order
+          // decides which department the shift is filed under.
+          .then((rows) =>
+            input
+              .templateIds!.map((id) => rows.find((r) => r.id === id))
+              .filter((r): r is (typeof rows)[number] => !!r),
+          )
+      : input.templateId
+        ? db.opsSopTemplate
+            .findUnique({
+              where: { id: input.templateId },
+              include: { tasks: { orderBy: { order: 'asc' } } },
+            })
+            .then((t) => (t ? [t] : []))
+        : db.opsSopTemplate
+            .findFirst({
+              where: { department: input.department, period: input.period, active: true, retiredAt: null },
+              orderBy: { createdAt: 'asc' },
+              include: { tasks: { orderBy: { order: 'asc' } } },
+            })
+            .then((t) => (t ? [t] : [])),
     input.locationId
       ? db.location.findUnique({ where: { id: input.locationId }, select: { timezone: true } })
       : Promise.resolve(null),
   ]);
-  // "By 9:00 AM" becomes 9:00 AM on this shift's clock, at the store.
-  const due = template
-    ? dueInstants(
-        template.tasks.map((task) => task.dueTime),
-        input.startsAt ?? now,
-        location?.timezone ?? DEFAULT_TIMEZONE,
-      )
-    : [];
+  const primary = templates[0] ?? null;
+  const multi = templates.length > 1;
+
+  /**
+   * One checklist, sectioned by department.
+   *
+   * The tasks of every SOP the supervisor is carrying are merged into a
+   * single shift — one open, one close, one handover, because that is
+   * what actually happens: one person, one tour of the floor. The section
+   * carries the department so the list reads as "Grocery / Front End"
+   * rather than an undifferentiated pile, and `order` is offset per
+   * template so the merged list is stable instead of interleaved by
+   * whatever each template numbered its own rows.
+   */
+  const tz = location?.timezone ?? DEFAULT_TIMEZONE;
+  const startsAt = input.startsAt ?? now;
+  const taskRows: Record<string, unknown>[] = [];
+  let orderBase = 0;
+  for (const t of templates) {
+    // "By 9:00 AM" becomes 9:00 AM on this shift's clock, at the store.
+    const due = dueInstants(t.tasks.map((task) => task.dueTime), startsAt, tz);
+    t.tasks.forEach((task, i) => {
+      taskRows.push({
+        source: 'SOP' as const,
+        templateTaskId: task.id,
+        // Only qualify when there is something to tell apart; a
+        // single-department shift keeps the template's own sections.
+        section: multi
+          ? task.section
+            ? `${t.department} · ${task.section}`
+            : t.department
+          : task.section,
+        order: orderBase + task.order,
+        title: task.title,
+        instructions: task.instructions,
+        responseType: task.responseType,
+        required: task.required,
+        photoRequired: task.photoRequired,
+        tempLabel: task.tempLabel,
+        tempMin: task.tempMin,
+        tempMax: task.tempMax,
+        metricKey: task.metricKey,
+        unit: task.unit,
+        followUpOn: task.followUpOn,
+        followUpRequirePhoto: task.followUpRequirePhoto,
+        followUpTaskTitle: task.followUpTaskTitle,
+        dueAt: due[i] ?? null,
+      });
+    });
+    orderBase += 1000;
+  }
+
+  // The coverage ledger. Sorted and de-duplicated so the same tour reads
+  // the same way every night.
+  const departments = [...new Set(templates.map((t) => t.department))].sort();
   return db.opsShift.create({
     data: {
       clientId: input.clientId,
-      department: input.department,
+      department: primary?.department ?? input.department,
+      departments: departments.length > 0 ? departments : [input.department],
       period: input.period,
       position: input.position,
       dateKey,
       openedById: input.openedById,
       scheduledHeadcount,
       actualHeadcount,
-      templateId: template?.id ?? null,
-      templateName: template?.name ?? null,
+      templateId: primary?.id ?? null,
+      // Shown to the client portal, so it must describe what ran. One
+      // template's name on a shift that carried three is a quiet lie.
+      templateName: multi
+        ? `${primary!.name} +${templates.length - 1} more`
+        : (primary?.name ?? null),
       locationId: input.locationId ?? null,
       windowLabel: input.windowLabel ?? null,
       timeEntryId: input.timeEntryId ?? null,
       dueAt: input.dueAt ?? null,
       coveringForId: input.coveringForId ?? null,
-      tasks: template
-        ? {
-            create: template.tasks.map((task, i) => ({
-              source: 'SOP' as const,
-              templateTaskId: task.id,
-              section: task.section,
-              order: task.order,
-              title: task.title,
-              instructions: task.instructions,
-              responseType: task.responseType,
-              required: task.required,
-              photoRequired: task.photoRequired,
-              tempLabel: task.tempLabel,
-              tempMin: task.tempMin,
-              tempMax: task.tempMax,
-              metricKey: task.metricKey,
-              unit: task.unit,
-              followUpOn: task.followUpOn,
-              followUpRequirePhoto: task.followUpRequirePhoto,
-              followUpTaskTitle: task.followUpTaskTitle,
-              dueAt: due[i] ?? null,
-            })),
-          }
-        : undefined,
+      tasks: taskRows.length > 0 ? { create: taskRows as never } : undefined,
     },
   });
 }
@@ -305,7 +387,9 @@ async function openStoreShiftSop(
     department: ss.department,
     period: ss.period,
     position: `${ss.label} shift`,
-    templateId: ss.templateId,
+    // Every department this supervisor is covering on this window, not
+    // just whichever SOP happened to be found first.
+    templateIds: ss.sops.map((x) => x.templateId),
     locationId: ss.locationId,
     windowLabel: ss.label,
     timeEntryId: input.timeEntryId,
@@ -326,6 +410,9 @@ async function openStoreShiftSop(
         locationId: ss.locationId,
         window: ss.label,
         template: ss.templateName,
+        // The coverage ledger, in the audit trail too: what this shift
+        // was actually carrying when it opened.
+        departments: ss.sops.map((x) => x.department),
         timeEntryId: input.timeEntryId,
         ...(input.coveringForId ? { coveringFor: input.coveringForId } : {}),
       },
