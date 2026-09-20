@@ -221,6 +221,30 @@ export const signalDriver = (rideId: string, kind: RiderSignal) =>
 export const cancelMyRide = (id: string) =>
   apiFetch<{ ok: true }>(`/transport/me/rides/${id}/cancel`, { method: 'POST' });
 
+/**
+ * One candidate address, coordinates already attached.
+ *
+ * That attachment is the whole point of picking over typing: a booking
+ * made from a suggestion is mappable by construction, so it can never
+ * reach the driver's stop list as a row with no pin. `precision` is the
+ * provider grading itself — 'approximate' means it interpolated along a
+ * street rather than finding the building, which is when the rider is
+ * asked to confirm the spot.
+ */
+export interface AddressSuggestion {
+  label: string;
+  address: string;
+  lat: number;
+  lng: number;
+  precision: 'exact' | 'approximate';
+}
+
+/** Addresses matching what they have typed so far, biased toward the store. */
+export const searchRideAddresses = (q: string, locationId?: string | null) =>
+  apiFetch<{ results: AddressSuggestion[] }>(
+    `/transport/me/ride-addresses?q=${encodeURIComponent(q)}${locationId ? `&locationId=${locationId}` : ''}`,
+  );
+
 /** The street address of the phone's position ("Use where I am now"). */
 export const whereAmI = (p: GeoPoint) =>
   apiFetch<{ address: string | null }>(`/transport/me/where?lat=${p.lat}&lng=${p.lng}`);

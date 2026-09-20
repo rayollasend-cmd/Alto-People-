@@ -11,7 +11,7 @@ import { emitLiveEvent } from '../lib/liveEvents.js';
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
-import { geocode, reverseGeocode } from '../lib/geocode.js';
+import { geocode, reverseGeocode, searchAddresses, type GeoPoint } from '../lib/geocode.js';
 import { orderAndTime, planDay, planRideSelect } from '../lib/transportPlan.js';
 import {
   announceWaitlist,
@@ -292,6 +292,43 @@ transportRouter.post('/me/places', RIDE, async (req, res) => {
   res.status(201).json({ place: { id: place.id, label: place.label, address: place.address } });
 });
 
+/**
+ * Suggestions for the pickup picker.
+ *
+ * Typing an address was the accuracy hole: an unrecognised string was
+ * accepted, stored with no coordinates, and only surfaced as a pin the
+ * driver couldn't find. A suggestion carries its own point, so a booking
+ * made from one is mappable by construction.
+ *
+ * Biased toward the store being booked against — "1500 nw 7" should offer
+ * the one down the road, not an identical street four states away. The
+ * rider's own saved places and the known stops are already in the page's
+ * payload and are matched client-side, so this is only ever asked for
+ * addresses the app has never seen.
+ */
+transportRouter.get('/me/ride-addresses', RIDE, async (req, res) => {
+  requireAssociate(req);
+  const q = z
+    .object({
+      q: z.string().trim().min(1).max(160),
+      locationId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  let near: GeoPoint | null = null;
+  if (q.locationId) {
+    const loc = await prisma.location.findUnique({
+      where: { id: q.locationId },
+      select: {
+        addressLine1: true, city: true, state: true, zip: true,
+        latitude: true, longitude: true,
+      },
+    });
+    if (loc) near = await storePoint(loc);
+  }
+  res.json({ results: await searchAddresses(q.q, near) });
+});
+
 /** "Use where I am now": the street address of the phone's position. */
 transportRouter.get('/me/where', RIDE, async (req, res) => {
   const q = z.object({ lat: z.coerce.number().min(-90).max(90), lng: z.coerce.number().min(-180).max(180) }).parse(req.query);
@@ -378,6 +415,21 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   } else {
     address = input.address!;
     at = await pointFor(address, input.lat, input.lng);
+  }
+  // A pickup nobody can find is worse than no booking. Until now an
+  // unrecognised address was accepted, stored without coordinates, and
+  // only became a problem at 6am when it turned up in the driver's stop
+  // list as an unmapped row. The picker hands back a point with every
+  // suggestion, and a pin can always be dropped, so arriving here without
+  // one means something the rider can still fix — say so while they are
+  // still looking at the form. Named stops are exempt: the driver knows
+  // them by name whether or not we hold a point.
+  if (!stopId && !at) {
+    throw new HttpError(
+      422,
+      'pickup_not_located',
+      'We could not place that address on the map. Pick one of the suggestions, use your current location, or drop a pin so the driver knows where to stop.',
+    );
   }
   const clash = await prisma.ride.findFirst({
     where: {

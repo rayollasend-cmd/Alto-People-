@@ -33,9 +33,7 @@ import {
   NO_SHOW_WAIT_MS,
   reportTransportIssue,
   signalDriver,
-  whereAmI,
   type BookRideInput,
-  type GeoPoint,
   type MyLiveRide,
   type MyTransport,
   type Ride,
@@ -64,6 +62,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TripMap, tripStage } from './TripMap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
+import { PickupPicker, type Pickup } from './PickupPicker';
 import {
   Dialog,
   DialogContent,
@@ -1253,19 +1252,36 @@ export interface BookPrefill {
   arrive?: string;
   leave?: string;
   shiftId?: string | null;
-  pickup?: string;
-  address?: string;
+  pickup?: Pickup | null;
 }
 
-/** The pickup select's value for where they went last time. */
-function defaultPickupKey(data: MyTransport): { pickup: string; address?: string } {
+/**
+ * Where they went last time, ready to book again in one tap.
+ *
+ * A remembered ADDRESS only counts if we kept its coordinates. Without
+ * them it is just a string we once failed to place, and pre-filling it
+ * would hand the rider back the very pickup the driver couldn't find —
+ * so it falls through and they pick again, which now resolves it.
+ */
+function initialPickup(data: MyTransport, initial: BookPrefill): Pickup | null {
+  if (initial.pickup) return initial.pickup;
   const d = data.defaultPickup;
-  if (d?.kind === 'stop') return { pickup: `stop:${d.stopId}` };
-  if (d?.kind === 'place') return { pickup: `place:${d.placeId}` };
-  if (d?.kind === 'address') return { pickup: 'new', address: d.address };
-  if (data.places[0]) return { pickup: `place:${data.places[0].id}` };
-  if (data.stops[0]) return { pickup: `stop:${data.stops[0].id}` };
-  return { pickup: 'new' };
+  if (d?.kind === 'stop') {
+    const stop = data.stops.find((x) => x.id === d.stopId);
+    if (stop) return { kind: 'stop', id: stop.id, name: stop.name };
+  }
+  if (d?.kind === 'place') {
+    const place = data.places.find((x) => x.id === d.placeId);
+    if (place) return { kind: 'place', id: place.id, label: place.label, address: place.address };
+  }
+  if (d?.kind === 'address' && d.lat !== null && d.lng !== null) {
+    return { kind: 'address', address: d.address, lat: d.lat, lng: d.lng, precision: 'exact' };
+  }
+  const p = data.places[0];
+  if (p) return { kind: 'place', id: p.id, label: p.label, address: p.address };
+  const st = data.stops[0];
+  if (st) return { kind: 'stop', id: st.id, name: st.name };
+  return null;
 }
 
 export function prefillFromShift(data: MyTransport, shift: Shift): BookPrefill {
@@ -1288,13 +1304,27 @@ export function prefillFromRide(data: MyTransport, ride: Ride): BookPrefill {
   const earliest = Date.now() + data.settings.cutoffHours * H + 5 * 60_000;
   let day = zonedDayKey(new Date(Math.max(Date.now(), Date.parse(ride.targetAt))), tz);
   for (let i = 0; i < 8 && Date.parse(localInputToUtcIso(`${day}T${at}`, tz)) < earliest; i++) day = addDays(day, 1);
-  const pickup =
-    ride.pickup.kind === 'stop'
-      ? { pickup: `stop:${ride.pickup.id}` }
-      : (() => {
-          const saved = data.places.find((p) => p.address === ride.pickup.address);
-          return saved ? { pickup: `place:${saved.id}` } : { pickup: 'new', address: ride.pickup.address };
-        })();
+  const pickup: { pickup: Pickup | null } = {
+    pickup: (() => {
+      if (ride.pickup.kind === 'stop' && ride.pickup.id) {
+        return { kind: 'stop', id: ride.pickup.id, name: ride.pickup.name ?? '' };
+      }
+      const saved = data.places.find((p) => p.address === ride.pickup.address);
+      if (saved) return { kind: 'place', id: saved.id, label: saved.label, address: saved.address };
+      // Repeating a ride keeps the point it actually used; an old ride
+      // without one has to be picked again rather than repeated blind.
+      if (ride.pickup.address && ride.point) {
+        return {
+          kind: 'address',
+          address: ride.pickup.address,
+          lat: ride.point.lat,
+          lng: ride.point.lng,
+          precision: 'exact',
+        };
+      }
+      return null;
+    })(),
+  };
   return {
     way: ride.direction,
     storeId: ride.store.id,
@@ -1356,13 +1386,7 @@ export function BookRideDialog({
     enabled: byShift && !!storeId && !!date,
     staleTime: 20_000,
   });
-  const start = initial.pickup ? { pickup: initial.pickup, address: initial.address } : defaultPickupKey(data);
-  const [pickup, setPickup] = useState(start.pickup);
-  const [address, setAddress] = useState(start.address ?? '');
-  // "Use where I am now": the phone's point, kept while the address it
-  // filled in is unchanged.
-  const [here, setHere] = useState<{ point: GeoPoint; address: string } | null>(null);
-  const [locating, setLocating] = useState(false);
+  const [pickup, setPickup] = useState<Pickup | null>(() => initialPickup(data, initial));
   const [saveAs, setSaveAs] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1428,49 +1452,29 @@ export function BookRideDialog({
   const fullLegs = picked ? legs.filter((l) => tripOf(picked.label, l.direction)?.full) : [];
   const pickupLabel = way === 'TO_WORK' ? t('ride.pickupTo') : way === 'FROM_WORK' ? t('ride.pickupFrom') : t('ride.pickupBoth');
 
-  const useWhereIAm = () => {
-    if (!navigator.geolocation) return setError(t('ride.locateFailed'));
-    setLocating(true);
-    setError(null);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        try {
-          const { address: found } = await whereAmI(point);
-          const text = found ?? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`;
-          setAddress(text);
-          setHere({ point, address: text });
-        } catch {
-          setError(t('ride.locateFailed'));
-        } finally {
-          setLocating(false);
-        }
-      },
-      () => {
-        setLocating(false);
-        setError(t('ride.locateFailed'));
-      },
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 },
-    );
-  };
-
   const submit = async () => {
     if (!store) return setError(t('ride.pickStore'));
-    if (pickup === 'new' && address.trim().length < 5) return setError(t('ride.pickPickup'));
+    if (!pickup) return setError(t('ride.pickRequired'));
     if (byShift && !picked) return setError(t('ride.pickShift'));
     if (tooSoon || legs.some((l) => !l.at)) return;
     setBusy(true);
     setError(null);
     try {
-      let home: Pick<BookRideInput, 'stopId' | 'placeId' | 'address'>;
-      if (pickup.startsWith('stop:')) home = { stopId: pickup.slice(5) };
-      else if (pickup.startsWith('place:')) home = { placeId: pickup.slice(6) };
-      else {
-        const point = here && here.address === address ? here.point : null;
-        if (saveAs.trim()) {
-          const { place } = await addRidePlace({ label: saveAs.trim(), address: address.trim(), ...(point ?? {}) });
-          home = { placeId: place.id };
-        } else home = { address: address.trim(), ...(point ?? {}) };
+      let home: Pick<BookRideInput, 'stopId' | 'placeId' | 'address' | 'lat' | 'lng'>;
+      if (pickup.kind === 'stop') home = { stopId: pickup.id };
+      else if (pickup.kind === 'place') home = { placeId: pickup.id };
+      else if (saveAs.trim()) {
+        // Saving it carries the coordinates across, so next time it is one
+        // tap and never needs a lookup again.
+        const { place } = await addRidePlace({
+          label: saveAs.trim(),
+          address: pickup.address,
+          lat: pickup.lat,
+          lng: pickup.lng,
+        });
+        home = { placeId: place.id };
+      } else {
+        home = { address: pickup.address, lat: pickup.lat, lng: pickup.lng };
       }
       let booked = 0;
       let inLine: { position: number; direction: RideDirection } | null = null;
@@ -1645,57 +1649,29 @@ export function BookRideDialog({
             </div>
           )}
 
-          <Field label={pickupLabel} required>
-            {(p) => (
-              <Select {...p} value={pickup} onChange={(e) => setPickup(e.target.value)}>
-                {data.stops.length > 0 && (
-                  <optgroup label={t('ride.groupStops')}>
-                    {data.stops.map((st) => (
-                      <option key={st.id} value={`stop:${st.id}`}>
-                        {st.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {data.places.length > 0 && (
-                  <optgroup label={t('ride.groupSaved')}>
-                    {data.places.map((pl) => (
-                      <option key={pl.id} value={`place:${pl.id}`}>
-                        {pl.label} — {pl.address}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                <option value="new">{t('ride.newAddress')}</option>
-              </Select>
-            )}
-          </Field>
-          {pickup === 'new' && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label={t('ride.address')} required className="sm:col-span-2">
-                {(p) => (
-                  <Input
-                    {...p}
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder={t('ride.addressPlaceholder')}
-                    autoComplete="street-address"
-                  />
-                )}
-              </Field>
-
-              <Field label={t('ride.saveAs')}>
-                {(p) => (
-                  <Input {...p} value={saveAs} onChange={(e) => setSaveAs(e.target.value)} placeholder={t('ride.saveAsPlaceholder')} maxLength={40} />
-                )}
-              </Field>
-              <div className="sm:col-span-3 -mt-1">
-                <Button type="button" size="xs" variant="ghost" onClick={useWhereIAm} loading={locating} disabled={locating}>
-                  <MapPin className="h-3.5 w-3.5" />
-                  {locating ? t('ride.locating') : t('ride.useWhereIAm')}
-                </Button>
-              </div>
-            </div>
+          <PickupPicker
+            value={pickup}
+            onChange={setPickup}
+            stops={data.stops}
+            places={data.places}
+            locationId={store?.id ?? null}
+            label={pickupLabel}
+            invalid={!!error && !pickup}
+          />
+          {/* Offered only for an address they searched for: a stop or an
+              already-saved place has nothing to save. */}
+          {pickup?.kind === 'address' && (
+            <Field label={t('ride.saveAs')}>
+              {(p) => (
+                <Input
+                  {...p}
+                  value={saveAs}
+                  onChange={(e) => setSaveAs(e.target.value)}
+                  placeholder={t('ride.saveAsPlaceholder')}
+                  maxLength={40}
+                />
+              )}
+            </Field>
           )}
           <Field label={t('ride.note')}>
             {(p) => (

@@ -701,7 +701,24 @@ describe('the Ride tab, one tap at a time', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Book again' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('radio', { name: 'Home' })).toHaveAttribute('aria-checked', 'true');
-    expect(within(dialog).getByLabelText(/Take me to/)).toHaveValue('stop:s1');
+    // The pickup is no longer a <select> of keys — it is chosen, and shows
+    // what was chosen by name. Repeating a ride brings that choice back.
+    expect(within(dialog).getByText('Seaside Housing')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Change' })).toBeInTheDocument();
+  });
+
+  it('a pickup must be picked — typing a street name is not a pickup', async () => {
+    // Typing was the accuracy hole: an address nobody could place was
+    // accepted, stored without coordinates, and only became a problem at
+    // 6am in the driver's stop list. There is no free-text box any more.
+    routes((path) => (path === '/transport/me' ? me({ stops: [], places: [] }) : undefined));
+    renderAs('ASSOCIATE', <RideHome />);
+    await userEvent.click((await screen.findAllByRole('button', { name: /Request a seat/i }))[0]!);
+    const dialog = await screen.findByRole('dialog');
+    const box = within(dialog).getByRole('combobox');
+    expect(box).toHaveAttribute('aria-autocomplete', 'list');
+    // Nothing chosen, so nothing to save under a name yet.
+    expect(within(dialog).queryByLabelText(/Save as/i)).not.toBeInTheDocument();
   });
 });
 

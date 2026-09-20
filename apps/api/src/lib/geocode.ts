@@ -23,6 +23,26 @@ export interface GeoPoint {
 
 type Lookup = (address: string) => Promise<GeoPoint | null>;
 type ReverseLookup = (p: GeoPoint) => Promise<string | null>;
+type SearchLookup = (q: string, near: GeoPoint | null) => Promise<AddressSuggestion[]>;
+
+/**
+ * One candidate address, with coordinates already attached.
+ *
+ * The whole point of picking over typing: a suggestion carries its own
+ * point, so a booking made from one can never land in the van list
+ * unmappable. `precision` says how much to trust the pin — 'approximate'
+ * means the provider interpolated along a street or only got as far as the
+ * block, which is where the rider gets asked to confirm on a map.
+ */
+export interface AddressSuggestion {
+  /** The headline — usually the street line. */
+  label: string;
+  /** The full one-line address, stored on the ride. */
+  address: string;
+  lat: number;
+  lng: number;
+  precision: 'exact' | 'approximate';
+}
 
 const MISS_RETRY_MS = 7 * 86_400_000;
 const TIMEOUT_MS = 5_000;
@@ -101,21 +121,189 @@ const mapboxReverse: ReverseLookup = async (p) => {
   return f?.properties.full_address ?? f?.properties.name ?? null;
 };
 
+/**
+ * Mapbox's forward geocoder in autocomplete mode.
+ *
+ * `proximity` is the store the rider is booking against, which is what
+ * makes "1500 nw 7" return the one down the road rather than an identical
+ * street four states away. `types` keeps it to things a van can pull up
+ * to. `accuracy` is the provider grading its own answer: rooftop and
+ * parcel mean it found the building, anything else means it guessed along
+ * a line and the rider should see a map.
+ */
+const mapboxSearch: SearchLookup = async (q, near) => {
+  const params = new URLSearchParams({
+    q,
+    limit: '6',
+    country: 'us',
+    autocomplete: 'true',
+    types: 'address,street,poi',
+    access_token: env.MAPBOX_TOKEN ?? '',
+  });
+  if (near) params.set('proximity', `${near.lng},${near.lat}`);
+  const body = (await getJson(
+    `https://api.mapbox.com/search/geocode/v6/forward?${params.toString()}`,
+  )) as {
+    features?: Array<{
+      geometry: { coordinates: [number, number] };
+      properties: {
+        name?: string;
+        full_address?: string;
+        place_formatted?: string;
+        feature_type?: string;
+        coordinates?: { accuracy?: string };
+      };
+    }>;
+  };
+  const EXACT = new Set(['rooftop', 'parcel', 'point']);
+  return (body.features ?? []).flatMap((f) => {
+    const [lng, lat] = f.geometry.coordinates;
+    const address = f.properties.full_address ?? f.properties.name;
+    if (!address || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+    const acc = f.properties.coordinates?.accuracy;
+    return [{
+      label: f.properties.name ?? address,
+      address,
+      lat,
+      lng,
+      precision: (f.properties.feature_type === 'address' && acc && EXACT.has(acc)
+        ? 'exact'
+        : 'approximate') as AddressSuggestion['precision'],
+    }];
+  });
+};
+
+/**
+ * Nominatim's search, paced through the same one-per-second queue as every
+ * other call to it. Their usage policy asks for that explicitly and also
+ * discourages per-keystroke autocomplete, which is why the route debounces
+ * hard before ever getting here.
+ */
+const nominatimSearch: SearchLookup = (q, near) =>
+  nominatimPaced(async () => {
+    const params = new URLSearchParams({
+      format: 'jsonv2',
+      limit: '6',
+      countrycodes: 'us',
+      addressdetails: '1',
+      q,
+    });
+    if (near) {
+      // A degree of latitude is ~69 miles; this box is the surrounding
+      // ~35 miles, biased but not bounded, so a genuine out-of-area match
+      // can still surface below the local ones.
+      const d = 0.5;
+      params.set('viewbox', `${near.lng - d},${near.lat + d},${near.lng + d},${near.lat - d}`);
+    }
+    const rows = (await getJson(
+      `https://nominatim.openstreetmap.org/search?${params.toString()}`,
+      { 'User-Agent': USER_AGENT },
+    )) as Array<{
+      lat: string;
+      lon: string;
+      display_name?: string;
+      name?: string;
+      addresstype?: string;
+      address?: Record<string, string>;
+    }>;
+    return rows.flatMap((r) => {
+      const lat = Number(r.lat);
+      const lng = Number(r.lon);
+      const address = r.display_name;
+      if (!address || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+      const a = r.address ?? {};
+      const street = [a.house_number, a.road].filter(Boolean).join(' ');
+      return [{
+        label: street || r.name || address.split(',')[0]!,
+        address,
+        lat,
+        lng,
+        // house_number present means it resolved to a building, not a road.
+        precision: (a.house_number ? 'exact' : 'approximate') as AddressSuggestion['precision'],
+      }];
+    });
+  });
+
 let testLookup: Lookup | null = null;
 let testReverse: ReverseLookup | null = null;
+let testSearch: SearchLookup | null = null;
 
 /** Tests: answer lookups in-process (null restores the configured provider). */
-export function setGeocoderForTests(lookup: Lookup | null, reverse: ReverseLookup | null = null): void {
+export function setGeocoderForTests(
+  lookup: Lookup | null,
+  reverse: ReverseLookup | null = null,
+  search: SearchLookup | null = null,
+): void {
   testLookup = lookup;
   testReverse = reverse;
+  testSearch = search;
 }
 
-function provider(): { name: string; lookup: Lookup | null; reverse: ReverseLookup | null } {
-  if (testLookup || testReverse) return { name: 'test', lookup: testLookup, reverse: testReverse };
+function provider(): {
+  name: string;
+  lookup: Lookup | null;
+  reverse: ReverseLookup | null;
+  search: SearchLookup | null;
+} {
+  if (testLookup || testReverse || testSearch) {
+    return { name: 'test', lookup: testLookup, reverse: testReverse, search: testSearch };
+  }
   const name = geocoderName();
-  if (name === 'nominatim') return { name, lookup: nominatim, reverse: nominatimReverse };
-  if (name === 'mapbox') return { name, lookup: mapbox, reverse: mapboxReverse };
-  return { name, lookup: null, reverse: null };
+  if (name === 'nominatim') {
+    return { name, lookup: nominatim, reverse: nominatimReverse, search: nominatimSearch };
+  }
+  if (name === 'mapbox') {
+    return { name, lookup: mapbox, reverse: mapboxReverse, search: mapboxSearch };
+  }
+  return { name, lookup: null, reverse: null, search: null };
+}
+
+/**
+ * Candidate addresses for a partial query — the picker's supply.
+ *
+ * Cached in-process rather than in GeoCache: that table answers "where is
+ * this exact address", keyed by the normalized full string, and a partial
+ * query is a different question with a different answer shape. A rider
+ * typing "1500 nw 7th" sends four or five requests that all want the same
+ * list, and every one of them is billed by Mapbox and rate-limited by
+ * Nominatim, so a short memory pays for itself immediately. Small and
+ * time-boxed — suggestions aren't worth persisting past the booking.
+ */
+const SEARCH_TTL_MS = 5 * 60_000;
+const SEARCH_CACHE_MAX = 300;
+const searchCache = new Map<string, { at: number; results: AddressSuggestion[] }>();
+
+export async function searchAddresses(
+  query: string,
+  near?: GeoPoint | null,
+): Promise<AddressSuggestion[]> {
+  const q = query.trim();
+  // Below four characters everything matches and nothing is useful — and
+  // on Nominatim it would burn the one-per-second budget on noise.
+  if (q.length < 4) return [];
+  const key = `${normalizeAddress(q)}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ''}`;
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_TTL_MS) return hit.results;
+
+  const p = provider();
+  if (!p.search) return [];
+  let results: AddressSuggestion[];
+  try {
+    results = await p.search(q, near ?? null);
+  } catch (err) {
+    // An outage means "no suggestions right now", not "no such address" —
+    // so it isn't cached, and the caller falls back to letting them drop
+    // a pin instead.
+    console.warn('[alto-people/api] address search failed:', (err as Error).message);
+    return [];
+  }
+  if (searchCache.size >= SEARCH_CACHE_MAX) {
+    // Oldest insertion first — Map preserves it, and this runs rarely.
+    const oldest = searchCache.keys().next().value;
+    if (oldest !== undefined) searchCache.delete(oldest);
+  }
+  searchCache.set(key, { at: Date.now(), results });
+  return results;
 }
 
 /** Coordinates for an address — cached; null when unknown or lookups are off. */

@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
+import { setGeocoderForTests } from '../../lib/geocode.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -22,8 +23,14 @@ import {
 const app = () => createApp();
 beforeEach(async () => {
   await truncateAll();
+  // Production geocodes every pickup, and a booking whose address can't be
+  // placed is now refused outright — an unfindable pickup is worse than no
+  // booking. These tests are about booking rules, not about the geocoder,
+  // so stand one up that answers. The refusal has its own test below.
+  setGeocoderForTests(async () => ({ lat: 30.39, lng: -86.49 }));
 });
 afterAll(async () => {
+  setGeocoderForTests(null);
   await prisma.$disconnect();
 });
 
@@ -69,6 +76,72 @@ async function seed() {
 async function book(agent: TestAgent<Test>, body: Record<string, unknown>) {
   return agent.post('/transport/me/rides').send(body);
 }
+
+describe('picking a pickup, not typing one', () => {
+  // Typing was the accuracy hole: an unrecognised address was accepted,
+  // stored without coordinates, and only became a problem at 6am when it
+  // showed up in the driver's stop list as a row with no pin. Every
+  // suggestion carries its own point, so a pickup chosen from one is
+  // mappable by construction — and anything that still isn't gets refused
+  // while the rider is looking at the form and can fix it.
+  it('refuses an address it cannot place, and says what to do instead', async () => {
+    const { kimAgent, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    setGeocoderForTests(async () => null); // nothing typed gets found
+
+    const res = await book(kimAgent, {
+      direction: 'TO_WORK',
+      locationId: store.id,
+      address: '900 Nowhere Rd',
+      targetAt: inHours(20).toISOString(),
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('pickup_not_located');
+    expect(res.body.error.message).toMatch(/suggestions|current location|drop a pin/i);
+    expect(await prisma.ride.count()).toBe(0);
+  });
+
+  it('takes the point the picker already found, without a lookup of its own', async () => {
+    const { kimAgent, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    // A suggestion arrives with coordinates attached, so this must book
+    // even when the geocoder is having a bad day.
+    setGeocoderForTests(async () => null);
+
+    const res = await book(kimAgent, {
+      direction: 'TO_WORK',
+      locationId: store.id,
+      address: '7209 Thomas Dr, Panama City Beach FL',
+      lat: 30.1766,
+      lng: -85.8055,
+      targetAt: inHours(20).toISOString(),
+    });
+    expect(res.status).toBe(201);
+    const ride = await prisma.ride.findFirstOrThrow();
+    expect(Number(ride.lat)).toBeCloseTo(30.1766, 4);
+    expect(Number(ride.lng)).toBeCloseTo(-85.8055, 4);
+  });
+
+  it('suggests addresses near the store being booked against', async () => {
+    const { kimAgent, store } = await seed();
+    const seen: Array<{ q: string; near: unknown }> = [];
+    setGeocoderForTests(null, null, async (q, near) => {
+      seen.push({ q, near });
+      return [
+        { label: '7209 Thomas Dr', address: '7209 Thomas Dr, Panama City Beach FL', lat: 30.17, lng: -85.8, precision: 'exact' as const },
+      ];
+    });
+
+    const res = await kimAgent.get(`/transport/me/ride-addresses?q=7209 Thomas&locationId=${store.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.results[0]).toMatchObject({ address: expect.stringContaining('Thomas Dr'), precision: 'exact' });
+    expect(seen[0]!.q).toBe('7209 Thomas');
+
+    // Too short to mean anything — and on Nominatim it would spend the
+    // one-per-second budget on noise.
+    expect((await kimAgent.get('/transport/me/ride-addresses?q=720')).body.results).toEqual([]);
+  });
+});
 
 describe('the Ride tab — booking a seat', () => {
   it('asks for the charge authorization first, then books at least 10 hours ahead — no shift needed', async () => {
