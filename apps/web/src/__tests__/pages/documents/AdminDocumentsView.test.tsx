@@ -167,3 +167,57 @@ describe('the document vault', () => {
     expect(await screen.findByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 });
+
+describe('an associate’s folder shows the documents, not a list of filenames', () => {
+  /**
+   * Reviewing a six-document folder meant opening each one and closing it
+   * again — twelve clicks to learn what a glance would have told you.
+   */
+  const FOLDER = [
+    doc({ id: 'f1', filename: 'id-front.png', name: 'Jannis Balanta', createdAt: new Date(Date.now() - 4 * 86_400_000).toISOString() }),
+    { ...doc({ id: 'f2', filename: 'agreement.pdf', name: 'Jannis Balanta', createdAt: new Date().toISOString() }), kind: 'SIGNED_AGREEMENT' as const, mimeType: 'application/pdf' },
+  ];
+
+  function folderRoutes() {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path.startsWith('/documents/admin/stats')) return STATS as never;
+      if (path.includes('associateId=')) return { documents: FOLDER, total: 2 } as never;
+      if (path.startsWith('/documents/admin')) return { documents: PAGE, total: 3 } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+
+  it('renders each document inline rather than waiting to be clicked', async () => {
+    folderRoutes();
+    renderVault();
+    // Open Ada's folder from the queue.
+    // Ada owns two rows in the queue; either opens her folder.
+    await userEvent.click((await screen.findAllByRole('button', { name: /Ada Lovelace/ }))[0]!);
+
+    // The thumbnail carries alt="" on purpose — the kind and status sit
+    // beside it as text, so the image is decorative to a screen reader.
+    // That also means it has no img role, hence the direct query.
+    await screen.findByText('Signed agreement');
+    const img = document.querySelector('img[src*="/documents/f1/download"]');
+    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute('src', expect.stringContaining('inline=1'));
+    // Lazy, so a thirty-document folder does not pull all thirty to show
+    // the first few.
+    expect(img).toHaveAttribute('loading', 'lazy');
+  });
+
+  it('can blur the identity documents without hiding the rest', async () => {
+    folderRoutes();
+    renderVault();
+    await userEvent.click((await screen.findAllByRole('button', { name: /Ada Lovelace/ }))[0]!);
+    const toggle = await screen.findByRole('button', { name: /Blur identity documents/ });
+    await userEvent.click(toggle);
+    // The ID blurs; the signed agreement is not an identity document.
+    const img = document.querySelector('img[src*="/documents/f1/download"]');
+    expect(img?.className).toContain('blur');
+    expect(document.querySelector('object')?.className ?? '').not.toContain('blur');
+    expect(
+      await screen.findByRole('button', { name: /Show identity documents/ }),
+    ).toBeInTheDocument();
+  });
+});

@@ -35,6 +35,8 @@ import {
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
   getDocumentStats,
+  isPreviewable,
+  previewDocumentUrl,
   listAdminDocuments,
   rejectDocument,
   requestDocumentReupload,
@@ -65,6 +67,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
+import { Eye, EyeOff, LayoutGrid, Rows3 } from 'lucide-react';
 import { REJECT_PRESETS, RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -157,6 +160,105 @@ interface AdminDocumentsViewProps {
   canManage: boolean;
 }
 
+/**
+ * The kinds you would not want a stranger reading over your shoulder.
+ * The gallery shows everything by default — seeing the documents IS the
+ * job — but these can be blurred with one click when somebody is standing
+ * behind you, and the choice is remembered.
+ */
+const OVER_THE_SHOULDER = new Set<DocumentKind>([
+  'ID',
+  'SSN_CARD',
+  'I9_SUPPORTING',
+  'J1_VISA',
+  'J1_DS2019',
+  'W4_PDF',
+]);
+
+/**
+ * One document, actually visible.
+ *
+ * The folder used to be a list of filenames: to see whether an ID was the
+ * right way up, or which page of the agreement was signed, you opened each
+ * one in turn and closed it again. For a six-document folder that is
+ * twelve clicks to learn what a glance would have told you.
+ */
+function DocumentTile({
+  doc,
+  blurred,
+  onOpen,
+}: {
+  doc: DocumentRecord;
+  blurred: boolean;
+  onOpen: () => void;
+}) {
+  const isImage = doc.mimeType.startsWith('image/');
+  const isPdf = doc.mimeType === 'application/pdf';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group/tile flex flex-col overflow-hidden rounded-lg border border-navy-secondary text-left transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      <span className="relative flex h-36 items-center justify-center overflow-hidden bg-navy-secondary/40">
+        {isImage ? (
+          <img
+            src={previewDocumentUrl(doc.id)}
+            alt=""
+            // Lazy: a folder can hold thirty documents and the drawer
+            // should not fetch all of them to show the first four.
+            loading="lazy"
+            decoding="async"
+            className={cn(
+              'h-full w-full object-cover transition',
+              blurred && 'blur-md',
+            )}
+          />
+        ) : isPdf ? (
+          // A PDF's first page, rendered by the browser. Pointer events off
+          // so the tile stays one click, not a nested scroll area.
+          <object
+            data={`${previewDocumentUrl(doc.id)}#toolbar=0&navpanes=0&view=FitH`}
+            type="application/pdf"
+            aria-hidden="true"
+            className={cn('pointer-events-none h-full w-full', blurred && 'blur-md')}
+          >
+            <FileText className="h-8 w-8 text-silver/50" aria-hidden="true" />
+          </object>
+        ) : (
+          <FileText className="h-8 w-8 text-silver/50" aria-hidden="true" />
+        )}
+        {blurred && (
+          <span className="absolute inset-0 flex items-center justify-center">
+            <EyeOff className="h-5 w-5 text-silver/80" aria-hidden="true" />
+          </span>
+        )}
+        {!isPreviewable(doc.mimeType) && (
+          <span className="absolute bottom-1 right-1 rounded bg-navy/80 px-1.5 py-0.5 text-2xs text-silver">
+            No preview
+          </span>
+        )}
+      </span>
+      <span className="flex min-w-0 flex-col gap-1 p-2">
+        <span className="flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-white">
+            {DOCUMENT_KIND_LABEL[doc.kind] ?? doc.kind.replace(/_/g, ' ')}
+          </span>
+          <Badge variant={statusTone(doc.status)} size="sm" data-status={doc.status}>
+            {STATUS_LABELS[doc.status]}
+          </Badge>
+        </span>
+        <span className="truncate text-2xs text-silver/70">
+          {fmtRelativeDate(doc.createdAt)}
+        </span>
+        {doc.rejectionReason && (
+          <span className="line-clamp-2 text-2xs text-alert">{doc.rejectionReason}</span>
+        )}
+      </span>
+    </button>
+  );
+}
+
 /** Rows per page. The server clamps at 200; 50 is a screenful that keeps
  *  the payload small enough to feel instant on a store tablet. */
 const PAGE_SIZE = 50;
@@ -201,6 +303,17 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     Record<string, number>
   >({});
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
+  // Gallery by default: the folder's job is to show you the documents.
+  const [folderView, setFolderView] = usePersistentState<'gallery' | 'list'>(
+    'alto:documents.folderView.v1',
+    'gallery',
+    (v): v is 'gallery' | 'list' => v === 'gallery' || v === 'list',
+  );
+  const [blurSensitive, setBlurSensitive] = usePersistentState<boolean>(
+    'alto:documents.blurSensitive.v1',
+    false,
+    (v): v is boolean => typeof v === 'boolean',
+  );
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   // Optional expiry captured alongside a single verify in the preview
   // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
@@ -1380,6 +1493,49 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 />
               )}
               {folder.docs.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <ViewToggle<'gallery' | 'list'>
+                    ariaLabel="How to show this folder"
+                    value={folderView}
+                    onChange={setFolderView}
+                    options={[
+                      { value: 'gallery', label: 'Gallery', icon: LayoutGrid },
+                      { value: 'list', label: 'List', icon: Rows3 },
+                    ]}
+                  />
+                  {folderView === 'gallery' &&
+                    folder.docs.some((d) => OVER_THE_SHOULDER.has(d.kind)) && (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setBlurSensitive(!blurSensitive)}
+                        aria-pressed={blurSensitive}
+                      >
+                        {blurSensitive ? (
+                          <Eye className="h-3.5 w-3.5" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        )}
+                        {blurSensitive ? 'Show identity documents' : 'Blur identity documents'}
+                      </Button>
+                    )}
+                </div>
+              )}
+
+              {folder.docs.length > 0 && folderView === 'gallery' && (
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  {folder.docs.map((d) => (
+                    <DocumentTile
+                      key={d.id}
+                      doc={d}
+                      blurred={blurSensitive && OVER_THE_SHOULDER.has(d.kind)}
+                      onOpen={() => setPreviewDoc(d)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {folder.docs.length > 0 && folderView === 'list' && (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
