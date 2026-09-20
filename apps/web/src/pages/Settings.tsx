@@ -39,7 +39,6 @@ import {
   ROLE_LABELS,
   SUPPORTED_TIMEZONES,
   TIMEZONE_LABELS,
-  type NotificationCategory,
   type NotificationPreferenceEntry,
   type SupportedTimezone,
 } from '@/lib/roles';
@@ -854,7 +853,8 @@ function NotificationsCard() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isPortal = user?.role === 'CLIENT_PORTAL';
-  const [pending, setPending] = useState<NotificationCategory | null>(null);
+  // `${category}:${channel}` — each switch spins on its own, not both.
+  const [pending, setPending] = useState<string | null>(null);
 
   // Push subscription state for this device. Settings is the recovery
   // path for users who dismissed the dashboard's one-time enable card
@@ -921,26 +921,34 @@ function NotificationsCard() {
     );
   };
 
-  const onToggle = async (entry: NotificationPreferenceEntry) => {
+  /**
+   * One handler, either channel. Muting a category used to stop the email
+   * and leave the bell ringing, so the switch turned off half of what it
+   * claimed to; the bell is now its own switch and its own server flag.
+   */
+  const onToggle = async (
+    entry: NotificationPreferenceEntry,
+    channel: 'emailEnabled' | 'inAppEnabled',
+  ) => {
     if (entry.mandatory) return;
-    setPending(entry.category);
-    const next = !entry.emailEnabled;
+    setPending(`${entry.category}:${channel}`);
+    const next = !entry[channel];
     // Optimistic update — reverts on failure.
     setEntries((prev) =>
       prev
         ? prev.map((e) =>
-            e.category === entry.category ? { ...e, emailEnabled: next } : e,
+            e.category === entry.category ? { ...e, [channel]: next } : e,
           )
         : prev,
     );
     try {
-      await patchNotificationPreference(entry.category, next);
+      await patchNotificationPreference(entry.category, { [channel]: next });
     } catch (err) {
       setEntries((prev) =>
         prev
           ? prev.map((e) =>
               e.category === entry.category
-                ? { ...e, emailEnabled: entry.emailEnabled }
+                ? { ...e, [channel]: entry[channel] }
                 : e,
             )
           : prev,
@@ -950,6 +958,29 @@ function NotificationsCard() {
       setPending(null);
     }
   };
+
+  const channelToggle = (
+    e: NotificationPreferenceEntry,
+    channel: 'emailEnabled' | 'inAppEnabled',
+    label: string,
+  ) => (
+    <label
+      className={`inline-flex flex-col items-center gap-1 ${
+        e.mandatory ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+      }`}
+    >
+      <span className="text-[10px] uppercase tracking-wide text-silver">{label}</span>
+      <input
+        type="checkbox"
+        className="sr-only peer"
+        checked={e[channel]}
+        disabled={e.mandatory || pending === `${e.category}:${channel}`}
+        aria-label={`${label} for ${e.label}`}
+        onChange={() => onToggle(e, channel)}
+      />
+      <div className="w-11 h-6 bg-navy-secondary peer-focus-visible:ring-2 peer-focus-visible:ring-gold rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
+    </label>
+  );
 
   return (
     <Card>
@@ -992,20 +1023,10 @@ function NotificationsCard() {
                   </div>
                   <div className="text-xs text-silver mt-0.5">{e.description}</div>
                 </div>
-                <label
-                  className={`inline-flex items-center cursor-pointer ${
-                    e.mandatory ? 'opacity-60 cursor-not-allowed' : ''
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={e.emailEnabled}
-                    disabled={e.mandatory || pending === e.category}
-                    onChange={() => onToggle(e)}
-                  />
-                  <div className="w-11 h-6 bg-navy-secondary peer-focus:outline-none rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
-                </label>
+                <span className="flex shrink-0 items-start gap-3">
+                  {channelToggle(e, 'inAppEnabled', 'Bell')}
+                  {channelToggle(e, 'emailEnabled', 'Email')}
+                </span>
               </li>
             ))}
           </ul>

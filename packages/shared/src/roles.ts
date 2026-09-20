@@ -127,6 +127,11 @@ export type Capability =
   // (read). Held by EXECUTIVE_CHAIRMAN and the FULL_ADMIN family — never
   // by client-scoped or self-service roles.
   | 'view:executive'
+  // Product telemetry — DAU/WAU, traffic, error rates, what the software
+  // is actually used for. Deliberately NOT view:analytics: that one is
+  // workforce reporting (retention, onboarding funnels) and is held by
+  // finance and field roles who have no business reading org-wide usage.
+  | 'view:product-analytics'
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
   // Phase 93 — public API keys + outbound webhooks.
@@ -235,6 +240,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     ...ALL_VIEWS,
     'view:audit',
     'view:executive',
+    'view:product-analytics',
     'view:time-live',
     // Store-ops oversight + the chairman's ONE write: the SOP standard.
     'view:ops',
@@ -246,6 +252,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   // perform the HR/Finance settle step.
   HR_ADMINISTRATOR: new Set<Capability>([
     ...FULL_ADMIN,
+    // Granted here rather than in FULL_ADMIN: product telemetry starts with
+    // the two roles accountable for the platform, and widens deliberately.
+    'view:product-analytics',
     'void:payroll',
     'export:payroll-pii',
     'submit:reimbursement',

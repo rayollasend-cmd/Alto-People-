@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Activity,
   Award,
   Briefcase,
   Building2,
@@ -112,6 +113,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'dircomms': MegaphoneIcon,
   'communications': MessageSquare,
   'analytics': LineChart,
+  'product-analytics': Activity,
   'reports': ReportsIcon,
   'integrations': IntegrationsIcon,
 };

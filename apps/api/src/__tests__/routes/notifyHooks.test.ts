@@ -124,12 +124,19 @@ describe('Notification hooks', () => {
     expect(res.status).toBe(201);
     await flushPendingNotifications();
 
-    // Every admin (2 HR + 1 INTERNAL_RECRUITER + 1 MANAGER) should get an
-    // IN_APP row — the previous notifyAllHR bug only matched HR_ADMINISTRATOR.
+    // The desks that act on a document: HR, who review it, and the
+    // recruiter whose pipeline it belongs to. NOT every admin role —
+    // routing by capability is what had a marketing manager reading about
+    // every licence photo in the company (CATEGORY_ROLE_ROUTING).
     const adminInApp = await prisma.notification.findMany({
       where: { recipientUserId: { in: w.allAdminIds }, category: 'documents', channel: 'IN_APP' },
     });
-    expect(adminInApp).toHaveLength(w.allAdminIds.length);
+    expect(adminInApp).toHaveLength(3); // 2 HR + 1 INTERNAL_RECRUITER
+    expect(
+      await prisma.notification.count({
+        where: { recipientUserId: w.managerUser.id, category: 'documents' },
+      }),
+    ).toBe(0);
     // Match against the structured data block produced by documentUploadedTemplate.
     expect(adminInApp[0].body).toMatch(/Document type/i);
     expect(adminInApp[0].body).toMatch(/license\.png/);
@@ -293,10 +300,10 @@ describe('Notification hooks', () => {
     expect(r1.status).toBe(204);
     await flushPendingNotifications();
 
-    const expectedFanOut = w.allAdminIds.length; // 2 HR + 1 IR + 1 MGR
-    // Emails are tiered (ADMIN_EMAIL_HIRING): the bell reaches every admin
-    // role, but the completion/edit-alert EMAILS go to HR + recruiters
-    // only — MANAGER sees the bell row without the inbox hit.
+    // The bell now follows the same tiering the emails always had: the
+    // hiring desks, not every role holding manage:onboarding. MANAGER gets
+    // neither, which is the whole point of CATEGORY_ROLE_ROUTING.
+    const expectedFanOut = 3; // 2 HR + 1 IR
     const expectedEmailFanOut = 3; // 2 HR + 1 IR
 
     let inApp = await prisma.notification.findMany({

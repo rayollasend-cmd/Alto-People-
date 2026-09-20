@@ -160,6 +160,11 @@ export const authRouter = Router();
 const LoginBodySchema = z.object({
   email: z.string().email().max(254),
   password: z.string().min(12).max(256),
+  // What the browser says its zone is. Optional and never trusted for
+  // anything but describing a sign-in back to its owner — it is a claim by
+  // the client, not a measurement. Chosen over IP geolocation deliberately:
+  // no third party sees these addresses and no database ships in the image.
+  timezone: z.string().max(64).optional(),
 });
 
 function cookieOptions() {
@@ -478,6 +483,7 @@ authRouter.post(
         req,
         userId: user.id,
         clientId: user.clientId,
+        timezone: parsed.data.timezone ?? null,
       });
       // A portal account's first sign-in is a milestone the account team hears once.
       void trackNotificationWork(notePortalSignIn(user.id));
@@ -1262,13 +1268,21 @@ authRouter.get('/me/login-history', requireAuth, async (req, res, next) => {
     });
     res.json({
       events: rows.map((r) => {
-        const meta = (r.metadata ?? {}) as { ip?: string | null; userAgent?: string | null };
+        const meta = (r.metadata ?? {}) as {
+          ip?: string | null;
+          userAgent?: string | null;
+          timezone?: string | null;
+          newNetwork?: boolean;
+        };
         return {
           id: r.id,
           action: r.action,
           at: r.createdAt.toISOString(),
           ip: meta.ip ?? null,
           userAgent: meta.userAgent ?? null,
+          timezone: meta.timezone ?? null,
+          // The row the owner should look at twice.
+          newNetwork: meta.newNetwork === true,
         };
       }),
     });
@@ -1800,17 +1814,21 @@ authRouter.get('/me/notification-preferences', requireAuth, async (req, res, nex
     const stored = await prisma.notificationPreference.findMany({
       take: 500,
       where: { userId: req.user!.id },
-      select: { category: true, emailEnabled: true },
+      select: { category: true, emailEnabled: true, inAppEnabled: true },
     });
-    const byCategory = new Map(stored.map((s) => [s.category, s.emailEnabled]));
+    const byCategory = new Map(stored.map((s) => [s.category, s]));
 
-    const entries: NotificationPreferenceEntry[] = notificationCategoriesFor(req.user!.role).map((c) => ({
-      category: c.key,
-      label: c.label,
-      description: c.description,
-      mandatory: c.mandatory,
-      emailEnabled: c.mandatory ? true : (byCategory.get(c.key) ?? true),
-    }));
+    const entries: NotificationPreferenceEntry[] = notificationCategoriesFor(req.user!.role).map((c) => {
+      const pref = byCategory.get(c.key);
+      return {
+        category: c.key,
+        label: c.label,
+        description: c.description,
+        mandatory: c.mandatory,
+        emailEnabled: c.mandatory ? true : (pref?.emailEnabled ?? true),
+        inAppEnabled: c.mandatory ? true : (pref?.inAppEnabled ?? true),
+      };
+    });
 
     res.json({ entries });
   } catch (err) {
@@ -1831,12 +1849,14 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { category, emailEnabled } = parsed.data;
+    const { category, emailEnabled, inAppEnabled } = parsed.data;
     const meta = NOTIFICATION_CATEGORIES.find((c) => c.key === category);
     if (!notificationCategoriesFor(req.user!.role).some((c) => c.key === category)) {
       throw new HttpError(400, 'category_not_available', 'That notification type does not apply to this account.');
     }
-    if (meta?.mandatory && !emailEnabled) {
+    // Mandatory buckets are undeniable on BOTH channels — muting the bell
+    // would hide a formal HR notice just as effectively as muting the mail.
+    if (meta?.mandatory && (emailEnabled === false || inAppEnabled === false)) {
       throw new HttpError(
         400,
         'mandatory_category',
@@ -1845,8 +1865,18 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
     }
     await prisma.notificationPreference.upsert({
       where: { userId_category: { userId: req.user!.id, category } },
-      create: { userId: req.user!.id, category, emailEnabled },
-      update: { emailEnabled },
+      // An absent switch means "leave that channel alone", so the create
+      // has to fall back to the default-on rather than to the other flag.
+      create: {
+        userId: req.user!.id,
+        category,
+        emailEnabled: emailEnabled ?? true,
+        inAppEnabled: inAppEnabled ?? true,
+      },
+      update: {
+        ...(emailEnabled !== undefined ? { emailEnabled } : {}),
+        ...(inAppEnabled !== undefined ? { inAppEnabled } : {}),
+      },
     });
     res.status(204).end();
   } catch (err) {

@@ -67,13 +67,15 @@ export function getNotificationPreferences(): Promise<{
   );
 }
 
+/** Send only the channel being changed — an absent flag leaves the other
+ *  one as it was, so the two toggles never overwrite each other. */
 export function patchNotificationPreference(
   category: NotificationCategory,
-  emailEnabled: boolean,
+  patch: { emailEnabled?: boolean; inAppEnabled?: boolean },
 ): Promise<void> {
   return apiFetch<void>('/auth/me/notification-preferences', {
     method: 'PATCH',
-    body: { category, emailEnabled },
+    body: { category, ...patch },
   });
 }
 

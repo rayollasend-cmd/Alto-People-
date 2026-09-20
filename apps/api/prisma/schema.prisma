@@ -409,6 +409,10 @@ model User {
   mfaSecretEncrypted Bytes?     @db.ByteA
   mfaEnabledAt       DateTime?  @db.Timestamptz(6)
   associateId        String?    @unique @db.Uuid
+  // Last authenticated request, stamped at most once per user per day per
+  // process (lib/usageTracker) — a "who has gone quiet" read, not a
+  // precise clock. Never on the request's critical path.
+  lastSeenAt         DateTime?  @db.Timestamptz(6)
   clientId           String?    @db.Uuid
   // Store scope for CLIENT_PORTAL accounts: a store manager is ONE
   // Location under the client; null = the whole client (a market or
@@ -430,6 +434,8 @@ model User {
   updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt          DateTime?  @db.Timestamptz(6)
 
+  activityDays                      UserActivityDay[]
+  knownIps                          UserKnownIp[]
   signaturesGiven                   Signature[]                   @relation("UserSignatures")
   // The store shift windows a supervisor leads ("Overnight 10p–6a").
   supervisorShiftWindows            SupervisorShiftWindow[]       @relation("SupervisorWindows")
@@ -3512,6 +3518,11 @@ model NotificationPreference {
   // Bucket key from NOTIFICATION_CATEGORIES in shared/contracts.
   category     String   @db.VarChar(64)
   emailEnabled Boolean  @default(true)
+  // The bell. Muting a category used to stop only the email — the in-app
+  // row was written regardless, so Settings turned off half of what it
+  // said it turned off. Checked by notifyUser/notifyAllAdmins before the
+  // Notification row is created; mandatory categories ignore both flags.
+  inAppEnabled Boolean  @default(true)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -7805,4 +7816,72 @@ model TransportSettings {
   cutoffHours    Int      @default(10)
   updatedById    String?  @db.Uuid
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// ===== Product analytics ==================================================
+//
+// Three small rollups, written by lib/usageTracker, read by routes/
+// productAnalytics. Nothing here is queried from the raw AuditLog: that
+// table has 209 action types, no retention sweep, and indexes built for
+// entity timelines rather than aggregates — a DAU query over it would
+// scan forever and fight the write path every mutation depends on.
+//
+// None of these tables stores a URL, a body, or an entity id. Route keys
+// are Express PATTERNS ("/rides/:id"), so an analytics row can never
+// become a way to read who looked at whom.
+
+/// One row per user per day they made an authenticated request. DAU is a
+/// COUNT on an indexed day; WAU/MAU are a COUNT DISTINCT over 7 or 30 of
+/// them. `role` is denormalised deliberately — it is the role they held
+/// that day, and re-deriving it later from the User row would silently
+/// rewrite history when somebody changes job.
+model UserActivityDay {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  day       DateTime @db.Date
+  role      String   @db.VarChar(40)
+  firstAt   DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([day])
+  @@index([day, role])
+  @@index([userId, day(sort: Desc)])
+}
+
+/// Per-day traffic and health, keyed by Express route pattern. Accumulated
+/// in memory and flushed on an interval, so a busy endpoint costs one UPDATE
+/// a minute rather than one per request.
+model RouteUsageDaily {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day         DateTime @db.Date
+  method      String   @db.VarChar(10)
+  /// Express pattern, never a resolved path — "/rides/:id", not "/rides/9f2…".
+  route       String   @db.VarChar(200)
+  ok          Int      @default(0)
+  clientError Int      @default(0)
+  serverError Int      @default(0)
+  /// Summed response time; divide by the three counters for a mean.
+  totalMs     BigInt   @default(0)
+
+  @@unique([day, method, route])
+  @@index([day])
+}
+
+/// Every IP an account has successfully signed in from. Small by nature —
+/// people have few networks — and it exists so "is this sign-in from
+/// somewhere new?" is an indexed lookup instead of a scan of the audit log.
+model UserKnownIp {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @db.Uuid
+  ip          String   @db.VarChar(64)
+  /// IANA zone the browser reported at sign-in, when it offered one.
+  timezone    String?  @db.VarChar(64)
+  firstSeenAt DateTime @default(now()) @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @db.Timestamptz(6)
+  logins      Int      @default(1)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ip])
+  @@index([userId, lastSeenAt(sort: Desc)])
 }

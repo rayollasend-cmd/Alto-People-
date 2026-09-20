@@ -41,6 +41,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   NOTIFICATION_CATEGORIES,
   bucketForCategory,
+  roleWantsCategory,
   rolesWithCapability,
   type NotificationCategory,
 } from '@alto-people/shared';
@@ -92,6 +93,49 @@ async function isEmailMutedForCategory(
     select: { emailEnabled: true },
   });
   return pref ? !pref.emailEnabled : false;
+}
+
+/**
+ * True when the user muted this category's BELL. Same bucket resolution and
+ * same mandatory exemption as the email check — a formal HR notice or a
+ * security alert is still undeniable.
+ */
+async function isInAppMutedForCategory(
+  userId: string,
+  rawCategory: string | undefined,
+): Promise<boolean> {
+  const bucket = bucketForRawCategory(rawCategory);
+  if (!bucket || MANDATORY_CATEGORIES.has(bucket)) return false;
+  const pref = await prisma.notificationPreference.findUnique({
+    where: { userId_category: { userId, category: bucket } },
+    select: { inAppEnabled: true },
+  });
+  return pref ? !pref.inAppEnabled : false;
+}
+
+/**
+ * Drop the users who muted this category's bell, in one query rather than
+ * one per recipient — the fan-outs below resolve a whole admin roster.
+ */
+async function withBellUnmuted<T extends { id: string }>(
+  users: readonly T[],
+  rawCategory: string | undefined,
+): Promise<T[]> {
+  const bucket = bucketForRawCategory(rawCategory);
+  if (!bucket || MANDATORY_CATEGORIES.has(bucket) || users.length === 0) {
+    return [...users];
+  }
+  const muted = await prisma.notificationPreference.findMany({
+    where: {
+      userId: { in: users.map((u) => u.id) },
+      category: bucket,
+      inAppEnabled: false,
+    },
+    select: { userId: true },
+  });
+  if (muted.length === 0) return [...users];
+  const off = new Set(muted.map((m) => m.userId));
+  return users.filter((u) => !off.has(u.id));
 }
 
 const inFlight: Set<Promise<unknown>> = new Set();
@@ -275,6 +319,8 @@ export function notifyUser(
 ): Promise<void> {
   return track(
     (async () => {
+      // A muted bucket means the bell too, not just the email.
+      if (await isInAppMutedForCategory(userId, opts.category)) return;
       await client.notification.create({
         data: {
           channel: 'IN_APP',
@@ -342,7 +388,7 @@ export function notifyAllAdmins(
 ): Promise<void> {
   return track(
     (async () => {
-      const recipients = await prisma.user.findMany({
+      const pool = await prisma.user.findMany({
         where: {
           role: { in: ONBOARDING_ADMIN_ROLES },
           status: 'ACTIVE',
@@ -350,6 +396,14 @@ export function notifyAllAdmins(
         },
         select: { id: true, email: true, role: true },
       });
+      // Whose job is this, rather than who is allowed to see it. Six roles
+      // hold manage:onboarding; that is an access answer, and using it as
+      // the recipient list is why a marketing manager heard about every
+      // OSHA incident in the company. An unrouted category still reaches
+      // everyone (see CATEGORY_ROLE_ROUTING).
+      const routed = pool.filter((u) => roleWantsCategory(u.role, opts.category));
+      // ...and then whoever asked not to be told.
+      const recipients = await withBellUnmuted(routed, opts.category);
       if (recipients.length === 0) return;
       const now = new Date();
       await prisma.notification.createMany({
@@ -404,10 +458,13 @@ export function notifyClientSupervisors(
   return track(
     (async () => {
       if (!clientId) return;
-      const recipients = await supervisorRecipients(prisma, clientId, opts.at, {
+      const roster = await supervisorRecipients(prisma, clientId, opts.at, {
         excludeUserId: opts.excludeUserId,
         aboutAssociateId: opts.aboutAssociateId,
       });
+      // No role filter here: this roster is already the people on that
+      // floor, for that client. Only the mute applies.
+      const recipients = await withBellUnmuted(roster, opts.category);
       if (recipients.length === 0) return;
       const now = new Date();
       await prisma.notification.createMany({

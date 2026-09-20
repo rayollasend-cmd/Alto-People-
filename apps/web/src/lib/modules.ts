@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import type { Capability } from './roles';
 
 export type ModuleKey =
+  | 'product-analytics'
   | 'portal'
   | 'region'
   | 'regions'
@@ -1129,6 +1130,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Executive dashboard, custom reports, and predictive analytics.',
     requires: 'view:analytics',
+    group: 'insights',
+  },
+  {
+    key: 'product-analytics',
+    path: '/product-analytics',
+    label: 'Product usage',
+    description:
+      'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
+    requires: 'view:product-analytics',
     group: 'insights',
   },
   {

@@ -188,6 +188,7 @@ const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'Bran
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
+const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
@@ -227,6 +228,7 @@ registerPrefetch('/compliance', () => import('@/pages/compliance/ComplianceHome'
 registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHome'));
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
+registerPrefetch('/product-analytics', () => import('@/pages/analytics/ProductAnalytics'));
 registerPrefetch('/audit', () => import('@/pages/audit/AuditHome'));
 registerPrefetch('/me', () => import('@/pages/me/MeHome'));
 registerPrefetch('/settings', () => import('@/pages/Settings'));
@@ -405,6 +407,7 @@ const LAYOUT_ROUTES = [
   { path: 'performance', element: <RequireCapability cap="view:performance"><PerformanceHome /></RequireCapability> },
   { path: 'recruiting', element: <RecruitingHome /> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
+  { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
   // `settings` is universal — every authenticated user manages their own
   // profile / password / preferences here. RequireAuth above is enough.
   { path: 'settings', element: <Settings /> },

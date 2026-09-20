@@ -32,6 +32,7 @@ import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
@@ -115,6 +116,7 @@ import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
 import { attachUser, requireAuth, requireCapability } from './middleware/auth.js';
 import { defaultApiLimiter } from './middleware/rateLimit.js';
+import { usageTracking } from './middleware/usage.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestId } from './middleware/requestId.js';
 
@@ -284,6 +286,9 @@ export function createApp() {
   // anonymous requests — those surfaces carry their own limiters).
   // Sits directly after attachUser so req.user keys the bucket.
   app.use(defaultApiLimiter);
+  // Counts finished requests, after auth so req.user is known. Everything
+  // it does happens on 'finish' — off the path to a response.
+  app.use(usageTracking);
 
   app.use('/health', healthRouter);
   // Enterprise SSO (OIDC). Mounted at the same root-path convention as
@@ -361,6 +366,10 @@ export function createApp() {
     requireCapability('view:dashboard'),
     analyticsRouter
   );
+  // Product telemetry — a different question and a different audience from
+  // the workforce analytics above, so its own capability rather than a
+  // sub-path under view:dashboard.
+  app.use('/product-analytics', productAnalyticsRouter);
   // One-click unsubscribe: mailbox providers POST this with no session, so
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.

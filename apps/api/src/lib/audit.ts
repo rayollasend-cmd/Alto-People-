@@ -2,6 +2,11 @@ import type { Request } from 'express';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
+// Static, not a dynamic import: this runs on every sign-in, and a
+// deferred module load on a security-critical path buys nothing and adds
+// a first-call stall plus an init race. The graph is acyclic — nothing
+// loginSecurity reaches (notify and its deps) imports this module back.
+import { alertNewNetwork, noteSuccessfulSignIn } from './loginSecurity.js';
 
 // ---------------------------------------------------------------------------
 // Fire-and-forget audit writes
@@ -95,6 +100,8 @@ interface LoginSuccessContext extends LoginContext {
   // flow — 'oidc' for SSO sign-ins. Recorded in metadata.method so the
   // audit feed can distinguish IdP-brokered logins from local ones.
   method?: string;
+  /** IANA zone the browser reported at sign-in, when it offered one. */
+  timezone?: string | null;
 }
 
 interface LoginFailureContext extends LoginContext {
@@ -163,6 +170,18 @@ function reqMetaOptional(req: Request | undefined): Prisma.InputJsonObject {
 }
 
 export async function recordLoginSuccess(ctx: LoginSuccessContext) {
+  // Record the network FIRST, so the audit row can say whether this
+  // sign-in came from somewhere new. Every sign-in path — password, MFA
+  // second leg, passkey, SSO — funnels through here, which is why the
+  // hook lives in this function rather than at each call site.
+  const ip = ctx.req?.ip ?? null;
+  const seen = await noteSuccessfulSignIn({
+    userId: ctx.userId,
+    ip,
+    userAgent: ctx.req?.headers['user-agent'] ?? null,
+    timezone: ctx.timezone ?? null,
+  });
+
   // Critical: a missing login row would let an attacker quietly establish
   // a session that doesn't show up in the audit feed.
   await recordCriticalAudit(
@@ -175,10 +194,24 @@ export async function recordLoginSuccess(ctx: LoginSuccessContext) {
       metadata: meta(ctx.req, {
         email: ctx.email,
         ...(ctx.method ? { method: ctx.method } : {}),
+        ...(ctx.timezone ? { timezone: ctx.timezone } : {}),
+        // Lets the user's own history highlight the row without a second
+        // lookup per line when it renders.
+        ...(seen.newNetwork ? { newNetwork: true } : {}),
       }),
     },
     'recordLoginSuccess'
   );
+
+  // Told to the account owner only, after the audit row is safely down.
+  if (seen.newNetwork) {
+    alertNewNetwork({
+      userId: ctx.userId,
+      ip,
+      userAgent: ctx.req?.headers['user-agent'] ?? null,
+      timezone: ctx.timezone ?? null,
+    });
+  }
 }
 
 export async function recordLoginFailure(ctx: LoginFailureContext) {

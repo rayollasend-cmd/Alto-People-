@@ -77,9 +77,13 @@ describe('Location timezone', () => {
     const client = await createClient('Beachside Co');
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = request.agent(app());
-    await a
+    // Check it. An unchecked login turns any later failure into a bare
+    // 401 on an unrelated assertion, which is exactly how this test
+    // reported itself when the sign-in was the thing that went wrong.
+    const signedIn = await a
       .post('/auth/login')
       .send({ email: hr.email, password: DEFAULT_TEST_PASSWORD });
+    expect(signedIn.status).toBe(200);
 
     // Omitted → DB default (Eastern). This is exactly what left the Panhandle
     // sites mis-zoned before the picker existed.

@@ -3432,10 +3432,14 @@ export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 
 export const DocumentListResponseSchema = z.object({
   documents: z.array(DocumentRecordSchema),
-  /** Total matching rows — the list itself is capped at 200, so the UI
-   *  must say "showing 200 of N" instead of presenting a partial vault
-   *  as audit truth. Optional for back-compat. */
+  /** Total matching rows. The list is one page, so the UI can say
+   *  "showing 1–50 of N" rather than presenting a partial vault as audit
+   *  truth. Optional for back-compat. */
   total: z.number().int().nonnegative().optional(),
+  /** Zero-based page index this response represents. */
+  page: z.number().int().nonnegative().optional(),
+  /** Rows per page the server actually applied (it clamps). */
+  pageSize: z.number().int().positive().optional(),
 });
 export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
 
@@ -4655,6 +4659,71 @@ export function notificationCategoriesFor(role: string) {
  * Null = unknown string: the API treats it as "always send" (defensive
  * over-delivery) and the bell renders a neutral row.
  */
+/* -------------------------------------------------------------------------- *
+ *  WHO A SYSTEM NOTIFICATION IS ACTUALLY FOR
+ *
+ *  The admin fan-out (notifyAllAdmins) picks recipients by CAPABILITY —
+ *  every ACTIVE user holding manage:onboarding, which is six roles. That
+ *  answers "who is allowed to see this", which is not the same question as
+ *  "whose job is this". The result was a MARKETING_MANAGER being told about
+ *  every OSHA incident, every no-show and every separation in the company.
+ *
+ *  This table answers the second question. It is keyed on the RAW category
+ *  the call site passes (not the settings bucket, which is deliberately
+ *  coarse — 'workplace' covers HR cases, asset assignments AND floor
+ *  alerts, so routing on it would lump a temperature alarm in with an
+ *  agreement). Prefix entries ending in '.' match a namespace.
+ *
+ *  Two rules hold it together:
+ *    - HR_ADMINISTRATOR is on every line. It is the one role guaranteed to
+ *      exist, so it is the backstop that keeps any event from reaching
+ *      nobody at all.
+ *    - An unlisted category delivers to everyone, exactly as before. This
+ *      table only ever NARROWS, and only where a decision was actually
+ *      made, so a new category added elsewhere can never silently vanish.
+ * -------------------------------------------------------------------------- */
+
+const HR = 'HR_ADMINISTRATOR';
+const OPS = 'OPERATIONS_MANAGER';
+const WFM = 'WORKFORCE_MANAGER';
+const REC = 'INTERNAL_RECRUITER';
+
+export const CATEGORY_ROLE_ROUTING: ReadonlyArray<readonly [string, readonly string[]]> = [
+  // Hiring — the recruiter's pipeline, and the workforce manager's charter
+  // covers the supervisor corps and seasonal cohorts.
+  ['onboarding', [HR, REC, WFM]],
+  ['internal-jobs', [HR, REC]],
+  // People records — HR's own desk.
+  // A document arriving mid-onboarding is the recruiter's pipeline too.
+  ['documents', [HR, REC]],
+  ['hr-cases', [HR]],
+  ['benefits', [HR]],
+  ['reimbursements', [HR]],
+  ['separation', [HR, OPS]],
+  ['dormancy', [HR, WFM]],
+  // The floor. Store Ops is the workforce manager's manual and the
+  // operations manager's day; neither is HR's, but HR stays as backstop.
+  ['ops.', [HR, OPS, WFM]],
+  ['scheduling', [HR, OPS, WFM]],
+  ['shift_no_show', [HR, OPS, WFM]],
+  ['ot_radar', [HR, OPS, WFM]],
+  ['time-off', [HR, WFM]],
+  // Safety and certifications.
+  ['compliance', [HR, OPS]],
+];
+
+/**
+ * True when this role should be told about this raw category. Unlisted
+ * categories return true for everyone — see the fail-open rule above.
+ */
+export function roleWantsCategory(role: string, raw: string | null | undefined): boolean {
+  if (!raw) return true;
+  const hit = CATEGORY_ROLE_ROUTING.find(([key]) =>
+    key.endsWith('.') ? raw.startsWith(key) : raw === key || raw.startsWith(`${key}.`),
+  );
+  return hit ? hit[1].includes(role) : true;
+}
+
 export function bucketForCategory(
   raw: string | null | undefined,
 ): NotificationCategory | null {
@@ -4738,10 +4807,17 @@ const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as 
   ...NotificationCategory[],
 ];
 
-export const PatchNotificationPreferenceInputSchema = z.object({
-  category: z.enum(NOTIFICATION_CATEGORY_KEYS),
-  emailEnabled: z.boolean(),
-});
+export const PatchNotificationPreferenceInputSchema = z
+  .object({
+    category: z.enum(NOTIFICATION_CATEGORY_KEYS),
+    // Either switch may be sent on its own — the settings page toggles one
+    // at a time, and an absent field leaves that channel as it was.
+    emailEnabled: z.boolean().optional(),
+    inAppEnabled: z.boolean().optional(),
+  })
+  .refine((v) => v.emailEnabled !== undefined || v.inAppEnabled !== undefined, {
+    message: 'Provide emailEnabled, inAppEnabled, or both.',
+  });
 export type PatchNotificationPreferenceInput = z.infer<
   typeof PatchNotificationPreferenceInputSchema
 >;
@@ -4752,6 +4828,8 @@ export interface NotificationPreferenceEntry {
   description: string;
   mandatory: boolean;
   emailEnabled: boolean;
+  /** The bell. Muting this stops the in-app row being written at all. */
+  inAppEnabled: boolean;
 }
 
 /* -------------------------------------------------------------------------- *
@@ -6423,3 +6501,116 @@ export const REPORT_PERIOD_LABELS: Record<ReportPeriodToken, string> = {
   'year-to-date': 'Year to date',
 };
 
+/* -------------------------------------------------------------------------- *
+ *  Product analytics — is anyone actually using this?
+ *
+ *  Distinct from the workforce analytics above, which answer questions
+ *  about associates. These answer questions about the software: who signs
+ *  in, what they open, what breaks. Every field is served from a daily
+ *  rollup, never from the raw audit log.
+ * -------------------------------------------------------------------------- */
+
+export interface ActiveUsersPoint {
+  /** YYYY-MM-DD, UTC. */
+  day: string;
+  activeUsers: number;
+}
+
+export interface ActiveUsersResponse {
+  series: ActiveUsersPoint[];
+  dau: number;
+  wau: number;
+  mau: number;
+  /** WAU/MAU. A ratio, not a verdict. */
+  stickiness: number;
+}
+
+export interface TrafficPoint {
+  day: string;
+  requests: number;
+  clientError: number;
+  serverError: number;
+  /** Server errors as a fraction of all requests — 4xx is usually the app working. */
+  errorRate: number;
+  avgMs: number;
+}
+
+export interface TrafficResponse {
+  series: TrafficPoint[];
+}
+
+export interface RouteUsageRow {
+  method: string;
+  /** Express pattern — "/rides/:id". Never a resolved path. */
+  route: string;
+  requests: number;
+  serverError: number;
+  errorRate: number;
+  avgMs: number;
+}
+
+export interface RouteUsageResponse {
+  busiest: RouteUsageRow[];
+  /** Only routes with enough traffic for a rate to mean anything. */
+  failing: RouteUsageRow[];
+}
+
+export interface AdoptionResponse {
+  signups: { day: string; accounts: number }[];
+  funnel: {
+    created: number;
+    activated: number;
+    activationRate: number;
+  };
+  activeByRole: { role: string; users: number }[];
+  /** Invited, never once signed in — the funnel's real leak. */
+  neverSignedIn: number;
+  dormant30d: number;
+  totalActiveAccounts: number;
+}
+
+/** One row of a person's own sign-in history. */
+export interface LoginHistoryEvent {
+  id: string;
+  action: string;
+  at: string;
+  ip: string | null;
+  userAgent: string | null;
+  /** IANA zone the browser reported at the time, when it offered one. */
+  timezone?: string | null;
+  /** True when this sign-in came from a network not seen before. */
+  newNetwork?: boolean;
+}
+
+/** How the document vault orders a page. Sorting has to happen on the
+ *  server: the queue's whole job is "oldest first", and a page sorted
+ *  after it was cut shows the oldest rows OF THAT PAGE, not of the vault. */
+export const DocumentSortSchema = z.enum([
+  'uploaded_asc',
+  'uploaded_desc',
+  'associate_asc',
+  'associate_desc',
+  'kind_asc',
+  'kind_desc',
+  'file_asc',
+  'file_desc',
+  'size_asc',
+  'size_desc',
+  'status_asc',
+  'status_desc',
+]);
+export type DocumentSort = z.infer<typeof DocumentSortSchema>;
+
+/** Vault counts, computed over the whole population rather than the page —
+ *  the KPI strip used to be derived from the capped list, so every number
+ *  on the page was wrong once the vault passed the cap. */
+export const DocumentStatsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  uploaded: z.number().int().nonnegative(),
+  verified: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+  expired: z.number().int().nonnegative(),
+  /** Oldest still-unreviewed upload, for the SLA banner. */
+  oldestPendingAt: z.string().datetime().nullable(),
+});
+export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
