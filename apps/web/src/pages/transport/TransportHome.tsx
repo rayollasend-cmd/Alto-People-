@@ -1539,6 +1539,50 @@ function RidesTab({ manage }: { manage: boolean }) {
     queryFn: () => searchRides({ from, to, ...(status ? { status } : {}), ...(dq ? { q: dq } : {}) }),
   });
   const actions = useRideActions();
+  const queryClient = useQueryClient();
+
+  /**
+   * Dispatch from here, not just from Today.
+   *
+   * Today's board only ever shows one service date, so a week of unassigned
+   * rides had to be dispatched a day at a time — and this tab, which is the
+   * one that spans days and actually shows them all, could only cancel and
+   * waive. Selecting across the range and sending them to a van in one go
+   * is the same DispatchDialog the board uses.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [dispatching, setDispatching] = useState(false);
+  const all = rides.data?.rides ?? [];
+  // What the server will actually accept onto a run: still waiting, no van.
+  const eligible = all.filter((r) => r.status === 'REQUESTED' && !r.run);
+  const pickedRides = eligible.filter((r) => picked.has(r.id));
+  const allPicked = eligible.length > 0 && pickedRides.length === eligible.length;
+
+  // A run is one van going one way on one day — the server refuses anything
+  // else with ride_mismatch, so say so here rather than letting them build a
+  // selection that can only fail.
+  const ways = new Set(pickedRides.map((r) => r.direction));
+  const days = new Set(pickedRides.map((r) => r.serviceDate));
+  const stores = new Set(pickedRides.map((r) => r.store.id));
+  const blocked =
+    ways.size > 1 ? 'One way per run' : days.size > 1 ? 'One day per run' : null;
+  const dispatchDate = days.size === 1 ? [...days][0]! : null;
+
+  // The dialog needs the vans and drivers for the day being dispatched —
+  // fetched only once they ask, since this tab otherwise never needs it.
+  const board = useQuery({
+    queryKey: ['transport', 'board', dispatchDate],
+    queryFn: () => getTransportBoard(dispatchDate!),
+    enabled: dispatching && !!dispatchDate,
+  });
+
+  const toggle = (ids: string[], on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) (on ? next.add(id) : next.delete(id));
+      return next;
+    });
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
@@ -1554,6 +1598,38 @@ function RidesTab({ manage }: { manage: boolean }) {
           ))}
         </Select>
       </div>
+      {manage && pickedRides.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gold/40 bg-gold/[0.06] px-3 py-2">
+          <span className="text-sm text-white">
+            <span className="font-semibold tabular-nums">{pickedRides.length}</span> selected
+          </span>
+          {blocked ? (
+            <span className="text-xs text-warning">{blocked}</span>
+          ) : (
+            <span className="text-xs text-silver">
+              {ways.has('TO_WORK') ? 'To work' : 'Home from work'} ·{' '}
+              {fmtRelativeDayTz(`${dispatchDate}T12:00:00Z`, 'UTC')}
+              {/* Not blocking: the server allows one run to serve two
+                  stores, and a van covering neighbours is legitimate —
+                  but it should never be a surprise. */}
+              {stores.size > 1 && <span className="text-warning"> · {stores.size} stores on one run</span>}
+            </span>
+          )}
+          <span className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
+              Clear
+            </Button>
+            <Button size="sm" disabled={!!blocked || board.isFetching} loading={board.isFetching} onClick={() => setDispatching(true)}>
+              <Send className="h-3.5 w-3.5" />
+              Dispatch {pickedRides.length}
+            </Button>
+          </span>
+        </div>
+      )}
+      {/* Without this the Dispatch button is a click that does nothing:
+          the dialog can't mount without a board, and the selection is
+          still sitting there looking ready. */}
+      {dispatching && board.isError && <QueryError what="the vans for that day" query={board} />}
       {rides.isLoading ? (
         <Skeleton className="h-48" />
       ) : rides.isError ? (
@@ -1565,6 +1641,18 @@ function RidesTab({ manage }: { manage: boolean }) {
           <Table>
             <TableHeader>
               <TableRow>
+                {manage && (
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-gold"
+                      aria-label={`Select all ${eligible.length} waiting for a van`}
+                      checked={allPicked}
+                      disabled={eligible.length === 0}
+                      onChange={(e) => toggle(eligible.map((r) => r.id), e.target.checked)}
+                    />
+                  </TableHead>
+                )}
                 <TableHead>When</TableHead>
                 <TableHead>Rider</TableHead>
                 <TableHead>Way</TableHead>
@@ -1578,6 +1666,19 @@ function RidesTab({ manage }: { manage: boolean }) {
             <TableBody>
               {rides.data!.rides.map((r) => (
                 <TableRow key={r.id}>
+                  {manage && (
+                    <TableCell>
+                      {r.status === 'REQUESTED' && !r.run ? (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-gold"
+                          aria-label={`Select ${r.rider.name}`}
+                          checked={picked.has(r.id)}
+                          onChange={(e) => toggle([r.id], e.target.checked)}
+                        />
+                      ) : null}
+                    </TableCell>
+                  )}
                   <TableCell className="whitespace-nowrap tabular-nums">
                     {fmtRelativeDayTz(r.targetAt, r.store.timezone)} {fmtTimeTz(r.targetAt, r.store.timezone)}
                   </TableCell>
@@ -1613,6 +1714,22 @@ function RidesTab({ manage }: { manage: boolean }) {
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {/* The same dialog the Today board uses — one van, one driver, pickup
+          times worked back from the arrive-by. */}
+      {dispatching && board.data && pickedRides.length > 0 && (
+        <DispatchDialog
+          board={board.data}
+          initial={{ rides: pickedRides }}
+          onClose={(done) => {
+            setDispatching(false);
+            if (done) {
+              setPicked(new Set());
+              void queryClient.invalidateQueries({ queryKey: ['transport'] });
+            }
+          }}
+        />
       )}
     </div>
   );

@@ -272,3 +272,94 @@ describe('<TransportHome> — plan the day in one go', () => {
     });
   });
 });
+
+describe('<TransportHome> — dispatching from the Rides tab', () => {
+  /**
+   * Today's board shows one service date, so a week of unassigned rides had
+   * to be dispatched a day at a time. This tab is the one that spans days
+   * and shows them all, and it could only cancel and waive.
+   */
+  const tomorrow = ride({ id: 'r1', rider: { associateId: 'a1', name: 'Marcus Hill', phone: null } });
+  const alsoTomorrow = ride({ id: 'r2', rider: { associateId: 'a2', name: 'Aaliyah Brooks', phone: null } });
+  const nextWeek = ride({
+    id: 'r3',
+    rider: { associateId: 'a3', name: 'Dana Reyes', phone: null },
+    targetAt: hoursFromNow(200),
+    serviceDate: zonedDayKey(hoursFromNow(200), tz),
+  });
+  const goingHome = ride({
+    id: 'r4',
+    rider: { associateId: 'a4', name: 'Nia Carter', phone: null },
+    direction: 'FROM_WORK',
+  });
+  // Already on a van — a run can't take it, so it must not be selectable.
+  const onAVan = ride({
+    id: 'r5',
+    status: 'SCHEDULED',
+    rider: { associateId: 'a5', name: 'Rosa Vega', phone: null },
+    run: {
+      id: 'run1', status: 'PLANNED', departAt: hoursFromNow(19),
+      van: { id: 'v1', name: 'Van 1', plate: null, capacity: 12 },
+      driver: { userId: 'd1', name: 'Mike Chen', associateId: null },
+    },
+  });
+
+  const openRides = async ({ boardFails = false } = {}) => {
+    routes((path) => {
+      if (path.startsWith('/transport/rides')) {
+        return { rides: [tomorrow, alsoTomorrow, nextWeek, goingHome, onAVan] };
+      }
+      if (path.startsWith('/transport/board')) return boardFails ? undefined : board();
+      if (path.startsWith('/transport/live')) return { runs: [] };
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR');
+    await userEvent.click(await screen.findByRole('tab', { name: /^Rides/ }));
+    return screen.findByRole('table');
+  };
+
+  it('offers a checkbox only for rides a run can actually take', async () => {
+    await openRides();
+    expect(await screen.findByRole('checkbox', { name: 'Select Marcus Hill' })).toBeInTheDocument();
+    // Rosa is already on a van.
+    expect(screen.queryByRole('checkbox', { name: 'Select Rosa Vega' })).not.toBeInTheDocument();
+  });
+
+  it('refuses a selection the server would reject, and says which rule', async () => {
+    await openRides();
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select Marcus Hill' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Aaliyah Brooks' }));
+    // Two riders, same way, same day — good to go.
+    expect(screen.getByRole('button', { name: /Dispatch 2/ })).toBeEnabled();
+
+    // A run is one van going one way: adding the ride home blocks it.
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Nia Carter' }));
+    expect(screen.getByText('One way per run')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dispatch 3/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Nia Carter' }));
+
+    // And one day: a ride next week can't share the run either.
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Dana Reyes' }));
+    expect(screen.getByText('One day per run')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dispatch 3/ })).toBeDisabled();
+  });
+
+  it('says so when the vans for that day cannot be loaded', async () => {
+    // The dialog can't open without a board, and the selection still looks
+    // ready — so a failure here has to be visible, not a dead button.
+    await openRides({ boardFails: true });
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select Marcus Hill' }));
+    await userEvent.click(screen.getByRole('button', { name: /Dispatch 1/ }));
+    expect(await screen.findByText(/the vans for that day/)).toBeInTheDocument();
+  });
+
+  it('select-all takes only the ones waiting for a van', async () => {
+    await openRides();
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Select all 4 waiting for a van/ }));
+    // Four eligible; Rosa is not among them — and they span two ways and
+    // two days, so it says so rather than letting it fail at the server.
+    expect(screen.getByRole('button', { name: /Dispatch 4/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByRole('button', { name: /Dispatch/ })).not.toBeInTheDocument();
+  });
+});
