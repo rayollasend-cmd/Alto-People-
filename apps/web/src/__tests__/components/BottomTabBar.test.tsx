@@ -114,10 +114,15 @@ describe('who owns the bottom safe area', () => {
     expect(tabBarHiddenFrom(undefined)).toBe('md');
   });
 
-  it('the bar pads for the inset, and hides at the width the helper names', () => {
+  it('reserves the inset only when installed, and hides at the width the helper names', () => {
     const { container } = renderBar([...ROLE_CAPABILITIES.ASSOCIATE]);
     const nav = container.querySelector('nav[aria-label="Primary"]')!;
-    expect(nav.className).toContain('pb-[calc(env(safe-area-inset-bottom)*0.65)]');
+    // standalone: — in a browser tab Safari's own toolbar already covers
+    // that region, and padding for it too is what put a dead strip under
+    // the bar on an iPhone.
+    expect(nav.className).toContain('standalone:pb-[calc(env(safe-area-inset-bottom)*0.65)]');
+    // Never unconditionally: an unprefixed pb-[env(...)] here is the bug.
+    expect(nav.className).not.toMatch(/(^|\s)pb-\[/);
     expect(nav.className).toContain('md:hidden');
   });
 

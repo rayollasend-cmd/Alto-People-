@@ -69,6 +69,24 @@ try {
   document.documentElement.dataset.theme = 'dark';
 }
 
+// Installed vs. browser tab, decided before first paint so the tab bar
+// never renders with the wrong bottom padding and then corrects itself.
+//
+// Only an installed app actually reaches the bottom of the screen. In a
+// browser tab Safari's toolbar is already sitting over the home indicator,
+// so reserving the safe-area inset there stacks a dead strip on top of the
+// browser's own chrome. navigator.standalone is the iOS-specific half —
+// Safari has been unreliable about the display-mode media feature for
+// home-screen apps, and the Tailwind `standalone:` variant matches either.
+try {
+  const installed =
+    (window.navigator as { standalone?: boolean }).standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+  if (installed) document.documentElement.classList.add('pwa-standalone');
+} catch {
+  /* matchMedia unavailable — treat as a browser tab, which reserves nothing */
+}
+
 // Phase 69 — same trick for density.
 try {
   const stored = window.localStorage.getItem('alto.density');

@@ -170,9 +170,12 @@ export function Layout() {
         <div
           className={cn(
             'flex-1 flex flex-col min-w-0',
+            // standalone: for the same reason the tab bar uses it — a
+            // browser tab's bottom inset is already covered by the
+            // browser's own chrome.
             tabBarHiddenFrom(user?.role) === 'lg'
-              ? 'lg:pb-[env(safe-area-inset-bottom)]'
-              : 'md:pb-[env(safe-area-inset-bottom)]',
+              ? 'lg:standalone:pb-[env(safe-area-inset-bottom)]'
+              : 'md:standalone:pb-[env(safe-area-inset-bottom)]',
           )}
         >
           <Topbar

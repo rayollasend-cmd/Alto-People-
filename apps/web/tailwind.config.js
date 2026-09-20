@@ -233,6 +233,20 @@ export default {
       addVariant('coarse', '@media (pointer: coarse)');
       addVariant('fine', '@media (pointer: fine)');
       addVariant('can-hover', '@media (hover: hover)');
+      // Installed-app only. The bottom safe area belongs to whoever is
+      // drawing at the bottom of the screen: in a browser tab that is
+      // Safari's own toolbar, which already sits over the home indicator,
+      // so a page that also reserves for it just adds a dead strip above
+      // the browser chrome. Standalone has no such toolbar and the page
+      // really does reach the indicator.
+      //
+      // Two selectors because iOS has been unreliable about the
+      // display-mode media feature for home-screen apps; main.tsx also
+      // stamps .pwa-standalone from navigator.standalone before render.
+      addVariant('standalone', [
+        '@media (display-mode: standalone)',
+        '.pwa-standalone &',
+      ]);
     }),
   ],
 };
