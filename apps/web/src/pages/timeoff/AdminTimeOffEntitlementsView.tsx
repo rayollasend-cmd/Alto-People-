@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarRange, Download, Pencil, Plus } from 'lucide-react';
+import { CalendarRange, Download, Pencil, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   TimeOffCategory,
@@ -36,6 +36,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Select } from '@/components/ui/Select';
+import { BulkEntitlementDialog } from './BulkEntitlementDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -101,6 +102,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
   );
   const [editing, setEditing] = useState<TimeOffEntitlement | null>(null);
   const [creating, setCreating] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -174,6 +176,12 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
               <Download className="h-4 w-4" />
               Export CSV
             </Button>
+            {canManage && (
+              <Button size="sm" variant="secondary" onClick={() => setBulkOpen(true)}>
+                <Users className="h-4 w-4" />
+                Apply to many
+              </Button>
+            )}
             {canManage && (
               <Button size="sm" onClick={() => setCreating(true)}>
                 <Plus className="h-4 w-4" />
@@ -307,6 +315,12 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
           </Table>
         )}
       </CardContent>
+
+      <BulkEntitlementDialog
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onApplied={refresh}
+      />
 
       <EntitlementDialog
         open={creating || editing !== null}

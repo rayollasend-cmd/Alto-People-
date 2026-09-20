@@ -936,6 +936,28 @@ export const TimeOffEntitlementUpsertInputSchema = z.object({
 });
 export type TimeOffEntitlementUpsertInput = z.infer<typeof TimeOffEntitlementUpsertInputSchema>;
 
+/**
+ * The same policy, applied to a roster in one go.
+ *
+ * Entitlements are the only way most categories ever get a balance, and
+ * they were created one associate at a time — so a client with two
+ * hundred people meant two hundred trips through the form, and until
+ * someone made all of them, those associates' time off could be
+ * requested but never approved.
+ */
+export const TimeOffEntitlementBulkInputSchema = TimeOffEntitlementUpsertInputSchema.omit({
+  associateId: true,
+}).extend({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  /**
+   * Leave an existing entitlement alone rather than rewriting it. On by
+   * default: applying a company policy shouldn't silently overwrite the
+   * negotiated exception someone set up for one person.
+   */
+  skipExisting: z.boolean().default(true),
+});
+export type TimeOffEntitlementBulkInput = z.infer<typeof TimeOffEntitlementBulkInputSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Phase 42 — Benefits enrollment
  * -------------------------------------------------------------------------- */
@@ -4838,6 +4860,20 @@ export type TimeOffRequestCreateInput = z.infer<typeof TimeOffRequestCreateInput
 
 export const TimeOffRequestDecisionInputSchema = z.object({
   note: z.string().max(500).optional(),
+  /**
+   * Approve even though the balance doesn't cover it, and say why.
+   *
+   * Most associates have no balance at all: only SICK accrues, and only
+   * in states whose law provides for it (Florida's rate is zero), while
+   * every other category needs an entitlement someone configured by hand.
+   * So the balance gate — correct in itself — became a wall with nothing
+   * behind it, and the approver had no way through.
+   *
+   * A reason is required rather than a bare flag: this writes a negative
+   * balance, and a negative balance with no explanation is the kind of
+   * thing that gets found months later by someone reconciling PTO.
+   */
+  overrideReason: z.string().trim().min(3).max(300).optional(),
 });
 export type TimeOffRequestDecisionInput = z.infer<typeof TimeOffRequestDecisionInputSchema>;
 

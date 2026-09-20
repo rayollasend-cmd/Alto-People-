@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ConfirmProvider } from '@/lib/confirm';
 import { ROLE_CAPABILITIES, type Capability, type Role, type TimeOffRequest } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
@@ -89,9 +90,13 @@ function renderPage(role: Role = 'HR_ADMINISTRATOR') {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={auth}>
-        <MemoryRouter>
-          <ApprovalsHome />
-        </MemoryRouter>
+        {/* main.tsx wraps the whole app in this; approving past a balance
+            asks for a reason through it. */}
+        <ConfirmProvider>
+          <MemoryRouter>
+            <ApprovalsHome />
+          </MemoryRouter>
+        </ConfirmProvider>
       </AuthContext.Provider>
     </QueryClientProvider>
   );

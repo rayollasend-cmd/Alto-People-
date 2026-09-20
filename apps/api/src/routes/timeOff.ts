@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   TimeOffAdminListQuerySchema,
   TimeOffEntitlementListResponseSchema,
+  TimeOffEntitlementBulkInputSchema,
   TimeOffEntitlementUpsertInputSchema,
   TimeOffMyBalanceResponseSchema,
   TimeOffRequestCreateInputSchema,
@@ -610,7 +611,13 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
     if (!inScope) throw new HttpError(404, 'not_found', 'Request not found');
 
     try {
-      await approveRequest(prisma, id, user.id, input.note ?? null);
+      await approveRequest(
+        prisma,
+        id,
+        user.id,
+        input.note ?? null,
+        input.overrideReason ? { reason: input.overrideReason } : null,
+      );
     } catch (err) {
       if (err instanceof InsufficientBalanceError) {
         throw new HttpError(409, 'insufficient_balance', err.message, {
@@ -750,6 +757,84 @@ timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
     res.json(
       TimeOffEntitlementListResponseSchema.parse({ entitlements })
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * One policy, a whole roster.
+ *
+ * Doing this one associate at a time is why so many people had no
+ * balance: their time off could be requested but never approved, and
+ * nothing said so until an approver hit the wall. Scope-clamped like
+ * every other admin write — a bounded caller can only ever touch their
+ * own client's people, and ids outside that simply aren't found.
+ */
+timeOffRouter.post('/admin/entitlements/bulk', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeOffEntitlementBulkInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+
+    // Resolve against the caller's scope first: anything outside it is
+    // reported as skipped rather than refused, so one stray id from a
+    // stale list doesn't sink the whole batch.
+    const allowed = await prisma.associate.findMany({
+      where: { ...scopeAssociates(req.user!), id: { in: input.associateIds } },
+      select: { id: true },
+    });
+    const allowedIds = allowed.map((a) => a.id);
+    const outOfScope = input.associateIds.length - allowedIds.length;
+
+    const existing =
+      allowedIds.length > 0
+        ? await prisma.timeOffEntitlement.findMany({
+            where: { associateId: { in: allowedIds }, category: input.category },
+            select: { associateId: true },
+          })
+        : [];
+    const already = new Set(existing.map((e) => e.associateId));
+    const targets = input.skipExisting ? allowedIds.filter((id) => !already.has(id)) : allowedIds;
+
+    const anchor = new Date(
+      Date.UTC(2000, input.policyAnchorMonth - 1, input.policyAnchorDay),
+    );
+    // createMany can't upsert, and a per-row upsert is the honest shape
+    // here — 500 is the schema's cap, which is a second or two at worst
+    // and runs once when a client is set up.
+    let created = 0;
+    let updated = 0;
+    for (const associateId of targets) {
+      const wasThere = already.has(associateId);
+      await prisma.timeOffEntitlement.upsert({
+        where: { associateId_category: { associateId, category: input.category } },
+        create: {
+          associateId,
+          category: input.category,
+          annualMinutes: input.annualMinutes,
+          carryoverMaxMinutes: input.carryoverMaxMinutes,
+          policyAnchorDate: anchor,
+        },
+        update: {
+          annualMinutes: input.annualMinutes,
+          carryoverMaxMinutes: input.carryoverMaxMinutes,
+          policyAnchorDate: anchor,
+        },
+      });
+      if (wasThere) updated += 1;
+      else created += 1;
+    }
+
+    res.json({
+      created,
+      updated,
+      // Left alone because they already had a policy for this category.
+      skippedExisting: input.skipExisting ? already.size : 0,
+      outOfScope,
+    });
   } catch (err) {
     next(err);
   }

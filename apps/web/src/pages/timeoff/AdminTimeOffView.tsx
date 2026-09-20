@@ -15,6 +15,7 @@ import {
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { usePrompt } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -213,6 +214,48 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
 
   // One-click row approve — same call as the dialog submit, just without
   // the note stop. "Approve with note…" still opens the dialog.
+  /**
+   * The balance said no — offer the way through rather than a dead end.
+   *
+   * Most associates have no balance at all: only SICK accrues, and only
+   * where state law provides for it, while every other category needs an
+   * entitlement someone configured by hand. So this is the common case,
+   * not the exception, and the approver needs more than an apology.
+   * The reason is required because it lands in the ledger next to a
+   * negative balance.
+   */
+  const prompt = usePrompt();
+
+  const offerOverride = async (
+    requestId: string,
+    who: string,
+    details: { currentMinutes: number; requestedMinutes: number },
+    after: () => void,
+  ) => {
+    const reason = (
+      await prompt({
+        title: 'Approve without the balance?',
+        description:
+          `${who} has ${fmtHours(details.currentMinutes)} available and asked for ` +
+          `${fmtHours(details.requestedMinutes)}. Approving anyway takes the balance negative — ` +
+          'say why, and it goes on the ledger beside it.',
+        reasonLabel: 'Why this is approved anyway',
+        reasonPlaceholder: 'e.g. Unpaid day, agreed with Ops',
+        confirmLabel: 'Approve anyway',
+      })
+    )?.trim();
+    if (!reason) return;
+    try {
+      await approveAdminRequest(requestId, undefined, reason);
+      toast.success(`Approved ${who} — balance now negative.`);
+      after();
+    } catch (err) {
+      toast.error('Could not approve.', {
+        description: err instanceof Error ? err.message : 'Something went wrong.',
+      });
+    }
+  };
+
   const quickApprove = async (r: TimeOffRequest) => {
     setQuickApproveId(r.id);
     try {
@@ -222,9 +265,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     } catch (err) {
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
-        toast.error('Insufficient balance.', {
-          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}`,
-        });
+        await offerOverride(r.id, r.associateName ?? 'this request', d, refresh);
         return;
       }
       toast.error('Could not approve.', {
@@ -246,8 +287,10 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     } catch (err) {
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
-        toast.error('Insufficient balance.', {
-          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}`,
+        const who = approveTarget.associateName ?? 'this request';
+        await offerOverride(approveTarget.id, who, d, () => {
+          setApproveTarget(null);
+          refresh();
         });
         return;
       }

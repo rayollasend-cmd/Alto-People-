@@ -38,14 +38,37 @@ export function listAdminRequests(status?: TimeOffRequestStatus) {
   return apiFetch<TimeOffRequestListResponse>(`/time-off/admin/requests${qs}`);
 }
 
-export function approveAdminRequest(id: string, note?: string) {
+export function approveAdminRequest(id: string, note?: string, overrideReason?: string) {
   return apiFetch<TimeOffRequestResponse>(
     `/time-off/admin/requests/${id}/approve`,
     {
       method: 'POST',
-      body: { note },
+      body: { note, overrideReason },
     }
   );
+}
+
+export interface BulkEntitlementResult {
+  created: number;
+  updated: number;
+  skippedExisting: number;
+  outOfScope: number;
+}
+
+/** One policy, applied to a whole roster instead of one person at a time. */
+export function bulkUpsertEntitlements(body: {
+  category: string;
+  annualMinutes: number;
+  carryoverMaxMinutes: number;
+  policyAnchorMonth?: number;
+  policyAnchorDay?: number;
+  associateIds: string[];
+  skipExisting?: boolean;
+}) {
+  return apiFetch<BulkEntitlementResult>('/time-off/admin/entitlements/bulk', {
+    method: 'POST',
+    body,
+  });
 }
 
 export function denyAdminRequest(id: string, input: TimeOffRequestDenyInput) {

@@ -79,7 +79,13 @@ export async function approveRequest(
   client: PrismaClient,
   requestId: string,
   reviewerUserId: string,
-  note: string | null
+  note: string | null,
+  /**
+   * Approve past the balance, on the record. Present = the approver chose
+   * to go ahead anyway and gave a reason; the balance is allowed to go
+   * negative and the ledger entry says who decided and why.
+   */
+  override: { reason: string } | null = null
 ): Promise<ApproveResult> {
   // Captured inside the tx, emitted only after it COMMITS — a rolled-back
   // approval must never produce an outbound webhook.
@@ -116,7 +122,8 @@ export async function approveRequest(
       },
     });
     const currentMinutes = balance?.balanceMinutes ?? 0;
-    if (currentMinutes < req.requestedMinutes) {
+    const short = currentMinutes < req.requestedMinutes;
+    if (short && !override) {
       throw new InsufficientBalanceError(currentMinutes, req.requestedMinutes);
     }
 
@@ -128,18 +135,33 @@ export async function approveRequest(
         deltaMinutes: -req.requestedMinutes,
         sourceRequestId: req.id,
         sourceUserId: reviewerUserId,
-        notes: note ?? null,
+        // The override lands in the ledger, not just the audit log: the
+        // ledger is what anyone reconciling a negative balance actually
+        // reads, and a negative line with no explanation is exactly the
+        // thing that turns into an argument months later.
+        notes: short && override
+          ? `Approved over balance (${currentMinutes}min available, ${req.requestedMinutes}min taken) — ${override.reason}${note ? ` · ${note}` : ''}`
+          : (note ?? null),
       },
     });
 
-    const updatedBalance = await tx.timeOffBalance.update({
+    // upsert, not update: an associate who never had a balance row has no
+    // row to decrement, and an override is precisely the case where that
+    // is true. Creating it at the negative keeps the arithmetic honest
+    // instead of silently starting them at zero.
+    const updatedBalance = await tx.timeOffBalance.upsert({
       where: {
         associateId_category: {
           associateId: req.associateId,
           category: req.category,
         },
       },
-      data: { balanceMinutes: { decrement: req.requestedMinutes } },
+      create: {
+        associateId: req.associateId,
+        category: req.category,
+        balanceMinutes: currentMinutes - req.requestedMinutes,
+      },
+      update: { balanceMinutes: { decrement: req.requestedMinutes } },
     });
 
     const decidedAt = new Date();

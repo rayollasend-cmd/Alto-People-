@@ -40,6 +40,7 @@ import {
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd } from '@/lib/format';
+import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -859,6 +860,7 @@ function PendingTimeOffPanel({
     }
   };
 
+  const prompt = usePrompt();
   const approveMutation = useMutation({
     mutationFn: (r: TimeOffRequest) => approveAdminRequest(r.id),
     onMutate: (r) => removeOptimistically(r.id),
@@ -866,9 +868,37 @@ function PendingTimeOffPanel({
       rollback(ctx);
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
-        toast.error('Insufficient balance.', {
-          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}.`,
-        });
+        // Not a dead end. Most associates have no balance at all — only
+        // SICK accrues, and only where state law provides for it — so the
+        // approver is offered the way through, with a reason that lands
+        // in the ledger beside the negative balance.
+        const who = _r.associateName ?? 'this request';
+        void (async () => {
+          const reason = (
+            await prompt({
+              title: 'Approve without the balance?',
+              description:
+                `${who} has ${fmtHours(d.currentMinutes)} available and asked for ` +
+                `${fmtHours(d.requestedMinutes)}. Approving anyway takes the balance negative — ` +
+                'say why, and it goes on the ledger beside it.',
+              reasonLabel: 'Why this is approved anyway',
+              reasonPlaceholder: 'e.g. Unpaid day, agreed with Ops',
+              confirmLabel: 'Approve anyway',
+            })
+          )?.trim();
+          if (!reason) return;
+          try {
+            await approveAdminRequest(_r.id, undefined, reason);
+            hapticConfirm();
+            toast.success(`Approved ${who} — balance now negative.`);
+          } catch (e) {
+            toast.error('Could not approve.', {
+              description: e instanceof Error ? e.message : 'Something went wrong.',
+            });
+          } finally {
+            void queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY });
+          }
+        })();
         return;
       }
       toast.error('Could not approve.', {

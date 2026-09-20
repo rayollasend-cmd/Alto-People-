@@ -405,6 +405,91 @@ describe('POST /time-off/admin/requests/:id/approve — atomic ledger debit', ()
     });
   });
 
+  it('a manager can approve past the balance, on the record', async () => {
+    // Most associates have no balance at all: only SICK accrues, and only
+    // where state law provides for it (Florida's rate is zero), while
+    // every other category needs an entitlement configured by hand. The
+    // gate was correct and had nothing behind it, so the approver needs a
+    // way through that leaves a trail.
+    const { associate, assocUser, hr } = await seedAssociateWithBalance({ balanceMinutes: 0 });
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/time-off/me/requests').send({
+      category: 'VACATION',
+      startDate: '2026-05-04',
+      endDate: '2026-05-04',
+      hours: 8,
+    });
+    const id = create.body.request.id;
+    const hrAgent = await loginAs(hr.email);
+
+    // Without a reason it still refuses — the wall is the default.
+    expect((await hrAgent.post(`/time-off/admin/requests/${id}/approve`).send({})).status).toBe(409);
+
+    const ok = await hrAgent
+      .post(`/time-off/admin/requests/${id}/approve`)
+      .send({ overrideReason: 'Approved by Ops — unpaid, covered by Dana' });
+    expect(ok.status).toBe(200);
+
+    // The balance goes negative rather than quietly resetting to zero,
+    // and the ledger — not just an audit row — says who and why.
+    const balance = await prisma.timeOffBalance.findUniqueOrThrow({
+      where: { associateId_category: { associateId: associate.id, category: 'VACATION' } },
+    });
+    expect(balance.balanceMinutes).toBe(-480);
+    const useRow = await prisma.timeOffLedgerEntry.findFirstOrThrow({
+      where: { associateId: associate.id, reason: 'USE' },
+    });
+    expect(useRow.deltaMinutes).toBe(-480);
+    expect(useRow.notes).toMatch(/Approved over balance/);
+    expect(useRow.notes).toMatch(/covered by Dana/);
+  });
+
+  it('a one-line reason is not a reason', async () => {
+    const { assocUser, hr } = await seedAssociateWithBalance({ balanceMinutes: 0 });
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/time-off/me/requests').send({
+      category: 'VACATION', startDate: '2026-05-04', endDate: '2026-05-04', hours: 8,
+    });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent
+      .post(`/time-off/admin/requests/${create.body.request.id}/approve`)
+      .send({ overrideReason: '  x ' });
+    expect(res.status).toBe(400);
+  });
+
+  it('applies one policy to a whole roster, and leaves negotiated ones alone', async () => {
+    const { hr } = await seedAssociateWithBalance({ balanceMinutes: 0 });
+    const hrAgent = await loginAs(hr.email);
+    const people = await Promise.all([
+      prisma.associate.create({ data: { firstName: 'A', lastName: 'One', email: `a1-${Date.now()}@example.com` } }),
+      prisma.associate.create({ data: { firstName: 'B', lastName: 'Two', email: `b2-${Date.now()}@example.com` } }),
+    ]);
+    // One of them already has a negotiated policy that must survive.
+    await prisma.timeOffEntitlement.create({
+      data: {
+        associateId: people[1]!.id,
+        category: 'PTO',
+        annualMinutes: 9999,
+        carryoverMaxMinutes: 0,
+        policyAnchorDate: new Date(Date.UTC(2000, 0, 1)),
+      },
+    });
+
+    const res = await hrAgent.post('/time-off/admin/entitlements/bulk').send({
+      category: 'PTO',
+      annualMinutes: 4800,
+      carryoverMaxMinutes: 2400,
+      associateIds: [people[0]!.id, people[1]!.id, '00000000-0000-4000-8000-000000000000'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ created: 1, updated: 0, skippedExisting: 1, outOfScope: 1 });
+    expect(
+      (await prisma.timeOffEntitlement.findUniqueOrThrow({
+        where: { associateId_category: { associateId: people[1]!.id, category: 'PTO' } },
+      })).annualMinutes,
+    ).toBe(9999);
+  });
+
   it('double-approve → 409 (no double-debit)', async () => {
     const { associate, assocUser, hr } = await seedAssociateWithBalance({ balanceMinutes: 960 });
     const a = await loginAs(assocUser.email);
