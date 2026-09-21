@@ -140,6 +140,13 @@ jobs:
           up on merge, which is what brings document scanning back under a
           CSP with no 'unsafe-eval'."
           git push origin "$BRANCH"
+          # The branch is the valuable part and it is now safe on the
+          # remote. Opening the PR can fail for a reason that has nothing
+          # to do with the build — "GitHub Actions is not permitted to
+          # create or approve pull requests" is a repository setting under
+          # Settings → Actions → General → Workflow permissions — and a
+          # 40-minute build must not be reported as a failure over it.
+          set +e
           gh pr create \
             --title "Vendor OpenCV ${{ inputs.opencv_ref }} built for strict CSP" \
             --body "Document scanning has been falling back to manual cropping because every published OpenCV.js generates code at runtime, which our CSP forbids.
@@ -151,3 +158,9 @@ jobs:
           Built from OpenCV \`${{ inputs.opencv_ref }}\` with emsdk \`${{ inputs.emsdk_version }}\` by run ${{ github.run_id }}." \
             --base main \
             --head "$BRANCH"
+          if [ $? -ne 0 ]; then
+            COMPARE="https://github.com/${{ github.repository }}/compare/main...$BRANCH?expand=1"
+            echo "::warning::The branch $BRANCH is pushed and verified; only opening the PR failed."
+            echo "::warning::Open it here: $COMPARE"
+            echo "::warning::To let this workflow do it: Settings -> Actions -> General -> Workflow permissions -> allow GitHub Actions to create pull requests."
+          fi
