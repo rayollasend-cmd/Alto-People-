@@ -5526,6 +5526,13 @@ export const EVerifyCaseDetailSchema = z.object({
   section2VerifierEmail: z.string().nullable(),
   // --- Case state ---
   hireDate: z.string().nullable(),
+  /**
+   * The earliest clock-in on record, ISO, or null if they have never
+   * worked. NOT the hire date: the I-9's three-business-day clock runs
+   * from the first day of employment for pay, and the hire date is the
+   * day the offer was dated — routinely weeks earlier.
+   */
+  firstClockInAt: z.string().datetime().nullable(),
   dueBy: z.string().nullable(),
   overdue: z.boolean(),
   caseNumber: z.string().nullable(),

@@ -209,6 +209,27 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
 
+    /**
+     * FIRST DAY WORKED, WHICH IS NOT THE HIRE DATE.
+     *
+     * The I-9 clock runs from the first day of employment for pay — the day
+     * they actually started — while the hire date on the record is the day
+     * the offer was dated. Those are routinely days or weeks apart: someone
+     * hired on the 1st who first walks the floor on the 14th has a Section 2
+     * deadline keyed to the 14th, and a reviewer reading only the hire date
+     * is looking at the wrong number.
+     *
+     * The earliest clock-in is the closest thing the system holds to that
+     * fact. Null until they have worked once, which is itself worth seeing:
+     * an associate who has never clocked in has not started, so the
+     * three-day clock has not begun.
+     */
+    const firstShift = await prisma.timeEntry.findFirst({
+      where: { associateId: associate.id },
+      orderBy: { clockInAt: 'asc' },
+      select: { clockInAt: true },
+    });
+
     const i9 = associate.i9Verification;
 
     // tryDecryptString, not decryptString: rows written before the 2026-06-11
@@ -333,6 +354,7 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         section2CompletedAt: i9?.section2CompletedAt?.toISOString() ?? null,
         section2VerifierEmail: i9?.section2Verifier?.email ?? null,
         hireDate: associate.hireDate ? ymd(associate.hireDate) : null,
+        firstClockInAt: firstShift?.clockInAt.toISOString() ?? null,
         dueBy: readiness.dueBy ? ymd(readiness.dueBy) : null,
         overdue: isEVerifyOverdue(
           readiness.dueBy,

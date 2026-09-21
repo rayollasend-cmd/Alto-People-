@@ -165,6 +165,21 @@ function daysAgoYmd(days: number): string {
   return localYmd(d);
 }
 
+/** The local calendar day of an ISO instant, for comparing against a
+ *  date-only hireDate. */
+function ymdOf(iso: string): string {
+  return localYmd(new Date(iso));
+}
+
+/** "12 days" / "1 day" — the gap a reviewer needs to notice, in words. */
+function daysBetween(hireYmd: string, firstIso: string): string {
+  const a = new Date(`${hireYmd}T00:00:00`);
+  const b = new Date(`${ymdOf(firstIso)}T00:00:00`);
+  const days = Math.round((b.getTime() - a.getTime()) / 86_400_000);
+  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} before`;
+  return `${days} day${days === 1 ? '' : 's'} later`;
+}
+
 function matchesHiredFilter(hireDate: string | null, f: HiredFilter): boolean {
   if (f === 'any') return true;
   // No hire date on file can't match a dated filter.
@@ -890,7 +905,28 @@ function CaseDrawer({
                   }
                 />
                 <CopyField label="Date of hire" value={detail.hireDate} mono />
+                {/* The date the I-9 clock actually runs from. Hire date is
+                    when the offer was dated; this is when they first worked
+                    for pay, and the two are routinely weeks apart. */}
+                <CopyField
+                  label="First day worked"
+                  value={detail.firstClockInAt ? fmtDate(detail.firstClockInAt) : null}
+                  mono
+                />
               </div>
+              {detail.hireDate && detail.firstClockInAt && (
+                <p className="mt-1.5 text-2xs text-silver/70">
+                  {ymdOf(detail.firstClockInAt) === detail.hireDate
+                    ? 'Started the day they were hired.'
+                    : `Started ${daysBetween(detail.hireDate, detail.firstClockInAt)} after the hire date — Section 2 is due from the first day worked, not the hire date.`}
+                </p>
+              )}
+              {!detail.firstClockInAt && (
+                <p className="mt-1.5 text-2xs text-silver/70">
+                  No clock-in on record — they have not started, so the
+                  three-day Section 2 clock has not begun.
+                </p>
+              )}
               <div className="mt-3">
                 <div className="text-2xs uppercase tracking-widest text-silver/80">
                   Identity documents

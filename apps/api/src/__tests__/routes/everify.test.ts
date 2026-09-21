@@ -206,6 +206,41 @@ describe('GET /compliance/everify/:associateId — aggregation', () => {
     expect(res.body.documentList).toBe('LIST_A');
     expect(res.body.hireDate).toBe('2026-06-04');
     expect(res.body.ready).toBe(true);
+    // Never worked yet: the three-day Section 2 clock has not started, and
+    // saying null is the honest answer rather than falling back to the
+    // hire date and implying they did.
+    expect(res.body.firstClockInAt).toBeNull();
+  });
+
+  it('reports the first day WORKED, which is not the hire date', async () => {
+    // The I-9's three business days run from the first day of employment
+    // for pay. The hire date is the day the offer was dated — here, eight
+    // days earlier — so a reviewer reading only that is looking at the
+    // wrong deadline.
+    const client = await createClient();
+    const ready = await readyAssociate(client.id);
+    const location = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const first = new Date('2026-06-12T13:00:00.000Z');
+    for (const at of [new Date('2026-06-20T13:00:00.000Z'), first]) {
+      await prisma.timeEntry.create({
+        data: {
+          associateId: ready.id,
+          clientId: client.id,
+          locationId: location.id,
+          clockInAt: at,
+          clockOutAt: new Date(at.getTime() + 8 * 3_600_000),
+          status: 'APPROVED',
+        },
+      });
+    }
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get(`/compliance/everify/${ready.id}`);
+    expect(res.status).toBe(200);
+    // The EARLIEST, not the most recent, and not the one inserted first.
+    expect(res.body.firstClockInAt).toBe(first.toISOString());
+    expect(res.body.hireDate).toBe('2026-06-04');
   });
 
   // view:compliance includes EXECUTIVE_CHAIRMAN, a read-only role that has no
