@@ -797,6 +797,7 @@ model Location {
   shifts       Shift[]
   supervisorShiftWindows SupervisorShiftWindow[]
   opsShifts              OpsShift[]
+  oshaIncidents          OshaIncident[]
   storeShiftSops         StoreShiftSop[]
   kioskDevices KioskDevice[]
   timeEntries  TimeEntry[]
@@ -4956,6 +4957,11 @@ enum EeoGender {
 model OshaIncident {
   id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId       String               @db.Uuid
+  // Which store it happened at. A store manager's safety card counts only
+  // their own building; without this the count was every location on the
+  // account. Nullable for rows predating the column at multi-store
+  // clients, where it can't be inferred after the fact.
+  locationId     String?              @db.Uuid
   associateId    String?              @db.Uuid
   occurredAt     DateTime             @db.Timestamptz(6)
   reportedAt     DateTime             @default(now()) @db.Timestamptz(6)
@@ -4974,10 +4980,12 @@ model OshaIncident {
   updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
 
   client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  store      Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
   associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   reportedBy User?      @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
 
   @@index([clientId, occurredAt(sort: Desc)])
+  @@index([locationId, occurredAt(sort: Desc)])
   @@index([status])
 }
 

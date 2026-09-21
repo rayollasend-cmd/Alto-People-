@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { atClient } from '../lib/scope.js';
+import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 
@@ -29,6 +30,10 @@ const MANAGE_COMP = requireCapability('manage:compliance');
 const OshaInputSchema = z.object({
   clientId: z.string().uuid(),
   associateId: z.string().uuid().nullable().optional(),
+  // The store it happened at. Optional on the wire: when it isn't given,
+  // the incident is placed from the person it happened to, or from the
+  // client's only building. Safety numbers are read per store.
+  locationId: z.string().uuid().nullable().optional(),
   occurredAt: z.string().datetime(),
   location: z.string().max(250).optional().nullable(),
   description: z.string().min(1).max(8000),
@@ -89,11 +94,66 @@ oshaWcEeoRouter.get('/osha/incidents', VIEW_COMP, async (req, res) => {
   });
 });
 
+/**
+ * Which store an incident belongs to.
+ *
+ * Named store wins. Otherwise the injured person's open assignment says
+ * where they were working, which is the store that owns the incident on
+ * its safety board. Failing both, a client with one building can only
+ * mean that one. Anything left unplaced stays null and is only counted
+ * by client-wide accounts — never attributed to a store that may not
+ * have had it. A named store is checked against the client so one
+ * client's incident can't be filed on another's board.
+ */
+async function placeIncident(input: {
+  clientId: string;
+  locationId?: string | null;
+  associateId?: string | null;
+  occurredAt: string;
+}): Promise<string | null> {
+  if (input.locationId) {
+    const named = await prisma.location.findFirst({
+      where: { id: input.locationId, clientId: input.clientId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!named) {
+      throw new HttpError(
+        400,
+        'location_not_in_client',
+        'That store does not belong to this client.',
+      );
+    }
+    return named.id;
+  }
+  if (input.associateId) {
+    const at = new Date(input.occurredAt);
+    const placed = await prisma.associateAssignment.findFirst({
+      where: {
+        associateId: input.associateId,
+        startedAt: { lte: at },
+        OR: [{ endedAt: null }, { endedAt: { gte: at } }],
+        location: { clientId: input.clientId },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: { locationId: true },
+    });
+    if (placed) return placed.locationId;
+  }
+  const only = await prisma.location.findMany({
+    where: { clientId: input.clientId, deletedAt: null, isActive: true },
+    select: { id: true },
+    take: 2,
+  });
+  return only.length === 1 ? only[0]!.id : null;
+}
+
 oshaWcEeoRouter.post('/osha/incidents', MANAGE_COMP, async (req, res) => {
   const input = OshaInputSchema.parse(req.body);
+  const locationId = await placeIncident(input);
   const created = await prisma.oshaIncident.create({
     data: {
       clientId: input.clientId,
+      locationId,
       associateId: input.associateId ?? null,
       occurredAt: new Date(input.occurredAt),
       location: input.location ?? null,

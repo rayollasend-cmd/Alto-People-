@@ -14,7 +14,7 @@ import { notePortalReportDownload } from '../lib/portalEngagement.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
-import { buildStoreOps, scopedOpsPhoto } from '../lib/portalOps.js';
+import { buildStoreOps, opsShiftScope, scopedOpsPhoto } from '../lib/portalOps.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import {
   DAY,
@@ -25,6 +25,7 @@ import {
   entryScope,
   fullName,
   gradeWeeks,
+  incidentWhere,
   loadAcknowledgements,
   loadPunches,
   loadTargets,
@@ -124,8 +125,14 @@ async function resolveScope(
       throw new HttpError(403, 'no_client_assigned', 'Your account is not assigned to a client.');
     }
     clientId = user.clientId;
+    // A supervisor pinned to a store stays there, exactly like a store
+    // portal account: their own store wins and the query param is
+    // ignored. Only a floating supervisor (no store of their own) may
+    // name one. Before this, a store-bound supervisor who opened the day
+    // or ops view without a param got the whole client.
     locationId =
-      typeof query.locationId === 'string' && query.locationId ? query.locationId : null;
+      user.locationId ??
+      (typeof query.locationId === 'string' && query.locationId ? query.locationId : null);
   } else if (
     hasCapability(user.role, 'view:executive') ||
     hasCapability(user.role, 'manage:org')
@@ -223,6 +230,9 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     const shifts = shiftScope(scope);
     const entries = entryScope(scope);
     const shiftRel = scope.locationId ? { locationId: scope.locationId } : {};
+    // Store Ops rows are per store; a store account never sums another
+    // building's SOP completion — or reads its closing notes.
+    const opsWhere = await opsShiftScope(scope);
 
     const [
       onFloorEntries,
@@ -338,6 +348,14 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           status: 'ACTIVE',
           deletedAt: null,
           role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] },
+          // A store account gets the leadership standing in ITS building:
+          // the supervisors pinned to this store, plus any who float
+          // across the client (no store of their own). The supervisor
+          // corps at the other stores is not this manager's business —
+          // and their phone number least of all.
+          ...(scope.locationId
+            ? { OR: [{ locationId: scope.locationId }, { locationId: null }] }
+            : {}),
         },
         select: {
           id: true,
@@ -355,7 +373,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         take: 50,
       }),
       prisma.opsShift.findMany({
-        where: { clientId, dateKey: { in: [opsYesterdayKey, opsTodayKey] } },
+        where: { ...opsWhere, dateKey: { in: [opsYesterdayKey, opsTodayKey] } },
         select: {
           id: true,
           dateKey: true,
@@ -381,10 +399,17 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         where: { id: 'singleton' },
         select: { supportEmail: true },
       }),
-      prisma.oshaIncident.count({ where: { clientId, occurredAt: { gte: monthStart } } }),
-      prisma.oshaIncident.count({ where: { clientId, status: { not: 'RESOLVED' } } }),
+      prisma.oshaIncident.count({
+        where: { ...incidentWhere(scope), occurredAt: { gte: monthStart } },
+      }),
+      prisma.oshaIncident.count({
+        where: { ...incidentWhere(scope), status: { not: 'RESOLVED' } },
+      }),
       prisma.oshaIncident.findFirst({
-        where: { clientId, occurredAt: { gte: new Date(now.getTime() - 365 * DAY) } },
+        where: {
+          ...incidentWhere(scope),
+          occurredAt: { gte: new Date(now.getTime() - 365 * DAY) },
+        },
         orderBy: { occurredAt: 'desc' },
         select: { occurredAt: true },
       }),
@@ -774,18 +799,24 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         const storeLine = scope.location
           ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
           : null;
+        // A store account never sees the client's total, only its own line.
+        // The client-wide figure is every OTHER store's labour spend as
+        // well, and the statement PDF is the same disclosure on paper.
+        const storeScoped = scope.locationId !== null;
         return {
           id: st.id,
           number: st.number,
           periodStart: st.periodStart.toISOString().slice(0, 10),
           periodEnd: st.periodEnd.toISOString().slice(0, 10),
-          amount: snap?.totals?.amount ?? null,
-          hours: snap?.totals?.hours ?? null,
+          amount: storeScoped ? null : (snap?.totals?.amount ?? null),
+          hours: storeScoped ? null : (snap?.totals?.hours ?? null),
           storeHours: storeLine ? storeLine.hours : null,
           storeAmount: storeLine ? storeLine.amount : null,
           finalizedAt: st.finalizedAt ? st.finalizedAt.toISOString() : null,
           paidAt: st.paidAt ? st.paidAt.toISOString() : null,
-          pdfUrl: withPreview(`/api/client-portal/statements/${st.id}.pdf`),
+          pdfUrl: storeScoped
+            ? null
+            : withPreview(`/api/client-portal/statements/${st.id}.pdf`),
           reviewed: reviewed('STATEMENT', st.id),
         };
       }),
@@ -978,6 +1009,18 @@ clientPortalRouter.get(
   async (req, res, next) => {
     try {
       const scope = await resolveScope(req.user!, req.query);
+      // The statement is billed per client: its lines, totals and store
+      // breakdown cover every location. A store account has no business
+      // holding another store's labour spend, so this document is for
+      // client-wide accounts only. Their own store's hours and amount are
+      // on the portal already, taken from the statement's store line.
+      if (scope.locationId) {
+        throw new HttpError(
+          403,
+          'statement_is_client_wide',
+          'This statement covers every store on the account. Your store’s hours and amount are shown on your dashboard.',
+        );
+      }
       const row = await prisma.clientStatement.findFirst({
         where: { id: req.params.sid, clientId: scope.clientId, status: 'FINAL' },
         include: { finalizedBy: { select: { email: true } } },
@@ -1253,6 +1296,8 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       take: 20000,
     });
     const shiftIds = shifts.map((s) => s.id);
+    // Same store clamp as the overview: Store Ops is a per-building record.
+    const opsWhere = await opsShiftScope(scope);
     const dayKeys = new Set<string>();
     for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.add(k);
 
@@ -1285,7 +1330,7 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
           },
         }),
         prisma.opsShift.findMany({
-          where: { clientId: scope.clientId, dateKey: { in: [...dayKeys] } },
+          where: { ...opsWhere, dateKey: { in: [...dayKeys] } },
           select: {
             sopDone: true,
             sopTotal: true,
@@ -1298,11 +1343,11 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
           take: 2000,
         }),
         prisma.oshaIncident.count({
-          where: { clientId: scope.clientId, occurredAt: { gte: from, lt: toExclusive } },
+          where: { ...incidentWhere(scope), occurredAt: { gte: from, lt: toExclusive } },
         }),
         prisma.oshaIncident.count({
           where: {
-            clientId: scope.clientId,
+            ...incidentWhere(scope),
             occurredAt: { gte: from, lt: toExclusive },
             status: { not: 'RESOLVED' },
           },
@@ -1522,17 +1567,23 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         const storeLine = scope.location
           ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
           : null;
+        // A store account never sees the client's total, only its own line.
+        // The client-wide figure is every OTHER store's labour spend as
+        // well, and the statement PDF is the same disclosure on paper.
+        const storeScoped = scope.locationId !== null;
         return {
           id: st.id,
           number: st.number,
           periodStart: st.periodStart.toISOString().slice(0, 10),
           periodEnd: st.periodEnd.toISOString().slice(0, 10),
-          amount: snap?.totals?.amount ?? null,
-          hours: snap?.totals?.hours ?? null,
+          amount: storeScoped ? null : (snap?.totals?.amount ?? null),
+          hours: storeScoped ? null : (snap?.totals?.hours ?? null),
           storeHours: storeLine ? storeLine.hours : null,
           storeAmount: storeLine ? storeLine.amount : null,
           paidAt: st.paidAt ? st.paidAt.toISOString() : null,
-          pdfUrl: `/api/client-portal/statements/${st.id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
+          pdfUrl: storeScoped
+            ? null
+            : `/api/client-portal/statements/${st.id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
           reviewed: reviewed('STATEMENT', st.id),
         };
       }),

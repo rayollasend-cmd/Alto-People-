@@ -187,7 +187,8 @@ interface PortalOverview {
     storeAmount: number | null;
     finalizedAt: string | null;
     paidAt: string | null;
-    pdfUrl: string;
+    /** null for store accounts — the statement covers the whole client. */
+    pdfUrl: string | null;
     reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   }>;
   coverage: {
@@ -1139,14 +1140,24 @@ export function ClientPortalHome() {
                         </div>
                       </div>
                       <div className="mt-1.5 flex flex-wrap gap-1 print:hidden">
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => void downloadStatementFile(s.pdfUrl, `statement-${s.periodStart}.pdf`)}
-                        >
-                          <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          {t('portal.stPdf')}
-                        </Button>
+                        {s.pdfUrl !== null && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => {
+                              const url = s.pdfUrl;
+                              if (url) {
+                                void downloadStatementFile(
+                                  url,
+                                  `statement-${s.periodStart}.pdf`,
+                                );
+                              }
+                            }}
+                          >
+                            <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                            {t('portal.stPdf')}
+                          </Button>
+                        )}
                         {isPortal && (
                           <Button
                             size="xs"

@@ -88,7 +88,8 @@ interface HistoryPayload {
     storeHours: number | null;
     storeAmount: number | null;
     paidAt: string | null;
-    pdfUrl: string;
+    /** null for store accounts — the statement covers the whole client. */
+    pdfUrl: string | null;
     reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   }>;
   serviceReports: Array<{
@@ -611,15 +612,25 @@ export function PortalHistory() {
                             ) : (
                               <Badge variant="pending" size="sm">{t('portal.due')}</Badge>
                             )}
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              onClick={() => void downloadStatementFile(s.pdfUrl, `statement-${s.periodStart}.pdf`)}
-                              aria-label={t('portal.stPdf')}
-                              title={t('portal.stPdf')}
-                            >
-                              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                            </Button>
+                            {s.pdfUrl !== null && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => {
+                                  const url = s.pdfUrl;
+                                  if (url) {
+                                    void downloadStatementFile(
+                                      url,
+                                      `statement-${s.periodStart}.pdf`,
+                                    );
+                                  }
+                                }}
+                                aria-label={t('portal.stPdf')}
+                                title={t('portal.stPdf')}
+                              >
+                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                              </Button>
+                            )}
                             <span className="basis-full sm:basis-auto">{reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}</span>
                           </div>
                         </li>

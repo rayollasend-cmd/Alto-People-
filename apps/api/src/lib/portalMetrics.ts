@@ -387,6 +387,23 @@ export async function loadPunches(scope: PortalScope, from: Date, to: Date, now:
 
 /** Unexcused attendance events in a window, keyed the way the store
  *  scope needs (shiftId — the model carries no relation). */
+/**
+ * Safety rows this scope may count.
+ *
+ * A store manager's "days since last incident" is about their building.
+ * Counting the whole client reset it on an injury at a store hours away,
+ * which is both wrong and, on a safety board, corrosive. Rows recorded
+ * before OshaIncident carried a store stay client-wide, so they only
+ * reach client-wide accounts — an incident no one can place is not
+ * attributed to a store that may not have had it.
+ */
+export function incidentWhere(scope: PortalScope): Prisma.OshaIncidentWhereInput {
+  return {
+    clientId: scope.clientId,
+    ...(scope.locationId ? { locationId: scope.locationId } : {}),
+  };
+}
+
 export function attendanceWhere(
   scope: PortalScope,
   from: Date,

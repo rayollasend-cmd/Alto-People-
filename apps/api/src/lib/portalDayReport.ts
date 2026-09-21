@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
+import { opsShiftScope } from './portalOps.js';
 import {
   DAY,
   HOUR,
@@ -11,6 +12,7 @@ import {
   entryScope,
   fullName,
   gradeWeeks,
+  incidentWhere,
   loadPunches,
   loadTargets,
   netMinutes,
@@ -236,6 +238,8 @@ export async function buildPortalReport(
   const dayKeys: string[] = [];
   for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.push(k);
   const opsKeys = [nextKey(fromKey, -1), ...dayKeys];
+  // Store Ops belongs to the building that ran it.
+  const opsWhere = await opsShiftScope(scope);
 
   const [rows, leadPositions, punches, targets, requests, leadUsers, opsShifts, incidents, statements] = await Promise.all([
     prisma.shift.findMany({
@@ -270,13 +274,24 @@ export async function buildPortalReport(
       take: 500,
     }),
     prisma.user.findMany({
-      where: { clientId: scope.clientId, status: 'ACTIVE', deletedAt: null, role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] } },
+      where: {
+        clientId: scope.clientId,
+        status: 'ACTIVE',
+        deletedAt: null,
+        role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] },
+        // Names, phones and emails: the leadership in THIS building, plus
+        // supervisors who float across the client. Another store's corps
+        // has no place in this store's report.
+        ...(scope.locationId
+          ? { OR: [{ locationId: scope.locationId }, { locationId: null }] }
+          : {}),
+      },
       select: { id: true, email: true, role: true, associateId: true, associate: { select: { firstName: true, lastName: true, phone: true } } },
       orderBy: { createdAt: 'asc' },
       take: 6,
     }),
     prisma.opsShift.findMany({
-      where: { clientId: scope.clientId, dateKey: { in: opsKeys } },
+      where: { ...opsWhere, dateKey: { in: opsKeys } },
       select: {
         dateKey: true,
         department: true,
@@ -295,7 +310,10 @@ export async function buildPortalReport(
       take: 400,
     }),
     prisma.oshaIncident.findMany({
-      where: { clientId: scope.clientId, occurredAt: { gte: new Date(from.getTime() - 366 * DAY), lt: toExclusive } },
+      where: {
+        ...incidentWhere(scope),
+        occurredAt: { gte: new Date(from.getTime() - 366 * DAY), lt: toExclusive },
+      },
       select: { occurredAt: true, status: true, resolvedAt: true },
       take: 2000,
     }),
@@ -662,8 +680,12 @@ export async function buildPortalReport(
             number: st.number,
             periodStart: st.periodStart.toISOString().slice(0, 10),
             periodEnd: st.periodEnd.toISOString().slice(0, 10),
-            amount: line ? line.amount : (snap?.totals?.amount ?? null),
-            hours: line ? line.hours : (snap?.totals?.hours ?? null),
+            // No fallback for a store account. When the statement has no
+            // line for this store (renamed, or billed before the store
+            // existed), the honest answer is nothing — the client total
+            // is every other store's labour spend.
+            amount: line ? line.amount : scope.locationId ? null : (snap?.totals?.amount ?? null),
+            hours: line ? line.hours : scope.locationId ? null : (snap?.totals?.hours ?? null),
             paid: st.paidAt !== null && st.paidAt.getTime() <= asOfMs,
             storeShare: !!line,
           };

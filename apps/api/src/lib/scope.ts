@@ -124,13 +124,21 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
       publishedAt: { not: null },
     };
   }
-  // CLIENT_PORTAL is restricted to its own client's shifts.
+  // CLIENT_PORTAL is restricted to its own client's shifts — and to its
+  // own store's, when the account is pinned to one.
   if (user.role === 'CLIENT_PORTAL') {
-    return { clientId: (user.clientId ?? NO_CLIENT) };
+    return {
+      clientId: user.clientId ?? NO_CLIENT,
+      ...(user.locationId ? { locationId: user.locationId } : {}),
+    };
   }
-  // SHIFT_SUPERVISOR manages only its own client's shifts (fail closed).
+  // SHIFT_SUPERVISOR manages only its own client's shifts (fail closed),
+  // narrowed to their store when they have one.
   if (user.role === 'SHIFT_SUPERVISOR') {
-    return { clientId: user.clientId ?? NO_CLIENT };
+    return {
+      clientId: user.clientId ?? NO_CLIENT,
+      ...(user.locationId ? { locationId: user.locationId } : {}),
+    };
   }
   return {};
 }
@@ -185,6 +193,19 @@ export function atClient(
 }
 
 /**
+ * "This store's people" — the same rule as atClient, one level down.
+ *
+ * An account pinned to a store (User.locationId) must never resolve a
+ * person who works at a sibling store, in any surface: the portal, the
+ * report builder, an export. Placement is the open assignment; there is
+ * no application fallback, because an application names a client, not a
+ * building, and guessing would put the whole client back in view.
+ */
+export function atStore(locationId: string): Prisma.AssociateWhereInput {
+  return { assignments: { some: { endedAt: null, locationId } } };
+}
+
+/**
  * Associates visible to this caller. CLIENT_PORTAL and SHIFT_SUPERVISOR
  * are clamped to their own client's roster (fail closed when the client
  * is unset); an ASSOCIATE only ever resolves to themselves.
@@ -195,6 +216,10 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
   }
   if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
     if (!user.clientId) return { id: NO_CLIENT };
+    // Pinned to a store: their roster is that building's, not the
+    // client's. Without this a store account could build an ad-hoc
+    // associate or time report and read every store on the account.
+    if (user.locationId) return atStore(user.locationId);
     return associatesOfClient(user.clientId);
   }
   return {};
@@ -255,6 +280,17 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   // CLIENT_PORTAL doesn't have view:time so it shouldn't reach here, but if
   // it ever does, scope to its own client's entries via denormalized clientId.
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    // A punch carries its own location (kiosk/geofence) or inherits its
+    // shift's, so a store account is clamped on either.
+    if (user.locationId) {
+      return {
+        clientId: user.clientId,
+        OR: [
+          { locationId: user.locationId },
+          { shift: { is: { locationId: user.locationId } } },
+        ],
+      };
+    }
     return { clientId: user.clientId };
   }
   // SHIFT_SUPERVISOR manages — and FLOOR_SUPERVISOR watches — only its

@@ -526,9 +526,14 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(storePositions).toContain('StoreAOnly');
     expect(storePositions).not.toContain('StoreBOnly');
     expect(JSON.stringify(store.body)).not.toContain('Okafor');
-    // Statement shows the store's share alongside the client total.
+    // The statement shows this store's share and NOT the client total —
+    // that figure is every other store's labour spend — and the whole-
+    // client PDF is withheld.
     expect(store.body.statements[0].storeHours).toBe(60);
-    expect(store.body.statements[0].amount).toBe(2121);
+    expect(store.body.statements[0].storeAmount).toBe(1272.6);
+    expect(store.body.statements[0].amount).toBeNull();
+    expect(store.body.statements[0].hours).toBeNull();
+    expect(store.body.statements[0].pdfUrl).toBeNull();
     // A store account cannot widen itself to the sister store.
     const widened = await (await loginAs(s.storeUser.email)).get(
       `/client-portal/overview?locationId=${s.storeB.id}`,
@@ -778,6 +783,119 @@ describe('the historical lenses — a day, and a range', () => {
     expect(
       (await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -120)}&to=${yesterday}`)).status,
     ).toBe(400);
+  });
+});
+
+describe('one store, one set of numbers', () => {
+  /**
+   * A store account must never read a sibling store — not a count, not a
+   * dollar, not a closing note, not a supervisor's phone number. These
+   * are the surfaces that used to filter on clientId alone.
+   */
+  it('keeps safety, Store Ops, statements and leads inside the store', async () => {
+    const s = await seedTwoStores();
+    const now = new Date();
+
+    // A safety incident at the SISTER store only.
+    await prisma.oshaIncident.create({
+      data: {
+        clientId: s.client.id,
+        locationId: s.storeB.id,
+        occurredAt: new Date(now.getTime() - 2 * HOUR),
+        description: 'Slip near the freezer at the other store',
+        severity: 'MEDICAL_TREATMENT',
+        status: 'REPORTED',
+      },
+    });
+    // A Store Ops run at the sister store, with a closing note.
+    const { user: opener } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: s.client.id,
+    });
+    await prisma.opsShift.create({
+      data: {
+        clientId: s.client.id,
+        locationId: s.storeB.id,
+        department: 'Grocery',
+        departments: ['Grocery'],
+        period: 'OPENING',
+        position: 'Lead',
+        dateKey: orgDateKey(now),
+        openedById: opener.id,
+        sopTotal: 10,
+        sopDone: 9,
+        taskTotal: 4,
+        taskDone: 4,
+        tempAlerts: 3,
+        closingSummary: 'Freezer alarm at the other store',
+      },
+    });
+    // A supervisor who belongs to the sister store.
+    const { user: otherLead } = await createUser({
+      role: 'FLOOR_SUPERVISOR',
+      clientId: s.client.id,
+    });
+    await prisma.user.update({
+      where: { id: otherLead.id },
+      data: { locationId: s.storeB.id },
+    });
+
+    const store = await (await loginAs(s.storeUser.email)).get('/client-portal/overview');
+    expect(store.status).toBe(200);
+    expect(store.body.safety.monthIncidents).toBe(0);
+    expect(store.body.safety.open).toBe(0);
+    expect(store.body.safety.daysSinceLast).toBeNull();
+    expect(JSON.stringify(store.body.ops ?? {})).not.toContain('Freezer alarm');
+    expect(store.body.leads.people.map((p: { email: string }) => p.email)).not.toContain(
+      otherLead.email,
+    );
+
+    // The market account still sees the whole account.
+    const market = await (await loginAs(s.marketUser.email)).get('/client-portal/overview');
+    expect(market.body.safety.monthIncidents).toBe(1);
+    expect(market.body.safety.open).toBe(1);
+  });
+
+  it('withholds the client-wide statement PDF from a store account', async () => {
+    const s = await seedTwoStores();
+
+    const blocked = await (await loginAs(s.storeUser.email)).get(
+      `/client-portal/statements/${s.statement.id}.pdf`,
+    );
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error?.code).toBe('statement_is_client_wide');
+
+    const allowed = await (await loginAs(s.marketUser.email)).get(
+      `/client-portal/statements/${s.statement.id}.pdf`,
+    );
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers['content-type']).toBe('application/pdf');
+  });
+
+  it('clamps an ad-hoc report to the store, not the client', async () => {
+    const s = await seedTwoStores();
+    // Placement is what puts a person on a store's roster.
+    const here = await createAssociate({ firstName: 'Rosa', lastName: 'Marchetti' });
+    const there = await createAssociate({ firstName: 'Dmitri', lastName: 'Vance' });
+    await prisma.associateAssignment.createMany({
+      data: [
+        { associateId: here.id, locationId: s.storeA.id, startedAt: new Date('2020-01-01') },
+        { associateId: there.id, locationId: s.storeB.id, startedAt: new Date('2020-01-01') },
+      ],
+    });
+    const a = await loginAs(s.storeUser.email);
+
+    const res = await a.post('/reports/preview').send({
+      name: 'Roster',
+      entity: 'ASSOCIATE',
+      spec: { columns: ['firstName', 'lastName'], filters: [], sort: [], limit: 100 },
+    });
+    // The report builder is open to portal accounts (view:analytics), so
+    // what it returns has to stop at the store the account is pinned to.
+    expect(res.status).toBe(200);
+    const body = JSON.stringify(res.body.rows);
+    expect(body).toContain('Marchetti');
+    expect(body).not.toContain('Vance');
   });
 });
 

@@ -588,6 +588,32 @@ async function isSoleStore(clientId: string): Promise<boolean> {
   return n <= 1;
 }
 
+/**
+ * The store filter for every OpsShift read a portal scope makes.
+ *
+ * A hand-opened SOP run carries no store; at a client with one building
+ * it can only be that one, so those rows stay visible. At a client with
+ * several, an unplaced run could belong to any of them — so a store
+ * account doesn't get it, rather than getting someone else's.
+ *
+ * Exported because the overview tile, the history roll-up and the PDF
+ * each aggregate OpsShift directly, and all three used to sum every
+ * store on the account into one store's card — free-text closing notes
+ * from other stores' shift leads included.
+ */
+export async function opsShiftScope(
+  scope: PortalScope,
+): Promise<Prisma.OpsShiftWhereInput> {
+  if (!scope.locationId) return { clientId: scope.clientId };
+  const sole = await isSoleStore(scope.clientId);
+  return {
+    clientId: scope.clientId,
+    ...(sole
+      ? { OR: [{ locationId: scope.locationId }, { locationId: null }] }
+      : { locationId: scope.locationId }),
+  };
+}
+
 /** A photo on an SOP run the scope may see — the final-zone evidence. */
 export async function scopedOpsPhoto(scope: PortalScope, photoId: string) {
   const photo = await prisma.opsTaskPhoto.findUnique({
