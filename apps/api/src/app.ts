@@ -168,6 +168,36 @@ export function createApp() {
   }
 
   app.use(stripApiPrefix);
+  // Declare the negotiation, or a cache will mix the two answers.
+  //
+  // Dozens of paths serve BOTH the SPA page and a JSON API resource
+  // (/jobs, /separations, /reports…), and which one you get depends on
+  // the request headers — Sec-Fetch-Mode/Dest, falling back to Accept.
+  // Without Vary, every shared cache between here and the browser (the
+  // platform edge, a corporate proxy, the browser's own HTTP cache) is
+  // entitled to replay the JSON variant for a page load. That is exactly
+  // how a refresh intermittently rendered `{"jobs":[…]}` instead of the
+  // page: not a routing bug at the moment of the request, but a cache
+  // handing back the other variant of the same URL.
+  //
+  // Also: business JSON must never sit in an intermediary at all. The
+  // handlers that legitimately want caching (static assets, the SPA
+  // shell, photos) set their own Cache-Control after this and win.
+  app.use((_req, res, next) => {
+    res.vary('Accept');
+    res.vary('Sec-Fetch-Mode');
+    res.vary('Sec-Fetch-Dest');
+    // Tied to res.json rather than the request, so it lands on business
+    // data and nothing else: the hashed asset bundles keep their year,
+    // the SPA shell keeps its revalidate, and a handler that has already
+    // chosen a policy for its own response keeps that too.
+    const json = res.json.bind(res);
+    res.json = (body: unknown) => {
+      if (!res.getHeader('Cache-Control')) res.setHeader('Cache-Control', 'no-store');
+      return json(body);
+    };
+    next();
+  });
   // Browser PAGE navigations never reach JSON API routes. API routers are
   // mounted at root paths that collide with SPA pages (GET /separations
   // the API list vs /separations the page, plus /agreements, /holidays,

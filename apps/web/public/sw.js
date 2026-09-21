@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v15';
+const CACHE_NAME = 'alto-shell-v16';
 const SHELL = [
   '/',
   '/index.html',
@@ -119,6 +119,12 @@ self.addEventListener('activate', (event) => {
       .then(() => self.clients.claim()),
   );
 });
+
+/** Is this response the HTML document a page load asked for? */
+function isHtml(res) {
+  const type = res.headers.get('content-type') || '';
+  return type.includes('text/html');
+}
 
 function isApiPath(url) {
   // Every API call is under /api (apiFetch prepends it — lib/api.ts).
@@ -236,7 +242,13 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res && res.ok) {
+          // Only ever cache HTML against a page URL. Most paths on this
+          // origin serve the SPA page AND a JSON API resource, so a
+          // navigation can come back as JSON (a cache replaying the other
+          // variant, a redirect to an API route, a mid-deploy edge). Store
+          // that and the page is poisoned for good: every later offline
+          // refresh replays raw JSON where the app should be.
+          if (res && res.ok && isHtml(res)) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(req, clone));
           }
@@ -250,9 +262,13 @@ self.addEventListener('fetch', (event) => {
             url.pathname === '/kiosk' || url.pathname.startsWith('/kiosk/')
               ? '/kiosk.html'
               : '/';
+          // Same rule on the way out: a cached entry that isn't HTML (one
+          // stored by an older worker, before the check above) is not a
+          // page, so fall through to the shell and let the SPA render.
           return caches
             .match(req)
-            .then((cached) => cached || caches.match(fallback) || Response.error());
+            .then((cached) => (cached && isHtml(cached) ? cached : caches.match(fallback)))
+            .then((res) => res || Response.error());
         }),
     );
     return;
