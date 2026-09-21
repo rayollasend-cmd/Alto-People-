@@ -153,7 +153,12 @@ describe('external payroll sheet — access', () => {
     }
   });
 
-  it.each(['OPERATIONS_MANAGER', 'MANAGER', 'MARKETING_MANAGER', 'FINANCE_ACCOUNTANT'] as const)(
+  // FINANCE_ACCOUNTANT was on this list until export:payroll-pii was
+  // narrowed from process:payroll (six roles) down to HR admin + finance.
+  // Finance is the payroll admin here — it runs the hours→pay cycle and
+  // the Fieldglass handoff this very sheet feeds — so it holds the
+  // capability deliberately, and the case below proves it.
+  it.each(['OPERATIONS_MANAGER', 'MANAGER', 'MARKETING_MANAGER'] as const)(
     'is forbidden to %s',
     async (role) => {
       const client = await createClient();
@@ -167,6 +172,18 @@ describe('external payroll sheet — access', () => {
       expect(res.status).toBe(403);
     },
   );
+
+  it('is allowed to FINANCE_ACCOUNTANT, which owns the payroll cycle', async () => {
+    const client = await createClient();
+    await seedComplete(client.id);
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const a = await loginAs(user.email);
+
+    const res = await a
+      .post('/time/admin/external-payroll-sheet.xlsx')
+      .send({ ...RANGE, clientId: client.id });
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('external payroll sheet — content', () => {

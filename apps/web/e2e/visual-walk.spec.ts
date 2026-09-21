@@ -50,8 +50,10 @@ test('associate visual walk', async ({ page }) => {
   await page.waitForTimeout(1_200);
   await page.screenshot({ path: shot('06-pay') });
 
-  // Time off + the request bottom sheet.
-  await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /time off/i }).click();
+  // Time off + the request bottom sheet. Reached by URL, not by tab: the
+  // associate's four tabs are Home, Schedule, Pay and Ride since the van
+  // fleet shipped, and time off lives in the menu behind them.
+  await page.goto('/time-off');
   await page.waitForTimeout(1_200);
   await page.screenshot({ path: shot('07-timeoff') });
   const requestBtn = page.getByRole('button', { name: /request time off/i }).first();
