@@ -57,7 +57,18 @@ export function notFoundHandler(req: Request, res: Response) {
  * `type: 'request.aborted'` and `code: 'ECONNABORTED'`; a socket reset
  * mid-body arrives as ECONNRESET. None of them are server faults, and
  * none of them have anyone left to answer.
+ *
+ * MULTER IS ITS OWN CASE, and it was the loudest thing in Sentry: a file
+ * upload that dies mid-body reaches us as a bare `new Error('Request
+ * aborted')` from multer's own req.on('aborted') handler — no `type`, no
+ * `code`, and a CAPITAL R that the lowercase body-parser string never
+ * matched. So every backgrounded tab and every phone that walked out of
+ * signal on /documents/me/upload was reported as an unhandled server
+ * fault. Matched case-insensitively here, with multer's two siblings
+ * ('Request error', 'Request closed') alongside it.
  */
+const MULTER_ABORTS = new Set(['request aborted', 'request error', 'request closed']);
+
 export function isAbortedRequest(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const e = err as { type?: unknown; code?: unknown; message?: unknown };
@@ -65,7 +76,7 @@ export function isAbortedRequest(err: unknown): boolean {
     e.type === 'request.aborted' ||
     e.code === 'ECONNABORTED' ||
     e.code === 'ECONNRESET' ||
-    e.message === 'request aborted'
+    (typeof e.message === 'string' && MULTER_ABORTS.has(e.message.toLowerCase()))
   );
 }
 

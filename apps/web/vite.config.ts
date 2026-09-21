@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -112,8 +113,64 @@ function emitAssetManifest(): Plugin {
   };
 }
 
+/**
+ * Deletes the emitted .map files when there is no Sentry upload to feed.
+ *
+ * `sourcemap: 'hidden'` writes maps and omits the //# sourceMappingURL
+ * comment, so a browser never asks for them — but the files would still
+ * sit in dist, downloadable by anyone who guessed a name. When the Sentry
+ * plugin runs it removes them itself after upload; when it is skipped (no
+ * auth token: local builds, CI without secrets) this does the same, so a
+ * build without the token ships exactly what it shipped before.
+ */
+function dropSourcemaps(): Plugin {
+  return {
+    name: 'alto-drop-sourcemaps',
+    apply: 'build',
+    closeBundle() {
+      const dir = path.resolve(__dirname, 'dist');
+      if (!fs.existsSync(dir)) return;
+      const walk = (d: string) => {
+        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+          const full = path.join(d, entry.name);
+          if (entry.isDirectory()) walk(full);
+          else if (entry.name.endsWith('.map')) fs.unlinkSync(full);
+        }
+      };
+      walk(dir);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), emitAssetManifest(), preloadLatinFonts()],
+  plugins: [
+    react(),
+    emitAssetManifest(),
+    preloadLatinFonts(),
+    /**
+     * Uploads the hidden sourcemaps, then deletes them from the build so
+     * they are never served. Without this a Sentry stack is a minified
+     * offset and a production bug can be watched but not read.
+     *
+     * Gated on the auth token: a developer build, and CI without secrets,
+     * simply skips it rather than failing. Set SENTRY_AUTH_TOKEN,
+     * SENTRY_ORG and SENTRY_PROJECT on the deploy for it to run.
+     */
+    ...(process.env.SENTRY_AUTH_TOKEN
+      ? [
+          sentryVitePlugin({
+            authToken: process.env.SENTRY_AUTH_TOKEN,
+            org: process.env.SENTRY_ORG,
+            project: process.env.SENTRY_PROJECT,
+            // Must match the `release` the browser SDK reports, or Sentry
+            // has maps it cannot match to the stack that needs them.
+            release: { name: process.env.VITE_SENTRY_RELEASE },
+            sourcemaps: { filesToDeleteAfterUpload: ['**/*.map'] },
+            telemetry: false,
+          }),
+        ]
+      : [dropSourcemaps()]),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -132,6 +189,21 @@ export default defineConfig({
     },
   },
   build: {
+    /**
+     * HIDDEN, NOT PUBLIC.
+     *
+     * Every frontend error in Sentry was a minified frame —
+     * `main-Cm6ob-Sk.js:2:10531` — which is unreadable, so a production
+     * TypeError could be seen but not diagnosed. 'hidden' emits the maps
+     * for the Sentry plugin to upload and omits the //# sourceMappingURL
+     * comment, so nothing points a browser at them; the plugin deletes
+     * them after upload (filesToDeleteAfterUpload below), so the original
+     * source never ships.
+     *
+     * Unset SENTRY_AUTH_TOKEN and the plugin is skipped — the build still
+     * works, it just produces maps nobody uploads.
+     */
+    sourcemap: 'hidden',
     // Explicit support floor instead of Vite's implicit default, so the
     // emitted JS matches the browserslist in package.json (which drives
     // autoprefixer). Slightly wider than the browserslist floor: store
