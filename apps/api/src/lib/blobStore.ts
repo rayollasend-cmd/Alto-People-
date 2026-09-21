@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createReadStream, existsSync } from 'node:fs';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import type { Readable } from 'node:stream';
 import { dirname } from 'node:path';
 import {
   DeleteObjectCommand,
@@ -39,6 +40,17 @@ import { resolveStoragePath } from './storage.js';
 export interface BlobStore {
   put(key: string, buffer: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
+  /**
+   * The same bytes, as a stream, for callers that only forward them to a
+   * response. `get` reads the WHOLE file into a Buffer, and Buffers live
+   * outside V8's heap — so concurrent downloads of identity documents and
+   * paystubs grow RSS in a way no --max-old-space-size can bound, and the
+   * container is OOM-killed with no stack to show for it. Streaming keeps
+   * the memory at one chunk per request instead of one file.
+   *
+   * Null means the object is missing, exactly as `get` does.
+   */
+  getStream(key: string): Promise<Readable | null>;
   exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
 }
@@ -67,6 +79,20 @@ export class LocalBlobStore implements BlobStore {
       if (isEnoent(err)) return null;
       throw err;
     }
+  }
+
+  async getStream(key: string): Promise<Readable | null> {
+    const full = resolveStoragePath(key);
+    // stat first: createReadStream reports a missing file asynchronously
+    // on the stream, by which point the caller has already committed to
+    // a 200 and cannot answer 404 any more.
+    try {
+      await stat(full);
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
+    return createReadStream(full);
   }
 
   async exists(key: string): Promise<boolean> {
@@ -171,6 +197,20 @@ export class S3BlobStore implements BlobStore {
       );
       if (!res.Body) return null;
       return Buffer.from(await res.Body.transformToByteArray());
+    } catch (err) {
+      if (isMissingObjectError(err)) return null;
+      throw err;
+    }
+  }
+
+  async getStream(key: string): Promise<Readable | null> {
+    try {
+      const res = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: this.objectKey(key) }),
+      );
+      // The SDK already hands back a stream; transformToByteArray was
+      // draining it into a Buffer purely so the caller could res.send it.
+      return (res.Body as Readable | undefined) ?? null;
     } catch (err) {
       if (isMissingObjectError(err)) return null;
       throw err;

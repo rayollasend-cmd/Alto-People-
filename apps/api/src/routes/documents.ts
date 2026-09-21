@@ -448,11 +448,18 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
       await purgeOneRejectedDoc(prisma, doc.id, doc.s3Key);
       throw new HttpError(404, 'document_not_found', 'Document not found');
     }
-    // Driver-based read: get() returns null when the blob is gone — the
-    // same 410 the old existsSync check produced (Railway redeploy wiping
-    // the local disk, or a lost/purged S3 object).
-    const blob = await getBlobStore().get(doc.s3Key);
-    if (!blob) {
+    // Driver-based read: a null stream means the blob is gone — the same
+    // 410 the old existsSync check produced (Railway redeploy wiping the
+    // local disk, or a lost/purged S3 object).
+    //
+    // STREAMED, not buffered. This used to read the whole file into a
+    // Buffer and res.send it, so a folder of identity documents opened by
+    // a few reviewers at once put tens of megabytes of file bytes in
+    // memory at the same moment. Buffers are external to V8's heap, which
+    // is why the process grew past anything --max-old-space-size could
+    // bound and was OOM-killed with no stack to show for it.
+    const stream = await getBlobStore().getStream(doc.s3Key);
+    if (!stream) {
       throw new HttpError(410, 'document_missing', 'Underlying file is no longer available');
     }
     const wantInline =
@@ -469,7 +476,18 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
     if (wantInline) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; object-src 'self'; frame-ancestors 'self'");
     }
-    res.send(blob);
+    // A client that hangs up mid-download (the common case on a phone)
+    // must not leave the read open: destroy the source when the response
+    // closes, or the stream drains into nothing and holds its buffers.
+    res.on('close', () => stream.destroy());
+    stream.on('error', (err) => {
+      // Headers are already out by the time bytes flow, so there is no
+      // status left to change — end the response and let the client's
+      // retry handle it.
+      if (!res.headersSent) next(err);
+      else res.end();
+    });
+    stream.pipe(res);
   } catch (err) {
     next(err);
   }

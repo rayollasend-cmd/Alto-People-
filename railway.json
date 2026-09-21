@@ -6,7 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": "for i in 1 2 3 4 5; do npx -w apps/api prisma migrate deploy && break || echo \"[migrate] attempt $i failed, retrying in ${i}s...\" && sleep $i; done",
-    "startCommand": "node apps/api/dist/index.js",
+    "startCommand": "node --max-old-space-size=16000 apps/api/dist/index.js",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",

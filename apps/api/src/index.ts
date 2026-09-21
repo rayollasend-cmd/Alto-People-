@@ -38,6 +38,7 @@ import { startWeekAheadCron } from './lib/weekAheadDigest.js';
 import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { startOfferLetterCron } from './lib/offerLetters.js';
 import { startUsageFlusher } from './lib/usageTracker.js';
+import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { startNotificationRetentionCron } from './lib/notificationRetention.js';
 import { startVanTrailRetentionCron } from './lib/transportLive.js';
@@ -103,6 +104,10 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // and never in tests, where a stray interval would write rollup rows
   // into alto_test between suites; tests drive flushUsageForTests().
   startUsageFlusher();
+  // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
+  // no handler runs, nothing reaches Sentry — so the evidence has to be
+  // written down BEFORE the process dies.
+  startMemoryWatch();
   // Outbound webhook deliveries — safe under MULTI_REPLICA without a
   // shared backend: each row is claimed via a guarded attemptCount
   // update, so two replicas can't double-POST the same delivery.
