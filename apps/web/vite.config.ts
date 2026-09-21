@@ -174,6 +174,21 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      // Document scanning runs OpenCV compiled to WebAssembly. Every
+      // PUBLISHED OpenCV.js generates code at runtime (embind builds its
+      // invokers from strings), which our CSP forbids — so the scanner
+      // cannot run on the npm package at all, and captures fall back to
+      // manual cropping.
+      //
+      // Dropping a build made with -sDYNAMIC_EXECUTION=0 into
+      // vendor/opencv/ swaps it in here, with no change to any importing
+      // module. See vendor/opencv/README.md; the artifact comes from the
+      // "Build OpenCV.js (strict CSP)" workflow.
+      ...(fs.existsSync(path.resolve(__dirname, 'vendor/opencv/opencv.js'))
+        ? {
+            '@techstark/opencv-js': path.resolve(__dirname, 'vendor/opencv/opencv.js'),
+          }
+        : {}),
     },
   },
   server: {

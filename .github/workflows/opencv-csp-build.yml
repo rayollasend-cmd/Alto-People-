@@ -1,0 +1,80 @@
+# Build an OpenCV.js that runs under our Content-Security-Policy.
+#
+# Every published OpenCV.js — all fourteen packages surveyed, plus the
+# official CDN build — is compiled with Emscripten's DYNAMIC_EXECUTION on,
+# so embind builds its invoker functions from strings at module init. Our
+# CSP has no 'unsafe-eval' and is not getting one, so document scanning
+# (the ID and void-cheque capture) dies before it starts and every capture
+# falls back to manual cropping.
+#
+# Emscripten supports the way out: with -sDYNAMIC_EXECUTION=0 embind uses
+# a closure-based invoker and generates no code at runtime. OpenCV's own
+# build_js.py forwards build flags, so the fix is a build, not a patch.
+#
+# Run this by hand from the Actions tab. It takes a while (OpenCV from
+# source), which is why it is not on push. It uploads the artifact; the
+# vendoring step is deliberately a human one — see
+# apps/web/vendor/opencv/README.md.
+name: Build OpenCV.js (strict CSP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      opencv_ref:
+        description: OpenCV tag to build from
+        default: '4.12.0'
+        required: true
+      emsdk_version:
+        description: Emscripten SDK version
+        default: '3.1.64'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # OpenCV from source, twice over (configure + compile). Generous, and
+    # still cheaper than shipping a scanner that cannot run.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git ~/emsdk
+          cd ~/emsdk
+          ./emsdk install ${{ inputs.emsdk_version }}
+          ./emsdk activate ${{ inputs.emsdk_version }}
+
+      - name: Fetch OpenCV
+        run: git clone --depth 1 --branch ${{ inputs.opencv_ref }} https://github.com/opencv/opencv.git ~/opencv
+
+      # Only what the scanner calls: core (Mat, MatVector), imgproc
+      # (cvtColor, Canny, findContours, approxPolyDP, warpPerspective) and
+      # calib3d (getPerspectiveTransform). Everything else is weight the
+      # store tablet would download and never execute.
+      - name: Build with DYNAMIC_EXECUTION=0
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          cd ~/opencv
+          python3 ./platforms/js/build_js.py build_wasm \
+            --build_wasm \
+            --disable_single_file=false \
+            --cmake_option="-DBUILD_LIST=core,imgproc,calib3d" \
+            --build_flags="-sDYNAMIC_EXECUTION=0"
+          ls -la build_wasm/bin
+
+      # The whole point of the build. If the artifact still constructs
+      # functions from strings, it will still die under our CSP, and a
+      # green build that ships it would be worse than no build at all.
+      - name: Refuse a build that still generates code
+        run: |
+          node "$GITHUB_WORKSPACE/apps/web/scripts/verify-opencv-csp.mjs" ~/opencv/build_wasm/bin/opencv.js
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv-js-strict-csp-${{ inputs.opencv_ref }}
+          path: |
+            ~/opencv/build_wasm/bin/opencv.js
+            ~/opencv/build_wasm/bin/opencv_js.wasm
+          if-no-files-found: error

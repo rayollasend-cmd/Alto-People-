@@ -1,0 +1,56 @@
+# OpenCV.js, built to run under our CSP
+
+Document scanning — the automatic edge detection and deskew behind the ID
+and void-cheque capture — runs OpenCV compiled to WebAssembly.
+
+Every published OpenCV.js build generates JavaScript at runtime: embind
+constructs its invoker functions from strings as the module starts. Our
+Content-Security-Policy allows WebAssembly (`'wasm-unsafe-eval'`) and
+nothing else, so the module throws before the scanner takes a single
+frame, and every capture silently falls back to manual cropping.
+
+Adding `'unsafe-eval'` would fix it by removing the protection, on the
+pages that handle passports and visas. We are not doing that.
+
+Emscripten has the way out: with `-sDYNAMIC_EXECUTION=0`, embind uses
+closure-based invokers and generates no code at all. OpenCV's own
+`build_js.py` forwards build flags, so this is a build, not a patch.
+
+## Getting the file
+
+1. Actions → **Build OpenCV.js (strict CSP)** → Run workflow. It builds
+   OpenCV from source with `-sDYNAMIC_EXECUTION=0`, trimmed to the three
+   modules the scanner uses (`core`, `imgproc`, `calib3d`), and refuses
+   to upload a build that still generates code.
+2. Download the artifact and put `opencv.js` in this directory. If the
+   build emitted a separate `opencv_js.wasm`, put it here too.
+3. Verify what you are about to ship:
+
+   ```
+   node apps/web/scripts/verify-opencv-csp.mjs apps/web/vendor/opencv/opencv.js
+   ```
+
+   It must report no runtime code generation. Do not skip this: minified
+   Emscripten builds reach the `Function` constructor through a helper, so
+   grepping for `new Function(` by hand reads clean on builds that are not.
+
+4. Build the web app. `vite.config.ts` aliases `@techstark/opencv-js` to
+   this file when it exists, so no importing module changes.
+
+## Checking it actually works
+
+The failure this fixes is invisible from the app: the scanner just never
+finds a document. After deploying, open the ID capture on a phone and
+confirm the live edge outline appears. In the browser console there must
+be no CSP violation naming `script-src`.
+
+## Why not the alternatives
+
+- **A sandboxed page with a relaxed CSP.** Works, but it means a page
+  handling passport and visa images is the one place protection was
+  deliberately weakened. Second choice, and only if the build proves
+  unworkable.
+- **A hand-written detector.** Edge detection on a phone photo of a
+  passport on a bedspread is exactly the problem that looks solved in
+  testing and is not.
+- **A Web Worker.** Does not help: workers inherit the document's CSP.
