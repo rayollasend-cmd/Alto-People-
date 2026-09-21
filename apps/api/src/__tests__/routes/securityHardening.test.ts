@@ -248,3 +248,76 @@ describe('user-supplied URLs must be http(s)', () => {
     expect(candidates).toHaveLength(0);
   });
 });
+
+describe('a report schedule runs as the report owner, so scheduling is borrowing their reach', () => {
+  /**
+   * /reports/:id/run checked `isPublic || createdById`. The schedule
+   * routes did not — and lib/reportScheduleRunner resolves the session
+   * from report.createdById and emails the CSV to the recipients. So
+   * anyone who could SEE a public report could schedule it, have it
+   * execute with ITS AUTHOR's scope, and be sent the rows on a timer.
+   *
+   * These routes are guarded by view:analytics, which CLIENT_PORTAL
+   * holds: a customer's store manager could have HR's associate and
+   * payroll reports mailed to them, for every client, indefinitely.
+   */
+  async function hrReportAndPortalUser() {
+    const mine = await createClient('Mine');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const made = await hrAgent.post('/reports').send({
+      name: 'Everyone, everywhere',
+      entity: 'ASSOCIATE',
+      spec: { columns: ['id', 'firstName', 'lastName', 'email'], limit: 1000 },
+      isPublic: true,
+    });
+    expect(made.status).toBe(201);
+    const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: mine.id });
+    return { reportId: made.body.id as string, portal, hr, hrAgent };
+  }
+
+  it('refuses to let a portal account schedule somebody else’s report', async () => {
+    const { reportId, portal } = await hrReportAndPortalUser();
+    const a = await loginAs(portal.email);
+
+    // Visible in the list — public reports are meant to be readable.
+    const listed = await a.get('/reports');
+    expect(listed.status).toBe(200);
+
+    const res = await a.post(`/reports/${reportId}/schedules`).send({
+      cadence: 'DAILY',
+      recipients: portal.email,
+    });
+    // 404, not 403: whether a report exists is not something to confirm.
+    expect(res.status).toBe(404);
+    expect(await prisma.reportSchedule.count({ where: { reportId } })).toBe(0);
+  });
+
+  it('refuses to hand over the recipient list of somebody else’s report', async () => {
+    const { reportId, portal } = await hrReportAndPortalUser();
+    const a = await loginAs(portal.email);
+    expect((await a.get(`/reports/${reportId}/schedules`)).status).toBe(404);
+  });
+
+  it('refuses to let one user delete another user’s schedule', async () => {
+    const { reportId, portal, hr, hrAgent } = await hrReportAndPortalUser();
+    const made = await hrAgent
+      .post(`/reports/${reportId}/schedules`)
+      .send({ cadence: 'DAILY', recipients: hr.email });
+    expect(made.status).toBe(201);
+    const scheduleId = made.body.id as string;
+
+    const a = await loginAs(portal.email);
+    expect((await a.delete(`/report-schedules/${scheduleId}`)).status).toBe(404);
+    // Still there — a bare id was enough to delete it before.
+    expect(await prisma.reportSchedule.count({ where: { id: scheduleId } })).toBe(1);
+  });
+
+  it('still lets the owner schedule their own report', async () => {
+    const { reportId, hr, hrAgent } = await hrReportAndPortalUser();
+    const res = await hrAgent
+      .post(`/reports/${reportId}/schedules`)
+      .send({ cadence: 'WEEKLY', recipients: hr.email });
+    expect(res.status).toBe(201);
+  });
+});

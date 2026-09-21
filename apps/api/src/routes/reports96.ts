@@ -185,6 +185,42 @@ reports96Router.delete('/reports/:id', VIEW, async (req, res) => {
 
 // ----- Run --------------------------------------------------------------
 
+/**
+ * A SCHEDULE RUNS AS THE REPORT'S OWNER, SO SCHEDULING ONE IS BORROWING
+ * THEIR PERMISSIONS.
+ *
+ * /run checked `isPublic || createdById` and the schedule routes did not,
+ * which is not a cosmetic inconsistency: lib/reportScheduleRunner resolves
+ * the session from `report.createdById` and mails the CSV to the
+ * schedule's recipients. So anyone who could see a public report could
+ * schedule it, have it execute with ITS AUTHOR's scope, and receive the
+ * rows — recurring, forever.
+ *
+ * These routes are guarded by view:analytics, which CLIENT_PORTAL holds.
+ * A customer's store manager could list HR's public reports, schedule an
+ * ASSOCIATE or PAYROLL_ITEM one to themselves, and be emailed every
+ * client's people and pay data on a timer. The recipient allowlist did
+ * not help — portal accounts are active platform users.
+ *
+ * OWNERSHIP, NOT `isPublic`. /run lets anyone execute a public report,
+ * and that is safe there because it runs with the REQUESTER's scope — a
+ * portal account running HR's report sees only its own client's rows. A
+ * schedule is the opposite: it runs with the OWNER's scope, so "public"
+ * would still hand over everything HR can see. Sharing a report for
+ * others to run is not the same as letting them borrow your reach.
+ *
+ * 404 rather than 403 on a miss, per lib/scope.ts: a report's existence
+ * is not something to confirm.
+ */
+async function reportYouMayScheduleOr404(id: string, userId: string) {
+  const r = await prisma.report.findUnique({ where: { id } });
+  if (!r || r.deletedAt) throw new HttpError(404, 'not_found', 'Report not found.');
+  if (r.createdById !== userId) {
+    throw new HttpError(404, 'not_found', 'Report not found.');
+  }
+  return r;
+}
+
 reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
   const r = await prisma.report.findUnique({ where: { id: req.params.id } });
   if (!r || r.deletedAt) throw new HttpError(404, 'not_found', 'Report not found.');
@@ -226,8 +262,7 @@ function nextRunFor(cadence: 'DAILY' | 'WEEKLY' | 'MONTHLY'): Date {
 }
 
 reports96Router.post('/reports/:id/schedules', VIEW, async (req, res) => {
-  const r = await prisma.report.findUnique({ where: { id: req.params.id } });
-  if (!r || r.deletedAt) throw new HttpError(404, 'not_found', 'Report not found.');
+  const r = await reportYouMayScheduleOr404(req.params.id, req.user!.id);
   const input = ScheduleInputSchema.parse(req.body);
 
   // Recipients must be existing, active platform users. A report schedule
@@ -266,6 +301,8 @@ reports96Router.post('/reports/:id/schedules', VIEW, async (req, res) => {
 });
 
 reports96Router.get('/reports/:id/schedules', VIEW, async (req, res) => {
+  // Listing them exposes the recipient addresses of somebody else's report.
+  await reportYouMayScheduleOr404(req.params.id, req.user!.id);
   const rows = await prisma.reportSchedule.findMany({
     take: 500,
     where: { reportId: req.params.id },
@@ -285,6 +322,13 @@ reports96Router.get('/reports/:id/schedules', VIEW, async (req, res) => {
 });
 
 reports96Router.delete('/report-schedules/:id', VIEW, async (req, res) => {
+  // Deleting by bare id let anyone remove anyone's schedule.
+  const sched = await prisma.reportSchedule.findUnique({
+    where: { id: req.params.id },
+    select: { reportId: true },
+  });
+  if (!sched) throw new HttpError(404, 'not_found', 'Schedule not found.');
+  await reportYouMayScheduleOr404(sched.reportId, req.user!.id);
   await prisma.reportSchedule.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });
