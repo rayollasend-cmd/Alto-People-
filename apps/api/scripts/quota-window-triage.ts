@@ -325,7 +325,22 @@ function toCsv(rows: Array<Record<string, string>>): string {
 }
 
 async function main() {
-  console.log(`Quota-window triage — ${FROM.toISOString()} → ${TO.toISOString()}\n`);
+  console.log(`Quota-window triage — ${FROM.toISOString()} → ${TO.toISOString()}`);
+  // Say which mode this is before a single row is read. Everything here
+  // is SELECT-only except one delete, behind two flags that have to be
+  // typed together.
+  console.log(
+    invalidateTokens && apply
+      ? 'MODE: read-only, EXCEPT it will delete unconsumed password-reset tokens in the window.'
+      : 'MODE: read-only. Nothing in the database is written or deleted.',
+  );
+  if (outDir) {
+    console.log(
+      `Writing CSVs to ${outDir}/ — these carry names, emails and phone ` +
+        'numbers. Delete them when the work is closed out.',
+    );
+  }
+  console.log('');
   const sections = await build();
 
   for (const s of sections) {

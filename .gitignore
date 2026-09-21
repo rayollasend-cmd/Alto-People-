@@ -54,3 +54,8 @@ apps/web/public/face-models/
 
 # Playwright artifacts
 apps/web/e2e-results/
+
+# Quota-window triage output — names, emails and phone numbers of people
+# whose mail failed. Read it, work it, delete it; it never belongs in git.
+quota-triage/
+apps/api/quota-triage/
