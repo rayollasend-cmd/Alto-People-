@@ -3,6 +3,7 @@ import {
   NAVIGABLE_FILE_PATTERN,
   htmlErrorPage,
   isBrowserNavigation,
+  isBuildArtifactRequest,
 } from '../../lib/browserNavigation.js';
 
 /**
@@ -116,5 +117,39 @@ describe('htmlErrorPage', () => {
     expect(html).not.toContain('<script>alert');
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('<!doctype html>');
+  });
+});
+
+/**
+ * A deploy content-hashes every bundle, so a tab open across one asks for
+ * files the server no longer has. Those requests must 404 rather than
+ * fall through to the SPA shell: HTML where a module was expected is what
+ * the browser reports as "Failed to fetch dynamically imported module".
+ */
+describe('isBuildArtifactRequest', () => {
+  it('claims the hashed bundles and anything else with an extension', () => {
+    for (const p of [
+      '/assets/AdminDashboard-BfLLMHRD.js',
+      '/assets/index-abc123.css',
+      '/assets/logo.svg',
+      '/favicon.svg',
+      '/manifest.webmanifest',
+      '/face-models/tiny_face_detector-weights_manifest.json',
+      '/sw.js',
+    ]) {
+      expect(isBuildArtifactRequest(p)).toBe(true);
+    }
+  });
+
+  it('leaves page paths to the SPA', () => {
+    for (const p of [
+      '/',
+      '/jobs',
+      '/portal/today',
+      '/time-attendance/timesheets/history/abc',
+      '/kiosk',
+    ]) {
+      expect(isBuildArtifactRequest(p)).toBe(false);
+    }
   });
 });

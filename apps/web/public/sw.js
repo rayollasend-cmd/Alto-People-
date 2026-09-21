@@ -289,7 +289,17 @@ self.addEventListener('fetch', (event) => {
       }
       return fetch(req)
         .then((res) => {
-          if (res && res.ok && (req.destination === 'script' || req.destination === 'style' || req.destination === 'image' || req.destination === 'font')) {
+          // Never cache HTML against an asset URL. A chunk the deploy has
+          // moved past used to come back as the SPA shell with a 200, and
+          // storing that meant the tab kept being handed a page where it
+          // asked for a module — long after the server stopped doing it.
+          const html = isHtml(res);
+          const cacheable =
+            req.destination === 'script' ||
+            req.destination === 'style' ||
+            req.destination === 'image' ||
+            req.destination === 'font';
+          if (res && res.ok && cacheable && !html) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(req, clone));
           }

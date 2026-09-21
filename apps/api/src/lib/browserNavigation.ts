@@ -45,6 +45,22 @@ export function isBrowserNavigation(req: NavigationProbe): boolean {
  * SPA-shell middleware skips them. When one of these FAILS, the error
  * handler still owes the browser HTML, not JSON — that's htmlErrorPage.
  */
+/**
+ * A request for a built file rather than a page: the hashed bundles under
+ * /assets, plus anything else carrying a file extension (source maps,
+ * icons, the web manifest, face models).
+ *
+ * These must never be answered with the SPA shell. Handing back HTML
+ * where a module was expected is what turns "this tab has been open
+ * since the last deploy" into "Failed to fetch dynamically imported
+ * module" — a message that names neither the cause nor the cure.
+ */
+export function isBuildArtifactRequest(pathname: string): boolean {
+  if (pathname.startsWith('/assets/')) return true;
+  const last = pathname.slice(pathname.lastIndexOf('/') + 1);
+  return last.includes('.') && !last.startsWith('.');
+}
+
 export const NAVIGABLE_FILE_PATTERN = /\.(pdf|zip|csv|ics)$|\/(download|pdf)(\/|$)/i;
 
 function escapeHtml(s: string): string {

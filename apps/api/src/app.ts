@@ -16,6 +16,7 @@ import {
   htmlErrorCopy,
   htmlErrorPage,
   isBrowserNavigation,
+  isBuildArtifactRequest,
 } from './lib/browserNavigation.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
@@ -583,6 +584,19 @@ export function createApp() {
       // stripApiPrefix. Skip the SPA fallback so unmatched API endpoints
       // return JSON 404 (via notFoundHandler) instead of HTML 200.
       if ((req as Request & { isApiCall?: boolean }).isApiCall) return next();
+      // A build artifact that isn't there is a 404, not the app.
+      //
+      // Every deploy content-hashes the bundles, so a tab that has been
+      // open across one asks for chunk names the server no longer has.
+      // Answering those with index.html hands the browser HTML where it
+      // expects a module, which surfaces as "Failed to fetch dynamically
+      // imported module" — a message that describes neither the cause nor
+      // the cure. A plain 404 lets the client recognise a stale deploy and
+      // reload into the new build.
+      if (isBuildArtifactRequest(req.path)) {
+        res.status(404).type('text/plain').send('Not found');
+        return;
+      }
       // The kiosk is a second HTML entry whose <head> statically links the
       // kiosk web-app manifest, so "Add to Home Screen" installs the
       // standalone kiosk app rather than the main SPA. Serve it for /kiosk

@@ -35,10 +35,57 @@ export function endChunk(): void {
   emit();
 }
 
+/**
+ * A page chunk that will never arrive, because the deploy moved on.
+ *
+ * Every bundle filename carries a content hash, so a deploy replaces the
+ * whole set. A tab left open across one still holds the old index.html
+ * and asks for names the server no longer has: the import rejects, the
+ * route never mounts, and the user gets an error screen on a page that
+ * works perfectly — one reload away. Chrome, Firefox and Safari each word
+ * the rejection differently, hence the several patterns.
+ */
+const STALE_BUILD = /dynamically imported module|importing a module script failed|error loading dynamically imported module|failed to fetch/i;
+
+/** One reload per tab per minute — a chunk missing for any other reason
+ *  must surface as an error, not as a reload loop. */
+const RELOAD_KEY = 'alto:chunk-reload-at';
+const RELOAD_COOLDOWN_MS = 60_000;
+
+function reloadOnceForNewBuild(): boolean {
+  let last = 0;
+  try {
+    last = Number(window.sessionStorage.getItem(RELOAD_KEY) ?? 0);
+  } catch {
+    // Private mode / blocked storage: without a memory of the last
+    // attempt, reloading risks a loop. Show the error instead.
+    return false;
+  }
+  if (Number.isFinite(last) && Date.now() - last < RELOAD_COOLDOWN_MS) return false;
+  try {
+    window.sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+  } catch {
+    return false;
+  }
+  // The new index.html names the new chunks; everything downstream follows.
+  window.location.reload();
+  return true;
+}
+
 /** Wrap a dynamic import so the chrome can see it. */
 export function trackChunk<T>(load: () => Promise<T>): Promise<T> {
   beginChunk();
-  return load().finally(endChunk);
+  return load()
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      if (STALE_BUILD.test(message) && reloadOnceForNewBuild()) {
+        // The page is on its way out. Never settling keeps the error
+        // boundary from flashing a failure the user will never act on.
+        return new Promise<T>(() => {});
+      }
+      throw err;
+    })
+    .finally(endChunk);
 }
 
 function subscribe(cb: () => void): () => void {
