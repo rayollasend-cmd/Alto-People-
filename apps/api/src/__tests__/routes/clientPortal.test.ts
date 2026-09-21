@@ -856,7 +856,7 @@ describe('one store, one set of numbers', () => {
     expect(market.body.safety.open).toBe(1);
   });
 
-  it('keeps one store's reviewed mark off another store's report', async () => {
+  it("keeps one store's reviewed mark off another store's report", async () => {
     const s = await seedTwoStores();
     const { user: otherStoreUser } = await createUser({
       role: 'CLIENT_PORTAL',
