@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
+import { isEmailMuted } from './notify.js';
 
 /**
  * Hourly kiosk maintenance sweep.
@@ -299,6 +300,9 @@ export async function sendKioskFleetNotices(
     `Manage devices: ${env.APP_BASE_URL ?? ''}/time-attendance/kiosk`;
 
   for (const admin of admins) {
+    // Same gap as the engagement digest: a raw send() ignores the mute,
+    // so this was an alert nobody could switch off.
+    if (await isEmailMuted(admin.id, 'kiosk_device_alert')) continue;
     await send({
       channel: 'EMAIL',
       category: 'kiosk_device_alert',

@@ -1,33 +1,25 @@
 import { config as loadDotenv } from 'dotenv';
-import http from 'node:http';
-import https from 'node:https';
 import { resolve } from 'node:path';
 import { beforeAll } from 'vitest';
 
 /**
- * NO KEEP-ALIVE IN THE SUITE — the cause of the random socket flakes.
+ * NOTE ON A FIX THAT WAS NOT ONE.
  *
- * Node 19 made `http.globalAgent.keepAlive` default to true, and supertest
- * binds a FRESH ephemeral server per request and closes it afterwards. The
- * agent pools idle sockets by `host:port`, so every closed server leaves a
- * dead socket pooled against the port it happened to get. Over a full run
- * (~1,720 tests, tens of thousands of requests) the OS recycles those
- * ephemeral ports, a new server lands on one that still has a stale socket
- * pooled — and the next request goes out on a socket to a server that no
- * longer exists.
+ * This file briefly set `http.globalAgent`/`https.globalAgent` to
+ * keepAlive:false, on the theory that supertest's pooled sockets outlived
+ * the ephemeral servers they belonged to. The mechanism is real — a closed
+ * server does leave a pooled socket behind, and reusing it resets — but
+ * SUPERAGENT NEVER TOUCHES THE GLOBAL AGENT: it sets `this._agent = false`
+ * in its constructor and passes that to http.request, so every request
+ * gets a fresh, unpooled agent. The fix changed something the suite does
+ * not use, and its guard test (asserting freeSockets was empty) could
+ * never have failed.
  *
- * That is the whole flake family this suite has lived with: ECONNRESET, a
- * request that hangs until the 120s timeout, and framing errors that Node's
- * own `clientError` handler answers with a bodiless `400`/`403` — which is
- * why the failures never looked like the app's error handler and always
- * passed when the file was rerun alone.
- *
- * Reproduced directly: request → close server → bind a new one on the same
- * port → ECONNRESET, with the dead socket visible in `freeSockets` between
- * the two. Connection-per-request costs nothing against loopback.
+ * Left as a comment so the next person does not spend the afternoon
+ * rediscovering it. The remaining flake — a bodiless 4xx on a route that
+ * exists, 0-3 per full run, always passing in isolation — is still
+ * unexplained. See the project memory for what has been ruled out.
  */
-http.globalAgent = new http.Agent({ keepAlive: false });
-https.globalAgent = new https.Agent({ keepAlive: false });
 
 // Load .env.test before any test imports the api source — those imports
 // pull in `config/env.ts`, which validates env at module load time.
@@ -73,3 +65,4 @@ beforeAll(async () => {
   ]);
   await preloadPayrollTaxConfig(prisma);
 });
+

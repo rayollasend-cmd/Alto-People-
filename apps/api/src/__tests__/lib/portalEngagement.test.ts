@@ -6,6 +6,7 @@ import {
   portalEngagementOverview,
   runPortalEngagementDigest,
 } from '../../lib/portalEngagement.js';
+import { bucketForCategory } from '@alto-people/shared';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
@@ -125,5 +126,32 @@ describe('portal engagement', () => {
     expect(body).toContain('has not signed in yet');
     // Once per week.
     expect(await runPortalEngagementDigest(prisma, MONDAY)).toEqual({ sent: 0, skipped: 3 });
+  });
+
+  it('respects a muted category — this sweep used to mail through it', async () => {
+    // It called send() directly rather than going through notifyUser, so
+    // the Settings switch said the digest was off and it arrived anyway.
+    const s = await seed();
+    await login(s.manager.id, new Date('2026-09-14T12:00:00.000Z'));
+    await prisma.notificationPreference.create({
+      data: {
+        userId: s.hr.id,
+        // Resolves to 'workplace' — the staff bucket for operational
+        // alerts. It used to resolve to nothing, which is why the mute
+        // could not bite.
+        category: bucketForCategory('portal.engagement_digest')!,
+        emailEnabled: false,
+        inAppEnabled: true,
+      },
+    });
+
+    const res = await runPortalEngagementDigest(prisma, MONDAY);
+    // HR is skipped; the other two still hear about it.
+    expect(res).toEqual({ sent: 2, skipped: 1 });
+    const mailed = await prisma.notification.findMany({
+      where: { category: 'portal.engagement_digest', channel: 'IN_APP' },
+      select: { recipientUserId: true },
+    });
+    expect(mailed.map((r) => r.recipientUserId).sort()).toEqual([s.wfm.id, s.chair.id].sort());
   });
 });

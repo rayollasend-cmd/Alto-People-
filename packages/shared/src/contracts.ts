@@ -4734,6 +4734,13 @@ export function bucketForCategory(
   if (raw === 'portal.coverage') return 'store_alerts';
   if (raw === 'client-request') return 'store_requests';
   if (raw === 'portal.service_report' || raw === 'portal.statement') return 'store_reports';
+  // Staff-side operational sweeps. They resolved to no bucket at all, which
+  // meant isEmailMuted() always answered false for them — so they were
+  // unmutable, and a mute check added to their senders would have been a
+  // no-op. 'workplace' is the staff bucket for operational alerts; the
+  // portal.* buckets above are for CLIENT_PORTAL accounts, and these two go
+  // to HR, Ops and the chairman.
+  if (raw === 'portal.engagement_digest' || raw === 'kiosk_device_alert') return 'workplace';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
   if (raw === 'security') return 'security';

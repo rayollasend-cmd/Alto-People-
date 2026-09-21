@@ -37,6 +37,7 @@ import {
   getDocumentStats,
   isPreviewable,
   previewDocumentUrl,
+  reclassifyDocument,
   listAdminDocuments,
   rejectDocument,
   requestDocumentReupload,
@@ -67,7 +68,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
-import { Eye, EyeOff, LayoutGrid, Rows3 } from 'lucide-react';
+import { Eye, EyeOff, FolderInput, LayoutGrid, Rows3 } from 'lucide-react';
 import { REJECT_PRESETS, RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -295,6 +296,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const deferredSearch = useDeferredValue(search);
   // Deferred so typing stays responsive while the query for the new term
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
+  // Misfiled, not wrong. See onReclassify.
+  const [moveTarget, setMoveTarget] = useState<DocumentRecord | null>(null);
+  const [moveKind, setMoveKind] = useState<DocumentKind | ''>('');
   // Session-local "requested <ago>" markers for EXPIRED rows (doc id →
   // epoch ms). The server doesn't stamp renewal requests on the document
   // row (that'd be a schema change), so the marker only survives as long
@@ -609,6 +613,37 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // Returns whether the verify succeeded so callers with follow-up UI (the
   // preview closes itself on success) don't dismiss on a failure this
   // handler already swallowed into a toast.
+  /**
+   * MISFILED IS NOT REJECTED.
+   *
+   * "Wrong document type" is one of three canned reject reasons here, and
+   * rejecting is the only thing the row offered for it — so a passport
+   * filed under SSN card went back to the associate with an email and a
+   * reopened task, to be re-uploaded unchanged. The document was always
+   * fine; only its label was wrong. Moving it is one action and costs the
+   * associate nothing.
+   */
+  const onReclassify = async () => {
+    const d = moveTarget;
+    if (!d || !moveKind || pendingId) return;
+    setPendingId(d.id);
+    try {
+      await reclassifyDocument(d.id, moveKind);
+      toast.success(
+        `${d.filename} moved to ${DOCUMENT_KIND_LABEL[moveKind] ?? moveKind}.`,
+      );
+      setMoveTarget(null);
+      setMoveKind('');
+      invalidateDocs();
+    } catch (err) {
+      toast.error('Could not move it.', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const onVerify = async (
     d: DocumentRecord,
     expiresAt?: string,
@@ -1236,19 +1271,39 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           </Button>
                         )}
                         {(d.status === 'UPLOADED' || d.status === 'VERIFIED') && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setRejectTarget(d);
-                            }}
-                            disabled={pendingId === d.id}
-                            title="Reject with reason"
-                            className="text-alert hover:text-alert"
-                          >
-                            <ShieldAlert className="h-3.5 w-3.5" />
-                            <span className="ml-1 hidden lg:inline">Reject</span>
-                          </Button>
+                          <>
+                            {/* Misfiled is not rejected — moving it costs
+                                the associate nothing, where a rejection
+                                emails them and reopens a task to re-upload
+                                the very same file. */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setMoveKind('');
+                                setMoveTarget(d);
+                              }}
+                              disabled={pendingId === d.id}
+                              title="Wrong kind — move it"
+                              aria-label={`Move ${d.filename} to another kind`}
+                            >
+                              <FolderInput className="h-3.5 w-3.5" />
+                              <span className="ml-1 hidden xl:inline">Move</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setRejectTarget(d);
+                              }}
+                              disabled={pendingId === d.id}
+                              title="Reject with reason"
+                              className="text-alert hover:text-alert"
+                            >
+                              <ShieldAlert className="h-3.5 w-3.5" />
+                              <span className="ml-1 hidden lg:inline">Reject</span>
+                            </Button>
+                          </>
                         )}
                         {d.status === 'EXPIRED' && (
                           <>
@@ -1837,6 +1892,76 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           different — one reason applied to many — so it keeps its own
           markup, but it now imports the presets instead of restating
           them. */}
+      {/* Move a misfiled document. The kinds come from the same label map
+          the rest of the vault reads, so a kind added there appears here
+          without a second list to keep in step. */}
+      <Dialog
+        open={!!moveTarget}
+        onOpenChange={(v) => {
+          if (!v && !pendingId) {
+            setMoveTarget(null);
+            setMoveKind('');
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Move to another kind</DialogTitle>
+            <DialogDescription>
+              The document is fine — only its label is wrong. Moving it keeps
+              the file and the associate hears nothing.
+            </DialogDescription>
+          </DialogHeader>
+          {moveTarget && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-2.5 text-xs">
+                <div className="truncate font-medium text-white">{moveTarget.filename}</div>
+                <div className="mt-0.5 text-silver">
+                  Filed as {DOCUMENT_KIND_LABEL[moveTarget.kind] ?? moveTarget.kind}
+                </div>
+              </div>
+              <label className="block text-sm">
+                <span className="mb-1 block text-silver">Move it to</span>
+                <Select
+                  value={moveKind}
+                  onChange={(e) => setMoveKind(e.target.value as DocumentKind)}
+                  aria-label="New document kind"
+                >
+                  <option value="">Choose a kind…</option>
+                  {Object.entries(DOCUMENT_KIND_LABEL)
+                    .filter(([k]) => k !== moveTarget.kind)
+                    .map(([k, label]) => (
+                      <option key={k} value={k}>
+                        {label}
+                      </option>
+                    ))}
+                </Select>
+              </label>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              disabled={!!pendingId}
+              onClick={() => {
+                setMoveTarget(null);
+                setMoveKind('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void onReclassify()}
+              loading={!!moveTarget && pendingId === moveTarget.id}
+              disabled={!moveKind || !!pendingId}
+            >
+              <FolderInput className="h-4 w-4" />
+              Move it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <RejectDocumentDialog
         doc={rejectTarget}
         onClose={() => setRejectTarget(null)}

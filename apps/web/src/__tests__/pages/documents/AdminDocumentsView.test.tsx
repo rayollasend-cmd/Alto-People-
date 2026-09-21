@@ -221,3 +221,40 @@ describe('an associate’s folder shows the documents, not a list of filenames',
     ).toBeInTheDocument();
   });
 });
+
+describe('a misfiled document is moved, not rejected', () => {
+  /**
+   * "Wrong document type" was one of three canned reject reasons, and
+   * rejecting was the only thing the row offered for it — so a passport
+   * filed under SSN card went back to the associate with an email and a
+   * reopened task, to be re-uploaded unchanged. The file was always fine;
+   * only its label was wrong.
+   */
+  it('moves it to the right kind without troubling the associate', async () => {
+    const calls: Array<{ path: string; body?: unknown }> = [];
+    vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { body?: unknown }) => {
+      calls.push({ path, body: init?.body });
+      if (path.startsWith('/documents/admin/stats')) return STATS as never;
+      if (path.includes('/reclassify')) return PAGE[0] as never;
+      if (path.startsWith('/documents/admin')) return { documents: PAGE, total: 3 } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+    renderVault();
+    await screen.findByText('oldest.png');
+
+    await userEvent.click(
+      (await screen.findAllByRole('button', { name: /^Move .* to another kind$/ }))[0]!,
+    );
+    await userEvent.selectOptions(
+      await screen.findByLabelText('New document kind'),
+      'SSN_CARD',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Move it' }));
+
+    const move = calls.find((c) => c.path.includes('/reclassify'));
+    expect(move).toBeTruthy();
+    expect(move!.body).toEqual({ kind: 'SSN_CARD' });
+    // Crucially NOT a rejection: no email, no reopened task.
+    expect(calls.some((c) => c.path.includes('/reject'))).toBe(false);
+  });
+});

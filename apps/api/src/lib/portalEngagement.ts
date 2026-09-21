@@ -1,7 +1,7 @@
 import type { PrismaClient, Role } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
-import { notifyUser, trackNotificationWork } from './notify.js';
+import { isEmailMuted, notifyUser, trackNotificationWork } from './notify.js';
 import { send } from './notifications.js';
 import { genericNotificationTemplate } from './emailTemplates.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
@@ -361,6 +361,13 @@ export async function runPortalEngagementDigest(
       select: { id: true },
     });
     if (already) {
+      skipped += 1;
+      continue;
+    }
+    // Muting this category in Settings has to stop the mail. This sweep
+    // called send() directly, so it was the one digest a person could not
+    // turn off — the switch said it was off and the mail arrived anyway.
+    if (await isEmailMuted(r.id, ENGAGEMENT_DIGEST_CATEGORY)) {
       skipped += 1;
       continue;
     }

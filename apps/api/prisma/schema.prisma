@@ -1923,6 +1923,11 @@ model Application {
   // The list orders by invitedAt DESC under a status chip or client scope.
   @@index([status, invitedAt(sort: Desc)])
   @@index([clientId, invitedAt(sort: Desc)])
+  // ...and a client-scoped admin filters by BOTH at once, which neither of
+  // the two above can serve: one narrows by client then sorts every status,
+  // the other narrows by status then sorts every client. This is the list
+  // an ops manager actually opens.
+  @@index([clientId, status, invitedAt(sort: Desc)])
   @@index([deletedAt])
   @@index([cohortId])
 }
