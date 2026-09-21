@@ -38,6 +38,7 @@ import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/st
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
 import { enqueueAudit, recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
+import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
 import { renderExternalPayrollSheetXlsx } from '../lib/externalPayrollSheetXlsx.js';
 import { renderExternalPayrollSheetPdf } from '../lib/externalPayrollSheetPdf.js';
@@ -2858,6 +2859,9 @@ async function loadExternalSheet(
   req: import('express').Request,
   format: 'xlsx' | 'pdf',
 ) {
+  // The capability says this ROLE may touch SSNs; this says this PERSON
+  // may carry the whole roster out. Checked before a single row is read.
+  const exportAuthority = assertBulkPiiExporter(req);
   const parsed = ExternalPayrollSheetInputSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2893,6 +2897,7 @@ async function loadExternalSheet(
         locationId: parsed.data.locationId ?? null,
         associateId: parsed.data.associateId ?? null,
         employeeCount: data.rows.length,
+        exportAuthority,
         includedFullSsn: data.rows.filter((r) => r.ssn !== '').length,
         includedBankAccounts: data.rows.filter((r) => r.accountNumber !== '').length,
         gaps: data.gaps,

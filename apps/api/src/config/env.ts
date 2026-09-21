@@ -201,6 +201,17 @@ const EnvSchema = z.object({
   // set 1800-3600. Each assigned+published shift starting within the next
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
   // guarded update, so overlapping sweeps/replicas can't double-send.
+  // Who may bulk-export SSN and bank data — the payroll census, the
+  // new-hire report, the external payroll sheet, the audit packet — as
+  // comma-separated emails. The capability export:payroll-pii still
+  // decides whether a ROLE may touch SSNs at all; this narrows the
+  // whole-roster download to named people, because reading one record in
+  // the UI and downloading two thousand are different risks.
+  //
+  // Unset means the capability alone decides: a blank value on a deploy
+  // must never be able to stop payday. Every export taken that way says
+  // so in the log and carries `exportAuthority: 'unset'` on its audit row.
+  PII_BULK_EXPORT_USERS: z.string().optional(),
   SHIFT_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
   // Daily schedule digest to admins (Sling-style morning summary: every
   // shift today, who's on it, fill/unconfirmed counts). The sweep runs

@@ -5,6 +5,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { recordCriticalAudit } from '../lib/audit.js';
+import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { COMPANY_INFO, formatRef } from '../lib/emailTemplates.js';
 import { ALTO_POLICIES } from '../lib/altoHrContent.js';
@@ -99,6 +100,8 @@ auditPacketRouter.post(
   HR_ADMIN,
   bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
+    // A roster's I-9 images and SSN cards in one archive: named people only.
+    assertBulkPiiExporter(req);
     const input = GenerateInputSchema.parse(req.body);
     if (input.periodEnd < input.periodStart) {
       throw new HttpError(400, 'invalid_period', 'periodEnd must be on or after periodStart.');

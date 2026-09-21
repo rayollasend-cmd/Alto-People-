@@ -39,6 +39,7 @@ import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
+import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 
 export const orgRouter = Router();
@@ -1609,6 +1610,8 @@ orgRouter.post(
     if (!hasCapability(req.user!.role, 'export:payroll-pii')) {
       throw new HttpError(403, 'forbidden', 'Missing capability: export:payroll-pii');
     }
+    // …and the whole-roster download is narrower still: named people only.
+    const exportAuthority = assertBulkPiiExporter(req);
 
     const { reason } = RevealReasonSchema.parse(req.body);
 
@@ -1724,6 +1727,7 @@ orgRouter.post(
           reason,
           scope: 'active',
           rowCount: associates.length,
+          exportAuthority,
           decryptFailures,
           associateIds: associates.map((a) => a.id),
         },

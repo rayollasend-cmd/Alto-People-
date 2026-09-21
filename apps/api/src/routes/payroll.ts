@@ -75,6 +75,7 @@ import { listW2EligibleAssociates } from '../lib/w2Aggregator.js';
 import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
 import archiver from 'archiver';
+import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 
 export const payrollRouter = Router();
 
@@ -2001,6 +2002,9 @@ payrollRouter.get('/new-hire-report', PROCESS, async (_req, res, next) => {
 // same CAPABILITY too, rather than process:payroll's six roles.
 payrollRouter.get('/new-hire-report.csv', requireCapability('export:payroll-pii'), async (req, res, next) => {
   try {
+    // Full SSNs and home addresses for every unreported hire — a named
+    // exporter's job, not the whole role's.
+    const exportAuthority = assertBulkPiiExporter(req);
     const stateFilter =
       typeof req.query.state === 'string' && /^[A-Za-z]{2}$/.test(req.query.state)
         ? req.query.state.toUpperCase()
@@ -2056,7 +2060,7 @@ payrollRouter.get('/new-hire-report.csv', requireCapability('export:payroll-pii'
         action: 'payroll.new_hire_report_exported',
         entityType: 'Associate',
         entityId: req.user!.id,
-        metadata: { included, stateFilter },
+        metadata: { included, stateFilter, rowCount: included, exportAuthority },
       },
       'payroll.new_hire_report_exported',
     );
