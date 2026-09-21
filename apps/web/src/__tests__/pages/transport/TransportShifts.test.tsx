@@ -170,9 +170,19 @@ describe('booking by shift', () => {
     // Time inputs are for "Other time" only.
     expect(within(dialog).queryByLabelText(/Be at work by/)).not.toBeInTheDocument();
 
-    await userEvent.click(morning);
+    // Re-query rather than reusing `morning`: the trips query resolving
+    // between the two lines re-renders the group, and clicking the node
+    // captured before that lands on a detached element — the whole
+    // booking silently does nothing, which is how this test flaked.
+    await userEvent.click(
+      within(within(dialog).getByRole('radiogroup', { name: 'Which shift?' })).getByRole('radio', {
+        name: /Morning/,
+      }),
+    );
     expect(within(dialog).getByText(/you’ll be #3 on the waitlist/)).toBeInTheDocument();
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Join the waitlist' }));
+    const join = within(dialog).getByRole('button', { name: 'Join the waitlist' });
+    await waitFor(() => expect(join).toBeEnabled());
+    await userEvent.click(join);
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ direction: 'TO_WORK', locationId: 'l1', stopId: 's1', windowLabel: 'Morning' });
     expect(posted[0]).not.toHaveProperty('targetAt');

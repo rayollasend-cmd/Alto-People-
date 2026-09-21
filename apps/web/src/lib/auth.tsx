@@ -128,7 +128,7 @@ function clearUserScopedStorage(): void {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUserState] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
 
@@ -194,13 +194,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // mounted once and must always see the CURRENT user without
   // re-subscribing on every auth change.
   const userRef = useRef<AuthUser | null>(null);
+  /**
+   * Every write to the signed-in user goes through here so `userRef`
+   * moves in the same tick as the state.
+   *
+   * Mirroring it in an effect left a window between the commit and the
+   * effect flushing where the mid-session 401 handler below read null and
+   * returned — swallowing the only signal that the session had died, so
+   * the app kept a dead session until the next unlucky request. It showed
+   * up as a load-dependent test flake; on a slow phone it is a user
+   * staring at a page that will never load.
+   */
+  const setUser = useCallback((next: AuthUser | null) => {
+    userRef.current = next;
+    setUserState(next);
+  }, []);
   const reprobeInFlightRef = useRef(false);
   const deathToastShownRef = useRef(false);
   const offlineTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    userRef.current = user;
-    // A fresh sign-in re-arms the toast for the NEXT session death.
+    // A fresh sign-in re-arms the toast for the NEXT session death. The
+    // ref itself is kept current by setUser, not here.
     if (user) deathToastShownRef.current = false;
   }, [user]);
 
