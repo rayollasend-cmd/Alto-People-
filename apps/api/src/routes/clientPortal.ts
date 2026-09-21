@@ -27,6 +27,7 @@ import {
   gradeWeeks,
   incidentWhere,
   loadAcknowledgements,
+  serviceReportKey,
   loadPunches,
   loadTargets,
   netMinutes,
@@ -837,7 +838,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       serviceReport: {
         weekStart: lastCompletedWeek,
         url: withPreview(`/api/client-portal/service-report.pdf?week=${lastCompletedWeek}`),
-        reviewed: reviewed('SERVICE_REPORT', lastCompletedWeek),
+        reviewed: reviewed('SERVICE_REPORT', serviceReportKey(scope, lastCompletedWeek)),
       },
     });
   } catch (err) {
@@ -1591,7 +1592,7 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         weekStart: w,
         weekEnd: nextKey(w, 6),
         url: `/api/client-portal/service-report.pdf?week=${w}${previewQs}`,
-        reviewed: reviewed('SERVICE_REPORT', w),
+        reviewed: reviewed('SERVICE_REPORT', serviceReportKey(scope, w)),
       })),
       stores: storeRows,
     });
@@ -1669,19 +1670,25 @@ clientPortalRouter.post('/client-portal/acknowledge', requireAuth, async (req, r
     } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input.key)) {
       throw new HttpError(400, 'invalid_key', 'A service report is keyed by its week start (YYYY-MM-DD).');
     }
+    // The caller sends the week; the store comes from their own account,
+    // never from the request, so one store can never sign for another.
+    const subjectKey =
+      input.kind === 'SERVICE_REPORT'
+        ? serviceReportKey({ locationId: req.user!.locationId ?? null }, input.key)
+        : input.key;
     const existing = await prisma.clientAcknowledgement.findUnique({
-      where: { clientId_kind_subjectKey: { clientId, kind: input.kind, subjectKey: input.key } },
+      where: { clientId_kind_subjectKey: { clientId, kind: input.kind, subjectKey } },
       include: { user: { select: { associate: { select: { firstName: true } }, email: true } } },
     });
     const row =
       existing ??
       (await prisma.clientAcknowledgement.create({
-        data: { clientId, kind: input.kind, subjectKey: input.key, userId: req.user!.id },
+        data: { clientId, kind: input.kind, subjectKey, userId: req.user!.id },
         include: { user: { select: { associate: { select: { firstName: true } }, email: true } } },
       }));
     res.status(existing ? 200 : 201).json({
       kind: row.kind,
-      key: row.subjectKey,
+      key: input.key,
       reviewedAt: row.createdAt.toISOString(),
       reviewedBy: reviewerName(row.user),
     });

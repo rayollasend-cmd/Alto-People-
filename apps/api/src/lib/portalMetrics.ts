@@ -320,6 +320,22 @@ export function reviewerName(
   return u.associate?.firstName ?? u.email.split('@')[0] ?? null;
 }
 
+/**
+ * The acknowledgement key for a service report.
+ *
+ * The report is per store, so the mark has to be per store too. Keyed by
+ * week alone, the first manager to mark a week reviewed marked it for
+ * every store on the account: their sibling's dashboard showed the week
+ * signed off, under a name they didn't recognise, and their own "mark
+ * reviewed" landed on the existing row instead of creating theirs.
+ */
+export function serviceReportKey(
+  scope: Pick<PortalScope, 'locationId'>,
+  weekStart: string,
+): string {
+  return scope.locationId ? `${scope.locationId}:${weekStart}` : weekStart;
+}
+
 /** "Reviewed" marks for a client, keyed `${kind}|${key}`. */
 export async function loadAcknowledgements(clientId: string) {
   const rows = await prisma.clientAcknowledgement.findMany({

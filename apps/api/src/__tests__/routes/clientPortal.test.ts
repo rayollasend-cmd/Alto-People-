@@ -856,6 +856,40 @@ describe('one store, one set of numbers', () => {
     expect(market.body.safety.open).toBe(1);
   });
 
+  it('keeps one store's reviewed mark off another store's report', async () => {
+    const s = await seedTwoStores();
+    const { user: otherStoreUser } = await createUser({
+      role: 'CLIENT_PORTAL',
+      clientId: s.client.id,
+    });
+    await prisma.user.update({
+      where: { id: otherStoreUser.id },
+      data: { locationId: s.storeB.id },
+    });
+
+    const week = (await (await loginAs(s.storeUser.email)).get('/client-portal/overview'))
+      .body.serviceReport.weekStart as string;
+
+    // Store B signs off its own week.
+    const marked = await (await loginAs(otherStoreUser.email))
+      .post('/client-portal/acknowledge')
+      .send({ kind: 'SERVICE_REPORT', key: week });
+    expect(marked.status).toBe(201);
+    expect(marked.body.key).toBe(week);
+
+    // Store A's report for the same week is still unsigned.
+    const a = await (await loginAs(s.storeUser.email)).get('/client-portal/overview');
+    expect(a.body.serviceReport.weekStart).toBe(week);
+    expect(a.body.serviceReport.reviewed).toBeNull();
+
+    // And signing it is store A's own act, not a no-op on B's row.
+    const own = await (await loginAs(s.storeUser.email))
+      .post('/client-portal/acknowledge')
+      .send({ kind: 'SERVICE_REPORT', key: week });
+    expect(own.status).toBe(201);
+    expect(await prisma.clientAcknowledgement.count({ where: { kind: 'SERVICE_REPORT' } })).toBe(2);
+  });
+
   it('withholds the client-wide statement PDF from a store account', async () => {
     const s = await seedTwoStores();
 
