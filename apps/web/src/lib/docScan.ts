@@ -1,4 +1,4 @@
-import cv from '@techstark/opencv-js';
+import { loadOpenCv, type CvNamespace } from './opencvLoader';
 
 /**
  * Document scanning engine — OpenCV (WebAssembly) behind a tiny facade.
@@ -26,18 +26,30 @@ export interface Point {
 /** Corners ordered TL, TR, BR, BL. */
 export type Quad = [Point, Point, Point, Point];
 
+/**
+ * The running OpenCV namespace, once cvReady() has resolved. Every
+ * function below assumes it, which is safe because each entry point
+ * awaits cvReady() first.
+ */
+let cv!: CvNamespace;
 let readyPromise: Promise<void> | null = null;
 
-/** Resolves when the wasm runtime is initialized. Safe to call often. */
+/**
+ * Resolves when the wasm runtime is up. Safe to call often.
+ *
+ * REJECTS when no build can start — under our CSP that is what the npm
+ * package does, and it is why we vendor our own. Callers treat a
+ * rejection as "no automatic detection" and fall back to manual cropping;
+ * none of them should treat it as an error worth showing.
+ */
 export function cvReady(): Promise<void> {
   if (!readyPromise) {
-    readyPromise = new Promise<void>((resolve) => {
-      // Depending on load timing, the runtime may already be up.
-      if (typeof cv.Mat === 'function') {
-        resolve();
-        return;
+    readyPromise = loadOpenCv().then((loaded) => {
+      if (!loaded) {
+        readyPromise = null; // let a later attempt try again
+        throw new Error('OpenCV is unavailable in this browser');
       }
-      cv.onRuntimeInitialized = () => resolve();
+      cv = loaded;
     });
   }
   return readyPromise;

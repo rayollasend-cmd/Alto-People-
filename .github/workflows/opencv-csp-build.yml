@@ -125,14 +125,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          mkdir -p apps/web/vendor/opencv
-          cp opencv-out/opencv.js apps/web/vendor/opencv/opencv.js
+          mkdir -p apps/web/public/vendor/opencv
+          cp opencv-out/opencv.js apps/web/public/vendor/opencv/opencv.js
           if [ -f opencv-out/opencv_js.wasm ]; then
-            cp opencv-out/opencv_js.wasm apps/web/vendor/opencv/
+            cp opencv-out/opencv_js.wasm apps/web/public/vendor/opencv/
           fi
           # Prove it again from the repo copy — this is the file that ships.
-          node apps/web/scripts/verify-opencv-csp.mjs apps/web/vendor/opencv/opencv.js
-          git add apps/web/vendor/opencv
+          node apps/web/scripts/verify-opencv-csp.mjs apps/web/public/vendor/opencv/opencv.js
+          git add apps/web/public/vendor/opencv
           git commit -m "build(scanning): vendor OpenCV ${{ inputs.opencv_ref }} built without dynamic execution
 
           Built by the 'Build OpenCV.js (strict CSP)' workflow with

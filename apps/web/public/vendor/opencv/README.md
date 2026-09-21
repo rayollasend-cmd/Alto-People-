@@ -29,20 +29,29 @@ closure-based invokers and generates no code at all. OpenCV's own
    matching custom export config, since the bindings generator's list is
    written against the default set — worth doing as a measured follow-up
    once a working build exists, not as part of getting one.
-2. Download the artifact and put `opencv.js` in this directory. If the
-   build emitted a separate `opencv_js.wasm`, put it here too.
+2. Download the artifact and put `opencv.js` in
+   `apps/web/public/vendor/opencv/`. If the build emitted a separate
+   `opencv_js.wasm`, put it there too.
+
+   It lives under `public/` and is loaded with a `<script>` tag at
+   runtime, not imported. The build is a classic UMD file whose export is
+   an Emscripten factory, so bundling it would mean teaching the bundler
+   to interpret UMD — and would put 11MB inside a JS chunk. As a static
+   file it is same-origin (so `script-src 'self'` allows it), it is
+   fetched only on the scan surfaces, and the bundler never looks at it.
 3. Verify what you are about to ship:
 
    ```
-   node apps/web/scripts/verify-opencv-csp.mjs apps/web/vendor/opencv/opencv.js
+   node apps/web/scripts/verify-opencv-csp.mjs apps/web/public/vendor/opencv/opencv.js
    ```
 
    It must report no runtime code generation. Do not skip this: minified
    Emscripten builds reach the `Function` constructor through a helper, so
    grepping for `new Function(` by hand reads clean on builds that are not.
 
-4. Build the web app. `vite.config.ts` aliases `@techstark/opencv-js` to
-   this file when it exists, so no importing module changes.
+4. Build the web app. `lib/opencvLoader.ts` tries this file first and
+   falls back to the npm package when it is absent, so no importing
+   module changes and nothing breaks while it is missing.
 
 ## Checking it actually works
 
