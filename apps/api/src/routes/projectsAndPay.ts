@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { effectiveClientIdFilter } from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
+import { assertClientInScope, effectiveClientIdFilter, scopeClients } from '../lib/scope.js';
 
 /**
  * Phase 86 — Projects, premium pay rules, tip pools.
@@ -71,8 +72,24 @@ projectsAndPayRouter.get('/projects', VIEW_TIME, async (req, res) => {
   res.json({ projects: rows });
 });
 
+/**
+ * A Project is a client's cost code. manage:time is held by
+ * SHIFT_SUPERVISOR, which is clamped to one client everywhere else in the
+ * product, and the three writes below checked only the capability — so a
+ * supervisor at one store could add, rename or retire another store's
+ * project codes, which are what its people book their hours against.
+ *
+ * Premium-pay rules and tip pools in this same file are guarded by
+ * process:payroll, which no client-bounded role holds, so they stay
+ * org-wide by design.
+ */
+const projectInScope = (user: SessionUser, id: string): Prisma.ProjectWhereInput => ({
+  AND: [{ id }, { client: { is: scopeClients(user) } }],
+});
+
 projectsAndPayRouter.post('/projects', MANAGE_TIME, async (req, res) => {
   const input = ProjectInputSchema.parse(req.body);
+  await assertClientInScope(prisma, req.user!, input.clientId);
   const created = await prisma.project.create({
     data: {
       clientId: input.clientId,
@@ -89,6 +106,10 @@ projectsAndPayRouter.post('/projects', MANAGE_TIME, async (req, res) => {
 projectsAndPayRouter.put('/projects/:id', MANAGE_TIME, async (req, res) => {
   const id = req.params.id;
   const input = ProjectInputSchema.partial().parse(req.body);
+  const existing = await prisma.project.findFirst({ where: projectInScope(req.user!, id) });
+  if (!existing) throw new HttpError(404, 'not_found', 'Project not found.');
+  // clientId stays put — moving a project between clients would carry every
+  // hour already booked against it across the tenant boundary.
   await prisma.project.update({
     where: { id },
     data: {
@@ -104,6 +125,8 @@ projectsAndPayRouter.put('/projects/:id', MANAGE_TIME, async (req, res) => {
 
 projectsAndPayRouter.delete('/projects/:id', MANAGE_TIME, async (req, res) => {
   const id = req.params.id;
+  const existing = await prisma.project.findFirst({ where: projectInScope(req.user!, id) });
+  if (!existing) throw new HttpError(404, 'not_found', 'Project not found.');
   await prisma.project.update({
     where: { id },
     data: { isActive: false },

@@ -439,6 +439,19 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
         where: { id: jobId, deletedAt: null, isActive: true },
       });
       if (!job) throw new HttpError(404, 'job_not_found', 'Job not found or inactive');
+      // The punch is about to inherit the job's client, and
+      // scopeTimeEntries filters on that column — so a client-bounded
+      // caller picking someone else's job files their own shift into
+      // another client's labour-cost reports and portal, and out of their
+      // own store's. Any active job id used to be accepted.
+      //
+      // This is the rule /admin/entries already applies below, so the two
+      // ways to create an entry agree. Same 404 and wording as a missing
+      // job, so it is not an oracle for which ids exist elsewhere.
+      const boundedTo = effectiveClientIdFilter(user, undefined);
+      if (boundedTo !== undefined && job.clientId !== boundedTo) {
+        throw new HttpError(404, 'job_not_found', 'Job not found or inactive');
+      }
       clientId = job.clientId;
       payRate = job.payRate ? Number(job.payRate) : null;
     }

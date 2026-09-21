@@ -310,6 +310,30 @@ export function scopeQualificationWrites(
 }
 
 /**
+ * The client this write is about had better be one the caller owns.
+ *
+ * For a row that hangs off a client — a Job, a Project, a rate card — the
+ * capability says whether the caller may manage that KIND of thing, and
+ * this says whose. 404 rather than 403, so an id from another tenant is
+ * indistinguishable from one that does not exist.
+ *
+ * `AND` rather than a spread: several scope helpers return an `id`
+ * constraint of their own, and two `id` keys in one object literal means
+ * one silently wins.
+ */
+export async function assertClientInScope(
+  tx: Tx,
+  user: SessionUser,
+  clientId: string,
+): Promise<void> {
+  const found = await tx.client.findFirst({
+    where: { AND: [{ id: clientId }, scopeClients(user)] },
+    select: { id: true },
+  });
+  if (!found) throw new HttpError(404, 'client_not_found', 'Client not found');
+}
+
+/**
  * Resolves the effective `clientId` filter for a list endpoint that's
  * reachable by tenant-bounded roles. CLIENT_PORTAL and ASSOCIATE are
  * always clamped to their own `clientId` — anything they pass in the
