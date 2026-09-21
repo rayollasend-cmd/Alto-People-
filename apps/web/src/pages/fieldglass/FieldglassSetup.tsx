@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, FileSpreadsheet, History as HistoryIcon, Pencil, Search, X } from 'lucide-react';
+import { Check, FileSpreadsheet, History as HistoryIcon, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FieldglassStatus } from '@alto-people/shared';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -14,9 +14,14 @@ import {
   Card,
   EmptyState,
   ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
+  Label,
   PageHeader,
+  SearchInput,
   SegmentedControl,
+  Select,
   Skeleton,
 } from '@/components/ui';
 import { FieldglassQueueList, type FieldglassQueueRow } from './FieldglassQueue';
@@ -54,6 +59,41 @@ interface SetupResponse {
   roster: RosterRow[];
 }
 
+
+/* ===== Filters ==========================================================
+ * Finance works this desk one client at a time ("who do I owe Walmart
+ * 218?"), one person at a time ("did Rosa ever get a Worker ID?"), and
+ * by date when a billing week is being closed. Every filter lives in the
+ * URL, so a filtered desk can be sent to someone else as a link.
+ * ====================================================================== */
+
+type Kind = 'all' | 'add' | 'transfer' | 'close';
+
+/** The date a To-do row is judged on: when they start (or started). */
+const queueDate = (r: FieldglassQueueRow): string | null =>
+  (r.firstShiftAt ?? r.hireDate ?? r.approvedAt ?? null)?.slice(0, 10) ?? null;
+
+/** The date a registered row is judged on: when they last worked. */
+const rosterDate = (r: RosterRow): string | null =>
+  (r.lastWorked ?? r.addedAt ?? null)?.slice(0, 10) ?? null;
+
+const inRange = (day: string | null, from: string, to: string): boolean => {
+  if (!from && !to) return true;
+  // No date to judge means it can't satisfy a date filter — better absent
+  // than silently counted in a billing window it may not belong to.
+  if (!day) return false;
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+};
+
+const matches = (haystack: Array<string | null | undefined>, search: string): boolean => {
+  const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const hay = haystack.filter(Boolean).join(' ').toLowerCase();
+  return tokens.every((t) => hay.includes(t));
+};
+
 /** "2026-09-18" → "09/18/2026", as Fieldglass writes dates. */
 const usDate = (ymd: string) => `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}/${ymd.slice(0, 4)}`;
 
@@ -86,18 +126,83 @@ export function FieldglassSetup() {
     );
 
   const data = q.data;
+
+  // Filters live in the URL next to ?tab=.
+  const search = params.get('q') ?? '';
+  const client = params.get('client') ?? '';
+  const kind = (params.get('kind') as Kind | null) ?? 'all';
+  const from = params.get('from') ?? '';
+  const to = params.get('to') ?? '';
+  const missingOnly = params.get('missing') === '1';
+  const setParam = (key: string, value: string) =>
+    setParams(
+      (prev) => {
+        if (value) prev.set(key, value);
+        else prev.delete(key);
+        return prev;
+      },
+      { replace: true },
+    );
+  const filtered = search !== '' || client !== '' || kind !== 'all' || from !== '' || to !== '' || missingOnly;
+  const clearFilters = () =>
+    setParams(
+      (prev) => {
+        for (const k of ['q', 'client', 'kind', 'from', 'to', 'missing']) prev.delete(k);
+        return prev;
+      },
+      { replace: true },
+    );
+
+  // Every client that appears anywhere on the desk, so the list doesn't
+  // change under you when you switch tabs.
+  const clients = useMemo(() => {
+    const names = new Set<string>();
+    for (const r of data?.queue ?? []) {
+      if (r.clientName) names.add(r.clientName);
+      if (r.fromClientName) names.add(r.fromClientName);
+    }
+    for (const r of data?.roster ?? []) if (r.clientName) names.add(r.clientName);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [data]);
+
+  const queue = useMemo(
+    () =>
+      (data?.queue ?? []).filter((r) => {
+        if (kind !== 'all' && r.kind !== kind) return false;
+        // A transfer sits between two clients; either side counts as that
+        // client's work to do.
+        if (client && r.clientName !== client && r.fromClientName !== client) return false;
+        if (!inRange(queueDate(r), from, to)) return false;
+        return matches([r.name, r.clientName, r.fromClientName, r.position, r.email, r.workerId], search);
+      }),
+    [data, kind, client, from, to, search],
+  );
+  const roster = useMemo(
+    () =>
+      (data?.roster ?? []).filter((r) => {
+        if (missingOnly && (r.workerId || r.separated)) return false;
+        if (client && r.clientName !== client) return false;
+        if (!inRange(rosterDate(r), from, to)) return false;
+        return matches([r.name, r.clientName, r.workerId], search);
+      }),
+    [data, missingOnly, client, from, to, search],
+  );
+
   const counts = useMemo(() => {
-    const queue = data?.queue ?? [];
     return {
       add: queue.filter((r) => r.kind === 'add').length,
       transfer: queue.filter((r) => r.kind === 'transfer').length,
       close: queue.filter((r) => r.kind === 'close').length,
       unbilled: queue.reduce((s, r) => s + (r.hoursUnbilled ?? 0), 0),
       unbilledPeople: queue.filter((r) => (r.hoursUnbilled ?? 0) > 0).length,
-      active: (data?.roster ?? []).filter((r) => !r.separated).length,
-      noWorkerId: (data?.roster ?? []).filter((r) => !r.separated && !r.workerId).length,
+      active: roster.filter((r) => !r.separated).length,
+      noWorkerId: roster.filter((r) => !r.separated && !r.workerId).length,
+      // Totals behind the filter, for the "showing x of y" line.
+      allQueue: (data?.queue ?? []).length,
+      allActive: (data?.roster ?? []).filter((r) => !r.separated).length,
+      allMissing: (data?.roster ?? []).filter((r) => !r.separated && !r.workerId).length,
     };
-  }, [data]);
+  }, [data, queue, roster]);
 
   return (
     <div className="space-y-5">
@@ -133,26 +238,131 @@ export function FieldglassSetup() {
             />
           </div>
 
+          <FilterBar className="gap-x-3 gap-y-2">
+            <SearchInput
+              value={search}
+              onChange={(e) => setParam('q', e.target.value)}
+              placeholder="Name, client, Worker ID…"
+              aria-label="Search the Fieldglass desk"
+              wrapperClassName="min-w-[14rem] flex-1"
+            />
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="fg-client" className="text-2xs uppercase tracking-wider text-silver/70">
+                Client
+              </Label>
+              <Select
+                id="fg-client"
+                value={client}
+                onChange={(e) => setParam('client', e.target.value)}
+                className="h-9 w-44"
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="fg-from" className="text-2xs uppercase tracking-wider text-silver/70">
+                {tab === 'todo' ? 'Starts' : 'Last worked'}
+              </Label>
+              <Input
+                id="fg-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setParam('from', e.target.value)}
+                className="h-9 w-[9.5rem]"
+                aria-label={tab === 'todo' ? 'Starts on or after' : 'Last worked on or after'}
+              />
+              <span className="text-xs text-silver/60">to</span>
+              <Input
+                id="fg-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setParam('to', e.target.value)}
+                className="h-9 w-[9.5rem]"
+                aria-label={tab === 'todo' ? 'Starts on or before' : 'Last worked on or before'}
+              />
+            </div>
+            {tab === 'todo' ? (
+              <div className="flex items-center gap-1.5">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['add', 'To add'],
+                    ['transfer', 'Transfers'],
+                    ['close', 'To close'],
+                  ] as Array<[Kind, string]>
+                ).map(([value, label]) => (
+                  <FilterChip
+                    key={value}
+                    active={kind === value}
+                    onClick={() => setParam('kind', value === 'all' ? '' : value)}
+                  >
+                    {label}
+                  </FilterChip>
+                ))}
+              </div>
+            ) : (
+              <FilterChip active={missingOnly} onClick={() => setParam('missing', missingOnly ? '' : '1')}>
+                Missing a Worker ID ({counts.allMissing})
+              </FilterChip>
+            )}
+            {filtered && (
+              <Button variant="ghost" size="xs" onClick={clearFilters}>
+                <X className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                Clear
+              </Button>
+            )}
+          </FilterBar>
+
+          {filtered && (
+            <p className="-mt-2 text-xs text-silver/70" aria-live="polite">
+              {tab === 'todo'
+                ? `Showing ${queue.length} of ${counts.allQueue} waiting on setup.`
+                : `Showing ${roster.length} of ${counts.allActive} registered.`}{' '}
+              The tiles above count what you are looking at.
+            </p>
+          )}
+
           <SegmentedControl
             ariaLabel="Fieldglass setup"
             value={tab}
             onChange={setTab}
             options={[
-              { value: 'todo', label: `To do (${data.queue.length})` },
+              { value: 'todo', label: `To do (${queue.length})` },
               { value: 'registered', label: `In Fieldglass (${counts.active})` },
             ]}
           />
 
           {tab === 'todo' ? (
             <Card className="p-4">
-              {data.queue.length === 0 ? (
-                <EmptyState title="Everyone is set up in Fieldglass" description="New hires land here once they’re approved and scheduled — or the moment they work unregistered." />
+              {queue.length === 0 ? (
+                <EmptyState
+                  title={filtered ? 'Nobody matches those filters' : 'Everyone is set up in Fieldglass'}
+                  description={
+                    filtered
+                      ? 'Widen the client, the dates or the search to see the rest of the desk.'
+                      : 'New hires land here once they’re approved and scheduled — or the moment they work unregistered.'
+                  }
+                  action={
+                    filtered ? (
+                      <Button variant="outline" size="sm" onClick={clearFilters}>
+                        Clear filters
+                      </Button>
+                    ) : undefined
+                  }
+                />
               ) : (
-                <FieldglassQueueList queue={data.queue} returnTo="/fieldglass" />
+                <FieldglassQueueList queue={queue} returnTo={`/fieldglass${params.toString() ? `?${params.toString()}` : ''}`} />
               )}
             </Card>
           ) : (
-            <Roster rows={data.roster} noWorkerId={counts.noWorkerId} />
+            <Roster rows={roster} total={(data.roster ?? []).length} onClear={clearFilters} />
           )}
         </>
       )}
@@ -160,40 +370,37 @@ export function FieldglassSetup() {
   );
 }
 
-function Roster({ rows, noWorkerId }: { rows: RosterRow[]; noWorkerId: number }) {
-  const [search, setSearch] = useState('');
-  const [missingOnly, setMissingOnly] = useState(false);
-  const shown = useMemo(() => {
-    const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    return rows.filter((r) => {
-      if (missingOnly && (r.workerId || r.separated)) return false;
-      const hay = `${r.name} ${r.clientName ?? ''} ${r.workerId ?? ''}`.toLowerCase();
-      return tokens.every((t) => hay.includes(t));
-    });
-  }, [rows, search, missingOnly]);
+function Roster({
+  rows,
+  total,
+  onClear,
+}: {
+  rows: RosterRow[];
+  total: number;
+  onClear: () => void;
+}) {
+  // Searching and filtering moved to the one bar above, shared with the
+  // To do tab — two search boxes on one page was the old confusion.
+  const shown = rows;
 
-  if (rows.length === 0) {
+  if (total === 0) {
     return <EmptyState title="Nobody registered yet" description="Mark someone added from To do and they’ll be listed here with their Worker ID." />;
+  }
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title="Nobody matches those filters"
+        description="Widen the client, the dates or the search to see everyone registered."
+        action={
+          <Button variant="outline" size="sm" onClick={onClear}>
+            Clear filters
+          </Button>
+        }
+      />
+    );
   }
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-navy-secondary p-3">
-        <div className="relative min-w-[14rem] flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-silver/60" aria-hidden="true" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, client or Worker ID…"
-            aria-label="Search who’s in Fieldglass"
-            className="pl-8"
-          />
-        </div>
-        {noWorkerId > 0 && (
-          <Button variant={missingOnly ? 'secondary' : 'ghost'} size="sm" aria-pressed={missingOnly} onClick={() => setMissingOnly((v) => !v)}>
-            Missing a Worker ID ({noWorkerId})
-          </Button>
-        )}
-      </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[52rem] text-sm">
           <thead>
