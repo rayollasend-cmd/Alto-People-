@@ -19,9 +19,16 @@ closure-based invokers and generates no code at all. OpenCV's own
 ## Getting the file
 
 1. Actions → **Build OpenCV.js (strict CSP)** → Run workflow. It builds
-   OpenCV from source with `-sDYNAMIC_EXECUTION=0`, trimmed to the three
-   modules the scanner uses (`core`, `imgproc`, `calib3d`), and refuses
-   to upload a build that still generates code.
+   OpenCV from source with `-s DYNAMIC_EXECUTION=0` and refuses to upload
+   a build that still generates code. By default it also commits the
+   result to a branch and opens a PR, so steps 2–4 are only needed if you
+   turn that input off.
+
+   The module set is the build script's default. Trimming it to the three
+   modules the scanner uses (`core`, `imgproc`, `calib3d`) needs a
+   matching custom export config, since the bindings generator's list is
+   written against the default set — worth doing as a measured follow-up
+   once a working build exists, not as part of getting one.
 2. Download the artifact and put `opencv.js` in this directory. If the
    build emitted a separate `opencv_js.wasm`, put it here too.
 3. Verify what you are about to ship:

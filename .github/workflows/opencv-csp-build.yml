@@ -58,35 +58,48 @@ jobs:
       - name: Fetch OpenCV
         run: git clone --depth 1 --branch ${{ inputs.opencv_ref }} https://github.com/opencv/opencv.git ~/opencv
 
-      # Only what the scanner calls: core (Mat, MatVector), imgproc
-      # (cvtColor, Canny, findContours, approxPolyDP, warpPerspective) and
-      # calib3d (getPerspectiveTransform). Everything else is weight the
-      # store tablet would download and never execute.
+      # The one flag that matters: DYNAMIC_EXECUTION=0 makes embind build
+      # its invokers as closures instead of from strings, which is what
+      # lets the module start under a CSP with no 'unsafe-eval'.
+      # build_js.py folds --build_flags into CMAKE_C/CXX_FLAGS, which CMake
+      # also passes at link, where -s settings take effect.
+      #
+      # Default module set on purpose. build_js.py already names each
+      # module it wants (-DBUILD_opencv_dnn=ON and so on) and the bindings
+      # generator's export list is written against exactly that set, so
+      # trimming needs a matching custom --config, not a BUILD_LIST that
+      # argues with it. Get a working build first; trim second, measured.
+      #
+      # Single file is the default here: the wasm is embedded in the .js,
+      # so vendoring is one file and there is no second URL to resolve.
       - name: Build with DYNAMIC_EXECUTION=0
         run: |
           source ~/emsdk/emsdk_env.sh
           cd ~/opencv
           python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
-            --disable_single_file=false \
-            --cmake_option="-DBUILD_LIST=core,imgproc,calib3d" \
-            --build_flags="-sDYNAMIC_EXECUTION=0"
+            --build_flags="-s DYNAMIC_EXECUTION=0"
           ls -la build_wasm/bin
+          mkdir -p "$GITHUB_WORKSPACE/opencv-out"
+          cp build_wasm/bin/opencv.js "$GITHUB_WORKSPACE/opencv-out/"
+          # Only present when the build was told not to inline the wasm.
+          if [ -f build_wasm/bin/opencv_js.wasm ]; then
+            cp build_wasm/bin/opencv_js.wasm "$GITHUB_WORKSPACE/opencv-out/"
+          fi
+          ls -la "$GITHUB_WORKSPACE/opencv-out"
 
       # The whole point of the build. If the artifact still constructs
       # functions from strings, it will still die under our CSP, and a
       # green build that ships it would be worse than no build at all.
       - name: Refuse a build that still generates code
         run: |
-          node "$GITHUB_WORKSPACE/apps/web/scripts/verify-opencv-csp.mjs" ~/opencv/build_wasm/bin/opencv.js
+          node apps/web/scripts/verify-opencv-csp.mjs opencv-out/opencv.js
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: opencv-js-strict-csp-${{ inputs.opencv_ref }}
-          path: |
-            ~/opencv/build_wasm/bin/opencv.js
-            ~/opencv/build_wasm/bin/opencv_js.wasm
+          path: opencv-out/
           if-no-files-found: error
 
       # Vendor it on a branch and open a PR, so the only human step is
@@ -94,7 +107,7 @@ jobs:
       # multi-megabyte file by hand.
       - name: Refuse a file too large to live in git
         run: |
-          SIZE=$(stat -c%s ~/opencv/build_wasm/bin/opencv.js)
+          SIZE=$(stat -c%s opencv-out/opencv.js)
           echo "opencv.js is $((SIZE / 1024 / 1024)) MB"
           if [ "$SIZE" -gt 41943040 ]; then
             echo "Over 40 MB — that does not belong in the repository."
@@ -113,9 +126,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           mkdir -p apps/web/vendor/opencv
-          cp ~/opencv/build_wasm/bin/opencv.js apps/web/vendor/opencv/opencv.js
-          if [ -f ~/opencv/build_wasm/bin/opencv_js.wasm ]; then
-            cp ~/opencv/build_wasm/bin/opencv_js.wasm apps/web/vendor/opencv/
+          cp opencv-out/opencv.js apps/web/vendor/opencv/opencv.js
+          if [ -f opencv-out/opencv_js.wasm ]; then
+            cp opencv-out/opencv_js.wasm apps/web/vendor/opencv/
           fi
           # Prove it again from the repo copy — this is the file that ships.
           node apps/web/scripts/verify-opencv-csp.mjs apps/web/vendor/opencv/opencv.js
@@ -123,8 +136,7 @@ jobs:
           git commit -m "build(scanning): vendor OpenCV ${{ inputs.opencv_ref }} built without dynamic execution
 
           Built by the 'Build OpenCV.js (strict CSP)' workflow with
-          -sDYNAMIC_EXECUTION=0, trimmed to core, imgproc and calib3d, and
-          verified to generate no code at runtime. The vite alias picks it
+          -s DYNAMIC_EXECUTION=0 and verified to generate no code at runtime. The vite alias picks it
           up on merge, which is what brings document scanning back under a
           CSP with no 'unsafe-eval'."
           git push origin "$BRANCH"
@@ -132,7 +144,7 @@ jobs:
             --title "Vendor OpenCV ${{ inputs.opencv_ref }} built for strict CSP" \
             --body "Document scanning has been falling back to manual cropping because every published OpenCV.js generates code at runtime, which our CSP forbids.
 
-          This is a build made with \`-sDYNAMIC_EXECUTION=0\`, trimmed to \`core\`, \`imgproc\` and \`calib3d\`. The workflow refused to upload it unless \`verify-opencv-csp.mjs\` found no runtime code generation, and the check ran again against this exact committed file.
+          This is a build made with \`-s DYNAMIC_EXECUTION=0\`, default module set. The workflow refused to upload it unless \`verify-opencv-csp.mjs\` found no runtime code generation, and the check ran again against this exact committed file.
 
           Merging swaps it in through the vite alias — no importing module changes. After it deploys, open the ID capture on a phone and confirm the live edge outline appears, with no CSP violation in the console.
 
