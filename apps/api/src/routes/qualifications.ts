@@ -4,7 +4,15 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { effectiveClientIdFilter, scopeShifts } from '../lib/scope.js';
+import {
+  effectiveClientIdFilter,
+  isClientBoundedRole,
+  scopeAssociates,
+  scopeQualifications,
+  scopeQualificationWrites,
+  scopeShifts,
+} from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 import { hasCapability } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
@@ -43,6 +51,99 @@ export const qualificationsRouter = Router();
 const VIEW_SCHED = requireCapability('view:scheduling');
 const MANAGE_SCHED = requireCapability('manage:scheduling');
 
+/**
+ * ----- Scope guards -------------------------------------------------------
+ *
+ * Every write below was reachable with nothing but the manage:scheduling
+ * capability, and SHIFT_SUPERVISOR holds it while being clamped to a single
+ * client by `scopeShifts`, `scopeAssociates` and `scopeClients` everywhere
+ * else in the product. The capability answers "may this person manage
+ * schedules"; it was being read as "may this person manage EVERY client's
+ * schedules".
+ *
+ * What that bought a supervisor at one store:
+ *
+ *   - revoke another client's associate's forklift certification, which
+ *     drops them out of open-shift eligibility (`assertCanClaimOpenShift`
+ *     reads exactly this table);
+ *   - delete a requirement off another client's shift, so anyone at all
+ *     may then claim it;
+ *   - rename or soft-delete a GLOBAL qualification, which is the same act
+ *     performed against every client at once.
+ *
+ * These are writes, so none of it needed a leaked id to be worth doing —
+ * a guessed one would do, and the ids are uuids returned by list endpoints
+ * the same roles can already reach.
+ *
+ * A scope miss is 404, not 403: an id from another client should be
+ * indistinguishable from one that does not exist.
+ */
+
+/** The qualification, if this caller is allowed to EDIT it. */
+async function qualificationForWriteOr404(user: SessionUser, id: string) {
+  const row = await prisma.qualification.findFirst({
+    where: { AND: [{ id, deletedAt: null }, scopeQualificationWrites(user)] },
+  });
+  if (!row) throw new HttpError(404, 'not_found', 'Qualification not found.');
+  return row;
+}
+
+/**
+ * The caller may USE this qualification — attach it to a shift, grant it to
+ * a worker. Wider than the write scope on purpose: a supervisor attaches the
+ * org's global "Forklift certified" to their own shift without being able to
+ * rename it for everyone.
+ */
+async function assertQualificationUsable(user: SessionUser, qualificationId: string) {
+  const found = await prisma.qualification.findFirst({
+    where: { AND: [{ id: qualificationId, deletedAt: null }, scopeQualifications(user)] },
+    select: { id: true },
+  });
+  if (!found) throw new HttpError(404, 'not_found', 'Qualification not found.');
+}
+
+/**
+ * `AND` rather than a spread: `scopeAssociates` returns `{ id }` for an
+ * ASSOCIATE caller, so spreading it beside the requested id would have one
+ * silently overwrite the other — either the caller reads their own record
+ * whatever they asked for, or the scope evaporates. Which one depends on key
+ * order, which is not a thing to depend on.
+ */
+async function assertAssociateInScope(user: SessionUser, associateId: string) {
+  const found = await prisma.associate.findFirst({
+    where: { AND: [{ id: associateId }, scopeAssociates(user)] },
+    select: { id: true },
+  });
+  if (!found) throw new HttpError(404, 'not_found', 'Associate not found.');
+}
+
+async function assertShiftInScope(user: SessionUser, shiftId: string) {
+  const found = await prisma.shift.findFirst({
+    where: { AND: [{ id: shiftId }, scopeShifts(user)] },
+    select: { id: true },
+  });
+  if (!found) throw new HttpError(404, 'not_found', 'Shift not found.');
+}
+
+/**
+ * The clientId a new qualification may carry.
+ *
+ * `null` means GLOBAL — every client's shifts and rosters draw on it — so a
+ * client-bounded caller gets their own client whatever they asked for, and a
+ * mis-provisioned one (no clientId on file) gets a refusal rather than the
+ * power to mint org-wide rows.
+ */
+function newQualificationClientId(
+  user: SessionUser,
+  requested: string | null | undefined,
+): string | null {
+  if (!isClientBoundedRole(user)) return requested ?? null;
+  if (!user.clientId) {
+    throw new HttpError(403, 'no_client', 'Your account is not assigned to a client.');
+  }
+  return user.clientId;
+}
+
 // ----- Qualification catalog --------------------------------------------
 
 const QualInputSchema = z.object({
@@ -78,7 +179,7 @@ qualificationsRouter.post(
     const input = QualInputSchema.parse(req.body);
     const created = await prisma.qualification.create({
       data: {
-        clientId: input.clientId ?? null,
+        clientId: newQualificationClientId(req.user!, input.clientId),
         code: input.code,
         name: input.name,
         description: input.description ?? null,
@@ -95,6 +196,10 @@ qualificationsRouter.put(
   async (req, res) => {
     const id = req.params.id;
     const input = QualInputSchema.partial().parse(req.body);
+    await qualificationForWriteOr404(req.user!, id);
+    // clientId is deliberately NOT updatable: moving a qualification between
+    // clients (or out to global) would carry every grant and requirement
+    // already hanging off it across the tenant boundary with it.
     await prisma.qualification.update({
       where: { id },
       data: {
@@ -113,6 +218,7 @@ qualificationsRouter.delete(
   MANAGE_SCHED,
   async (req, res) => {
     const id = req.params.id;
+    await qualificationForWriteOr404(req.user!, id);
     await prisma.qualification.update({
       where: { id },
       data: { deletedAt: new Date() },
@@ -135,14 +241,11 @@ qualificationsRouter.get(
   VIEW_SCHED,
   async (req, res) => {
     const associateId = req.params.associateId;
-    // ASSOCIATE callers can only ever read their own qualifications via this
-    // endpoint. 404 (not 403) so they can't probe for which IDs exist.
-    if (
-      req.user!.role === 'ASSOCIATE' &&
-      req.user!.associateId !== associateId
-    ) {
-      throw new HttpError(404, 'not_found', 'Not found.');
-    }
+    // An ASSOCIATE reads only their own; a client-bounded caller only their
+    // own client's roster. This used to guard the first and not the second,
+    // so CLIENT_PORTAL and SHIFT_SUPERVISOR — both of which hold
+    // view:scheduling — could read any worker in the company.
+    await assertAssociateInScope(req.user!, associateId);
     const rows = await prisma.associateQualification.findMany({
       take: 500,
       where: { associateId, deletedAt: null },
@@ -169,6 +272,8 @@ qualificationsRouter.post(
   async (req, res) => {
     const associateId = req.params.associateId;
     const input = AssocQualInputSchema.parse(req.body);
+    await assertAssociateInScope(req.user!, associateId);
+    await assertQualificationUsable(req.user!, input.qualificationId);
     // Upsert: if a soft-deleted row exists, reuse it; if a live row exists, update it.
     const existing = await prisma.associateQualification.findFirst({
       where: { associateId, qualificationId: input.qualificationId },
@@ -204,6 +309,10 @@ qualificationsRouter.delete(
   MANAGE_SCHED,
   async (req, res) => {
     const { associateId, assocQualId } = req.params;
+    // Revoking a certification takes the worker out of open-shift
+    // eligibility — the most consequential write in this file, and the one
+    // that was reachable across clients.
+    await assertAssociateInScope(req.user!, associateId);
     const existing = await prisma.associateQualification.findUnique({
       where: { id: assocQualId },
     });
@@ -225,6 +334,7 @@ qualificationsRouter.get(
   VIEW_SCHED,
   async (req, res) => {
     const shiftId = req.params.shiftId;
+    await assertShiftInScope(req.user!, shiftId);
     const rows = await prisma.shiftQualificationRequirement.findMany({
       take: 500,
       where: { shiftId },
@@ -247,10 +357,33 @@ qualificationsRouter.post(
   async (req, res) => {
     const shiftId = req.params.shiftId;
     const input = z.object({ qualificationId: z.string().uuid() }).parse(req.body);
-    const created = await prisma.shiftQualificationRequirement.create({
-      data: { shiftId, qualificationId: input.qualificationId },
-    });
-    res.status(201).json({ id: created.id });
+    await assertShiftInScope(req.user!, shiftId);
+    await assertQualificationUsable(req.user!, input.qualificationId);
+    // (shiftId, qualificationId) is unique, and adding the same requirement
+    // twice is what a double-click does. The requirement is already there,
+    // which is what the caller wanted, so hand back the existing row rather
+    // than turning an impatient second press into a 500.
+    try {
+      const created = await prisma.shiftQualificationRequirement.create({
+        data: { shiftId, qualificationId: input.qualificationId },
+      });
+      res.status(201).json({ id: created.id });
+    } catch (err) {
+      if (
+        !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+        err.code !== 'P2002'
+      ) {
+        throw err;
+      }
+      const existing = await prisma.shiftQualificationRequirement.findUnique({
+        where: {
+          shiftId_qualificationId: { shiftId, qualificationId: input.qualificationId },
+        },
+        select: { id: true },
+      });
+      if (!existing) throw err;
+      res.status(200).json({ id: existing.id, alreadyRequired: true });
+    }
   },
 );
 
@@ -259,6 +392,9 @@ qualificationsRouter.delete(
   MANAGE_SCHED,
   async (req, res) => {
     const { shiftId, reqId } = req.params;
+    // Dropping a requirement widens who may claim the shift, so it is a
+    // write against the shift's client, not a tidy-up.
+    await assertShiftInScope(req.user!, shiftId);
     const existing = await prisma.shiftQualificationRequirement.findUnique({
       where: { id: reqId },
     });

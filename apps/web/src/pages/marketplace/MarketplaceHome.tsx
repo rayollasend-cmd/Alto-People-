@@ -710,6 +710,20 @@ function deriveCode(name: string): string {
 
 function CatalogTab() {
   const confirm = useConfirm();
+  const { user } = useAuth();
+  /**
+   * A global qualification belongs to the org, not to any one client, so a
+   * client-bounded role may USE it (attach it to their shifts) and not edit
+   * it — the server enforces that. Offering them a Delete button whose only
+   * outcome is "Qualification not found." would read as the app being
+   * broken rather than as a boundary.
+   */
+  const boundedToOneClient =
+    user?.role === 'SHIFT_SUPERVISOR' ||
+    user?.role === 'FLOOR_SUPERVISOR' ||
+    user?.role === 'CLIENT_PORTAL';
+  const canDelete = (q: Qualification) =>
+    !boundedToOneClient || (q.clientId != null && q.clientId === user?.clientId);
   const [rows, setRows] = useState<Qualification[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -824,9 +838,13 @@ function CatalogTab() {
                     <TableCell className="hidden md:table-cell">{q.isCert ? <Badge variant="accent">Cert</Badge> : '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">{q.clientId ? 'Client-scoped' : 'Global'}</TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
-                        Delete
-                      </Button>
+                      {canDelete(q) ? (
+                        <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
+                          Delete
+                        </Button>
+                      ) : (
+                        <span className="text-xs2 text-silver/70">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

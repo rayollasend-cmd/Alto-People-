@@ -265,6 +265,50 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   return {};
 }
 
+/** The roles clamped to a single client. */
+export function isClientBoundedRole(user: SessionUser): boolean {
+  return (
+    user.role === 'CLIENT_PORTAL' ||
+    user.role === 'SHIFT_SUPERVISOR' ||
+    user.role === 'FLOOR_SUPERVISOR' ||
+    user.role === 'ASSOCIATE'
+  );
+}
+
+/**
+ * The qualification catalog a caller may READ.
+ *
+ * A Qualification with a null clientId is GLOBAL — every client's shifts
+ * and rosters draw on it — so a client-bounded caller sees their own
+ * client's plus the globals.
+ */
+export function scopeQualifications(user: SessionUser): Prisma.QualificationWhereInput {
+  if (isClientBoundedRole(user)) {
+    return { OR: [{ clientId: null }, { clientId: user.clientId ?? NO_CLIENT }] };
+  }
+  return {};
+}
+
+/**
+ * The qualification catalog a caller may EDIT — deliberately narrower
+ * than what they may read.
+ *
+ * Reading a global qualification is how a supervisor attaches "Forklift
+ * certified" to their own shift. EDITING one is an org-wide act: renaming
+ * it renames it everywhere, and soft-deleting it drops the requirement
+ * from every client's shifts at once and silently widens who may claim
+ * them. So a client-bounded caller may only write rows their own client
+ * owns — never a global, never another client's.
+ */
+export function scopeQualificationWrites(
+  user: SessionUser,
+): Prisma.QualificationWhereInput {
+  if (isClientBoundedRole(user)) {
+    return { clientId: user.clientId ?? NO_CLIENT };
+  }
+  return {};
+}
+
 /**
  * Resolves the effective `clientId` filter for a list endpoint that's
  * reachable by tenant-bounded roles. CLIENT_PORTAL and ASSOCIATE are
