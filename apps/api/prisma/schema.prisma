@@ -2731,6 +2731,11 @@ model Shift {
   // passed with no linked punch by setting this (guarded update) before
   // notifying admins, so each shift alerts at most once.
   noShowNotifiedAt    DateTime?                       @db.Timestamptz(6)
+  // Attendance-record stamp, deliberately separate from the alert above.
+  // The 15-minute alert asks a supervisor to go look; the attendance
+  // event is only written once the shift has ENDED with no punch, so a
+  // late arrival is never filed as a no-call no-show.
+  noShowRecordedAt    DateTime?                       @db.Timestamptz(6)
   client              Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   locationRel         Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)

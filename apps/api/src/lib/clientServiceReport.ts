@@ -65,8 +65,8 @@ export interface ServiceReportData {
   }[];
   rosterTruncated: number;
   reliability: {
+    /** Shifts that ended with no punch of any kind against them. */
     noShows: number;
-    noShowsCovered: number;
     pickupsApproved: number;
   };
   nextWeek: { shifts: number; assigned: number; confirmed: number };
@@ -162,7 +162,6 @@ export async function buildClientServiceReport(
     { name: string; positions: Set<string>; hours: number; photoS3Key: string | null }
   >();
   let noShows = 0;
-  let noShowsCovered = 0;
   for (const s of shifts) {
     const key = orgDateKey(s.startsAt);
     const day = dayMap.get(key);
@@ -195,9 +194,12 @@ export async function buildClientServiceReport(
       r.hours += hours;
       rosterMap.set(s.assignedAssociateId, r);
     }
-    if (s.noShowNotifiedAt) {
+    // The alert stamp only means nobody had punched 15 minutes in. A
+    // shift with any punch against it was worked, however late — counting
+    // those as missed told the store a person who was on the floor never
+    // showed.
+    if (s.noShowNotifiedAt && s.timeEntries.length === 0) {
       noShows += 1;
-      if (s.timeEntries.length > 0) noShowsCovered += 1;
     }
   }
 
@@ -425,7 +427,7 @@ export async function buildClientServiceReport(
       .map(([key, rows]) => ({ dayLabel: dayName(key, true), rows })),
     roster,
     rosterTruncated: Math.max(0, rosterAll.length - ROSTER_CAP),
-    reliability: { noShows, noShowsCovered, pickupsApproved },
+    reliability: { noShows, pickupsApproved },
     nextWeek,
     statements,
     ops,
@@ -519,7 +521,7 @@ export function renderClientServiceReportPdf(data: ServiceReportData): Promise<B
         tone: data.reliability.noShows === 0 ? GOOD : WARN,
         sub:
           data.reliability.noShows > 0
-            ? `${data.reliability.noShowsCovered} covered`
+            ? 'no punch recorded'
             : 'clean week',
       },
     ];
@@ -664,7 +666,7 @@ export function renderClientServiceReportPdf(data: ServiceReportData): Promise<B
     doc.text(
       rel.noShows === 0
         ? 'No missed shifts this week.'
-        : `${rel.noShows} missed shift${rel.noShows === 1 ? '' : 's'}; ${rel.noShowsCovered} ${rel.noShowsCovered === 1 ? 'was' : 'were'} still covered on the day.`,
+        : `${rel.noShows} missed shift${rel.noShows === 1 ? '' : 's'} — nobody punched in against ${rel.noShows === 1 ? 'it' : 'them'}.`,
       left,
       doc.y,
       { width },

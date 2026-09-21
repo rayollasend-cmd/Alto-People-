@@ -417,10 +417,6 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       shifts: trendShifts,
       entries: trendEntries,
     });
-    const ncnsShiftIds = new Set(
-      trendEvents.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId),
-    );
-
     const onFloorIds = new Set(onFloorEntries.map((e) => e.associateId));
     // Punch time per person on the floor — shown next to the name on the
     // Today page. A time, never a "late" label: the judgment stays with Alto.
@@ -494,7 +490,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         if (s.status !== 'OPEN') wk.filled += 1;
         if (s.endsAt.getTime() <= now.getTime()) {
           wk.ended += 1;
-          if (s.status !== 'OPEN' && !ncnsShiftIds.has(s.id) && punched(s)) wk.showed += 1;
+          // Punch evidence wins. A shift someone clocked into counts as
+          // showed even if an old no-show event is still on file for it —
+          // the person was on the floor, whatever the sweep once inferred.
+          if (s.status !== 'OPEN' && punched(s)) wk.showed += 1;
         }
       }
       if (s.startsAt >= weekStart) {
@@ -1132,11 +1131,12 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
       const ended = s.endsAt.getTime() <= now.getTime();
       const started = s.startsAt.getTime() <= now.getTime();
       let state: DayState;
+      // Order matters: a punch outranks a no-show event, so someone who
+      // clocked in late is never shown to the store as "missed".
       if (s.status === 'OPEN') state = 'open';
-      else if (ncns.has(s.id)) state = 'missed';
       else if (punch && punch.clockOutAt === null && !ended) state = 'on-floor';
       else if (punch) state = 'worked';
-      else if (ended) state = 'missed';
+      else if (ncns.has(s.id) || ended) state = 'missed';
       else if (started) state = 'not-in';
       else state = s.acknowledgedAt ? 'confirmed' : 'unconfirmed';
       return {

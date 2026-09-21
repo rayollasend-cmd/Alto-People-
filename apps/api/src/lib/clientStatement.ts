@@ -247,6 +247,11 @@ export async function computeStatementSnapshot(
         clientId,
         startsAt: { gte: periodStart, lt: periodEndExclusive },
         noShowNotifiedAt: { not: null },
+        // Flagged AND never punched. The stamp alone only means nobody had
+        // clocked in 15 minutes after the start, which a late arrival
+        // trips; billing a client for "no-shows" they actually got the
+        // labour for is not a number we can stand behind.
+        timeEntries: { none: {} },
       },
     }),
     db.timeEntry.count({

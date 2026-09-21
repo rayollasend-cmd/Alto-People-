@@ -15,7 +15,10 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
-import { recordNoShowAttendance } from './attendance.js';
+import {
+  recordNoShowAttendance,
+  withdrawContradictedNoShows,
+} from './attendance.js';
 import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -29,6 +32,10 @@ const NO_SHOW_GRACE_MS = 15 * 60 * 1000;
 // Don't alert on ancient shifts when the cron comes back after downtime;
 // a 12h-old no-show is history, not something an admin can still fix.
 const NO_SHOW_LOOKBACK_MS = 12 * 60 * 60 * 1000;
+// How far back the attendance-record pass looks for shifts that ended.
+// Wider than the alert window: a shift that ended overnight still has to
+// be judged once, even if nobody was awake to be alerted.
+const NO_SHOW_RECORD_LOOKBACK_MS = 36 * 60 * 60 * 1000;
 
 export interface ShiftReminderSweepResult {
   scanned: number;
@@ -39,6 +46,10 @@ export interface ShiftReminderSweepResult {
   expiredClaims: number;
   /** Shifts flagged to admins as possible no-shows this sweep. */
   noShows: number;
+  /** Ended shifts recorded as attendance no-call no-shows this sweep. */
+  noShowsRecorded: number;
+  /** Earlier no-shows withdrawn because a punch turned up. */
+  noShowsWithdrawn: number;
   /** Associates alerted for projected weekly overtime this sweep. */
   otAlerts: number;
   errors: { shiftId: string; error: string }[];
@@ -252,14 +263,10 @@ export async function runShiftReminderSweep(
         at: { locationId: shift.locationId, startsAt: shift.startsAt },
         aboutAssociateId: shift.assignedAssociateId,
       });
-      // Attendance points: approved time off = excused (no event), a
-      // pending same-day request = CALL_OUT, silence = NO_CALL_NO_SHOW.
-      void recordNoShowAttendance(prisma, {
-        id: shift.id,
-        clientId: shift.clientId,
-        startsAt: shift.startsAt,
-        assignedAssociateId: shift.assignedAssociateId!,
-      });
+      // NO attendance event here. Fifteen minutes of silence is a reason
+      // to walk the floor, not a finding about the person — they may be
+      // in the kiosk queue. The attendance record waits for the shift to
+      // end, in the pass below.
       noShows++;
     } catch (err) {
       errors.push({
@@ -267,6 +274,108 @@ export async function runShiftReminderSweep(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // ----- Attendance record: shifts that ENDED with nobody on them --------
+  // A no-call no-show is a claim about a person, so it waits for the only
+  // moment the claim can be true: the shift is over and no punch of theirs
+  // ever covered it. Stamped via noShowRecordedAt (separate from the alert
+  // stamp above) so each shift is judged once.
+  let noShowsRecorded = 0;
+  try {
+    const ended = await prisma.shift.findMany({
+      where: {
+        status: 'ASSIGNED',
+        publishedAt: { not: null },
+        assignedAssociateId: { not: null },
+        noShowRecordedAt: null,
+        endsAt: {
+          lte: now,
+          gte: new Date(now.getTime() - NO_SHOW_RECORD_LOOKBACK_MS),
+        },
+        timeEntries: { none: {} },
+      },
+      orderBy: { endsAt: 'asc' },
+      take: SWEEP_CAP,
+      select: {
+        id: true,
+        clientId: true,
+        startsAt: true,
+        endsAt: true,
+        assignedAssociateId: true,
+      },
+    });
+    if (ended.length > 0) {
+      // One probe for the whole batch: any punch of theirs overlapping the
+      // shift means they worked it, however the entry got there (kiosk
+      // synced late, admin keyed the timesheet, matcher never linked it).
+      const ids = [...new Set(ended.map((s) => s.assignedAssociateId!))];
+      const earliest = ended.reduce(
+        (min, s) => (s.startsAt < min ? s.startsAt : min),
+        now,
+      );
+      const entries = await prisma.timeEntry.findMany({
+        where: {
+          associateId: { in: ids },
+          clockInAt: { lte: now },
+          OR: [{ clockOutAt: null }, { clockOutAt: { gte: earliest } }],
+        },
+        select: { associateId: true, clockInAt: true, clockOutAt: true },
+      });
+      const byAssociate = new Map<string, typeof entries>();
+      for (const e of entries) {
+        const arr = byAssociate.get(e.associateId) ?? [];
+        arr.push(e);
+        byAssociate.set(e.associateId, arr);
+      }
+      for (const shift of ended) {
+        try {
+          const claim = await prisma.shift.updateMany({
+            where: { id: shift.id, noShowRecordedAt: null },
+            data: { noShowRecordedAt: now },
+          });
+          if (claim.count === 0) continue;
+          const worked = (byAssociate.get(shift.assignedAssociateId!) ?? []).some(
+            (e) =>
+              e.clockInAt < shift.endsAt &&
+              (e.clockOutAt === null || e.clockOutAt > shift.startsAt),
+          );
+          if (worked) continue;
+          // Approved time off = excused (no event), a pending same-day
+          // request = CALL_OUT, silence = NO_CALL_NO_SHOW.
+          await recordNoShowAttendance(prisma, {
+            id: shift.id,
+            clientId: shift.clientId,
+            startsAt: shift.startsAt,
+            assignedAssociateId: shift.assignedAssociateId!,
+          });
+          noShowsRecorded++;
+        } catch (err) {
+          errors.push({
+            shiftId: shift.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    errors.push({
+      shiftId: 'no-show-record',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ----- Withdraw no-shows the punch record has since disproven ----------
+  // Backstop for evidence that lands after the record pass ran: a
+  // timesheet keyed in the next morning, a kiosk that syncs a day late.
+  let noShowsWithdrawn = 0;
+  try {
+    noShowsWithdrawn = await withdrawContradictedNoShows(prisma, now);
+  } catch (err) {
+    errors.push({
+      shiftId: 'no-show-withdraw',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   // ----- OT radar ---------------------------------------------------------
@@ -284,7 +393,17 @@ export async function runShiftReminderSweep(
     });
   }
 
-  return { scanned: due.length, reminded, confirmNudges, expiredClaims: expired.count, noShows, otAlerts, errors };
+  return {
+    scanned: due.length,
+    reminded,
+    confirmNudges,
+    expiredClaims: expired.count,
+    noShows,
+    noShowsRecorded,
+    noShowsWithdrawn,
+    otAlerts,
+    errors,
+  };
 }
 
 const OT_THRESHOLD_MIN = 40 * 60;

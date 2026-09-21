@@ -172,6 +172,10 @@ export async function recordAttendanceForEntry(
       },
     });
     if (!entry?.shift || !entry.shiftId || !entry.clockOutAt) return;
+    // They worked it. If an earlier sweep filed a no-call no-show against
+    // this shift, that claim is now disproven — withdraw it before writing
+    // LATE, so the same shift is never counted as both.
+    await withdrawNoShowForShift(db, entry.shiftId);
     const name = `${entry.associate.firstName} ${entry.associate.lastName}`;
     if (entry.clockInAt.getTime() > entry.shift.startsAt.getTime() + LATE_GRACE_MS) {
       const min = Math.round(
@@ -210,10 +214,131 @@ export async function recordAttendanceForEntry(
 }
 
 /**
+ * Withdraw a machine-written no-call no-show that the punch record
+ * contradicts.
+ *
+ * A no-show is a claim about a person: they were rostered and never came.
+ * The sweep can only ever infer it from the absence of a punch at one
+ * moment in time, and punches arrive late for ordinary reasons — the
+ * associate badged in after the grace window, the kiosk synced later, an
+ * admin keyed the timesheet that evening, or the punch never linked to
+ * the shift at all. When the evidence shows up, the claim has to go.
+ *
+ * Only `source: 'AUTO'` rows are withdrawn. An event a human recorded by
+ * hand is a judgment, not an inference, and stands until a human clears
+ * it. Deleted rather than excused: "excused" says they missed the shift
+ * and were forgiven, which is the same false statement about someone who
+ * was on the floor, and the 2.0 points have to come off their score.
+ *
+ * Never throws — every caller is on a punch path that must not fail.
+ */
+export async function withdrawNoShowForShift(
+  db: Db,
+  shiftId: string,
+): Promise<number> {
+  try {
+    const { count } = await db.attendanceEvent.deleteMany({
+      where: { shiftId, kind: 'NO_CALL_NO_SHOW', source: 'AUTO' },
+    });
+    if (count > 0) {
+      console.log(
+        '[attendance] withdrew no-call no-show — punch evidence arrived',
+        JSON.stringify({ shiftId, events: count }),
+      );
+    }
+    return count;
+  } catch (err) {
+    console.warn(
+      '[attendance] no-show withdrawal failed:',
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  }
+}
+
+/** How far back the withdrawal pass re-examines machine-written no-shows. */
+const WITHDRAW_LOOKBACK_DAYS = 7;
+
+/**
+ * Sweep backstop: re-examine recent AUTO no-call no-shows and withdraw the
+ * ones the punch record now contradicts.
+ *
+ * The record pass already waits for a shift to end, so this catches the
+ * evidence that lands afterwards — a timesheet keyed the next morning, a
+ * kiosk that syncs a day late, a punch an admin re-pointed at the right
+ * shift. Bounded per sweep; returns how many were withdrawn.
+ */
+export async function withdrawContradictedNoShows(
+  db: Db,
+  now: Date = new Date(),
+  limit = 500,
+): Promise<number> {
+  const since = new Date(now.getTime() - WITHDRAW_LOOKBACK_DAYS * 86_400_000);
+  const events = await db.attendanceEvent.findMany({
+    where: {
+      kind: 'NO_CALL_NO_SHOW',
+      source: 'AUTO',
+      occurredOn: { gte: since },
+      shiftId: { not: null },
+    },
+    select: { id: true, associateId: true, shiftId: true },
+    take: limit,
+  });
+  if (events.length === 0) return 0;
+
+  const shifts = await db.shift.findMany({
+    where: { id: { in: events.map((e) => e.shiftId!) } },
+    select: { id: true, startsAt: true, endsAt: true },
+  });
+  const shiftById = new Map(shifts.map((s) => [s.id, s]));
+  const entries = await db.timeEntry.findMany({
+    where: {
+      associateId: { in: [...new Set(events.map((e) => e.associateId))] },
+      clockInAt: { gte: since },
+    },
+    select: { associateId: true, clockInAt: true, clockOutAt: true },
+    take: 5000,
+  });
+  const byAssociate = new Map<string, typeof entries>();
+  for (const e of entries) {
+    const arr = byAssociate.get(e.associateId) ?? [];
+    arr.push(e);
+    byAssociate.set(e.associateId, arr);
+  }
+
+  const contradicted = events
+    .filter((ev) => {
+      const shift = shiftById.get(ev.shiftId!);
+      if (!shift) return false;
+      return (byAssociate.get(ev.associateId) ?? []).some(
+        (t) =>
+          t.clockInAt < shift.endsAt &&
+          (t.clockOutAt === null || t.clockOutAt > shift.startsAt),
+      );
+    })
+    .map((ev) => ev.id);
+  if (contradicted.length === 0) return 0;
+
+  const { count } = await db.attendanceEvent.deleteMany({
+    where: { id: { in: contradicted } },
+  });
+  if (count > 0) {
+    console.log(
+      '[attendance] withdrew no-call no-shows contradicted by punches',
+      JSON.stringify({ events: count }),
+    );
+  }
+  return count;
+}
+
+/**
  * No-show sweep hook. An APPROVED time-off request covering the day means
  * the miss is excused entirely (no event). Any other request covering the
  * day (a same-day PENDING call-out) downgrades it to CALL_OUT. Silence is
  * a no-call no-show.
+ *
+ * Called only once a shift has ENDED with no punch anywhere near it — the
+ * 15-minute supervisor alert is a separate pass in shiftReminder.ts.
  */
 export async function recordNoShowAttendance(
   db: Db,
