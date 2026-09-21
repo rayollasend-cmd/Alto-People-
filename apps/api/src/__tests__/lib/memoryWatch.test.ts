@@ -23,8 +23,16 @@ describe('the memory sample', () => {
     // can sit beside an RSS that is about to be killed.
     expect(s).toHaveProperty('externalMb');
     expect(s).toHaveProperty('arrayBuffersMb');
-    // RSS is the number the container actually enforces.
-    expect(s.rssMb).toBeGreaterThanOrEqual(s.heapUsedMb);
+    // RSS is the number the container actually enforces, and it is
+    // reported alongside the heap rather than derived from it.
+    //
+    // Deliberately NOT asserting rss >= heapUsed. That looks like an
+    // invariant and is not one: heapUsed is what V8 has committed, rss is
+    // what is RESIDENT, and the OS is free to reclaim or compress pages
+    // underneath. This test asserted it and caught itself out in a full
+    // suite run — rss 1087MB against heapUsed 1503MB — which is exactly
+    // the confusion this module exists to prevent.
+    expect(s.rssMb).toBeGreaterThan(0);
   });
 
   it('remembers the peak, so a restart shows what it reached', () => {
