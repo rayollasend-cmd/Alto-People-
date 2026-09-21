@@ -1357,12 +1357,28 @@ export function BookRideDialog({
   const store = data.stores.find((x) => x.id === storeId) ?? null;
   const tz = store?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const earliest = useMemo(() => new Date(Date.now() + s.cutoffHours * H + 5 * 60_000), [s.cutoffHours]);
-  // Open on the first bookable day: a 7:00 arrival that's already inside
-  // the cutoff moves to the next morning instead of opening on an error.
+  // Open on the first bookable day.
+  //
+  // Judged by the earliest moment the day can actually be booked: the
+  // first shift window when the store plans by shift (the default when it
+  // has windows), else the 07:00 the "other time" form starts on. Judging
+  // every day by 07:00 while by-shift targets a 06:00 window opened the
+  // dialog on a day whose first shift was already inside the cutoff — the
+  // shift list rendered, "too soon" appeared, and the button sat disabled
+  // with no way forward except noticing the date and changing it.
   const [date, setDate] = useState(() => {
     if (initial.date) return initial.date;
     const first = zonedDayKey(earliest, tz);
-    return new Date(localInputToUtcIso(`${first}T07:00`, tz)) < earliest ? addDays(first, 1) : first;
+    const openMinute = (store?.windows ?? []).reduce(
+      (min, w) => Math.min(min, w.startMinute),
+      7 * 60,
+    );
+    const openAt = `${String(Math.floor(openMinute / 60)).padStart(2, '0')}:${String(
+      openMinute % 60,
+    ).padStart(2, '0')}`;
+    return new Date(localInputToUtcIso(`${first}T${openAt}`, tz)) < earliest
+      ? addDays(first, 1)
+      : first;
   });
   const [arrive, setArrive] = useState(initial.arrive ?? '07:00');
   const [leave, setLeave] = useState(initial.leave ?? '15:30');
