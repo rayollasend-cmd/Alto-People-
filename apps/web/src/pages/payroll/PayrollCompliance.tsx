@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Download, FileText, Landmark, Scale, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import {
   downloadNewHireReportCsv,
@@ -589,6 +590,12 @@ function RemittancesTab() {
 
 function NewHireTab() {
   const confirm = useConfirm();
+  // The CSV carries SSNs, so it moved to export:payroll-pii (HR + Finance)
+  // while the tab itself stays on process:payroll (six roles). The other
+  // four can still SEE who is unreported — names and hire dates, no PII —
+  // which is the half of this tab that tells an ops manager to go chase
+  // someone. They just cannot pull the file.
+  const canExport = useAuth().can('export:payroll-pii');
   const [rows, setRows] = useState<NewHireRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -646,15 +653,24 @@ function NewHireTab() {
               </>
             )}
           </div>
-          <Button
-            size="sm"
-            onClick={onExportAndMark}
-            loading={busy}
-            disabled={busy || reportable.length === 0}
-          >
-            <Download className="h-4 w-4" />
-            Export CSV & mark reported
-          </Button>
+          {canExport ? (
+            <Button
+              size="sm"
+              onClick={onExportAndMark}
+              loading={busy}
+              disabled={busy || reportable.length === 0}
+            >
+              <Download className="h-4 w-4" />
+              Export CSV & mark reported
+            </Button>
+          ) : (
+            // Not a disabled button: nothing they can do here makes it
+            // clickable, so say who to ask instead of leaving them
+            // hovering over a dead control.
+            <span className="text-xs text-silver">
+              Filing the CSV is restricted to HR and Finance.
+            </span>
+          )}
         </div>
         {error && (
           <ErrorBanner

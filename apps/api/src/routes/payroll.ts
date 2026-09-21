@@ -1996,7 +1996,10 @@ payrollRouter.get('/new-hire-report', PROCESS, async (_req, res, next) => {
  * address + state on file) are included; the JSON endpoint above shows
  * who was excluded and why.
  */
-payrollRouter.get('/new-hire-report.csv', PROCESS, async (req, res, next) => {
+// Full SSNs and home addresses for every unreported hire. The comment
+// above says "same audit posture as the census export" — it now has the
+// same CAPABILITY too, rather than process:payroll's six roles.
+payrollRouter.get('/new-hire-report.csv', requireCapability('export:payroll-pii'), async (req, res, next) => {
   try {
     const stateFilter =
       typeof req.query.state === 'string' && /^[A-Za-z]{2}$/.test(req.query.state)

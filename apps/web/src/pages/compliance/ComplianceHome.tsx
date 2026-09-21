@@ -16,8 +16,11 @@ export function ComplianceHome() {
   const { can } = useAuth();
   const canManage = can('manage:compliance');
   // The packet is the product's single largest PII export — the tab only
-  // exists for the same capability tier the server enforces.
-  const canAudit = can('view:hr-admin');
+  // exists for the same capability the server enforces. It used to read
+  // view:hr-admin, which six roles hold; the packet itself is now behind
+  // export:audit-packet, which two do, so the tab followed it rather than
+  // leaving four roles a button that 403s.
+  const canAudit = can('export:audit-packet');
   // Scorecard is the new default landing — preventative dashboard. The
   // existing forensic tabs (I-9 / background / J-1) stay as drill-downs.
   // The active tab LIVES in ?tab= (URL is the single source of truth):
@@ -27,7 +30,12 @@ export function ComplianceHome() {
   const TABS: readonly Tab[] = ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1', 'audit'];
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const tab: Tab = TABS.includes(requestedTab as Tab) ? (requestedTab as Tab) : 'scorecard';
+  // A bookmarked ?tab=audit from before the capability narrowed would
+  // otherwise select a tab that no longer renders — an empty page, not a
+  // refusal. Fall back to the scorecard.
+  const tabAllowed = (t: string | null): t is Tab =>
+    TABS.includes(t as Tab) && (t !== 'audit' || canAudit);
+  const tab: Tab = tabAllowed(requestedTab) ? requestedTab : 'scorecard';
   const setTab = (next: Tab) => {
     const params = new URLSearchParams(searchParams);
     if (next === 'scorecard') params.delete('tab');

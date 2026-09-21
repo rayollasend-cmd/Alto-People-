@@ -132,6 +132,12 @@ export type Capability =
   // workforce reporting (retention, onboarding funnels) and is held by
   // finance and field roles who have no business reading org-wide usage.
   | 'view:product-analytics'
+  // The audit packet — I-9 images, SSN cards and pay data for a whole
+  // roster in one archive, the largest single PII export in the product.
+  // It sat on view:hr-admin, a READ-tier capability in ALL_VIEWS, so six
+  // roles could pull every worker's identity documents. Its own header
+  // said it took "the same posture as the SSN reveal"; it did not.
+  | 'export:audit-packet'
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
   // Phase 93 — public API keys + outbound webhooks.
@@ -241,6 +247,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:audit',
     'view:executive',
     'view:product-analytics',
+    // The owner's copy of the audit packet. Note this is the ONE export
+    // capability a read-only role holds — deliberate, and narrow.
+    'export:audit-packet',
     'view:time-live',
     // Store-ops oversight + the chairman's ONE write: the SOP standard.
     'view:ops',
@@ -255,6 +264,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Granted here rather than in FULL_ADMIN: product telemetry starts with
     // the two roles accountable for the platform, and widens deliberately.
     'view:product-analytics',
+    // HR runs the audit: they are the ones handing the packet to a DOL or
+    // ICE auditor, so restricting it to the chairman would lock the tool
+    // away from its actual user.
+    'export:audit-packet',
     'void:payroll',
     'export:payroll-pii',
     'submit:reimbursement',
@@ -323,6 +336,15 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Gap 10 — Finance settles approved reimbursements into the next
     // REGULAR run. Cannot approve at the manager step.
     'settle:reimbursement',
+    // The payroll census and the new-hire report carry full SSNs, bank
+    // routing and account numbers, DOBs and home addresses for every
+    // associate. Both sat on process:payroll, which SIX roles hold —
+    // including MARKETING_MANAGER and INTERNAL_RECRUITER. The audience
+    // org.ts names in its own comment is "Owner + Payroll admin + HR
+    // admin", and finance IS the payroll admin here: it runs the whole
+    // hours→pay cycle. So the capability widens by exactly one role
+    // rather than the export staying open to four who have no use for it.
+    'export:payroll-pii',
     // Inbox READ access. payrollFailureNotify writes payment-failure
     // alerts to this role's bell — without this capability the inbox API
     // 403'd and the bell silently rendered empty, so the most urgent

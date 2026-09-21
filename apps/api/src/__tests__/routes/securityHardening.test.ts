@@ -321,3 +321,65 @@ describe('a report schedule runs as the report owner, so scheduling is borrowing
     expect(res.status).toBe(201);
   });
 });
+
+describe('bulk PII exports are gated on the capability built for them', () => {
+  /**
+   * Three artifacts carry the company's worst data in one file: the
+   * payroll census (full SSN, bank routing + account, DOB, home address
+   * for EVERY associate), the new-hire report (SSNs and addresses), and
+   * the audit packet (I-9 images and SSN cards for a whole roster).
+   *
+   * The first two sat on process:payroll and the third on view:hr-admin —
+   * six roles each, including MARKETING_MANAGER and INTERNAL_RECRUITER.
+   * roles.ts already defined export:payroll-pii for exactly this and
+   * reserved it; the exports simply never used it.
+   */
+  const census = (a: TestAgent<Test>) =>
+    a.post('/org/associates/payroll-census-export').send({ reason: 'Quarterly payroll reconciliation' });
+
+  it('refuses the census to roles with no business holding it', async () => {
+    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER', 'OPERATIONS_MANAGER'] as const) {
+      const { user } = await createUser({ role });
+      const a = await loginAs(user.email);
+      const res = await census(a);
+      expect(res.status, `${role} should not export the census`).toBe(403);
+    }
+  });
+
+  it('keeps it open to the two roles that run payroll', async () => {
+    // Finance IS the payroll admin here — locking them out would break the
+    // pay cycle, which is why the capability widened by exactly one role
+    // rather than the export staying open to four.
+    for (const role of ['HR_ADMINISTRATOR', 'FINANCE_ACCOUNTANT'] as const) {
+      const { user } = await createUser({ role });
+      const a = await loginAs(user.email);
+      expect((await census(a)).status, `${role} should keep the census`).not.toBe(403);
+    }
+  });
+
+  it('holds the new-hire report to the same bar — it is the same data', async () => {
+    const { user: marketing } = await createUser({ role: 'MARKETING_MANAGER' });
+    const m = await loginAs(marketing.email);
+    expect((await m.get('/payroll/new-hire-report.csv')).status).toBe(403);
+
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const f = await loginAs(fin.email);
+    expect((await f.get('/payroll/new-hire-report.csv')).status).not.toBe(403);
+  });
+
+  it('keeps the audit packet to the owner and HR, not everyone who can read HR pages', async () => {
+    const body = { scope: 'ALL_WORKFORCE', reason: 'DOL audit preparation' };
+    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER'] as const) {
+      const { user } = await createUser({ role });
+      const a = await loginAs(user.email);
+      expect((await a.post('/audit-packets/generate').send(body)).status, role).toBe(403);
+    }
+    // The chairman keeps it — the one export capability a read-only role
+    // holds, deliberately — and so does HR, who hand it to the auditor.
+    for (const role of ['EXECUTIVE_CHAIRMAN', 'HR_ADMINISTRATOR'] as const) {
+      const { user } = await createUser({ role });
+      const a = await loginAs(user.email);
+      expect((await a.post('/audit-packets/generate').send(body)).status, role).not.toBe(403);
+    }
+  });
+});

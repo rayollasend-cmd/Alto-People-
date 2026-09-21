@@ -38,7 +38,17 @@ import { ReportPdf } from '../lib/reportPdf.js';
 
 export const auditPacketRouter = Router();
 
-const HR_ADMIN = requireCapability('view:hr-admin');
+/**
+ * The largest PII export in the product — I-9 images, SSN cards and pay
+ * data for a whole roster — used to sit on view:hr-admin, which is in
+ * ALL_VIEWS. So a READ-ONLY chairman and a marketing manager could both
+ * pull every worker's identity documents. Its own header claimed "the
+ * same posture as the SSN reveal"; that was aspiration, not code.
+ *
+ * export:audit-packet names the two roles who need it: the owner, and HR,
+ * who are the ones actually handing the packet to an auditor.
+ */
+const HR_ADMIN = requireCapability('export:audit-packet');
 
 const GenerateInputSchema = z.object({
   /**

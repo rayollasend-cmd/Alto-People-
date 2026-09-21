@@ -51,6 +51,15 @@ const MANAGE = requireCapability('manage:org');
 // the "Owner + Payroll admin + HR admin" audience the product owner
 // chose for this surface.
 const PAYROLL_OR_HR = requireCapability('process:payroll');
+/**
+ * The census carries FULL SSN, bank routing and account numbers, DOB and
+ * home address for every associate, in one file. process:payroll is held
+ * by six roles — including MARKETING_MANAGER and INTERNAL_RECRUITER —
+ * which is not the "Owner + Payroll admin + HR admin" audience the
+ * comment above describes. export:payroll-pii exists for exactly this
+ * artifact and now names HR and Finance.
+ */
+const EXPORT_PII = requireCapability('export:payroll-pii');
 
 function audit(
   req: Request,
@@ -1593,12 +1602,12 @@ function isoDate(d: Date | null | undefined): string {
 
 orgRouter.post(
   '/associates/payroll-census-export',
-  PAYROLL_OR_HR,
+  EXPORT_PII,
   bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the single-record reveals.
-    if (!hasCapability(req.user!.role, 'process:payroll')) {
-      throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
+    if (!hasCapability(req.user!.role, 'export:payroll-pii')) {
+      throw new HttpError(403, 'forbidden', 'Missing capability: export:payroll-pii');
     }
 
     const { reason } = RevealReasonSchema.parse(req.body);

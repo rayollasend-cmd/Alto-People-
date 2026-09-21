@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Download, XCircle } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import {
   getPayrollReadiness,
   type PayrollReadinessResponse,
@@ -299,8 +300,11 @@ function Flag({
 
 /**
  * Bulk census export for onboarding a new payroll provider. The button lives
- * here because this page is already the "is everyone ready to be paid" surface
- * and is gated on process:payroll — the same capability the export requires.
+ * here because this page is already the "is everyone ready to be paid" surface.
+ *
+ * The page is gated on process:payroll, which six roles hold; the export is
+ * gated on export:payroll-pii, which two do. It renders nothing for the other
+ * four rather than handing them a button that 403s.
  *
  * The dialog forces a written reason before the download because the file it
  * produces holds every active associate's full SSN + bank account. The server
@@ -308,11 +312,14 @@ function Flag({
  * sensitivity explicit so nobody pulls it casually.
  */
 function CensusExportDialog() {
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
   const reasonOk = reason.trim().length >= 8;
+
+  if (!can('export:payroll-pii')) return null;
 
   async function handleExport() {
     if (!reasonOk || busy) return;

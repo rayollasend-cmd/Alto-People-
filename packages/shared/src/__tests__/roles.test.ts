@@ -154,9 +154,11 @@ describe('hasCapability', () => {
     // does not come with it — that is the whole shape of this role.
     for (const c of [
       'manage:clients', 'manage:org', 'manage:comp', 'manage:communications',
-      // Voiding a disbursed run reverses a QBO entry; the payroll sheet
-      // carries full SSN and bank details. Both are HR_ADMINISTRATOR only.
-      'void:payroll', 'export:payroll-pii',
+      // Voiding a disbursed run reverses a QBO journal entry and marks
+      // paystubs VOIDED — settling a run is finance's, reversing a
+      // disbursed one is not. (export:payroll-pii was on this line until
+      // 2026-09-21; finance holds it now, see the holders test above.)
+      'void:payroll',
       // Nothing on the HR side of the house.
       'view:onboarding', 'manage:onboarding', 'view:recruiting', 'view:hr-admin',
       'approve:reimbursement',
@@ -190,11 +192,31 @@ describe('hasCapability', () => {
   // specific: the Time router's usual guard is manage:time, which
   // SHIFT_SUPERVISOR holds, so reusing that would have handed floor
   // supervisors their client's identity documents.
-  it('export:payroll-pii is held by HR_ADMINISTRATOR alone', () => {
+  it('export:payroll-pii is held by HR and Finance, and nobody else', () => {
+    // Was HR alone. Finance was added (owner decision, 2026-09-21) when the
+    // payroll census and new-hire report — full SSN, bank routing and
+    // account, DOB, home address for every associate — were moved off
+    // process:payroll, which SIX roles hold. Finance runs the pay cycle, so
+    // locking them out would have broken payroll to close the hole; the
+    // capability widened by one role instead of the export staying open to
+    // four who have no use for it.
     const holders = HUMAN_ROLES.filter((r) =>
       hasCapability(r, 'export:payroll-pii'),
     );
-    expect(holders).toEqual(['HR_ADMINISTRATOR']);
+    expect(holders.slice().sort()).toEqual(['FINANCE_ACCOUNTANT', 'HR_ADMINISTRATOR']);
+  });
+
+  it('export:audit-packet is the owner and HR, and is the one export a read-only role holds', () => {
+    // I-9 images and SSN cards for a whole roster. It sat on view:hr-admin,
+    // which is in ALL_VIEWS — so a marketing manager could pull every
+    // worker's identity documents. HR is here because HR hands the packet
+    // to the auditor; restricting it to the chairman would lock the tool
+    // away from the person who uses it.
+    const holders = HUMAN_ROLES.filter((r) => hasCapability(r, 'export:audit-packet'));
+    expect(holders.slice().sort()).toEqual(['EXECUTIVE_CHAIRMAN', 'HR_ADMINISTRATOR']);
+    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER', 'SHIFT_SUPERVISOR'] as const) {
+      expect(hasCapability(role, 'export:audit-packet'), role).toBe(false);
+    }
   });
 
   it('no role can reach the PII export via manage:time', () => {
@@ -212,7 +234,15 @@ describe('hasCapability', () => {
     expect(hasCapability('SHIFT_SUPERVISOR', 'export:payroll-pii')).toBe(false);
     expect(hasCapability('OPERATIONS_MANAGER', 'export:payroll-pii')).toBe(false);
     expect(hasCapability('MARKETING_MANAGER', 'export:payroll-pii')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'export:payroll-pii')).toBe(false);
+    // FINANCE_ACCOUNTANT is no longer asserted here: it holds BOTH now, by
+    // owner decision. That does not weaken the property this test exists
+    // for — the danger was never "some role has both", it was that the
+    // CLIENT-SCOPED floor roles could reach a full-SSN export through the
+    // guard the Time routes happen to use. Stated directly:
+    for (const role of ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR', 'CLIENT_PORTAL'] as const) {
+      expect(hasCapability(role, 'export:payroll-pii'), role).toBe(false);
+      expect(hasCapability(role, 'export:audit-packet'), role).toBe(false);
+    }
   });
 
   // The web UI gates invite-shaped affordances (bulk invite, nudge, resend,
