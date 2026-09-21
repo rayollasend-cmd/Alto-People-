@@ -1,5 +1,8 @@
 # OpenCV.js, built to run under our CSP
 
+The build itself lives at `public/vendor/opencv/opencv.js`; this file is
+the instructions, kept out of the directory that gets served.
+
 Document scanning — the automatic edge detection and deskew behind the ID
 and void-cheque capture — runs OpenCV compiled to WebAssembly.
 

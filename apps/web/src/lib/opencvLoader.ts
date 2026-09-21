@@ -8,17 +8,19 @@
  *     classic UMD script, loaded with a <script> tag rather than imported,
  *     which keeps 11MB out of the JS bundle and avoids asking the bundler
  *     to interpret a UMD file. Same-origin, so `script-src 'self'` allows it.
- *   - the npm package — the fallback when that file isn't deployed. It
- *     cannot actually START under our CSP (that is the whole reason the
- *     vendored build exists), but keeping the path means the scanner
- *     degrades to manual cropping rather than throwing, and the package
- *     stays the source of TYPES either way.
+ * The npm package stays in package.json as the source of TYPES, and is
+ * imported with `import type` only. It is deliberately NOT a runtime
+ * fallback: it cannot start under our CSP at all, so bundling it shipped
+ * a 15.5MB chunk that could only ever fail. When the vendored file is
+ * missing the scanner reports that it is unavailable and every caller
+ * falls back to manual cropping, exactly as it does today.
  *
  * Both are Emscripten MODULARIZE output, where the export is a factory or
  * a promise rather than the namespace itself, so everything funnels
  * through one normalizer.
  */
 
+// Types only — see above. This import contributes nothing to the bundle.
 export type CvNamespace = typeof import('@techstark/opencv-js');
 
 const VENDORED_URL = '/vendor/opencv/opencv.js';
@@ -74,20 +76,8 @@ let pending: Promise<CvNamespace | null> | null = null;
 export function loadOpenCv(): Promise<CvNamespace | null> {
   if (!pending) {
     pending = (async () => {
-      if (await injectScript(VENDORED_URL)) {
-        const fromGlobal = await normalize(
-          (globalThis as { cv?: unknown }).cv,
-        );
-        if (fromGlobal) return fromGlobal;
-      }
-      try {
-        const mod = await import('@techstark/opencv-js');
-        return await normalize((mod as { default?: unknown }).default ?? mod);
-      } catch {
-        // Under a strict CSP this is where the npm build dies. The caller
-        // falls back to manual cropping.
-        return null;
-      }
+      if (!(await injectScript(VENDORED_URL))) return null;
+      return normalize((globalThis as { cv?: unknown }).cv);
     })();
   }
   return pending;

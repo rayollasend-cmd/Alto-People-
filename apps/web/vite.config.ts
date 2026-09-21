@@ -209,16 +209,6 @@ export default defineConfig({
     // autoprefixer). Slightly wider than the browserslist floor: store
     // kiosk tablets skew old, and es2020/safari14 costs little.
     target: ['es2020', 'safari14'],
-    // The vendored OpenCV.js build (see resolve.alias above) lives outside
-    // node_modules, so Vite's default CommonJS interop — which only scans
-    // node_modules — never converts it. Left unconverted, Rollup treats the
-    // Emscripten UMD/CommonJS output as plain ESM with no exports, and
-    // `import cv from '@techstark/opencv-js'` fails at build time with
-    // "'default' is not exported". Explicitly including the vendor path
-    // runs the same CJS-to-ESM interop on it.
-    commonjsOptions: {
-      include: [/vendor\/opencv/, /node_modules/],
-    },
     // Route-level lazy loading (see App.tsx) splits each page into its own
     // chunk. The chunks below pull shared vendor code into stable buckets so
     // it's downloaded once and cached across navigations.
