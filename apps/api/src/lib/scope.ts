@@ -132,13 +132,10 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
       ...(user.locationId ? { locationId: user.locationId } : {}),
     };
   }
-  // SHIFT_SUPERVISOR manages only its own client's shifts (fail closed),
-  // narrowed to their store when they have one.
+  // SHIFT_SUPERVISOR manages its own client's shifts (fail closed). Not
+  // narrowed by store: covering another store for a night is the job.
   if (user.role === 'SHIFT_SUPERVISOR') {
-    return {
-      clientId: user.clientId ?? NO_CLIENT,
-      ...(user.locationId ? { locationId: user.locationId } : {}),
-    };
+    return { clientId: user.clientId ?? NO_CLIENT };
   }
   return {};
 }
@@ -216,10 +213,15 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
   }
   if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
     if (!user.clientId) return { id: NO_CLIENT };
-    // Pinned to a store: their roster is that building's, not the
-    // client's. Without this a store account could build an ad-hoc
-    // associate or time report and read every store on the account.
-    if (user.locationId) return atStore(user.locationId);
+    // A CLIENT account pinned to a store has that building's roster, not
+    // the client's — without this a store manager could build an ad-hoc
+    // associate or time report and read every store on the account. Alto's
+    // own supervisors are deliberately left client-wide: they cover for
+    // each other across stores, and their store views are already scoped
+    // by the portal's own resolveScope.
+    if (user.role === 'CLIENT_PORTAL' && user.locationId) {
+      return atStore(user.locationId);
+    }
     return associatesOfClient(user.clientId);
   }
   return {};
