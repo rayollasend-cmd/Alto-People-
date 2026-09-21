@@ -631,11 +631,20 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(JSON.stringify(sched.body)).not.toContain('payRate');
     expect((await agent.get('/client-portal/schedule?week=nope')).status).toBe(400);
 
+    // The statement covers every store on the account, so the STORE
+    // account is refused it; the market account downloads it.
     const pdf = await agent.get(`/client-portal/statements/${s.statement.id}.pdf`);
-    expect(pdf.status).toBe(200);
-    expect(pdf.headers['content-type']).toContain('application/pdf');
+    expect(pdf.status).toBe(403);
+    const marketAgent = await loginAs(s.marketUser.email);
+    const marketPdf = await marketAgent.get(
+      `/client-portal/statements/${s.statement.id}.pdf`,
+    );
+    expect(marketPdf.status).toBe(200);
+    expect(marketPdf.headers['content-type']).toContain('application/pdf');
     // Drafts don't exist for the client.
-    expect((await agent.get(`/client-portal/statements/${s.draft.id}.pdf`)).status).toBe(404);
+    expect(
+      (await marketAgent.get(`/client-portal/statements/${s.draft.id}.pdf`)).status,
+    ).toBe(404);
     // Another tenant's statement is simply not found.
     const foreignStatement = await prisma.clientStatement.create({
       data: {
@@ -649,7 +658,8 @@ describe('the store site — scope, targets, evidence, downloads', () => {
       },
     });
     expect(
-      (await agent.get(`/client-portal/statements/${foreignStatement.id}.pdf`)).status,
+      (await marketAgent.get(`/client-portal/statements/${foreignStatement.id}.pdf`))
+        .status,
     ).toBe(404);
 
     // The service report is the portal on paper: today by default, any
@@ -801,7 +811,7 @@ describe('one store, one set of numbers', () => {
       data: {
         clientId: s.client.id,
         locationId: s.storeB.id,
-        occurredAt: new Date(now.getTime() - 2 * HOUR),
+        occurredAt: now,
         description: 'Slip near the freezer at the other store',
         severity: 'MEDICAL_TREATMENT',
         status: 'REPORTED',
@@ -818,7 +828,7 @@ describe('one store, one set of numbers', () => {
         locationId: s.storeB.id,
         department: 'Grocery',
         departments: ['Grocery'],
-        period: 'OPENING',
+        period: 'MORNING',
         position: 'Lead',
         dateKey: orgDateKey(now),
         openedById: opener.id,
