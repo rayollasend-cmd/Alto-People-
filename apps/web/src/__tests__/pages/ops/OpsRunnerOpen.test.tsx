@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
+import { ConfirmProvider } from '@/lib/confirm';
 
 vi.mock('@/lib/opsApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/opsApi')>()),
@@ -53,9 +54,11 @@ function renderPicker(role: Role = 'SHIFT_SUPERVISOR', clientId: string | null =
   vi.mocked(openOpsShift).mockResolvedValue({ shiftId: 's1' } as never);
   return render(
     withAuth(
-      <MemoryRouter>
-        <OpsRunner />
-      </MemoryRouter>,
+      <ConfirmProvider>
+        <MemoryRouter>
+          <OpsRunner />
+        </MemoryRouter>
+      </ConfirmProvider>,
       role,
       clientId,
     ),

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
+import { ConfirmProvider } from '@/lib/confirm';
 
 vi.mock('@/lib/opsApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/opsApi')>()),
@@ -67,9 +68,11 @@ function renderRunner(d: OpsShiftDetail) {
           can: (c: Capability) => caps.has(c),
         }}
       >
-        <MemoryRouter initialEntries={['/ops?tab=shift&shift=sop1']}>
-          <OpsRunner />
-        </MemoryRouter>
+        <ConfirmProvider>
+          <MemoryRouter initialEntries={['/ops?tab=shift&shift=sop1']}>
+            <OpsRunner />
+          </MemoryRouter>
+        </ConfirmProvider>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
