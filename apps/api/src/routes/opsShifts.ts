@@ -261,6 +261,7 @@ function toHandover(h: Prisma.OpsHandoverItemGetPayload<{ select: typeof handove
 function shiftHeader(s: {
   id: string;
   clientId: string;
+  location?: { name: string } | null;
   department: string;
   period: string;
   position: string;
@@ -307,6 +308,10 @@ function shiftHeader(s: {
     // Store-shift SOP (opened at clock-in): its window, and when it's due.
     windowLabel: s.windowLabel ?? null,
     locationId: s.locationId ?? null,
+    // The building. Every surface that used to print the client's name and
+    // call it a store prints this instead when it is known: two overnight
+    // shifts at Destin and Front Beach were previously the same row twice.
+    locationName: s.location?.name ?? null,
     dueAt: s.dueAt?.toISOString() ?? null,
     incompleteReason: s.incompleteReason ?? null,
     handoverNone: s.handoverNone ?? false,
@@ -781,10 +786,60 @@ opsRouter.get('/open-options', RUN, async (req, res, next) => {
 
 const OpenShiftSchema = z.object({
   clientId: z.string().uuid().optional(),
+  /**
+   * Which store this shift runs in. Optional on the wire because the
+   * supervisor's own store usually answers it — but one of the two must,
+   * or the shift joins the pile of records that can never be filed under
+   * a building, which is what made "what happened on the overnight at
+   * Destin" unanswerable.
+   */
+  locationId: z.string().uuid().optional(),
   position: z.string().trim().min(1).max(120),
   /** Explicit override when the position name doesn't say which. */
   department: z.string().trim().max(80).optional(),
 });
+
+/**
+ * Which store a hand-opened ops shift belongs to.
+ *
+ * Named store wins, checked against the client so one client's shift can
+ * never be filed on another's floor. Otherwise the supervisor's own store
+ * says it. Otherwise a client with one building can only mean that one.
+ *
+ * Anything still unplaced stays null, and is the reason the board could
+ * not answer "the overnight at Destin": a record with no building cannot
+ * be filed under one. The migration backfills what it can by the same
+ * rules; from here forward almost nothing should land unplaced.
+ */
+async function resolveOpsLocation(
+  clientId: string,
+  named: string | null,
+  usersOwn: string | null,
+): Promise<string | null> {
+  if (named) {
+    const ok = await prisma.location.findFirst({
+      where: { id: named, clientId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!ok) {
+      throw new HttpError(400, 'location_not_in_client', 'That store is not on this client.');
+    }
+    return ok.id;
+  }
+  if (usersOwn) {
+    const mine = await prisma.location.findFirst({
+      where: { id: usersOwn, clientId, deletedAt: null },
+      select: { id: true },
+    });
+    if (mine) return mine.id;
+  }
+  const only = await prisma.location.findMany({
+    where: { clientId, deletedAt: null, isActive: true },
+    select: { id: true },
+    take: 2,
+  });
+  return only.length === 1 ? only[0]!.id : null;
+}
 
 opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
   try {
@@ -817,12 +872,18 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
       );
     }
     const period = periodForPosition(parsed.data.position, orgHour(now));
+    const locationId = await resolveOpsLocation(
+      clientId,
+      parsed.data.locationId ?? null,
+      req.user!.locationId ?? null,
+    );
 
     // Auto-populated header facts + the checklist, snapshotted from today's
     // library (lib/storeShiftSop — the clock-in opens shifts the same way).
     const dayStart = utcInstantOfLocalMidnight(dateKey, 'America/New_York');
     const shift = await createOpsShift(prisma, {
       clientId,
+      locationId,
       openedById: req.user!.id,
       department,
       period,
@@ -838,7 +899,7 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
         action: 'ops.shift_opened',
         entityType: 'OpsShift',
         entityId: shift.id,
-        metadata: { department, period, position: parsed.data.position, dateKey },
+        metadata: { department, period, position: parsed.data.position, dateKey, locationId },
       },
       'ops.shifts',
     );
@@ -1854,6 +1915,7 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
       take: 200,
       include: {
         client: { select: { name: true } },
+        location: { select: { name: true } },
         openedBy: { select: { email: true } },
         coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
       },
@@ -1871,27 +1933,54 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
   }
 });
 
-opsRouter.get('/board', BOARD, async (_req, res, next) => {
+/** Store / period / department narrowing, shared by the board and history. */
+function opsFilters(req: Request): Prisma.OpsShiftWhereInput {
+  const locationId = req.query.locationId?.toString();
+  const period = req.query.period?.toString();
+  const department = req.query.department?.toString();
+  const clientId = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+  return {
+    ...(clientId ? { clientId } : {}),
+    ...(locationId ? { locationId } : {}),
+    ...(period && ['MORNING', 'EVENING', 'CLOSING', 'OVERNIGHT'].includes(period)
+      ? { period: period as Prisma.OpsShiftWhereInput['period'] }
+      : {}),
+    // A supervisor covering three departments files the shift under one,
+    // so match either the primary or the full list they carried.
+    ...(department
+      ? { OR: [{ department }, { departments: { has: department } }] }
+      : {}),
+  };
+}
+
+opsRouter.get('/board', BOARD, async (req, res, next) => {
   try {
     const now = new Date();
     const todayKey = orgDateKey(now);
+    const dayStart = utcInstantOfLocalMidnight(todayKey, 'America/New_York');
+    const filters = opsFilters(req);
     const [active, closedToday] = await Promise.all([
       prisma.opsShift.findMany({
-        where: { status: 'ACTIVE' },
+        where: { ...filters, status: 'ACTIVE' },
         orderBy: { openedAt: 'asc' },
         take: 100,
         include: {
           client: { select: { name: true } },
+          location: { select: { name: true } },
           openedBy: { select: { email: true } },
           coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
       prisma.opsShift.findMany({
-        where: { status: 'CLOSED', dateKey: todayKey },
+        // Closed TODAY means it closed today. Keyed on the day it opened,
+        // an overnight shift vanished from the board the moment it ended:
+        // it opened yesterday, so it matched neither list.
+        where: { ...filters, status: 'CLOSED', closedAt: { gte: dayStart } },
         orderBy: { closedAt: 'desc' },
         take: 100,
         include: {
           client: { select: { name: true } },
+          location: { select: { name: true } },
           openedBy: { select: { email: true } },
           coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
@@ -1908,6 +1997,7 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
     );
     res.json({
       dateKey: todayKey,
+      generatedAt: new Date().toISOString(),
       active: activeWithCounts,
       closedToday: closedToday.map((s) => ({
         ...shiftHeader(s),
@@ -1928,6 +2018,136 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
  * production volume. Everything a walk of all four stores would tell
  * you, on one screen.
  */
+/**
+ * GET /ops/history — the record, not the wall.
+ *
+ * "What happened on last week's overnight at Destin" is a query with four
+ * parts: a store, a period, a date range, and an order. The board answers
+ * none of them (it is today, unordered, and labelled by client), and the
+ * one date-capable list took a single day and no store. This is that
+ * query.
+ *
+ *   ?from=YYYY-MM-DD&to=YYYY-MM-DD   the org days to read (default: 7)
+ *   ?locationId= &period= &department= &clientId=   narrowing
+ *   ?status=ACTIVE|CLOSED
+ *   ?sort=recent|worst|store         worst = least-finished first
+ *
+ * Rows carry the store's name and real timestamps, because "what
+ * happened" is a question about a clock.
+ */
+opsRouter.get('/history', BOARD, async (req, res, next) => {
+  try {
+    const today = orgDateKey(new Date());
+    const isDay = (v: unknown): v is string =>
+      typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const to = isDay(req.query.to) ? req.query.to : today;
+    const defaultFrom = new Date(
+      utcInstantOfLocalMidnight(to, 'America/New_York').getTime() - 6 * DAY_MS,
+    );
+    const from = isDay(req.query.from) ? req.query.from : orgDateKey(defaultFrom);
+    if (from > to) {
+      throw new HttpError(400, 'invalid_range', 'The start date is after the end date.');
+    }
+    const status = req.query.status?.toString();
+    const sort = req.query.sort?.toString() ?? 'recent';
+
+    const rows = await prisma.opsShift.findMany({
+      where: {
+        ...opsFilters(req),
+        dateKey: { gte: from, lte: to },
+        ...(status === 'ACTIVE' || status === 'CLOSED' ? { status } : {}),
+      },
+      orderBy: [{ dateKey: 'desc' }, { openedAt: 'desc' }],
+      take: 500,
+      include: {
+        client: { select: { name: true } },
+        location: { select: { name: true } },
+        openedBy: { select: { email: true } },
+        coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+      },
+    });
+
+    const shifts = rows.map((r) => ({
+      ...shiftHeader(r),
+      clientName: r.client.name,
+      openedByEmail: r.openedBy.email,
+      coveringForName: r.coveringFor ? personName(r.coveringFor) : null,
+      /** Everything the supervisor actually carried, not just the filing department. */
+      departments: r.departments,
+      /** 0-100, or null when the shift carried no checklist at all. */
+      completionPct:
+        r.taskTotal > 0 ? Math.round((r.taskDone / r.taskTotal) * 100) : null,
+    }));
+
+    // Sorting is the difference between a list and a decision. "worst"
+    // puts the shifts someone needs to look at on top: unfinished first,
+    // then incomplete closes, then temperature alerts.
+    if (sort === 'worst') {
+      shifts.sort((a, b) => {
+        const pct = (x: typeof a) => x.completionPct ?? 101;
+        return (
+          pct(a) - pct(b) ||
+          Number(b.closedIncomplete) - Number(a.closedIncomplete) ||
+          b.tempAlerts - a.tempAlerts
+        );
+      });
+    } else if (sort === 'store') {
+      shifts.sort(
+        (a, b) =>
+          (a.locationName ?? a.clientName).localeCompare(b.locationName ?? b.clientName) ||
+          b.dateKey.localeCompare(a.dateKey),
+      );
+    }
+
+    res.json({
+      range: { from, to },
+      generatedAt: new Date().toISOString(),
+      sort,
+      /** True when the cap trimmed the answer — narrow the range. */
+      truncated: rows.length === 500,
+      shifts,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /ops/stores — the stores that have ever run an ops shift, for the
+ * board's store picker. Built from the shifts themselves so the list can
+ * never offer a store with nothing behind it.
+ */
+opsRouter.get('/stores', BOARD, async (req, res, next) => {
+  try {
+    const clientId = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const rows = await prisma.opsShift.findMany({
+      where: { ...(clientId ? { clientId } : {}), locationId: { not: null } },
+      distinct: ['locationId'],
+      select: {
+        locationId: true,
+        location: { select: { name: true, client: { select: { name: true } } } },
+      },
+      take: 300,
+    });
+    const stores = rows
+      .filter((r) => r.location)
+      .map((r) => ({
+        id: r.locationId!,
+        name: r.location!.name,
+        clientName: r.location!.client?.name ?? null,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    // Shifts opened before the store was recorded — the count is the
+    // honest caveat on any per-store number.
+    const unplaced = await prisma.opsShift.count({
+      where: { ...(clientId ? { clientId } : {}), locationId: null },
+    });
+    res.json({ stores, unplaced });
+  } catch (err) {
+    next(err);
+  }
+});
+
 opsRouter.get('/insights', BOARD, async (_req, res, next) => {
   try {
     const now = new Date();
@@ -1941,6 +2161,8 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
           where: { status: 'ACTIVE' },
           select: {
             clientId: true,
+            locationId: true,
+            location: { select: { name: true } },
             department: true,
             actualHeadcount: true,
             scheduledHeadcount: true,
@@ -1953,6 +2175,8 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
           where: { dateKey: todayKey },
           select: {
             clientId: true,
+            locationId: true,
+            location: { select: { name: true } },
             status: true,
             sopDone: true,
             sopTotal: true,
@@ -1977,7 +2201,12 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
             tempMax: true,
             tempOutOfRange: true,
             tempLabel: true,
-            opsShift: { select: { client: { select: { name: true } } } },
+            opsShift: {
+              select: {
+                client: { select: { name: true } },
+                location: { select: { name: true } },
+              },
+            },
           },
         }),
         prisma.opsTask.findMany({
@@ -2011,6 +2240,8 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
       string,
       {
         name: string;
+        clientName: string;
+        locationId: string | null;
         liveShifts: number;
         departments: string[];
         floor: number;
@@ -2020,27 +2251,40 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
         incompleteToday: number;
       }
     >();
-    const touch = (clientId: string, name: string) => {
-      const row = storeMap.get(clientId) ?? {
-        name,
+    const touch = (shift: {
+      clientId: string;
+      locationId: string | null;
+      client: { name: string };
+      location?: { name: string } | null;
+    }) => {
+      const key = shift.locationId ?? `client:${shift.clientId}`;
+      const row = storeMap.get(key) ?? {
+        // An unplaced shift says so rather than borrowing the client's
+        // name and pretending to be a building.
+        name: shift.location?.name ?? `${shift.client.name} (store not recorded)`,
+        clientName: shift.client.name,
+        locationId: shift.locationId ?? null,
         liveShifts: 0,
         departments: [],
-        floor: floorByClient.get(clientId) ?? 0,
+        // Floor headcount is still counted per client — punches carry a
+        // location, but not every one of them does, so this stays the
+        // client's number until that is as reliable as the shift's.
+        floor: floorByClient.get(shift.clientId) ?? 0,
         tempAlertsToday: 0,
         sopDone: 0,
         sopTotal: 0,
         incompleteToday: 0,
       };
-      storeMap.set(clientId, row);
+      storeMap.set(key, row);
       return row;
     };
     for (const s of activeShifts) {
-      const row = touch(s.clientId, s.client.name);
+      const row = touch(s);
       row.liveShifts += 1;
       if (!row.departments.includes(s.department)) row.departments.push(s.department);
     }
     for (const s of todayShifts) {
-      const row = touch(s.clientId, s.client.name);
+      const row = touch(s);
       row.tempAlertsToday += s.tempAlerts;
       row.sopDone += s.sopDone;
       row.sopTotal += s.sopTotal;
@@ -2113,7 +2357,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
         max: t.tempMax != null ? Number(t.tempMax) : null,
         out: t.tempOutOfRange,
         label: t.tempLabel,
-        store: t.opsShift.client.name,
+        store: t.opsShift.location?.name ?? t.opsShift.client.name,
       })),
       hourly,
       sopTrend,
@@ -2154,6 +2398,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
             select: {
               department: true,
               client: { select: { name: true } },
+              location: { select: { name: true } },
             },
           },
         },
@@ -2169,7 +2414,11 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
             select: {
               title: true,
               opsShift: {
-                select: { department: true, client: { select: { name: true } } },
+                select: {
+                  department: true,
+                  client: { select: { name: true } },
+                  location: { select: { name: true } },
+                },
               },
             },
           },
@@ -2192,6 +2441,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
           sopDone: true,
           sopTotal: true,
           client: { select: { name: true } },
+          location: { select: { name: true } },
           openedBy: { select: { email: true } },
         },
       }),
@@ -2216,7 +2466,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         events.push({
           at: t.completedAt!.toISOString(),
           kind: 'temp',
-          store: t.opsShift.client.name,
+          store: t.opsShift.location?.name ?? t.opsShift.client.name,
           department: t.opsShift.department,
           headline: `${t.tempLabel ?? 'Temperature'}: ${Number(t.answerNumber)}°F`,
           detail: t.tempOutOfRange ? 'OUT OF RANGE — alerted' : 'in range',
@@ -2227,7 +2477,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         events.push({
           at: t.completedAt!.toISOString(),
           kind: 'task',
-          store: t.opsShift.client.name,
+          store: t.opsShift.location?.name ?? t.opsShift.client.name,
           department: t.opsShift.department,
           headline: t.title,
           detail: [
@@ -2246,7 +2496,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
       events.push({
         at: p.createdAt.toISOString(),
         kind: 'photo',
-        store: p.task.opsShift.client.name,
+        store: p.task.opsShift.location?.name ?? p.task.opsShift.client.name,
         department: p.task.opsShift.department,
         headline: p.task.title,
         detail: 'photo from the floor',
@@ -2258,7 +2508,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
       events.push({
         at: s.openedAt.toISOString(),
         kind: 'open',
-        store: s.client.name,
+        store: s.location?.name ?? s.client.name,
         department: s.department,
         headline: `${s.department} shift opened`,
         detail: s.openedBy.email,
@@ -2269,7 +2519,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         events.push({
           at: s.closedAt.toISOString(),
           kind: 'close',
-          store: s.client.name,
+          store: s.location?.name ?? s.client.name,
           department: s.department,
           headline: `${s.department} shift closed — SOP ${s.sopDone}/${s.sopTotal}`,
           detail: s.closedIncomplete ? 'closed incomplete' : 'complete',
@@ -2284,7 +2534,7 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
       photos: photos.map((p) => ({
         id: p.id,
         at: p.createdAt.toISOString(),
-        store: p.task.opsShift.client.name,
+        store: p.task.opsShift.location?.name ?? p.task.opsShift.client.name,
         department: p.task.opsShift.department,
         title: p.task.title,
       })),
@@ -2302,6 +2552,9 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       where: { status: 'CLOSED', closedAt: { gte: since } },
       select: {
         clientId: true,
+        locationId: true,
+        location: { select: { name: true } },
+        period: true,
         department: true,
         sopTotal: true,
         sopDone: true,
@@ -2379,6 +2632,9 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       string,
       {
         clientName: string;
+        storeName: string;
+        locationId: string | null;
+        period: string;
         department: string;
         shifts: number;
         sopDone: number;
@@ -2388,9 +2644,12 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       }
     >();
     for (const s of shifts) {
-      const key = `${s.clientId}|${s.department}`;
+      const key = `${s.locationId ?? s.clientId}|${s.period}|${s.department}`;
       const row = byKey.get(key) ?? {
         clientName: s.client.name,
+        storeName: s.location?.name ?? `${s.client.name} (store not recorded)`,
+        locationId: s.locationId ?? null,
+        period: s.period,
         department: s.department,
         shifts: 0,
         sopDone: 0,
@@ -2418,10 +2677,17 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
           ...r,
           sopPct: r.sopTotal > 0 ? Math.round((r.sopDone / r.sopTotal) * 100) : null,
         }))
-        .sort(
-          (a, b) =>
-            a.clientName.localeCompare(b.clientName) ||
-            a.department.localeCompare(b.department),
+        // Worst first by default: a scorecard sorted alphabetically puts
+        // the store that needs attention wherever its name happens to
+        // fall. ?sort=store restores the alphabetical reading.
+        .sort((a, b) =>
+          (req.query.sort?.toString() ?? 'worst') === 'store'
+            ? a.storeName.localeCompare(b.storeName) ||
+              a.period.localeCompare(b.period) ||
+              a.department.localeCompare(b.department)
+            : (a.sopPct ?? 101) - (b.sopPct ?? 101) ||
+              b.incomplete - a.incomplete ||
+              b.tempAlerts - a.tempAlerts,
         ),
       totals: {
         shifts: shifts.length,

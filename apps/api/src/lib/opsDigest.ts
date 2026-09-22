@@ -47,7 +47,10 @@ export async function runOpsDigestSweep(
 
   const shifts = await prisma.opsShift.findMany({
     where: { dateKey },
-    include: { client: { select: { name: true } } },
+    include: {
+      client: { select: { name: true } },
+      location: { select: { name: true } },
+    },
     take: 300,
   });
   if (shifts.length === 0) return { sent: false, reason: 'no_activity' };
@@ -56,12 +59,14 @@ export async function runOpsDigestSweep(
     where: { status: 'PENDING', fromShift: { is: { dateKey } } },
   });
 
-  const byClient = new Map<
+  const byStore = new Map<
     string,
     { shifts: number; open: number; incomplete: number; tempAlerts: number; sopDone: number; sopTotal: number }
   >();
+  const storeLabel = (s: { client: { name: string }; location: { name: string } | null }) =>
+    s.location?.name ?? `${s.client.name} (store not recorded)`;
   for (const s of shifts) {
-    const row = byClient.get(s.client.name) ?? {
+    const row = byStore.get(storeLabel(s)) ?? {
       shifts: 0,
       open: 0,
       incomplete: 0,
@@ -75,9 +80,9 @@ export async function runOpsDigestSweep(
     row.tempAlerts += s.tempAlerts;
     row.sopDone += s.sopDone;
     row.sopTotal += s.sopTotal;
-    byClient.set(s.client.name, row);
+    byStore.set(storeLabel(s), row);
   }
-  const lines = [...byClient.entries()]
+  const lines = [...byStore.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, r]) => {
       const sop = r.sopTotal > 0 ? ` · SOP ${Math.round((r.sopDone / r.sopTotal) * 100)}%` : '';
@@ -92,7 +97,7 @@ export async function runOpsDigestSweep(
     });
 
   await notifyAllAdmins({
-    subject: `Store ops today: ${shifts.length} shift${shifts.length === 1 ? '' : 's'} across ${byClient.size} store${byClient.size === 1 ? '' : 's'}`,
+    subject: `Store ops today: ${shifts.length} shift${shifts.length === 1 ? '' : 's'} across ${byStore.size} store${byStore.size === 1 ? '' : 's'}`,
     body:
       `Ops digest for ${dateKey}:\n\n${lines.join('\n')}` +
       (pendingHandover > 0
