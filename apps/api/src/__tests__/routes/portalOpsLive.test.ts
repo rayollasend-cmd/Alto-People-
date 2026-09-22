@@ -11,6 +11,7 @@ import {
   truncateAll,
 } from '../../../test/db.js';
 import { localDateKey } from '../../lib/timezone.js';
+import { utcInstantOfLocalMidnight } from '../../lib/timeAnomalies.js';
 
 /**
  * Store operations, as the store manager reads it.
@@ -27,6 +28,29 @@ import { localDateKey } from '../../lib/timezone.js';
 const app = () => createApp();
 const NY = 'America/New_York';
 const H = 3_600_000;
+
+/**
+ * An instant that is inside TODAY on the store's clock and already past.
+ *
+ * These fixtures used to say `Date.now() - 1 * H` for "finished this
+ * morning". Between midnight and 1am in New York that lands on YESTERDAY,
+ * so the shift matched neither openedAt nor closedAt in today's window and
+ * the suite failed — one hour in every twenty-four, which is long enough
+ * to be a nuisance and short enough to look like a flake. CI caught it at
+ * 00:51 EDT.
+ *
+ * Six in the morning when the day is old enough, and otherwise the most
+ * recent moment that is still inside today: either way a real instant,
+ * inside today, that has already happened. The clamp to dayStart matters
+ * in the first minute after midnight, where "a minute ago" is yesterday
+ * again — the same bug one order of magnitude smaller.
+ */
+function earlierToday(now = new Date()): Date {
+  const dayStart = utcInstantOfLocalMidnight(localDateKey(now, NY), NY);
+  const six = new Date(dayStart.getTime() + 6 * H);
+  const candidate = six.getTime() < now.getTime() ? six : new Date(now.getTime() - 60_000);
+  return candidate.getTime() >= dayStart.getTime() ? candidate : dayStart;
+}
 
 beforeEach(async () => {
   await truncateAll();
@@ -117,8 +141,10 @@ describe('the store manager reads a live day', () => {
 
   it('keeps an overnight that FINISHED this morning in this morning', async () => {
     const { client, loc, sup, manager } = await store();
-    const opened = new Date(Date.now() - 9 * H);
-    const closed = new Date(Date.now() - 1 * H);
+    // Finished earlier today; started the evening before — the overnight
+    // shape, pinned to today's clock rather than to the hour the suite runs.
+    const closed = earlierToday();
+    const opened = new Date(closed.getTime() - 8 * H);
     const shift = await overnight({
       clientId: client.id,
       locationId: loc.id,
@@ -148,8 +174,8 @@ describe('the store manager reads a live day', () => {
       clientId: client.id,
       locationId: loc.id,
       openedById: sup.id,
-      openedAt: new Date(Date.now() - 9 * H),
-      closedAt: new Date(Date.now() - 1 * H),
+      openedAt: new Date(earlierToday().getTime() - 8 * H),
+      closedAt: earlierToday(),
     });
     const morning = await prisma.opsShift.create({
       data: {
