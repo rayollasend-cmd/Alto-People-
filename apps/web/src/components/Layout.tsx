@@ -52,6 +52,53 @@ function RouteFallback() {
 // detail and back.
 const scrollPositions = new Map<string, number>();
 
+/**
+ * Where each SECTION was left, keyed by pathname rather than by history
+ * entry.
+ *
+ * The map above restores on POP, which covers Back and Forward. A bottom
+ * tab is a <Link>, so tapping one is a PUSH with a brand-new key — and
+ * every PUSH resets to the top. Scroll halfway down Schedule, glance at
+ * Pay, tap Schedule again and you are back at the first row, having lost
+ * your place for doing the thing a tab bar exists to do. No native tab
+ * bar behaves that way.
+ *
+ * Only section ROOTS are remembered — one path segment, e.g. /scheduling
+ * or /rides, which is exactly what the tab bar and the sidebar navigate
+ * to. A push into a detail screen still opens at the top, because that is
+ * a new thing to read rather than a return to one you were already in.
+ */
+const sectionScroll = new Map<string, number>();
+
+/** A section root: "/rides", not "/rides/42" and not "/". */
+export function isSectionRoot(pathname: string): boolean {
+  const parts = pathname.split('/').filter(Boolean);
+  return parts.length === 1;
+}
+
+/**
+ * Where the incoming page should be scrolled to. Exported so the test
+ * exercises the rule the component actually runs, rather than a copy of
+ * it that can drift.
+ */
+export function scrollTargetFor(args: {
+  navigationType: string;
+  pathname: string;
+  sectionScroll: Map<string, number>;
+  keyScroll: number | undefined;
+}): number {
+  const returningToSection =
+    args.navigationType !== 'POP' &&
+    isSectionRoot(args.pathname) &&
+    args.sectionScroll.has(args.pathname);
+  if (args.navigationType === 'POP' || returningToSection) {
+    return (
+      (returningToSection ? args.sectionScroll.get(args.pathname) : args.keyScroll) ?? 0
+    );
+  }
+  return 0;
+}
+
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
@@ -62,6 +109,7 @@ export function Layout() {
   // True while a page chunk is still on the wire — see lib/chunkLoading.
   const chunkLoading = useChunkLoading();
   const prevKey = useRef(location.key);
+  const prevPath = useRef(location.pathname);
 
   // Feed the sidebar's "Recent" section — every module navigation bumps
   // that module to the top of the signed-in user's recents (per-user
@@ -98,18 +146,30 @@ export function Layout() {
     // before swapping. Capture happens before the next paint so the
     // restore on POP sees fresh values.
     scrollPositions.set(prevKey.current, main.scrollTop);
-    if (navigationType === 'POP') {
-      const saved = scrollPositions.get(location.key);
+    if (isSectionRoot(prevPath.current)) {
+      sectionScroll.set(prevPath.current, main.scrollTop);
+    }
+    // A tab tap is a PUSH to a section root we may have been in before —
+    // restore it, the way a tab bar is expected to. Anything else pushed
+    // is new reading and opens at the top.
+    const target = scrollTargetFor({
+      navigationType,
+      pathname: location.pathname,
+      sectionScroll,
+      keyScroll: scrollPositions.get(location.key),
+    });
+    if (target > 0) {
       // Wait one frame: the route swap is mid-commit, and a synchronous
-      // scrollTop = 0 would race the new page's first paint. requestAnimation
+      // scrollTop would race the new page's first paint. requestAnimation
       // schedules us after the layout commits.
       requestAnimationFrame(() => {
-        main.scrollTop = saved ?? 0;
+        main.scrollTop = target;
       });
     } else {
       main.scrollTop = 0;
     }
     prevKey.current = location.key;
+    prevPath.current = location.pathname;
   }, [location.key, navigationType]);
 
   return (

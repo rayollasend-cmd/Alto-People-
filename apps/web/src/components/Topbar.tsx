@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronRight, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -25,6 +25,7 @@ import { NotificationsBell } from './NotificationsBell';
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitcher } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
+import { isSectionRoot } from './Layout';
 
 interface TopbarProps {
   onOpenCommandPalette: () => void;
@@ -101,6 +102,39 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
   const breadcrumbs = usePageBreadcrumbs();
+  const location = useLocation();
+
+  /**
+   * The phone's way back out of a detail screen.
+   *
+   * Shown only inside a section — at a root the top-left is the logo, as
+   * before. The label prefers the parent breadcrumb ("Payroll") over a
+   * bare "Back" because naming the destination is what makes it worth
+   * tapping.
+   */
+  const showBack = !isSectionRoot(location.pathname) && location.pathname !== '/';
+  const parentCrumb =
+    breadcrumbs && breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2] : null;
+  const backLabel = parentCrumb?.label ?? 'Back';
+
+  const goBack = () => {
+    // react-router stamps an index on each entry. Zero means this is the
+    // first page of the session — someone followed a link from an email
+    // straight into a detail — and history.back() would leave the app (or
+    // in standalone, do nothing at all). Go UP a level instead, which is
+    // always somewhere inside the product.
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) {
+      navigate(-1);
+      return;
+    }
+    if (parentCrumb?.to) {
+      navigate(parentCrumb.to);
+      return;
+    }
+    const up = location.pathname.replace(/\/[^/]+\/?$/, '');
+    navigate(up || '/');
+  };
   const heroHidden = useHeroHidden();
   // When the last confirmed sync happened, so the offline pill can date
   // what's on screen rather than just apologise.
@@ -126,8 +160,28 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
       className="bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
     >
       {/* No ☰ on phones: the tab bar's More opens the same menu, and two
-          doors to one room read as a website, not an app. */}
-      <Logo size="xs" className="md:hidden" alt="Alto HR" />
+          doors to one room read as a website, not an app.
+
+          The top-left is the app's identity at a section root and a way
+          BACK inside one — the iOS convention, and on a phone the only
+          one available. Breadcrumbs are hidden below md (PageHeader), the
+          tab bar only moves between sections rather than up out of a
+          detail, and an installed PWA has no browser chrome at all: in
+          standalone there was no way back from /payroll/compliance except
+          a tab that threw away where you were. */}
+      {showBack ? (
+        <button
+          type="button"
+          onClick={goBack}
+          aria-label={backLabel}
+          className="md:hidden -ml-2 flex items-center gap-0.5 rounded-md pl-1 pr-2 py-1 min-h-11 text-gold active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <ChevronLeft className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="text-sm max-w-[7rem] truncate">{backLabel}</span>
+        </button>
+      ) : (
+        <Logo size="xs" className="md:hidden" alt="Alto HR" />
+      )}
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
           scroll. Prefer the breadcrumb trail when the page provided one;
