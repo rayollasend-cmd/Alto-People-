@@ -3,12 +3,14 @@ import {
   AlertTriangle,
   Camera,
   Check,
+  Clock,
   CornerDownRight,
   Flag,
   Users,
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { fmtClock, fmtDayKey, fmtDuration, fmtFull } from './opsTime';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import {
@@ -109,14 +111,32 @@ export function OpsShiftRecordDialog({
                 )}
               </DialogTitle>
               <DialogDescription>
-                {detail.shift.clientName} · {detail.shift.position} · {detail.shift.dateKey}
+                {detail.shift.locationName ?? detail.shift.clientName}
+                {detail.shift.locationName ? ` · ${detail.shift.clientName}` : ''} ·{' '}
+                {detail.shift.position} · {fmtDayKey(detail.shift.dateKey)}
                 {detail.shift.templateName ? ` · ${detail.shift.templateName}` : ''} — the
                 shift as it was recorded. Nothing here can be edited.
               </DialogDescription>
             </DialogHeader>
 
-            {/* Fact strip */}
+            {/* Fact strip. The clock comes first: a checklist with no
+                times on it cannot answer "what happened overnight". */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2 text-xs tabular-nums">
+              <span
+                className="inline-flex items-center gap-1.5 text-silver"
+                title={`Opened ${fmtFull(detail.shift.openedAt)}${
+                  detail.shift.closedAt ? ` · closed ${fmtFull(detail.shift.closedAt)}` : ''
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5 text-gold" aria-hidden="true" />
+                {fmtClock(detail.shift.openedAt)}
+                {detail.shift.closedAt ? ` – ${fmtClock(detail.shift.closedAt)}` : ' – running'}
+                {detail.shift.closedAt && (
+                  <span className="text-silver/60">
+                    ({fmtDuration(detail.shift.openedAt, detail.shift.closedAt)})
+                  </span>
+                )}
+              </span>
               <span className="inline-flex items-center gap-1.5 text-silver">
                 <Users className="h-3.5 w-3.5 text-gold" aria-hidden="true" />
                 {detail.shift.actualHeadcount}/{detail.shift.scheduledHeadcount} floor
@@ -290,6 +310,13 @@ function RecordTaskLine({ task, isFollowUp = false }: { task: OpsTaskRow; isFoll
           </span>
         )}
         {task.doneAssociate && <span>by {task.doneAssociate.name}</span>}
+        {/* When each line was actually done — the sequence is the story of
+            the shift, and it was stored all along without being shown. */}
+        {task.completedAt && (
+          <span className="tabular-nums text-silver/60" title={fmtFull(task.completedAt)}>
+            {fmtClock(task.completedAt)}
+          </span>
+        )}
         {task.photos.map((p) => (
           <a
             key={p.id}

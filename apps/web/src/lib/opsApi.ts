@@ -378,6 +378,56 @@ export function closeOpsShift(
   });
 }
 
+export type OpsShiftRow = OpsShiftHeader & {
+  clientName: string;
+  openedByEmail: string;
+  coveringForName?: string | null;
+  /** Every department the supervisor carried, not just the filing one. */
+  departments?: string[];
+  /** 0-100, or null when the shift carried no checklist. */
+  completionPct?: number | null;
+};
+
+/** How a list of shifts may be ordered. */
+export type OpsSort = 'recent' | 'worst' | 'store';
+
+export interface OpsHistoryQuery {
+  from?: string;
+  to?: string;
+  locationId?: string;
+  clientId?: string;
+  period?: string;
+  department?: string;
+  status?: 'ACTIVE' | 'CLOSED';
+  sort?: OpsSort;
+}
+
+/**
+ * The record, not the wall: shifts over a date range, narrowed to a store,
+ * a period and a department, ordered by what matters.
+ */
+export function getOpsHistory(q: OpsHistoryQuery = {}): Promise<{
+  range: { from: string; to: string };
+  generatedAt: string;
+  sort: OpsSort;
+  truncated: boolean;
+  shifts: OpsShiftRow[];
+}> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) params.set(k, String(v));
+  const qs = params.toString();
+  return apiFetch(`/ops/history${qs ? `?${qs}` : ''}`);
+}
+
+/** The stores that have run an ops shift, for the board's picker. */
+export function getOpsStores(): Promise<{
+  stores: { id: string; name: string; clientName: string | null }[];
+  /** Shifts with no store on them — the caveat on any per-store number. */
+  unplaced: number;
+}> {
+  return apiFetch('/ops/stores');
+}
+
 export function listOpsShifts(params?: {
   clientId?: string;
   status?: 'ACTIVE' | 'CLOSED';
@@ -391,12 +441,22 @@ export function listOpsShifts(params?: {
   return apiFetch(`/ops/shifts${qs ? `?${qs}` : ''}`);
 }
 
-export function getOpsBoard(): Promise<{
+export function getOpsBoard(
+  filters: { locationId?: string; period?: string; department?: string } = {},
+): Promise<{
   dateKey: string;
-  active: (OpsShiftHeader & { clientName: string; openedByEmail: string })[];
-  closedToday: (OpsShiftHeader & { clientName: string; openedByEmail: string })[];
+  /** When the server answered — a frozen board and a quiet floor look
+   *  identical without it. */
+  generatedAt: string;
+  active: OpsShiftRow[];
+  /** Shifts that CLOSED today, including an overnight that opened
+   *  yesterday — it used to match neither list and disappear. */
+  closedToday: OpsShiftRow[];
 }> {
-  return apiFetch('/ops/board');
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+  const qs = params.toString();
+  return apiFetch(`/ops/board${qs ? `?${qs}` : ''}`);
 }
 
 export interface OpsStoreWindow {
@@ -449,10 +509,14 @@ export function getOpsFeed(): Promise<{
   return apiFetch('/ops/feed');
 }
 
-export function getOpsScorecard(weeks = 4): Promise<{
+export function getOpsScorecard(weeks = 4, sort: 'worst' | 'store' = 'worst'): Promise<{
   weeks: number;
   rows: {
     clientName: string;
+    /** The building. Falls back to "<client> (store not recorded)". */
+    storeName: string;
+    locationId: string | null;
+    period: string;
     department: string;
     shifts: number;
     sopPct: number | null;
@@ -474,7 +538,7 @@ export function getOpsScorecard(weeks = 4): Promise<{
     weeks: { weekKey: string; total: number }[];
   }[];
 }> {
-  return apiFetch(`/ops/scorecard?weeks=${weeks}`);
+  return apiFetch(`/ops/scorecard?weeks=${weeks}&sort=${sort}`);
 }
 
 /** The SOP the signed-in supervisor has open — the "finish your SOP"

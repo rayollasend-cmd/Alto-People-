@@ -33,18 +33,25 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Button } from '@/components/ui/Button';
+import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   getOpsBoard,
   getOpsFeed,
   getOpsInsights,
   getOpsScorecard,
+  getOpsStores,
   metricLabel,
   opsPhotoUrl,
   type OpsFeedEvent,
   type OpsShiftHeader,
 } from '@/lib/opsApi';
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
+import { OpsHistory } from './OpsHistory';
+import { fmtAgo, fmtClock, fmtDayKey, fmtFull, OPS_TZ, opsToday, shiftDayKey } from './opsTime';
 
 /**
  * The operations command center — presence in every store without being
@@ -52,6 +59,25 @@ import { OpsShiftRecordDialog } from './OpsShiftRecord';
  * progress rings, the floor feed (completions, temps, photos ticking in),
  * a photo wall, and the rolling scorecard. Refreshes itself every 30s.
  */
+
+
+/* ===== Filters ==========================================================
+ * A board that shows today, unordered, cannot answer "what happened on
+ * last week's overnight at Destin". Four things make it answerable: a
+ * store, a period, a date range, and an order — all carried in the URL,
+ * so the answer can be sent to someone as a link.
+ *
+ * Empty dates mean NOW: the live wall, filtered. Any date range switches
+ * to the record.
+ * ====================================================================== */
+
+const PERIODS = ['MORNING', 'EVENING', 'CLOSING', 'OVERNIGHT'] as const;
+
+const RANGE_PRESETS: { key: string; label: string; days: number }[] = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7', label: 'Last 7 days', days: 6 },
+  { key: '30', label: 'Last 30 days', days: 29 },
+];
 
 const PERIOD_LABEL: Record<string, string> = {
   MORNING: 'Morning',
@@ -78,7 +104,14 @@ function ProgressRing({ pct, alert }: { pct: number; alert: boolean }) {
   const r = 26;
   const c = 2 * Math.PI * r;
   return (
-    <svg viewBox="0 0 64 64" className="h-16 w-16 shrink-0" aria-hidden="true">
+    <svg
+      viewBox="0 0 64 64"
+      className="h-16 w-16 shrink-0"
+      role="img"
+      // The percentage is drawn INSIDE the svg, so hiding the whole
+      // element hid the number from anyone not looking at it.
+      aria-label={`${pct}% of this shift's checklist done`}
+    >
       <circle cx="32" cy="32" r={r} fill="none" strokeWidth="5" className="stroke-navy-secondary" />
       <circle
         cx="32"
@@ -117,9 +150,150 @@ const FEED_ICON: Record<OpsFeedEvent['kind'], typeof Activity> = {
   close: Flag,
 };
 
+
+/** Store, period, department, dates, order — the whole query, in one row. */
+function OpsFilterBar({
+  stores,
+  storeId,
+  period,
+  department,
+  from,
+  to,
+  sort,
+  historyMode,
+  anyFilter,
+  departments,
+  onParam,
+  onRange,
+  onClear,
+}: {
+  stores: { id: string; name: string; clientName: string | null }[];
+  unplaced: number;
+  storeId: string;
+  period: string;
+  department: string;
+  from: string;
+  to: string;
+  sort: string;
+  historyMode: boolean;
+  anyFilter: boolean;
+  departments: string[];
+  onParam: (key: string, value: string) => void;
+  onRange: (days: number) => void;
+  onClear: () => void;
+}) {
+  return (
+    <FilterBar className="gap-x-3 gap-y-2">
+      <label className="flex items-center gap-1.5 text-2xs uppercase tracking-wider text-silver/70">
+        Store
+        <Select
+          value={storeId}
+          onChange={(e) => onParam('store', e.target.value)}
+          className="h-9 w-48"
+          aria-label="Filter by store"
+        >
+          <option value="">All stores</option>
+          {stores.map((st) => (
+            <option key={st.id} value={st.id}>
+              {st.name}
+            </option>
+          ))}
+        </Select>
+      </label>
+
+      <div
+        className="flex flex-wrap items-center gap-1"
+        role="group"
+        aria-label="Filter by shift period"
+      >
+        {PERIODS.map((pKey) => (
+          <FilterChip
+            key={pKey}
+            active={period === pKey}
+            onClick={() => onParam('period', period === pKey ? '' : pKey)}
+          >
+            {PERIOD_LABEL[pKey]}
+          </FilterChip>
+        ))}
+      </div>
+
+      {departments.length > 0 && (
+        <label className="flex items-center gap-1.5 text-2xs uppercase tracking-wider text-silver/70">
+          Dept
+          <Select
+            value={department}
+            onChange={(e) => onParam('dept', e.target.value)}
+            className="h-9 w-40"
+            aria-label="Filter by department"
+          >
+            <option value="">All</option>
+            {departments.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
+
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Date range">
+        {RANGE_PRESETS.map((r) => {
+          const active =
+            r.days === 0 ? !historyMode : from === shiftDayKey(opsToday(), -r.days) && to === opsToday();
+          return (
+            <FilterChip key={r.key} active={active} onClick={() => onRange(r.days)}>
+              {r.label}
+            </FilterChip>
+          );
+        })}
+        <Input
+          type="date"
+          value={from}
+          max={to || undefined}
+          onChange={(e) => onParam('from', e.target.value)}
+          className="h-9 w-[9.5rem]"
+          aria-label="Shifts on or after"
+        />
+        <span className="text-xs text-silver/60">to</span>
+        <Input
+          type="date"
+          value={to}
+          min={from || undefined}
+          onChange={(e) => onParam('to', e.target.value)}
+          className="h-9 w-[9.5rem]"
+          aria-label="Shifts on or before"
+        />
+      </div>
+
+      {historyMode && (
+        <label className="flex items-center gap-1.5 text-2xs uppercase tracking-wider text-silver/70">
+          Order
+          <Select
+            value={sort}
+            onChange={(e) => onParam('sort', e.target.value)}
+            className="h-9 w-44"
+            aria-label="Order the record"
+          >
+            <option value="worst">Needs attention first</option>
+            <option value="recent">Most recent first</option>
+            <option value="store">By store</option>
+          </Select>
+        </label>
+      )}
+
+      {anyFilter && (
+        <Button variant="ghost" size="xs" onClick={onClear}>
+          Clear
+        </Button>
+      )}
+    </FilterBar>
+  );
+}
+
 export function OpsBoard() {
   const [board, setBoard] = useState<{
     dateKey: string;
+    generatedAt: string;
     active: BoardShift[];
     closedToday: BoardShift[];
   } | null>(null);
@@ -131,6 +305,7 @@ export function OpsBoard() {
     ReturnType<typeof getOpsScorecard>
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stores, setStores] = useState<Awaited<ReturnType<typeof getOpsStores>> | null>(null);
   // The record drill-in: which shift's full evidence is open.
   const [recordId, setRecordId] = useState<string | null>(null);
 
@@ -138,6 +313,52 @@ export function OpsBoard() {
   // then drops the param (replace) so closing the dialog — or a later
   // reload — doesn't reopen it.
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // The four things that make a question answerable, all in the URL.
+  const storeId = searchParams.get('store') ?? '';
+  const period = searchParams.get('period') ?? '';
+  const department = searchParams.get('dept') ?? '';
+  const from = searchParams.get('from') ?? '';
+  const to = searchParams.get('to') ?? '';
+  const sort = (searchParams.get('sort') ?? 'worst') as 'worst' | 'recent' | 'store';
+  // Dates switch the page from the live wall to the record.
+  const historyMode = from !== '' || to !== '';
+  const anyFilter = historyMode || storeId !== '' || period !== '' || department !== '';
+
+  const setParam = (key: string, value: string) =>
+    setSearchParams(
+      (prev) => {
+        if (value) prev.set(key, value);
+        else prev.delete(key);
+        return prev;
+      },
+      { replace: true },
+    );
+  const setRange = (days: number) => {
+    const today = opsToday();
+    setSearchParams(
+      (prev) => {
+        if (days <= 0) {
+          prev.delete('from');
+          prev.delete('to');
+        } else {
+          prev.set('from', shiftDayKey(today, -days));
+          prev.set('to', today);
+        }
+        return prev;
+      },
+      { replace: true },
+    );
+  };
+  const clearFilters = () =>
+    setSearchParams(
+      (prev) => {
+        for (const k of ['store', 'period', 'dept', 'from', 'to', 'sort']) prev.delete(k);
+        return prev;
+      },
+      { replace: true },
+    );
+
   useEffect(() => {
     const linked = searchParams.get('record');
     if (!linked) return;
@@ -150,9 +371,14 @@ export function OpsBoard() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      getOpsBoard()
+      getOpsBoard({ locationId: storeId, period, department })
         .then((b) => {
-          if (!cancelled) setBoard(b);
+          if (cancelled) return;
+          setBoard(b);
+          // A banner that never clears is how this board used to behave:
+          // one failed poll and it stayed up while the next nine
+          // succeeded behind it.
+          setError(null);
         })
         .catch((err) => {
           if (!cancelled) {
@@ -170,6 +396,7 @@ export function OpsBoard() {
         })
         .catch(() => {});
     };
+    if (historyMode) return () => undefined;
     load();
     const timer = setInterval(load, 30_000);
     getOpsScorecard(4)
@@ -181,6 +408,19 @@ export function OpsBoard() {
       cancelled = true;
       clearInterval(timer);
     };
+  }, [storeId, period, department, historyMode]);
+
+  // The store list is stable; fetch it once for the picker.
+  useEffect(() => {
+    let cancelled = false;
+    getOpsStores()
+      .then((r) => {
+        if (!cancelled) setStores(r);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const headline = useMemo(() => {
@@ -190,7 +430,9 @@ export function OpsBoard() {
     const tempAlerts = all.reduce((n, s) => n + s.tempAlerts, 0);
     const sopDone = all.reduce((n, s) => n + s.taskDone, 0);
     const sopTotal = all.reduce((n, s) => n + s.taskTotal, 0);
-    const stores = new Set(all.map((s) => s.clientName)).size;
+    // Buildings, not chains. This counted distinct clients and called
+    // them stores, so a client with forty locations read as one.
+    const stores = new Set(all.map((s) => s.locationName ?? `client:${s.clientName}`)).size;
     return {
       live: board.active.length,
       floor,
@@ -201,11 +443,86 @@ export function OpsBoard() {
     };
   }, [board]);
 
-  if (error) return <ErrorBanner>{error}</ErrorBanner>;
+  const departments = useMemo(() => {
+    const set = new Set<string>();
+    for (const shift of [...(board?.active ?? []), ...(board?.closedToday ?? [])]) {
+      set.add(shift.department);
+    }
+    for (const store of insights?.stores ?? []) for (const d of store.departments) set.add(d);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [board, insights]);
+
+  const filterBar = (
+    <OpsFilterBar
+      stores={stores?.stores ?? []}
+      unplaced={stores?.unplaced ?? 0}
+      storeId={storeId}
+      period={period}
+      department={department}
+      from={from}
+      to={to}
+      sort={sort}
+      historyMode={historyMode}
+      anyFilter={anyFilter}
+      departments={departments}
+      onParam={setParam}
+      onRange={setRange}
+      onClear={clearFilters}
+    />
+  );
+
+  // The record: a date range switches the page from what is happening to
+  // what happened, which is the question the board could never answer.
+  if (historyMode) {
+    return (
+      <div className="space-y-4">
+        {filterBar}
+        <p className="text-xs text-silver/70">
+          {from && to
+            ? `Shifts from ${fmtDayKey(from)} to ${fmtDayKey(to)}`
+            : 'Pick both dates to read a range'}
+          {' · times in '}
+          {OPS_TZ.split('/')[1]?.replace('_', ' ')}
+        </p>
+        <OpsHistory
+          query={{
+            from: from || undefined,
+            to: to || undefined,
+            locationId: storeId || undefined,
+            period: period || undefined,
+            department: department || undefined,
+            sort,
+          }}
+          onOpenRecord={setRecordId}
+        />
+        {recordId && (
+          <OpsShiftRecordDialog shiftId={recordId} onClose={() => setRecordId(null)} />
+        )}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        {filterBar}
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="outline" onClick={() => setError(null)}>
+              Try again
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      </div>
+    );
+  }
   if (!board || !headline) return <Skeleton className="h-64" />;
 
   return (
     <div className="space-y-4">
+      {filterBar}
       {/* ===== Headline band — the six numbers that ARE the floor ===== */}
       <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
         <div
@@ -647,7 +964,13 @@ export function OpsBoard() {
                             </span>
                           </div>
                           <div className="mt-0.5 truncate text-xs text-silver">
-                            {s.clientName}
+                            {/* The building, not the chain: two overnight
+                                shifts at Destin and Front Beach used to be
+                                the same row twice. */}
+                            {s.locationName ?? s.clientName}
+                            {s.locationName && (
+                              <span className="text-silver/50"> · {s.clientName}</span>
+                            )}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-2xs tabular-nums text-silver/80">
                             <span className="inline-flex items-center gap-1">
@@ -664,8 +987,12 @@ export function OpsBoard() {
                               </span>
                             )}
                           </div>
-                          <div className="mt-1 truncate text-2xs text-silver/50">
-                            {s.openedByEmail} · opened {relTime(s.openedAt)}
+                          <div
+                            className="mt-1 truncate text-2xs text-silver/50"
+                            title={`Opened ${fmtFull(s.openedAt)}`}
+                          >
+                            {s.openedByEmail} · opened {fmtClock(s.openedAt)} (
+                            {fmtAgo(s.openedAt)})
                           </div>
                         </div>
                       </button>
@@ -743,7 +1070,9 @@ export function OpsBoard() {
                           <span className="ml-1.5 text-xs text-gold">
                             {PERIOD_LABEL[s.period]}
                           </span>
-                          <span className="ml-2 text-xs text-silver/70">{s.clientName}</span>
+                          <span className="ml-2 text-xs text-silver/70">
+                            {s.locationName ?? s.clientName}
+                          </span>
                         </div>
                         {s.closingSummary && (
                           <div className="mt-0.5 max-w-prose truncate text-xs italic text-silver/70">
@@ -752,6 +1081,14 @@ export function OpsBoard() {
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2 text-xs tabular-nums">
+                        {/* When it closed. A shift record with no clock on
+                            it cannot answer "what happened overnight". */}
+                        <span
+                          className="text-silver/80"
+                          title={`Opened ${fmtFull(s.openedAt)} · closed ${fmtFull(s.closedAt)}`}
+                        >
+                          {fmtClock(s.openedAt)}–{fmtClock(s.closedAt)}
+                        </span>
                         <span className="text-silver">
                           SOP <span className="text-white">{s.sopDone}</span>/{s.sopTotal}
                         </span>
@@ -938,7 +1275,10 @@ export function OpsBoard() {
               <Activity className="mr-1.5 inline h-4 w-4 text-gold" aria-hidden="true" />
               Floor feed
               <span className="ml-2 text-2xs font-normal uppercase tracking-wider text-silver/50">
-                live · 30s refresh
+                {/* Not "30s refresh" as a promise — the time it last
+                    actually answered. A frozen board and a quiet floor
+                    look identical without this. */}
+                as of {fmtClock(board.generatedAt)}
               </span>
             </CardTitle>
           </CardHeader>
@@ -948,7 +1288,15 @@ export function OpsBoard() {
                 Quiet — events appear here the moment a supervisor records them.
               </p>
             ) : (
-              <ul className="relative space-y-0 max-h-[560px] overflow-y-auto pr-1">
+              <ul
+                // A scroll container with no tab stop can only be scrolled
+                // by tabbing through whatever links happen to be inside it
+                // — an event list without photos was unreachable.
+                tabIndex={0}
+                role="region"
+                aria-label="Floor feed, newest first"
+                className="relative space-y-0 max-h-[560px] overflow-y-auto pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
                 {feed.events.map((e, i) => {
                   const Icon = FEED_ICON[e.kind];
                   return (
