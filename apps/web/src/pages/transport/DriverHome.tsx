@@ -907,7 +907,7 @@ function StopCard({
 
       <ul className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
         {stop.rides.map((r) => (
-          <RiderAtStop key={r.id} ride={r} now={now} act={act} busy={busy} onRider={onRider} />
+          <RiderAtStop key={r.id} ride={r} now={now} arrived={!!arrivedAt} act={act} busy={busy} onRider={onRider} />
         ))}
       </ul>
     </div>
@@ -917,12 +917,16 @@ function StopCard({
 function RiderAtStop({
   ride,
   now,
+  arrived,
   act,
   busy,
   onRider,
 }: {
   ride: Ride;
   now: number;
+  /** The STOP's arrival, not this ride's — one card, one answer to "are
+   *  we there yet", so every control on it leads at the same moment. */
+  arrived: boolean;
   act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
   busy: boolean;
   onRider: (associateId: string) => void;
@@ -983,7 +987,18 @@ function RiderAtStop({
           them — On board and a no-show fee should not be 8px apart when the
           phone is being held one-handed on a kerb. */}
       <div className="mt-2 flex flex-wrap items-center gap-2 pl-11 coarse:gap-3 coarse:pl-14">
-        <Button size="sm" className="coarse:text-sm" onClick={() => void act(() => markBoarded(ride.id))} disabled={busy}>
+        {/* Gold only once the van is actually at the kerb. Marking
+            someone aboard from two streets away is premature — it starts
+            their fare and clears them off the waiting list — and while
+            the van is still moving a row of gold buttons down the card
+            competes with Navigate, which IS the next thing to do. */}
+        <Button
+          size="sm"
+          className="coarse:text-sm"
+          variant={arrived ? 'primary' : 'secondary'}
+          onClick={() => void act(() => markBoarded(ride.id))}
+          disabled={busy}
+        >
           <Check className="h-3.5 w-3.5" />
           {t('drive.onBoard')}
         </Button>

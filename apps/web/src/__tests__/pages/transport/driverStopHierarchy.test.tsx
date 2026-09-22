@@ -31,11 +31,11 @@ import { DriverHome } from '@/pages/transport/DriverHome';
  *   driving to the stop   Navigate      (Arrived and All on board quiet)
  *   standing at it        All on board  (Navigate steps back)
  *
- * The assertion is deliberately "exactly one primary", not "Navigate is
- * primary". Two gold buttons side by side is the failure mode, and it is
- * the one a per-button assertion would let through — Button defaults to
- * primary, so any future control added to this row without a variant
- * breaks the rule while every individual expectation still passes.
+ * The assertion is deliberately "exactly one gold thing on the card",
+ * not "Navigate is primary". Competing gold buttons are the failure mode
+ * and a per-button assertion lets them through — Button defaults to
+ * primary, so any control added to this card without a variant breaks
+ * the rule while every individual expectation still passes.
  */
 
 const tz = 'America/Chicago';
@@ -144,22 +144,16 @@ function renderDriver() {
 }
 
 /**
- * The gold ones in the stop's ACTION ROW.
- *
- * `btn-gold` is what Button's primary variant paints with and no other
- * variant uses it, so this reads the same cue a driver does.
- *
- * Scoped to the row rather than the whole card on purpose: each rider
- * below has its own gold "On board", so a card-wide count is three before
- * arrival and says nothing about the row. Whether a rider's On board
- * should be gold while the van is still moving is a separate question
- * from this one, and not what this test is for.
+ * Every gold control on the card. `btn-gold` is what Button's primary
+ * variant paints with and no other variant uses it, so this reads the
+ * same cue a driver does. Links count too — Navigate is an <a> behind
+ * asChild.
  */
-function goldInActionRow(): string[] {
-  // Navigate is an <a> behind asChild, and it is a direct child of the
-  // row, so its parent IS the row whichever variant it carries.
-  const row = screen.getByRole('link', { name: 'Navigate' }).parentElement!;
-  return [...row.children]
+function goldOnCard(card: HTMLElement): string[] {
+  return [
+    ...within(card).queryAllByRole('button'),
+    ...within(card).queryAllByRole('link'),
+  ]
     .filter((el) => el.className.split(/\s+/).includes('btn-gold'))
     .map((el) => el.textContent?.trim() ?? '');
 }
@@ -175,7 +169,10 @@ describe('the stop card offers exactly one next thing', () => {
     const card = await screen.findByRole('region', { name: /Van 2/ });
     // Arrived and All on board are both present and both quiet.
     expect(within(card).getByRole('button', { name: /Arrived/ })).toBeInTheDocument();
-    expect(goldInActionRow()).toEqual(['Navigate']);
+    // The WHOLE card, not just the action row: each rider's "On board" is
+    // quiet until the van is at the kerb too, so while driving there is
+    // exactly one gold thing on screen and it is the one to press.
+    expect(goldOnCard(card)).toEqual(['Navigate']);
   });
 
   it('once the van has arrived, it is All on board', async () => {
@@ -184,6 +181,12 @@ describe('the stop card offers exactly one next thing', () => {
     const card = await screen.findByRole('region', { name: /Van 2/ });
     // Arrived has become the timestamp, so it cannot be the gold one.
     expect(within(card).queryByRole('button', { name: /^Arrived$/ })).toBeNull();
-    expect(goldInActionRow()).toEqual(['All on board']);
+    // Boarding is now the job, so every way of doing it leads: the whole
+    // stop at once, or a rider at a time. What must NOT still lead is
+    // Navigate — the van is already there.
+    const gold = goldOnCard(card);
+    expect(gold).toContain('All on board');
+    expect(gold).not.toContain('Navigate');
+    expect(gold.filter((g) => g === 'On board')).toHaveLength(2);
   });
 });
