@@ -873,6 +873,12 @@ function StopCard({
           <Button
             size="sm"
             className="coarse:text-sm"
+            // Secondary while the van is still moving: Navigate leads
+            // until you are there, and two gold buttons side by side make
+            // neither of them the obvious one. This button only exists
+            // before arrival — afterwards it is replaced by the time — so
+            // there is no "after" case to express here.
+            variant="secondary"
             onClick={() => void act(() => driverArrived(run.id, waiting.map((r) => r.id)))}
             disabled={busy}
           >
