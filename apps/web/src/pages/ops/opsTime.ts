@@ -106,3 +106,16 @@ export function shiftDayKey(key: string, days: number): string {
   base.setUTCDate(base.getUTCDate() + days);
   return base.toISOString().slice(0, 10);
 }
+
+/** "Sep 20" from an org day key — for chart ticks, where the weekday is
+ *  noise and the year is already established by the range. */
+const shortDay = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  month: 'short',
+  day: 'numeric',
+});
+export function fmtShortDayKey(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  if (!y || !m || !d) return key;
+  return shortDay.format(new Date(Date.UTC(y, m - 1, d, 12)));
+}

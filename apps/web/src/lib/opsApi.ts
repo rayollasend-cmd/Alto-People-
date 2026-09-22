@@ -54,10 +54,16 @@ export interface OpsShiftHeader {
   dueAt?: string | null;
   incompleteReason?: string | null;
   handoverNone?: boolean;
-  /** Who runs it (must submit it) and — a floor supervisor covering —
-   *  the shift supervisor they're covering for. On the detail. */
-  runBy?: { id: string; name: string } | null;
-  coveringFor?: { id: string; name: string } | null;
+  /** The account that opened the shift, and the account that SUBMITTED
+   *  it. Usually the same login, and not always — a floor supervisor can
+   *  close for the lead who ran it, and a record has to say which. */
+  openedByAccount?: string | null;
+  submittedByAccount?: string | null;
+  /** Who runs it (must submit it), who submitted it, and — a floor
+   *  supervisor covering — the lead they're covering for. On the detail. */
+  runBy?: { id: string; name: string; email?: string } | null;
+  submittedBy?: { id: string; name: string; email?: string } | null;
+  coveringFor?: { id: string; name: string; email?: string } | null;
   /** On the board and lists. */
   coveringForName?: string | null;
 }
@@ -344,6 +350,30 @@ export async function uploadOpsTaskPhoto(
   };
 }
 
+export type OpsPacketKind = 'shift' | 'day' | 'month';
+
+/**
+ * The SOP packet, as a URL. A browser download, not a fetch: the response
+ * is a PDF with a Content-Disposition, and letting the browser handle it
+ * keeps the iOS behaviour the mobile doctrine asks for.
+ */
+export function opsPacketUrl(
+  kind: OpsPacketKind,
+  q: {
+    shiftId?: string;
+    dateKey?: string;
+    month?: string;
+    locationId?: string;
+    clientId?: string;
+    period?: string;
+    department?: string;
+  } = {},
+): string {
+  const params = new URLSearchParams({ kind });
+  for (const [k, v] of Object.entries(q)) if (v) params.set(k, String(v));
+  return `/api/ops/packet.pdf?${params.toString()}`;
+}
+
 export function opsPhotoUrl(photoId: string): string {
   return `/api/ops/photos/${photoId}`;
 }
@@ -469,8 +499,22 @@ export interface OpsStoreWindow {
   incompleteToday: number;
 }
 
+export interface OpsScopeFilters {
+  locationId?: string;
+  clientId?: string;
+  period?: string;
+  department?: string;
+}
+
+const scopeQs = (f: OpsScopeFilters) => {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v) params.set(k, String(v));
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+};
+
 /** The chairman's drawn window: store snapshots, temps, rhythm, trend. */
-export function getOpsInsights(): Promise<{
+export function getOpsInsights(filters: OpsScopeFilters = {}): Promise<{
   stores: OpsStoreWindow[];
   tempSeries: {
     at: string;
@@ -487,7 +531,7 @@ export function getOpsInsights(): Promise<{
   /** Named production series — cases stocked ≠ items discarded. */
   metrics: { metricKey: string; unit: string | null; total: number; readings: number }[];
 }> {
-  return apiFetch('/ops/insights');
+  return apiFetch(`/ops/insights${scopeQs(filters)}`);
 }
 
 export interface OpsFeedEvent {
@@ -536,7 +580,11 @@ export function getOpsFeed(
   return apiFetch(`/ops/feed${qs ? `?${qs}` : ''}`);
 }
 
-export function getOpsScorecard(weeks = 4, sort: 'worst' | 'store' = 'worst'): Promise<{
+export function getOpsScorecard(
+  weeks = 4,
+  sort: 'worst' | 'store' = 'worst',
+  filters: OpsScopeFilters = {},
+): Promise<{
   weeks: number;
   rows: {
     clientName: string;
@@ -553,10 +601,32 @@ export function getOpsScorecard(weeks = 4, sort: 'worst' | 'store' = 'worst'): P
   totals: {
     shifts: number;
     tempChecks: number;
+    tempInRange: number;
     tempOutOfRange: number;
+    /** Every item raised, and what became of each one. "Carried" alone
+     *  reads as a failure rate and is not one — the number that matters
+     *  is how many were never decided at all. */
     handoverCreated: number;
     handoverCarried: number;
+    handoverReviewed: number;
+    handoverDismissed: number;
+    handoverPending: number;
+    /** Shifts that closed before their window was due, of those that had
+     *  a due time at all. Submitting on time is its own standard. */
+    onTime: number;
+    onTimeOf: number;
   };
+  /** Week by week over the window — an average cannot tell an improving
+   *  store from a slipping one. */
+  weekly: {
+    weekKey: string;
+    shifts: number;
+    sopPct: number | null;
+    incomplete: number;
+    tempAlerts: number;
+    onTime: number;
+    onTimeOf: number;
+  }[];
   /** Weekly named-metric series (top 4 by volume, zero-filled weeks). */
   metricTrends: {
     metricKey: string;
@@ -565,7 +635,7 @@ export function getOpsScorecard(weeks = 4, sort: 'worst' | 'store' = 'worst'): P
     weeks: { weekKey: string; total: number }[];
   }[];
 }> {
-  return apiFetch(`/ops/scorecard?weeks=${weeks}&sort=${sort}`);
+  return apiFetch(`/ops/scorecard?weeks=${weeks}&sort=${sort}${scopeQs(filters).replace('?', '&')}`);
 }
 
 /** The SOP the signed-in supervisor has open — the "finish your SOP"

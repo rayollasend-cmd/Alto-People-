@@ -1,4 +1,21 @@
 import PDFDocument from 'pdfkit';
+import {
+  ASCENT,
+  C,
+  colW,
+  CONTENT_BOTTOM,
+  CONTENT_TOP,
+  GAP,
+  GUTTER,
+  HEAD,
+  M,
+  PAD,
+  PAGE_H,
+  PAGE_W,
+  T,
+  W,
+  pdfSafe,
+} from './pdfDesign.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
@@ -181,20 +198,7 @@ function initialsOf(name: string | null): string {
     .toUpperCase();
 }
 
-/**
- * The built-in PDF fonts only carry WinAnsi glyphs. Names from Turkish,
- * Kazakh, Vietnamese … rosters would otherwise print as garbage, so
- * strip accents the font lacks, map the common bare letters, and swap
- * anything still outside Latin-1 for a question mark.
- */
-const BARE: Record<string, string> = { ı: 'i', İ: 'I', ł: 'l', Ł: 'L', đ: 'd', Đ: 'D', ħ: 'h', ŧ: 't', ŋ: 'n', ĸ: 'k' };
-export function pdfSafe(text: string): string {
-  return text
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[ıİłŁđĐħŧŋĸ]/g, (c) => BARE[c] ?? c)
-    .replace(/[^\u0000-\u00ff\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026\u00b7]/g, '?');
-}
+export { pdfSafe } from './pdfDesign.js';
 
 const money = (v: number) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -781,34 +785,9 @@ export async function buildPortalReport(
  *            say "(continued)". Nothing is ever truncated.
  */
 
-const C = {
-  ink: '#0B1832',
-  ink2: '#4A5568',
-  ink3: '#7C8799',
-  rule: '#DCE1E8',
-  wash: '#F4F6F9',
-  brand: '#C9A227',
-  mastSub: '#AEB8C9',
-  data: '#2F5FD0',
-  dataTint: '#C9D6F2',
-  good: '#1E7B4F',
-  warn: '#B7791F',
-  bad: '#C0392B',
-  white: '#FFFFFF',
-} as const;
-const T = { label: 8, body: 9.5, title: 12, figure: 20, hero: 36 } as const;
-const PAGE_W = 612;
-const PAGE_H = 792;
-const M = 44;
-const W = PAGE_W - M * 2;
-const GUTTER = 12;
-const GAP = 12;
-const PAD = 14;
-const HEAD = PAD + 15 + 8;
-const CONTENT_TOP = 62;
-const CONTENT_BOTTOM = PAGE_H - 58;
-const ASCENT = 0.718; // Helvetica ascender and cap height, as a fraction of size
-const colW = (n: number) => ((W - GUTTER * 11) / 12) * n + GUTTER * (n - 1);
+// The palette, the type scale and the 12-column grid are the house style,
+// shared with every other report that prints on Alto letterhead. They live
+// in lib/pdfDesign.ts so two reports on the same desk cannot disagree.
 
 const keyDate = (key: string) => new Date(`${key}T12:00:00.000Z`);
 const fmtKey = (key: string, o: Intl.DateTimeFormatOptions) => keyDate(key).toLocaleDateString('en-US', { ...o, timeZone: 'UTC' });

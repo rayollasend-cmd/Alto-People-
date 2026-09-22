@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { OpsShiftPacketLink } from './OpsPacketButton';
 import { fmtClock, fmtDayKey, fmtDuration, fmtFull } from './opsTime';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -156,6 +157,55 @@ export function OpsShiftRecordDialog({
                   {detail.shift.tempAlerts === 1 ? '' : 's'}
                 </span>
               )}
+            </div>
+
+            {/* Who signed it. A shift record that names no account cannot
+                settle a question about the shift — and the supervisor who
+                RAN it is not always the one who SUBMITTED it. */}
+            <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2.5">
+              <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                <div className="min-w-0">
+                  <dt className="text-2xs uppercase tracking-wider text-silver/60">Run by</dt>
+                  <dd className="mt-0.5 truncate text-white">
+                    {detail.shift.runBy?.name ?? '—'}
+                    {detail.shift.runBy?.email && (
+                      <span className="ml-1.5 text-2xs text-silver/60">
+                        {detail.shift.runBy.email}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-2xs uppercase tracking-wider text-silver/60">
+                    Submitted by
+                  </dt>
+                  <dd className="mt-0.5 truncate">
+                    {detail.shift.submittedBy ? (
+                      <>
+                        <span className="text-white">{detail.shift.submittedBy.name}</span>
+                        {detail.shift.submittedBy.email && (
+                          <span className="ml-1.5 text-2xs text-silver/60">
+                            {detail.shift.submittedBy.email}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-warning">not yet submitted</span>
+                    )}
+                  </dd>
+                </div>
+                {detail.shift.coveringFor && (
+                  <div className="min-w-0">
+                    <dt className="text-2xs uppercase tracking-wider text-silver/60">
+                      Covering for
+                    </dt>
+                    <dd className="mt-0.5 truncate text-gold">
+                      {detail.shift.coveringFor.name}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              <OpsShiftPacketLink shiftId={detail.shift.id} size="xs" />
             </div>
 
             {detail.shift.closingSummary && (

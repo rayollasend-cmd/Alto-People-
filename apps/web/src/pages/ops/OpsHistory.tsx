@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { History as HistoryIcon } from 'lucide-react';
+import { Download, History as HistoryIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -11,6 +11,7 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   getOpsHistory,
+  opsPacketUrl,
   type OpsHistoryQuery,
   type OpsShiftRow,
 } from '@/lib/opsApi';
@@ -162,7 +163,11 @@ export function OpsHistory({
                   <th scope="col" className="px-3 py-2 font-semibold">Closed</th>
                   <th scope="col" className="px-3 py-2 font-semibold">Ran</th>
                   <th scope="col" className="px-3 py-2 font-semibold">Checklist</th>
+                  <th scope="col" className="px-3 py-2 font-semibold">Submitted by</th>
                   <th scope="col" className="px-3 py-2 font-semibold">Flags</th>
+                  <th scope="col" className="px-3 py-2 font-semibold">
+                    <span className="sr-only">Packet</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -229,6 +234,22 @@ function HistoryRow({ shift: s, onOpen }: { shift: OpsShiftRow; onOpen: () => vo
         </span>
       </td>
       <td className="px-3 py-2">
+        {/* The supervisor account that submitted the shift. A record with
+            no signature on it cannot settle a question about the shift. */}
+        <div className="max-w-[12rem] truncate text-silver" title={s.submittedByAccount ?? undefined}>
+          {s.submittedByAccount ?? (
+            <span className="text-silver/50">
+              {s.status === 'ACTIVE' ? 'not yet submitted' : 'unknown account'}
+            </span>
+          )}
+        </div>
+        {s.openedByAccount && s.openedByAccount !== s.submittedByAccount && (
+          <div className="max-w-[12rem] truncate text-2xs text-gold" title={s.openedByAccount}>
+            opened by {s.openedByAccount}
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-2">
         <div className="flex flex-wrap items-center gap-1">
           {s.tempAlerts > 0 && <Badge variant="destructive" size="sm">{s.tempAlerts} temp</Badge>}
           {s.closedIncomplete && <Badge variant="destructive" size="sm">incomplete</Badge>}
@@ -237,6 +258,20 @@ function HistoryRow({ shift: s, onOpen }: { shift: OpsShiftRow; onOpen: () => vo
             <span className="text-2xs text-silver/60">clean</span>
           )}
         </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-right">
+        <a
+          href={opsPacketUrl('shift', { shiftId: s.id })}
+          target="_blank"
+          rel="noreferrer"
+          download
+          aria-label={`Download the SOP packet for the ${
+            PERIOD_LABEL[s.period] ?? s.period
+          } shift at ${s.locationName ?? s.clientName} on ${fmtDayKey(s.dateKey)}`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded text-silver/60 transition-colors hover:bg-navy-secondary/40 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+        </a>
       </td>
     </tr>
   );

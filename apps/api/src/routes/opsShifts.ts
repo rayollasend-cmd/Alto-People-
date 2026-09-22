@@ -24,6 +24,9 @@ import { createOpsShift } from '../lib/storeShiftSop.js';
 import { isDueTime } from '../lib/sopDue.js';
 import { currentStoreWindows } from '../lib/shiftWindows.js';
 import { personName, validLead } from '../lib/floorLeads.js';
+import { ensureBrandingLoaded } from '../lib/branding.js';
+import { buildOpsPacket, type PacketKind } from '../lib/opsPacket.js';
+import { renderOpsPacketPdf } from '../lib/opsPacketPdf.js';
 
 /**
  * Store Operations — the shift supervisor's floor tool and the leadership
@@ -262,6 +265,8 @@ function shiftHeader(s: {
   id: string;
   clientId: string;
   location?: { name: string } | null;
+  openedBy?: { email: string } | null;
+  closedBy?: { email: string } | null;
   department: string;
   period: string;
   position: string;
@@ -312,6 +317,12 @@ function shiftHeader(s: {
     // call it a store prints this instead when it is known: two overnight
     // shifts at Destin and Front Beach were previously the same row twice.
     locationName: s.location?.name ?? null,
+    // The two accounts that matter for accountability: who opened the
+    // shift, and who SUBMITTED it. They are usually the same person and
+    // are not always — a floor supervisor can close for the lead who ran
+    // it, and until now the record kept that only in the database.
+    openedByAccount: s.openedBy?.email ?? null,
+    submittedByAccount: s.closedBy?.email ?? null,
     dueAt: s.dueAt?.toISOString() ?? null,
     incompleteReason: s.incompleteReason ?? null,
     handoverNone: s.handoverNone ?? false,
@@ -918,13 +929,26 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
     if (!access && !hasCapability(req.user!.role, 'view:ops')) {
       throw new HttpError(403, 'not_your_shift', "This isn't your shift's SOP.");
     }
+    // The three accounts a record has to name: who ran it, who SUBMITTED
+    // it, and the lead they were covering for. The closer was missing, so
+    // the record could not answer "which supervisor account signed this".
     const people = await prisma.user.findMany({
-      where: { id: { in: [shift.openedById, ...(shift.coveringForId ? [shift.coveringForId] : [])] } },
+      where: {
+        id: {
+          in: [
+            shift.openedById,
+            ...(shift.closedById ? [shift.closedById] : []),
+            ...(shift.coveringForId ? [shift.coveringForId] : []),
+          ],
+        },
+      },
       select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
     });
     const nameOf = (id: string | null) => {
       const u = id ? people.find((p) => p.id === id) : null;
-      return u ? { id: u.id, name: personName(u) } : null;
+      // The account, not only the person: "Rosa M" is a name two people
+      // can share, and an audit answers to the login that acted.
+      return u ? { id: u.id, name: personName(u), email: u.email } : null;
     };
     const [tasks, handoverOut, pendingIn, clockedIn, client] = await Promise.all([
       prisma.opsTask.findMany({
@@ -990,6 +1014,7 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
         locationName: location?.name ?? null,
         // Who runs it (must submit it), and who they're covering for.
         runBy: nameOf(shift.openedById),
+        submittedBy: nameOf(shift.closedById),
         coveringFor: nameOf(shift.coveringForId),
       },
       // What the caller may do here: run it, help on it, or only read it.
@@ -1917,6 +1942,7 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
         client: { select: { name: true } },
         location: { select: { name: true } },
         openedBy: { select: { email: true } },
+        closedBy: { select: { email: true } },
         coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
       },
     });
@@ -1968,6 +1994,7 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
           client: { select: { name: true } },
           location: { select: { name: true } },
           openedBy: { select: { email: true } },
+          closedBy: { select: { email: true } },
           coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
@@ -1982,6 +2009,7 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
           client: { select: { name: true } },
           location: { select: { name: true } },
           openedBy: { select: { email: true } },
+          closedBy: { select: { email: true } },
           coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
@@ -2063,6 +2091,7 @@ opsRouter.get('/history', BOARD, async (req, res, next) => {
         client: { select: { name: true } },
         location: { select: { name: true } },
         openedBy: { select: { email: true } },
+        closedBy: { select: { email: true } },
         coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
       },
     });
@@ -2117,6 +2146,88 @@ opsRouter.get('/history', BOARD, async (req, res, next) => {
  * board's store picker. Built from the shifts themselves so the list can
  * never offer a store with nothing behind it.
  */
+
+/**
+ * GET /ops/packet.pdf — the SOP packet.
+ *
+ * The board is a screen; this is a document. Three shapes of the same
+ * record, chosen by ?kind:
+ *
+ *   shift  ?shiftId=          one shift, in full: every checklist item
+ *                             with its answer, its time and the account
+ *                             that recorded it, the handovers in and out,
+ *                             the closing summary, and a signature block.
+ *   day    ?dateKey=          one org day across the scope.
+ *   month  ?month=YYYY-MM     one month, with the day-by-day trend.
+ *
+ * The narrowing is the board's own: ?locationId, ?period, ?department,
+ * ?clientId. Tenant scope is clamped server-side, so a store account
+ * cannot widen its way into another client's stores by editing the URL.
+ */
+opsRouter.get('/packet.pdf', BOARD, async (req, res, next) => {
+  try {
+    const kind = (req.query.kind?.toString() ?? 'day') as PacketKind;
+    if (!['shift', 'day', 'month'].includes(kind)) {
+      throw new HttpError(400, 'invalid_kind', 'Ask for a shift, day or month packet.');
+    }
+    // A scoped account with no client of its own has no stores to report
+    // on. Elsewhere that case silently drops the filter; here it refuses.
+    const clamp = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    if (clamp === null) {
+      throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
+    }
+    const branding = await ensureBrandingLoaded(prisma);
+    const packet = await buildOpsPacket(
+      {
+        kind,
+        shiftId: req.query.shiftId?.toString(),
+        dateKey: req.query.dateKey?.toString(),
+        month: req.query.month?.toString(),
+        clientId: req.query.clientId?.toString() ?? null,
+        locationId: req.query.locationId?.toString() ?? null,
+        period: req.query.period?.toString() ?? null,
+        department: req.query.department?.toString() ?? null,
+      },
+      branding.orgName,
+      clamp,
+    );
+    if (!packet) {
+      throw new HttpError(404, 'shift_not_found', 'That shift is not on this account.');
+    }
+    const pdf = await renderOpsPacketPdf(packet);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'ops.packet_exported',
+        entityType: 'OpsShift',
+        // A shift packet audits against its shift; a day or month packet
+        // has no single row, so it audits against the window it covered.
+        entityId: req.query.shiftId?.toString() ?? `${kind}:${packet.from}..${packet.to}`,
+        metadata: {
+          kind,
+          from: packet.from,
+          to: packet.to,
+          locationId: req.query.locationId?.toString() ?? null,
+          period: req.query.period?.toString() ?? null,
+          department: req.query.department?.toString() ?? null,
+          shifts: packet.rollup.shifts,
+        },
+      },
+      'ops.packet',
+    );
+    const slug = packet.scopeLabel.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase().replace(/^-|-$/g, '');
+    const span = packet.from === packet.to ? packet.from : `${packet.from}-to-${packet.to}`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="sop-${kind}-packet-${slug || 'all-stores'}-${span}.pdf"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 opsRouter.get('/stores', BOARD, async (req, res, next) => {
   try {
     const clientId = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
@@ -2148,8 +2259,12 @@ opsRouter.get('/stores', BOARD, async (req, res, next) => {
   }
 });
 
-opsRouter.get('/insights', BOARD, async (_req, res, next) => {
+opsRouter.get('/insights', BOARD, async (req, res, next) => {
   try {
+    // The board's filter bar narrows the picture; the pictures used to
+    // ignore it, so picking Destin left the charts showing every store —
+    // and, worse, showed a store-scoped account other clients' floors.
+    const filters = opsFilters(req);
     const now = new Date();
     const todayKey = orgDateKey(now);
     const dayAgo = new Date(now.getTime() - 24 * 3_600_000);
@@ -2158,7 +2273,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
     const [activeShifts, todayShifts, tempTasks, todayDone, weekClosed, floorEntries] =
       await Promise.all([
         prisma.opsShift.findMany({
-          where: { status: 'ACTIVE' },
+          where: { ...filters, status: 'ACTIVE' },
           select: {
             clientId: true,
             locationId: true,
@@ -2172,7 +2287,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
           take: 100,
         }),
         prisma.opsShift.findMany({
-          where: { dateKey: todayKey },
+          where: { ...filters, dateKey: todayKey },
           select: {
             clientId: true,
             locationId: true,
@@ -2191,6 +2306,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
             responseType: 'TEMPERATURE',
             answerNumber: { not: null },
             completedAt: { gte: dayAgo },
+            opsShift: { is: filters },
           },
           orderBy: { completedAt: 'asc' },
           take: 200,
@@ -2212,6 +2328,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
         prisma.opsTask.findMany({
           where: {
             completedAt: { gte: new Date(now.getTime() - 24 * 3_600_000) },
+            opsShift: { is: filters },
           },
           select: {
             completedAt: true,
@@ -2223,7 +2340,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
           take: 2000,
         }),
         prisma.opsShift.findMany({
-          where: { status: 'CLOSED', closedAt: { gte: weekAgo } },
+          where: { ...filters, status: 'CLOSED', closedAt: { gte: weekAgo } },
           select: { dateKey: true, sopDone: true, sopTotal: true },
           take: 1000,
         }),
@@ -2453,6 +2570,7 @@ opsRouter.get('/feed', BOARD, async (req, res, next) => {
           client: { select: { name: true } },
           location: { select: { name: true } },
           openedBy: { select: { email: true } },
+          closedBy: { select: { email: true } },
         },
       }),
     ]);
@@ -2573,12 +2691,15 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
   try {
     const weeks = Math.min(12, Math.max(1, Number(req.query.weeks) || 4));
     const since = new Date(Date.now() - weeks * 7 * DAY_MS);
+    const filters = opsFilters(req);
     const shifts = await prisma.opsShift.findMany({
-      where: { status: 'CLOSED', closedAt: { gte: since } },
+      where: { ...filters, status: 'CLOSED', closedAt: { gte: since } },
       select: {
         clientId: true,
         locationId: true,
         location: { select: { name: true } },
+        closedAt: true,
+        dueAt: true,
         period: true,
         department: true,
         sopTotal: true,
@@ -2596,13 +2717,13 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       where: {
         responseType: 'TEMPERATURE',
         answerNumber: { not: null },
-        opsShift: { is: { status: 'CLOSED', closedAt: { gte: since } } },
+        opsShift: { is: { ...filters, status: 'CLOSED', closedAt: { gte: since } } },
       },
       _count: { _all: true },
     });
     const handover = await prisma.opsHandoverItem.groupBy({
       by: ['status'],
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, fromShift: { is: filters } },
       _count: { _all: true },
     });
     // Weekly named-metric series — where the metric keys pay compound
@@ -2613,6 +2734,7 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
         metricKey: { not: null },
         answerNumber: { not: null },
         completedAt: { gte: since },
+        opsShift: { is: filters },
       },
       select: { metricKey: true, unit: true, answerNumber: true, completedAt: true },
       take: 5000,
@@ -2689,6 +2811,46 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       row.tempAlerts += s.tempAlerts;
       byKey.set(key, row);
     }
+    // Week by week: completion, and the exceptions behind it. A single
+    // four-week average cannot tell an improving store from a slipping
+    // one, which is the first question anyone asks of a scorecard.
+    const weekly = weekKeys.map((weekKey) => ({
+      weekKey,
+      shifts: 0,
+      sopDone: 0,
+      sopTotal: 0,
+      sopPct: null as number | null,
+      incomplete: 0,
+      tempAlerts: 0,
+      onTime: 0,
+      onTimeOf: 0,
+    }));
+    const weeklyIndex = new Map(weekly.map((w, i) => [w.weekKey, i]));
+    for (const sh of shifts) {
+      if (!sh.closedAt) continue;
+      const i = weeklyIndex.get(orgDateKey(startOfWeekUTC(sh.closedAt)));
+      if (i === undefined) continue;
+      const w = weekly[i];
+      w.shifts += 1;
+      w.sopDone += sh.sopDone;
+      w.sopTotal += sh.sopTotal;
+      if (sh.closedIncomplete) w.incomplete += 1;
+      w.tempAlerts += sh.tempAlerts;
+      if (sh.dueAt) {
+        w.onTimeOf += 1;
+        if (sh.closedAt.getTime() <= sh.dueAt.getTime()) w.onTime += 1;
+      }
+    }
+    for (const w of weekly) {
+      w.sopPct = w.sopTotal > 0 ? Math.round((w.sopDone / w.sopTotal) * 100) : null;
+    }
+    // Submitting before the window ends is its own standard, and one no
+    // surface measured until now.
+    const onTime = shifts.filter((sh) => sh.dueAt && sh.closedAt).length;
+    const onTimeMet = shifts.filter(
+      (sh) => sh.dueAt && sh.closedAt && sh.closedAt.getTime() <= sh.dueAt.getTime(),
+    ).length;
+
     const inRange = tempChecks.find((r) => !r.tempOutOfRange)?._count._all ?? 0;
     const outOfRange = tempChecks.find((r) => r.tempOutOfRange)?._count._all ?? 0;
     const handoverCounts = Object.fromEntries(
@@ -2724,7 +2886,17 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
           (handoverCounts.DISMISSED ?? 0) +
           (handoverCounts.REVIEWED ?? 0),
         handoverCarried: handoverCounts.CARRIED ?? 0,
+        // "2 of 60 carried" reads as a failure and is not one: most items
+        // are correctly reviewed or dismissed. What matters is how many
+        // were never decided at all.
+        handoverReviewed: handoverCounts.REVIEWED ?? 0,
+        handoverDismissed: handoverCounts.DISMISSED ?? 0,
+        handoverPending: handoverCounts.PENDING ?? 0,
+        tempInRange: inRange,
+        onTimeOf: onTime,
+        onTime: onTimeMet,
       },
+      weekly,
       metricTrends,
     });
   } catch (err) {

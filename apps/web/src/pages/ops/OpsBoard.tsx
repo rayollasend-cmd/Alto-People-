@@ -48,15 +48,31 @@ import {
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
 import { OpsHistory } from './OpsHistory';
 import { OpsFloorFeed, OpsPhotoWall } from './OpsFloorFeed';
-import { fmtAgo, fmtClock, fmtDayKey, fmtFull, OPS_TZ, opsToday, shiftDayKey } from './opsTime';
+import { OpsStandards } from './OpsStandards';
+import { OpsProduction } from './OpsProduction';
+import { OpsPacketButton } from './OpsPacketButton';
+import {
+  fmtAgo,
+  fmtClock,
+  fmtDayKey,
+  fmtDuration,
+  fmtFull,
+  OPS_TZ,
+  opsToday,
+  shiftDayKey,
+} from './opsTime';
 
 /**
  * The operations command center — presence in every store without being
  * in any of them. A live headline band, per-store mission tiles with
  * progress rings, the floor feed (completions, temps, photos ticking in),
- * a photo wall, and the rolling scorecard. Refreshes itself every 30s.
+ * a photo wall, the production trends and the standards scorecard.
+ * Refreshes itself every 30s.
+ *
+ * Everything here narrows together: the filter bar drives the board, the
+ * feed, the charts and the scorecard, and whatever is on screen is what
+ * the SOP packet prints.
  */
-
 
 /* ===== Filters ==========================================================
  * A board that shows today, unordered, cannot answer "what happened on
@@ -375,7 +391,9 @@ export function OpsBoard() {
         .catch(() => {
           if (!cancelled) setFeedFailed(true);
         });
-      getOpsInsights()
+      // The charts used to read every store regardless of the filter —
+      // so picking Destin left them showing the whole estate.
+      getOpsInsights({ locationId: storeId, period, department })
         .then((ins) => {
           if (!cancelled) setInsights(ins);
         })
@@ -384,7 +402,7 @@ export function OpsBoard() {
     if (historyMode) return () => undefined;
     load();
     const timer = setInterval(load, 30_000);
-    getOpsScorecard(4)
+    getOpsScorecard(4, 'worst', { locationId: storeId, period, department })
       .then((s) => {
         if (!cancelled) setScorecard(s);
       })
@@ -428,6 +446,20 @@ export function OpsBoard() {
     };
   }, [board]);
 
+  // The store the board is currently pointed at, by name — the packet
+  // menu says what it is about to produce in the reader's own terms.
+  const storeName = useMemo(
+    () => stores?.stores.find((st) => st.id === storeId)?.name ?? null,
+    [stores, storeId],
+  );
+  const packetScope = {
+    locationId: storeId || undefined,
+    period: period || undefined,
+    department: department || undefined,
+  };
+
+  const incompleteToday = (board?.closedToday ?? []).filter((s) => s.closedIncomplete).length;
+
   const departments = useMemo(() => {
     const set = new Set<string>();
     for (const shift of [...(board?.active ?? []), ...(board?.closedToday ?? [])]) {
@@ -462,13 +494,16 @@ export function OpsBoard() {
     return (
       <div className="space-y-4">
         {filterBar}
-        <p className="text-xs text-silver/70">
-          {from && to
-            ? `Shifts from ${fmtDayKey(from)} to ${fmtDayKey(to)}`
-            : 'Pick both dates to read a range'}
-          {' · times in '}
-          {OPS_TZ.split('/')[1]?.replace('_', ' ')}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-silver/70">
+            {from && to
+              ? `Shifts from ${fmtDayKey(from)} to ${fmtDayKey(to)}`
+              : 'Pick both dates to read a range'}
+            {' · times in '}
+            {OPS_TZ.split('/')[1]?.replace('_', ' ')}
+          </p>
+          <OpsPacketButton scope={packetScope} storeName={storeName} dateKey={to || undefined} />
+        </div>
         <OpsHistory
           query={{
             from: from || undefined,
@@ -539,6 +574,15 @@ export function OpsBoard() {
               {headline.live > 0
                 ? `${headline.live} shift${headline.live === 1 ? '' : 's'} running across ${headline.stores} store${headline.stores === 1 ? '' : 's'}`
                 : 'All floors quiet'}
+            </div>
+            <div className="mt-2.5">
+              {/* The board is a screen; the packet is the document that
+                  leaves the room with whoever asked for it. */}
+              <OpsPacketButton
+                scope={packetScope}
+                storeName={storeName}
+                dateKey={board.dateKey}
+              />
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-x-8 gap-y-3">
@@ -913,14 +957,27 @@ export function OpsBoard() {
           {/* ===== Live mission tiles ===== */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Live now</CardTitle>
+              <CardTitle className="text-base">
+                Live now
+                <span className="ml-2 text-xs font-normal tabular-nums text-silver/60">
+                  {board.active.length} open · as of {fmtClock(board.generatedAt)}
+                </span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {board.active.length === 0 ? (
                 <EmptyState
                   icon={ClipboardList}
-                  title="No ops shifts running right now"
-                  description="Supervisors open their shift from Store Ops when they start — it will appear here the moment they do."
+                  title={
+                    anyFilter
+                      ? 'No shifts running that match these filters'
+                      : 'No ops shifts running right now'
+                  }
+                  description={
+                    anyFilter
+                      ? 'Clear the filters above to see every floor, or pick a date range to read the record instead.'
+                      : 'Supervisors open their shift from Store Ops when they start — it will appear here the moment they do.'
+                  }
                 />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -972,12 +1029,37 @@ export function OpsBoard() {
                               </span>
                             )}
                           </div>
-                          <div
-                            className="mt-1 truncate text-2xs text-silver/50"
-                            title={`Opened ${fmtFull(s.openedAt)}`}
-                          >
-                            {s.openedByEmail} · opened {fmtClock(s.openedAt)} (
-                            {fmtAgo(s.openedAt)})
+                          <div className="mt-1 space-y-0.5">
+                            <div
+                              className="truncate text-2xs text-silver/60"
+                              title={`Opened ${fmtFull(s.openedAt)}`}
+                            >
+                              {/* Who is accountable for this shift right
+                                  now — the account, because a first name
+                                  is not an audit trail. */}
+                              <span className="text-silver">
+                                {s.openedByAccount ?? s.openedByEmail ?? 'unknown account'}
+                              </span>
+                              {s.coveringForName && (
+                                <span className="text-gold"> · covering {s.coveringForName}</span>
+                              )}
+                            </div>
+                            <div className="truncate text-2xs tabular-nums text-silver/50">
+                              opened {fmtClock(s.openedAt)} ({fmtAgo(s.openedAt)})
+                              {s.dueAt && (
+                                <span
+                                  className={
+                                    new Date(s.dueAt).getTime() < Date.now()
+                                      ? ' text-alert'
+                                      : ' text-silver/50'
+                                  }
+                                >
+                                  {' · due '}
+                                  {fmtClock(s.dueAt)}
+                                  {new Date(s.dueAt).getTime() < Date.now() && ' — overdue'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </button>
@@ -998,11 +1080,21 @@ export function OpsBoard() {
           {/* ===== Closed today ===== */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Closed today</CardTitle>
+              <CardTitle className="text-base">
+                Closed today
+                <span className="ml-2 text-xs font-normal tabular-nums text-silver/60">
+                  {board.closedToday.length} submitted
+                  {incompleteToday > 0 && ` · ${incompleteToday} incomplete`}
+                </span>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {board.closedToday.length === 0 ? (
-                <p className="text-sm text-silver">Nothing closed yet today.</p>
+                <p className="text-sm text-silver">
+                  {anyFilter
+                    ? 'Nothing matching these filters has closed yet today.'
+                    : 'Nothing closed yet today.'}
+                </p>
               ) : (
                 <ul className="divide-y divide-navy-secondary/60">
                   {board.closedToday.map((s) => (
@@ -1023,6 +1115,19 @@ export function OpsBoard() {
                             {s.locationName ?? s.clientName}
                           </span>
                         </div>
+                        <div className="mt-0.5 truncate text-2xs text-silver/60">
+                          {/* Which supervisor account submitted it. This
+                              row used to name nobody at all. */}
+                          submitted by{' '}
+                          <span className="text-silver">
+                            {s.submittedByAccount ?? s.openedByAccount ?? 'unknown account'}
+                          </span>
+                          {s.submittedByAccount &&
+                            s.openedByAccount &&
+                            s.submittedByAccount !== s.openedByAccount && (
+                              <span className="text-gold"> · opened by {s.openedByAccount}</span>
+                            )}
+                        </div>
                         {s.closingSummary && (
                           <div className="mt-0.5 max-w-prose truncate text-xs italic text-silver/70">
                             “{s.closingSummary}”
@@ -1037,6 +1142,9 @@ export function OpsBoard() {
                           title={`Opened ${fmtFull(s.openedAt)} · closed ${fmtFull(s.closedAt)}`}
                         >
                           {fmtClock(s.openedAt)}–{fmtClock(s.closedAt)}
+                          <span className="ml-1 text-silver/50">
+                            ({fmtDuration(s.openedAt, s.closedAt)})
+                          </span>
                         </span>
                         <span className="text-silver">
                           SOP <span className="text-white">{s.sopDone}</span>/{s.sopTotal}
@@ -1060,161 +1168,24 @@ export function OpsBoard() {
             </CardContent>
           </Card>
 
-          {/* ===== Production trends — the metric keys paying interest ===== */}
-          {scorecard && scorecard.metricTrends.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  Production trends — {scorecard.weeks} weeks
-                  <span className="ml-2 text-xs font-normal text-silver/60">
-                    volumes per org week, all stores
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {scorecard.metricTrends.map((m) => (
-                    <div key={m.metricKey}>
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-xs font-medium text-white">
-                          {metricLabel(m.metricKey)}
-                        </span>
-                        <span className="text-xs tabular-nums text-gold">
-                          {m.total.toLocaleString('en-US')} {m.unit ?? ''}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-20">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart
-                            data={m.weeks}
-                            margin={{ top: 4, right: 4, bottom: 0, left: -26 }}
-                          >
-                            <defs>
-                              <linearGradient
-                                id={`mt-${m.metricKey}`}
-                                x1="0"
-                                y1="0"
-                                x2="0"
-                                y2="1"
-                              >
-                                <stop
-                                  offset="0%"
-                                  stopColor="rgb(var(--color-gold))"
-                                  stopOpacity={0.35}
-                                />
-                                <stop
-                                  offset="100%"
-                                  stopColor="rgb(var(--color-gold))"
-                                  stopOpacity={0}
-                                />
-                              </linearGradient>
-                            </defs>
-                            <XAxis
-                              dataKey="weekKey"
-                              tickFormatter={(v: string) => v.slice(5)}
-                              tick={{ fill: 'rgb(var(--color-silver) / 0.5)', fontSize: 9 }}
-                              axisLine={false}
-                              tickLine={false}
-                            />
-                            <YAxis
-                              tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
-                              axisLine={false}
-                              tickLine={false}
-                              width={38}
-                              allowDecimals={false}
-                            />
-                            <Tooltip
-                              contentStyle={{
-                                background: 'rgb(var(--color-navy))',
-                                border: '1px solid rgb(var(--color-navy-secondary))',
-                                borderRadius: 8,
-                                fontSize: 11,
-                              }}
-                              formatter={(value) => [
-                                `${String(value)} ${m.unit ?? ''}`,
-                                metricLabel(m.metricKey),
-                              ]}
-                            />
-                            <Area
-                              type="monotone"
-                              dataKey="total"
-                              stroke="rgb(var(--color-gold))"
-                              strokeWidth={2}
-                              fill={`url(#mt-${m.metricKey})`}
-                            />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* ===== Production trends — direction, not only volume ===== */}
+          <OpsProduction scorecard={scorecard} />
 
-          {/* ===== Scorecard ===== */}
-          {scorecard && scorecard.rows.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  Standards — last {scorecard.weeks} weeks
-                  <span className="ml-2 text-xs font-normal text-silver/60 tabular-nums">
-                    {scorecard.totals.shifts} shifts · {scorecard.totals.tempChecks} temp checks
-                    · {scorecard.totals.handoverCarried}/{scorecard.totals.handoverCreated}{' '}
-                    handovers carried
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {scorecard.rows.map((r) => (
-                    <div
-                      key={`${r.clientName}|${r.department}`}
-                      className="flex items-center gap-3"
-                    >
-                      <div className="w-56 min-w-0 shrink-0">
-                        <div className="truncate text-sm text-white">{r.department}</div>
-                        <div className="truncate text-2xs text-silver/60">{r.clientName}</div>
-                      </div>
-                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy-secondary">
-                        <div
-                          className={cn(
-                            'h-full rounded-full transition-all duration-700',
-                            (r.sopPct ?? 0) >= 90
-                              ? 'bg-success'
-                              : (r.sopPct ?? 0) >= 70
-                                ? 'bg-gold'
-                                : 'bg-alert',
-                          )}
-                          style={{ width: `${r.sopPct ?? 0}%` }}
-                        />
-                      </div>
-                      <div
-                        className={cn(
-                          'w-12 shrink-0 text-right text-sm tabular-nums',
-                          r.sopPct == null
-                            ? 'text-silver/50'
-                            : r.sopPct >= 90
-                              ? 'text-success'
-                              : r.sopPct >= 70
-                                ? 'text-warning'
-                                : 'text-alert',
-                        )}
-                      >
-                        {r.sopPct == null ? '—' : `${r.sopPct}%`}
-                      </div>
-                      <div className="w-24 shrink-0 text-right text-2xs tabular-nums text-silver/60">
-                        {r.shifts} shifts
-                        {r.tempAlerts > 0 && (
-                          <span className="ml-1 text-alert">· {r.tempAlerts}⚠</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* ===== Standards — the four-week record, by store and shift ===== */}
+          <OpsStandards
+            scorecard={scorecard}
+            onPickStore={(locationId, pickedPeriod) => {
+              setSearchParams(
+                (prev) => {
+                  if (locationId) prev.set('store', locationId);
+                  else prev.delete('store');
+                  prev.set('period', pickedPeriod);
+                  return prev;
+                },
+                { replace: true },
+              );
+            }}
+          />
         </div>
 
         {/* ===== Floor feed — the narration, and a way into each line ===== */}
