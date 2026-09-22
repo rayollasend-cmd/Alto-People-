@@ -139,6 +139,42 @@ export interface StoreOpsDay {
   temps: StoreOpsTemp[];
   metrics: StoreOpsMetric[];
   handoffs: StoreOpsHandoff[];
+  /** What the page is narrowed to right now, echoed back by the server. */
+  filters: { period: OpsPeriod | null; department: string | null };
+  /** Every department that ran that day — the department picker. */
+  departments: string[];
+  /** On the floor at this moment; null when reading a past day. */
+  live: StoreOpsLive[] | null;
+  /** The floor, photographed. Newest first. */
+  photos: StoreOpsPhoto[];
+}
+
+/** A shift that is running right now. */
+export interface StoreOpsLive {
+  id: string;
+  department: string;
+  period: OpsPeriod;
+  storeName: string | null;
+  windowLabel: string | null;
+  runBy: string;
+  openedAt: string;
+  dueAt: string | null;
+  done: number;
+  total: number;
+  overdueItems: number;
+  current: { section: string | null; dueAt: string; open: number } | null;
+}
+
+/** One photograph off the floor, and what it is of. */
+export interface StoreOpsPhoto {
+  id: string;
+  at: string;
+  title: string;
+  section: string | null;
+  shiftId: string;
+  department: string | null;
+  period: OpsPeriod | null;
+  storeName: string | null;
 }
 
 /** `qs` carries the scope (?clientId= / ?locationId=) and ?date=. */

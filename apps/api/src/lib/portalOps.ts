@@ -115,11 +115,21 @@ const num = (d: Prisma.Decimal | null): number | null => (d == null ? null : Num
 
 export async function buildStoreOps(
   scope: PortalScope,
-  opts: { dateKey: string; cal: StoreCalendar; now: Date },
+  opts: {
+    dateKey: string;
+    cal: StoreCalendar;
+    now: Date;
+    /** Narrow to one shift ("what happened overnight") and/or one department. */
+    period?: OpsPeriod | null;
+    department?: string | null;
+  },
 ) {
   const { dateKey, cal, now } = opts;
   const dayStart = cal.midnight(dateKey);
   const dayEnd = cal.midnight(nextKey(dateKey, 1));
+  // "Today" on the store's own clock. An overnight crew arriving at 22:00
+  // and a manager reading this at 06:00 are inside the same working night.
+  const isToday = dateKey === cal.key(now);
 
   const stores = scope.locationId
     ? [{ id: scope.locationId, name: scope.location!.name, timezone: scope.location!.timezone }]
@@ -139,7 +149,30 @@ export async function buildStoreOps(
 
   const [shifts, windows, assigned] = await Promise.all([
     prisma.opsShift.findMany({
-      where: { clientId: scope.clientId, ...locWhere, openedAt: { gte: dayStart, lt: dayEnd } },
+      where: {
+        clientId: scope.clientId,
+        ...locWhere,
+        ...(opts.period ? { period: opts.period } : {}),
+        // A supervisor covering three departments files under one, so match
+        // either the filing department or the full list they carried.
+        ...(opts.department
+          ? { OR: [{ department: opts.department }, { departments: { has: opts.department } }] }
+          : {}),
+        AND: [
+          {
+            OR: [
+              // Opened inside the day…
+              { openedAt: { gte: dayStart, lt: dayEnd } },
+              // …or finished inside it. The overnight crew opens at 22:00
+              // and submits at 06:00; keyed on the open alone, their work
+              // vanished from the morning the manager reads it.
+              { closedAt: { gte: dayStart, lt: dayEnd } },
+              // …or is on the floor right now, on the day that is now.
+              ...(isToday ? [{ status: 'ACTIVE' as const, openedAt: { lt: dayEnd } }] : []),
+            ],
+          },
+        ],
+      },
       select: shiftSelect,
       orderBy: { openedAt: 'asc' },
       take: 200,
@@ -185,6 +218,28 @@ export async function buildStoreOps(
         }),
       ])
     : [[], []];
+
+  // Every photograph the floor took, newest first. The portal counted
+  // these and showed none of them — a number where the evidence was.
+  const photoRows = shiftIds.length
+    ? await prisma.opsTaskPhoto.findMany({
+        where: { task: { is: { opsShiftId: { in: shiftIds } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 80,
+        select: {
+          id: true,
+          createdAt: true,
+          task: {
+            select: {
+              title: true,
+              tempLabel: true,
+              opsShiftId: true,
+              section: true,
+            },
+          },
+        },
+      })
+    : [];
 
   const tasksByShift = new Map<string, TaskRow[]>();
   for (const t of tasks) {
@@ -571,6 +626,43 @@ export async function buildStoreOps(
     temps,
     metrics,
     handoffs,
+    /** What the filter is currently narrowed to, echoed back. */
+    filters: { period: opts.period ?? null, department: opts.department ?? null },
+    /** Every department that ran, for the picker. */
+    departments,
+    /** On the floor right now — null on a past day. */
+    live: isToday
+      ? runs
+          .filter((r) => r.status === 'ACTIVE')
+          .map((r) => ({
+            id: r.id,
+            department: r.department,
+            period: r.period,
+            storeName: r.storeName,
+            windowLabel: r.windowLabel,
+            runBy: r.runBy,
+            openedAt: r.openedAt,
+            dueAt: r.dueAt,
+            done: r.done,
+            total: r.total,
+            overdueItems: r.overdueItems,
+            current: r.current,
+          }))
+      : null,
+    /** The floor, photographed. Newest first. */
+    photos: photoRows.map((ph) => {
+      const where = shiftName.get(ph.task.opsShiftId);
+      return {
+        id: ph.id,
+        at: ph.createdAt.toISOString(),
+        title: ph.task.tempLabel ? `${ph.task.title} — ${ph.task.tempLabel}` : ph.task.title,
+        section: ph.task.section,
+        shiftId: ph.task.opsShiftId,
+        department: where?.department ?? null,
+        period: where?.period ?? null,
+        storeName: where?.storeName ?? null,
+      };
+    }),
   };
 }
 

@@ -193,6 +193,36 @@ function day(over: Partial<StoreOpsDay> = {}): StoreOpsDay {
         decidedBy: null,
       },
     ],
+    filters: { period: null, department: null },
+    departments: ['Frozen & Dairy', 'Meat & Produce'],
+    live: [
+      {
+        id: 'r1',
+        department: 'Frozen & Dairy',
+        period: 'MORNING',
+        storeName: 'Front Beach 218',
+        windowLabel: 'Morning',
+        runBy: 'Tori Banks',
+        openedAt: at(-3),
+        dueAt: at(5),
+        done: 12,
+        total: 30,
+        overdueItems: 2,
+        current: { section: 'Backroom · 7:30–9:30', dueAt: at(-0.2), open: 2 },
+      },
+    ],
+    photos: [
+      {
+        id: 'p1',
+        at: at(-5),
+        title: 'Final zone photo',
+        section: 'End of shift',
+        shiftId: 'r2',
+        department: 'Frozen & Dairy',
+        period: 'OVERNIGHT',
+        storeName: 'Front Beach 218',
+      },
+    ],
     ...over,
   };
 }
@@ -280,5 +310,65 @@ describe('<PortalOps> — the store manager’s store operations', () => {
       }),
     );
     expect(await screen.findByText('Every department is on track')).toBeInTheDocument();
+  });
+});
+
+describe('<PortalOps> — what is happening in the store', () => {
+  it('names what is on the floor right now, not only how the day finished', async () => {
+    renderPage(day());
+    const now = await screen.findByRole('heading', { name: /On the floor now/i });
+    const card = now.closest('div')!.parentElement!;
+    expect(within(card).getByText(/Tori Banks/)).toBeInTheDocument();
+    expect(within(card).getByText(/2 items past due/)).toBeInTheDocument();
+    // The section is absent on a past day — "now" has no meaning there.
+    expect(screen.getByText(/1 shift running/)).toBeInTheDocument();
+  });
+
+  it('shows the photographs, rather than counting them', async () => {
+    renderPage(day());
+    expect(await screen.findByRole('heading', { name: /From the floor/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Open the full photo: Final zone photo/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByAltText('Final zone photo')).toBeInTheDocument();
+  });
+
+  it('stays on the page when the floor photographed nothing', async () => {
+    renderPage(day({ photos: [] }));
+    expect(await screen.findByRole('heading', { name: /From the floor/i })).toBeInTheDocument();
+    expect(screen.getByText(/no photos yet/i)).toBeInTheDocument();
+  });
+
+  it('turns "what happened overnight" into one button', async () => {
+    const user = userEvent.setup();
+    renderPage(day());
+    const btn = await screen.findByRole('button', { name: /Last night/i });
+    await user.click(btn);
+    // Yesterday AND the overnight shift, in one act — the manager should
+    // not have to pick a date and then remember to filter.
+    const calls = vi.mocked(apiFetch).mock.calls.map((c) => String(c[0]));
+    const last = calls.at(-1)!;
+    expect(last).toContain('period=OVERNIGHT');
+    expect(last).toMatch(/date=\d{4}-\d{2}-\d{2}/);
+    expect(last).not.toContain(`date=${today}`);
+  });
+
+  it('offers the shift and department filters, and a way back out', async () => {
+    const user = userEvent.setup();
+    renderPage(day());
+    const shift = await screen.findByLabelText('Filter by shift');
+    await user.selectOptions(shift, 'OVERNIGHT');
+    expect(String(vi.mocked(apiFetch).mock.calls.at(-1)![0])).toContain('period=OVERNIGHT');
+
+    const dept = screen.getByLabelText('Filter by department');
+    await user.selectOptions(dept, 'Meat & Produce');
+    expect(String(vi.mocked(apiFetch).mock.calls.at(-1)![0])).toContain(
+      'department=Meat+%26+Produce',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    const after = String(vi.mocked(apiFetch).mock.calls.at(-1)![0]);
+    expect(after).not.toContain('period=');
+    expect(after).not.toContain('department=');
   });
 });

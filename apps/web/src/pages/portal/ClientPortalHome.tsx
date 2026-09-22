@@ -104,6 +104,18 @@ interface WeekRow {
   current: boolean;
 }
 
+interface OpsRoll {
+  shifts: number;
+  open: number;
+  sopDone: number;
+  sopTotal: number;
+  taskDone: number;
+  taskTotal: number;
+  tempAlerts: number;
+  incomplete: number;
+  photos: number;
+}
+
 interface OpsDay {
   dateKey: string;
   shifts: number;
@@ -167,7 +179,25 @@ interface PortalOverview {
     }>;
     supportEmail: string | null;
   };
-  ops: { yesterday: OpsDay | null; today: OpsDay | null } | null;
+  ops: {
+    yesterday: OpsDay | null;
+    today: OpsDay | null;
+    /** Running at this moment, whatever day it was filed under. */
+    live: Array<{
+      id: string;
+      department: string;
+      period: string;
+      openedAt: string;
+      sopDone: number;
+      sopTotal: number;
+    }>;
+    /** Today, INCLUDING an overnight that carried into it. */
+    current: OpsRoll | null;
+    /** Last night's overnight specifically. */
+    lastNight: OpsRoll | null;
+    todayKey: string;
+    yesterdayKey: string;
+  } | null;
   reliability: {
     weeks: WeekRow[];
     grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
@@ -406,10 +436,21 @@ export function ClientPortalHome() {
   const hoursPct =
     data.week.hours > 0 ? Math.min(100, Math.round((data.week.workedHours / data.week.hours) * 100)) : null;
   const tomorrowTotal = data.tomorrow.confirmed + data.tomorrow.unconfirmed + data.tomorrow.open;
-  const opsDay = data.ops?.yesterday ?? data.ops?.today ?? null;
-  const opsIsToday = !!data.ops && !data.ops.yesterday && !!data.ops.today;
-  const sopPct =
-    opsDay && opsDay.sopTotal > 0 ? Math.round((opsDay.sopDone / opsDay.sopTotal) * 100) : null;
+  // The card used to lead with LAST NIGHT and only fall back to today, so
+  // at ten in the morning a store manager saw a finished overnight while
+  // the morning crew was on the floor in front of them. It leads with now.
+  // Last night is still one click away, under Store operations.
+  const opsLive = data.ops?.live ?? [];
+  const opsDay = data.ops?.current ?? data.ops?.today ?? null;
+  const opsNotes = data.ops?.today?.notes ?? data.ops?.yesterday?.notes ?? [];
+  const opsLastNight = data.ops?.lastNight ?? null;
+  const pctOf = (r: { sopDone: number; sopTotal: number } | null) =>
+    r && r.sopTotal > 0 ? Math.round((r.sopDone / r.sopTotal) * 100) : null;
+  const sopPct = pctOf(opsDay);
+  const lastNightPct = pctOf(opsLastNight);
+  const lastNightHref = `/portal/ops${qs ? `${qs}&` : '?'}date=${
+    data.ops?.yesterdayKey ?? ''
+  }&period=OVERNIGHT`;
   const cl = data.clearance;
   const clearedCount = cl.total - cl.flagged - cl.checksInFlight;
   const clearancePct = cl.total > 0 ? Math.round((clearedCount / cl.total) * 100) : null;
@@ -863,7 +904,16 @@ export function ClientPortalHome() {
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
-                {opsIsToday ? t('portal.opsToday') : t('portal.opsTitle')}
+                {opsLive.length > 0 ? t('portal.opsNowTitle') : t('portal.opsTodayTitle')}
+                {opsLive.length > 0 && (
+                  <span className="ml-1 inline-flex items-center gap-1 text-2xs font-normal text-success">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                    </span>
+                    {t('portal.opsNowLine', { count: opsLive.length })}
+                  </span>
+                )}
               </h2>
               <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
                 {t('portal.opsOpen')}
@@ -906,9 +956,52 @@ export function ClientPortalHome() {
                     )}
                   </div>
                 </div>
-                {opsDay.notes.length > 0 && (
+                {/* What is on the floor right now, named. A percentage
+                    alone never told the manager who to walk up to. */}
+                {opsLive.length > 0 && (
+                  <ul className="mt-3 space-y-1 border-t border-navy-secondary/60 pt-3">
+                    {opsLive.map((l) => {
+                      const pct = l.sopTotal > 0 ? Math.round((l.sopDone / l.sopTotal) * 100) : null;
+                      return (
+                        <li key={l.id} className="flex items-center gap-2 text-xs">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
+                          <span className="min-w-0 flex-1 truncate text-white">
+                            {l.department}
+                            <span className="text-silver/50"> · {l.period.toLowerCase()}</span>
+                          </span>
+                          <span className="shrink-0 tabular-nums text-silver/70">
+                            {pct === null ? '—' : `${pct}%`}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-silver/50">
+                            {t('portal.opsSince', { time: fmtTime(new Date(l.openedAt)) })}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {/* Last night, on purpose — the thing this card used to be,
+                    now a link into the filter that actually shows it. */}
+                {opsLastNight && (
+                  <Link
+                    to={lastNightHref}
+                    className="mt-3 flex items-center justify-between gap-2 rounded-md border border-navy-secondary/70 px-2.5 py-2 text-xs transition-colors hover:border-gold/40"
+                  >
+                    <span className="min-w-0">
+                      <span className="text-white">{t('portal.opsLastNight')}</span>
+                      <span className="ml-1.5 text-silver/70 tabular-nums">
+                        {t('portal.opsLastNightLine', {
+                          shifts: opsLastNight.shifts,
+                          pct: lastNightPct ?? 0,
+                        })}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-gold">{t('portal.opsSeeLastNight')}</span>
+                  </Link>
+                )}
+                {opsNotes.length > 0 && (
                   <ul className="mt-3 space-y-1.5 border-t border-navy-secondary/60 pt-3">
-                    {opsDay.notes.map((n, i) => (
+                    {opsNotes.map((n, i) => (
                       <li key={i} className="text-xs text-silver/80">
                         <span className="font-medium text-white">{n.department}</span>
                         <span className="text-silver/50"> · {n.period.toLowerCase()}</span>

@@ -15,6 +15,7 @@ import {
   ClipboardX,
   Download,
   FileWarning,
+  Moon,
   Printer,
   ShieldCheck,
   Thermometer,
@@ -43,6 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE, HANDOVER_KIND_ICON, HANDOVER_KIND_LABEL, PERIOD_LABEL } from '../ops/opsVisuals';
 import { scopeParams, shiftDays } from './scope';
@@ -139,7 +141,16 @@ export function StoreOps() {
   const scope = scopeParams(searchParams, isPortal);
   const scopeQs = scope.toString() ? `?${scope.toString()}` : '';
   const date = searchParams.get('date') ?? ymdLocal();
-  const qs = `?${new URLSearchParams([...scope.entries(), ['date', date]]).toString()}`;
+  // The two narrowings a store manager actually asks for. "What happened
+  // overnight" is a filter on this page, not a different page.
+  const period = searchParams.get('period') ?? '';
+  const department = searchParams.get('department') ?? '';
+  const qs = `?${new URLSearchParams([
+    ...scope.entries(),
+    ['date', date],
+    ...(period ? ([['period', period]] as [string, string][]) : []),
+    ...(department ? ([['department', department]] as [string, string][]) : []),
+  ]).toString()}`;
   const isToday = date === ymdLocal();
   const query = useQuery({
     queryKey: ['clientPortal', 'ops', qs],
@@ -158,11 +169,42 @@ export function StoreOps() {
     else p.set('date', next);
     setSearchParams(p, { replace: true });
   };
+  const setFilter = (key: 'period' | 'department', value: string) => {
+    const p = new URLSearchParams(searchParams);
+    if (value) p.set(key, value);
+    else p.delete(key);
+    setSearchParams(p, { replace: true });
+  };
+  /** "Last night" is one button: yesterday, narrowed to the overnight. */
+  const goLastNight = () => {
+    const p = new URLSearchParams(searchParams);
+    p.set('date', shiftDays(ymdLocal(), -1));
+    p.set('period', 'OVERNIGHT');
+    setSearchParams(p, { replace: true });
+  };
+  const clearFilters = () => {
+    const p = new URLSearchParams(searchParams);
+    p.delete('period');
+    p.delete('department');
+    p.delete('date');
+    setSearchParams(p, { replace: true });
+  };
+  const lastNightOn = date === shiftDays(ymdLocal(), -1) && period === 'OVERNIGHT';
 
   const run = data?.runs.find((r) => r.id === openRun) ?? null;
   return (
     <div className={cn('space-y-4', switching && 'opacity-70 transition-opacity')}>
-      <DateBar date={date} onDate={goDay} data={data} />
+      <DateBar
+        date={date}
+        onDate={goDay}
+        data={data}
+        period={period}
+        department={department}
+        onFilter={setFilter}
+        onLastNight={goLastNight}
+        onClear={clearFilters}
+        lastNightOn={lastNightOn}
+      />
       {query.error ? (
         <ErrorBanner>{query.error instanceof Error ? query.error.message : 'Could not load store operations.'}</ErrorBanner>
       ) : !data ? (
@@ -173,7 +215,9 @@ export function StoreOps() {
       ) : (
         <>
           <Verdict data={data} isToday={isToday} onOpen={setOpenRun} />
+          <OnTheFloorNow data={data} onOpen={setOpenRun} />
           <DepartmentGrid data={data} onOpen={setOpenRun} />
+          <FromTheFloor data={data} scopeQs={scopeQs} onOpen={setOpenRun} />
           <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
             <FoodSafety data={data} />
             <Production data={data} />
@@ -188,11 +232,203 @@ export function StoreOps() {
   );
 }
 
+
+/* ----- on the floor now -------------------------------------------------- */
+
+/**
+ * What is happening in the store AT THIS MOMENT.
+ *
+ * The page could tell a manager how their day finished and not who was
+ * standing in the building. A shift that opened at 22:00 and is still
+ * running at 06:00 is the most current thing on the page, and it was the
+ * one thing the day view could not show.
+ */
+function OnTheFloorNow({ data, onOpen }: { data: StoreOpsDay; onOpen: (id: string) => void }) {
+  const live = data.live ?? [];
+  if (live.length === 0) return null;
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <h2 className="flex items-center gap-2 text-sm font-medium text-white">
+          <span className="relative flex h-2 w-2" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+          </span>
+          On the floor now
+          <span className="text-xs font-normal text-silver/60">
+            {live.length} shift{live.length === 1 ? '' : 's'} running
+          </span>
+        </h2>
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          {live.map((l) => {
+            const pct = l.total > 0 ? Math.round((l.done / l.total) * 100) : null;
+            return (
+              <li key={l.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(l.id)}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    l.overdueItems > 0
+                      ? 'border-warning/50 bg-warning/[0.06]'
+                      : 'border-navy-secondary hover:border-gold/30',
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-white">
+                      {l.department}
+                      <span className="ml-1.5 text-xs text-gold">{l.period.toLowerCase()}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-silver/70">
+                      {l.runBy} · started {fmtTimeTz(l.openedAt, data.tz)}
+                      {l.dueAt && ` · due ${fmtTimeTz(l.dueAt, data.tz)}`}
+                    </span>
+                    {l.current?.section && (
+                      <span className="mt-0.5 block truncate text-xs text-silver/60">
+                        on {l.current.section} · {l.current.open} left
+                      </span>
+                    )}
+                    {l.overdueItems > 0 && (
+                      <span className="mt-0.5 block text-xs text-warning">
+                        {l.overdueItems} item{l.overdueItems === 1 ? '' : 's'} past due
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-lg font-semibold tabular-nums text-white">
+                      {pct === null ? '—' : `${pct}%`}
+                    </span>
+                    <span className="block text-2xs tabular-nums text-silver/60">
+                      {l.done}/{l.total}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ----- the photographs --------------------------------------------------- */
+
+/**
+ * From the floor.
+ *
+ * The page counted photographs — "14 photos on record" — and showed none
+ * of them. The whole point of asking a supervisor to photograph a faced
+ * aisle or a cooler probe is that somebody can LOOK at it, and the person
+ * who most needs to look is the store manager who was not there.
+ */
+function FromTheFloor({
+  data,
+  scopeQs,
+  onOpen,
+}: {
+  data: StoreOpsDay;
+  scopeQs: string;
+  onOpen: (id: string) => void;
+}) {
+  const photos = data.photos ?? [];
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+            <Camera className="h-4 w-4 text-gold" aria-hidden="true" />
+            From the floor
+          </h2>
+          <span className="text-xs text-silver/60 tabular-nums">
+            {photos.length === 0
+              ? 'no photos yet'
+              : `${photos.length} photo${photos.length === 1 ? '' : 's'}`}
+          </span>
+        </div>
+        {photos.length === 0 ? (
+          // It stays on the page when empty: a card that disappears is a
+          // card nobody learns exists, and "no photos" is itself a finding.
+          <p className="mt-3 text-sm text-silver/70">
+            Supervisors photograph the floor as they work the checklist. Anything taken
+            {data.date === data.storeToday ? ' today' : ' that day'} appears here.
+          </p>
+        ) : (
+          <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {photos.map((ph) => (
+              <li key={ph.id} className="group">
+                <a
+                  href={storeOpsPhotoUrl(ph.id, scopeQs)}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open the full photo: ${ph.title}${
+                    ph.department ? `, ${ph.department}` : ''
+                  }${ph.period ? `, ${ph.period.toLowerCase()}` : ''}, ${fmtTimeTz(
+                    ph.at,
+                    data.tz,
+                  )} (opens in a new tab)`}
+                  className="block overflow-hidden rounded-lg border border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                >
+                  <img
+                    src={storeOpsPhotoUrl(ph.id, scopeQs)}
+                    alt={ph.title}
+                    loading="lazy"
+                    className="aspect-[4/3] w-full object-cover transition-transform group-hover:scale-[1.03]"
+                  />
+                </a>
+                <div className="mt-1.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => onOpen(ph.shiftId)}
+                    className="block max-w-full truncate text-left text-xs font-medium text-white hover:text-gold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    aria-label={`Open the shift this photo came from: ${
+                      ph.department ?? 'this shift'
+                    }`}
+                  >
+                    {ph.title}
+                  </button>
+                  <div className="truncate text-2xs text-silver/60">
+                    {[ph.department, ph.period?.toLowerCase()].filter(Boolean).join(' · ')}
+                  </div>
+                  <div className="text-2xs tabular-nums text-silver/50">
+                    {fmtTimeTz(ph.at, data.tz)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /* ----- date bar ---------------------------------------------------------- */
 
-function DateBar({ date, onDate, data }: { date: string; onDate: (d: string | null) => void; data?: StoreOpsDay }) {
+function DateBar({
+  date,
+  onDate,
+  data,
+  period,
+  department,
+  onFilter,
+  onLastNight,
+  onClear,
+  lastNightOn,
+}: {
+  date: string;
+  onDate: (d: string | null) => void;
+  data?: StoreOpsDay;
+  period: string;
+  department: string;
+  onFilter: (key: 'period' | 'department', value: string) => void;
+  onLastNight: () => void;
+  onClear: () => void;
+  lastNightOn: boolean;
+}) {
   const today = ymdLocal();
   const yesterday = shiftDays(today, -1);
+  const narrowed = period !== '' || department !== '' || date !== today;
   return (
     <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:static">
       <Button size="sm" variant="ghost" onClick={() => onDate(shiftDays(date, -1))} aria-label="Previous day" className="print:hidden">
@@ -204,11 +440,22 @@ function DateBar({ date, onDate, data }: { date: string; onDate: (d: string | nu
         </Button>
         <Button
           size="sm"
-          variant={date === yesterday ? 'secondary' : 'ghost'}
+          variant={date === yesterday && !lastNightOn ? 'secondary' : 'ghost'}
           onClick={() => onDate(yesterday)}
           className="hidden sm:inline-flex print:hidden"
         >
           Yesterday
+        </Button>
+        {/* The question this page is asked most: what happened overnight.
+            One button, rather than a date and a filter and a guess. */}
+        <Button
+          size="sm"
+          variant={lastNightOn ? 'secondary' : 'ghost'}
+          onClick={onLastNight}
+          className="print:hidden"
+        >
+          <Moon className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+          Last night
         </Button>
         <input
           type="date"
@@ -218,6 +465,40 @@ function DateBar({ date, onDate, data }: { date: string; onDate: (d: string | nu
           className="ml-1 h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white print:hidden coarse:h-11 coarse:text-base"
           aria-label="Pick a date"
         />
+        <Select
+          size="sm"
+          value={period}
+          onChange={(e) => onFilter('period', e.target.value)}
+          aria-label="Filter by shift"
+          className="ml-1 w-auto print:hidden"
+        >
+          <option value="">All shifts</option>
+          <option value="MORNING">Morning</option>
+          <option value="EVENING">Evening</option>
+          <option value="CLOSING">Closing</option>
+          <option value="OVERNIGHT">Overnight</option>
+        </Select>
+        {(data?.departments?.length ?? 0) > 1 && (
+          <Select
+            size="sm"
+            value={department}
+            onChange={(e) => onFilter('department', e.target.value)}
+            aria-label="Filter by department"
+            className="w-auto max-w-[10rem] print:hidden"
+          >
+            <option value="">All departments</option>
+            {data!.departments.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </Select>
+        )}
+        {narrowed && (
+          <Button size="sm" variant="ghost" onClick={onClear} className="print:hidden">
+            Clear
+          </Button>
+        )}
         <span className="ml-2 hidden text-xs text-silver sm:inline">
           {data?.scope.location?.name ?? data?.scope.client.name}
           {' · '}

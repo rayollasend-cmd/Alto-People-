@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { OpsPeriod } from '@prisma/client';
 import { z } from 'zod';
 import { hasCapability, paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -374,7 +375,16 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         take: 50,
       }),
       prisma.opsShift.findMany({
-        where: { ...opsWhere, dateKey: { in: [opsYesterdayKey, opsTodayKey] } },
+        // Yesterday and today, PLUS anything still running — an overnight
+        // crew that clocked on before midnight is filed under yesterday
+        // and is standing on the floor right now.
+        where: {
+          ...opsWhere,
+          OR: [
+            { dateKey: { in: [opsYesterdayKey, opsTodayKey] } },
+            { status: 'ACTIVE' },
+          ],
+        },
         select: {
           id: true,
           dateKey: true,
@@ -648,7 +658,41 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         shifts: [...new Set(ledHere.filter((w) => w.userId === u.id).map((w) => w.label))],
       }));
 
-    // ---- Store ops evidence: yesterday + today --------------------------
+    // ---- Store ops evidence ---------------------------------------------
+    //
+    // The store manager's page used to lead with LAST NIGHT and only fall
+    // back to today, so at ten in the morning it showed a finished shift
+    // while the morning crew was on the floor. It leads with now; last
+    // night is one click away under Store operations.
+    const opsRoll = (rows: typeof opsShifts) => {
+      if (rows.length === 0) return null;
+      const sum = (f: (o: (typeof rows)[number]) => number) => rows.reduce((a, o) => a + f(o), 0);
+      return {
+        shifts: rows.length,
+        open: rows.filter((o) => o.status === 'ACTIVE').length,
+        sopDone: sum((o) => o.sopDone),
+        sopTotal: sum((o) => o.sopTotal),
+        taskDone: sum((o) => o.taskDone),
+        taskTotal: sum((o) => o.taskTotal),
+        tempAlerts: sum((o) => o.tempAlerts),
+        incomplete: rows.filter((o) => o.closedIncomplete).length,
+        photos: sum((o) => o._count.tasks),
+      };
+    };
+
+    /** On the floor at this moment, whatever day it was filed under. */
+    const opsLive = opsShifts
+      .filter((o) => o.status === 'ACTIVE')
+      .map((o) => ({
+        id: o.id,
+        department: o.department,
+        period: o.period,
+        openedAt: o.openedAt.toISOString(),
+        sopDone: o.sopDone,
+        sopTotal: o.sopTotal,
+      }))
+      .slice(0, 6);
+
     const opsDay = (key: string) => {
       const rows = opsShifts.filter((o) => o.dateKey === key);
       if (rows.length === 0) return null;
@@ -788,7 +832,23 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       leads: { people: leads, supportEmail: orgSetting?.supportEmail ?? null },
       ops:
         opsShifts.length > 0
-          ? { yesterday: opsDay(opsYesterdayKey), today: opsDay(opsTodayKey) }
+          ? {
+              yesterday: opsDay(opsYesterdayKey),
+              today: opsDay(opsTodayKey),
+              /** Running right now — the answer to "what is happening". */
+              live: opsLive,
+              /** Today's work including an overnight that carried into it. */
+              current: opsRoll(
+                opsShifts.filter((o) => o.dateKey === opsTodayKey || o.status === 'ACTIVE'),
+              ),
+              /** Last night's overnight, specifically — the thing the old
+               *  card was really showing, now reachable on purpose. */
+              lastNight: opsRoll(
+                opsShifts.filter((o) => o.dateKey === opsYesterdayKey && o.period === 'OVERNIGHT'),
+              ),
+              todayKey: opsTodayKey,
+              yesterdayKey: opsYesterdayKey,
+            }
           : null,
       reliability: { weeks, grade: graded.grade, score: graded.score, basis: graded.basis },
       clearance,
@@ -1252,7 +1312,16 @@ clientPortalRouter.get('/client-portal/ops', requireAuth, async (req, res, next)
     const now = new Date();
     const cal = await portalCalendar(scope);
     const dateKey = req.query.date === undefined ? cal.key(now) : parseDayKey(req.query.date, 'date');
-    const body = await buildStoreOps(scope, { dateKey, cal, now });
+    // The two narrowings a store manager actually asks for: which shift,
+    // and which department. "What happened overnight" is a filter, not a
+    // different page.
+    const periodRaw = req.query.period?.toString();
+    const period =
+      periodRaw && ['MORNING', 'EVENING', 'CLOSING', 'OVERNIGHT'].includes(periodRaw)
+        ? (periodRaw as OpsPeriod)
+        : null;
+    const department = req.query.department?.toString()?.slice(0, 80) || null;
+    const body = await buildStoreOps(scope, { dateKey, cal, now, period, department });
     res.json({
       scope: { client: scope.client, location: scope.location ? { id: scope.location.id, name: scope.location.name } : null },
       ...body,
