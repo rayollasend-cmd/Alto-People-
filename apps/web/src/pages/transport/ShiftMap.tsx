@@ -141,11 +141,18 @@ export function ShiftMapDrawer({ trip, open, onClose }: { trip: TripKey | null; 
                             <Avatar src={r.photoUrl ?? null} name={r.name} size="xs" />
                             <span className="text-xs text-white">{r.name}</span>
                             {r.status === 'REQUESTED' && <span className="text-2xs text-gold">{t('drive.shiftAskingTag')}</span>}
+                            {/* The whole point of this drawer for an
+                                address the geocoder missed, and it was an
+                                11px underline inside a wrapping row — a
+                                ~15px-tall target, tapped from a van with
+                                cold hands. On touch it claims 44px of
+                                height and a legible label; the mouse keeps
+                                the quiet inline footnote it reads as. */}
                             {!r.pinned && (
                               <button
                                 type="button"
                                 onClick={() => setPinFor({ rider: r, cluster: c })}
-                                className="inline-flex items-center gap-0.5 rounded text-2xs text-warning underline underline-offset-2 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                                className="inline-flex items-center gap-0.5 rounded text-2xs text-warning underline underline-offset-2 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11 coarse:text-xs"
                               >
                                 <MapPinOff className="h-3 w-3" aria-hidden="true" />
                                 {c.mapped ? t('drive.pinFix') : t('drive.pinSet')}

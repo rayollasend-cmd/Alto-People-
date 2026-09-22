@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Crosshair, Maximize2, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import type { GeoPoint, MyLiveRide, Ride } from '@/lib/transportApi';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 
@@ -163,11 +164,19 @@ export function TripMap({
             fitKey={`${stage}:${recenter}`}
             controls={false}
           />
-          <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top,0px)+1rem)]">{chip}</div>
-          <div className="absolute right-4 top-[calc(env(safe-area-inset-top,0px)+1rem)]">{buttons(true)}</div>
+          {/* The full-screen map is `fixed inset-0`, so unlike the inline
+              one it really does reach the glass. Landscape on a notched
+              phone puts 44px of inset on ONE side, and a flat left-4 /
+              right-4 dropped the close button behind the notch — the only
+              way out of the map, unreachable. Insets are honoured on both
+              sides so it doesn't matter which way the phone is turned. */}
+          <div className="pointer-events-none absolute left-[max(1rem,env(safe-area-inset-left))] top-[calc(env(safe-area-inset-top,0px)+1rem)]">{chip}</div>
+          <div className="absolute right-[max(1rem,env(safe-area-inset-right))] top-[calc(env(safe-area-inset-top,0px)+1rem)]">{buttons(true)}</div>
           {overlay && (
             // Clear of the map credit's (i) in the corner.
-            <div className="absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+3rem)] mx-auto max-w-lg">{overlay}</div>
+            <div className="absolute bottom-[calc(env(safe-area-inset-bottom,0px)+3rem)] left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-w-lg">
+              {overlay}
+            </div>
           )}
         </FullMap>
       )}
@@ -182,16 +191,22 @@ function MapButton({ label, onClick, children }: { label: string; onClick: () =>
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="grid h-10 w-10 place-items-center rounded-full bg-midnight/85 text-white shadow-lg backdrop-blur transition-colors hover:bg-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      // 40px is a mouse target. These two float over a map that eats every
+      // near-miss as a pan, so on a finger they go to the 44px floor.
+      className="grid h-10 w-10 place-items-center rounded-full bg-midnight/85 text-white shadow-lg backdrop-blur transition-colors hover:bg-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:h-11 coarse:w-11"
     >
       {children}
     </button>
   );
 }
 
-/** The map, the whole screen — Escape or the X closes it. */
+/** The map, the whole screen — Back, Escape or the X closes it. */
 function FullMap({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   const { t } = useI18n();
+  // Escape is a desktop key. On the phone this thing covers is opened on,
+  // Back IS the dismiss gesture — without a sentinel the edge-swipe left
+  // the /rides page entirely and took the ride they were watching with it.
+  useOverlayBackButton(true, onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', onKey);

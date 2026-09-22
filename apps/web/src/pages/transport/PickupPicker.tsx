@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Crosshair, Home, Loader2, MapPin, Search, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { searchRideAddresses, whereAmI, type AddressSuggestion } from '@/lib/transportApi';
@@ -80,6 +81,10 @@ function ConfirmPinDialog({
 }) {
   const { t } = useI18n();
   const [point, setPoint] = useState({ lat: pickup.lat, lng: pickup.lng });
+  // Whether they have actually moved it. The marker shifting is the real
+  // feedback, but a thumb covers the marker at the moment of the tap — so
+  // something outside the map has to say the tap landed.
+  const [moved, setMoved] = useState(false);
   return (
     <Dialog open onOpenChange={(o) => !o && onCancel()}>
       <DialogContent className="max-w-lg">
@@ -87,18 +92,45 @@ function ConfirmPinDialog({
           <DialogTitle>{t('ride.pinTitle')}</DialogTitle>
           <DialogDescription>{t('ride.pinBody')}</DialogDescription>
         </DialogHeader>
-        <div className="h-64 overflow-hidden rounded-lg border border-navy-secondary">
+        {/* This is the one screen where a few pixels are a few metres of
+            walking, in the dark, at the end of a shift — so it takes the
+            height it can get. Capped, and short of the sheet, because a
+            map that pushes "This is the spot" below the fold is worse
+            than a small one: they can aim but not commit. */}
+        <div className="h-[38vh] max-h-[22rem] min-h-[15rem] overflow-hidden rounded-lg border border-navy-secondary sm:h-72">
           <LazyLiveMap
             ariaLabel={t('ride.pinTitle')}
             className="h-full w-full rounded-none"
             markers={[{ id: 'pickup', kind: 'stop', lat: point.lat, lng: point.lng, label: pickup.address }]}
-            controls={false}
+            // `controls` left at its default ON, where the trip map turns
+            // it off. Pinch-to-zoom is a two-handed gesture and this is a
+            // one-handed moment — holding a phone in a parking lot, aiming
+            // at a door. The driver's pin dialog keeps them for the same
+            // reason. It also matters more here than anywhere: the fit
+            // opens wide (see LiveMap's single-marker branch), so +/- is
+            // the only way in without a second hand.
             maxZoom={17}
             fitKey={`${pickup.address}`}
-            onPick={setPoint}
+            onPick={(p) => {
+              setPoint(p);
+              setMoved(true);
+              hapticConfirm();
+            }}
           />
         </div>
-        <p className="text-xs text-silver/70">{pickup.address}</p>
+        {/* The street they are pinning ON. Was text-xs at silver/70 — the
+            smallest type at the lowest contrast, on the one line that says
+            whether this is even the right road. */}
+        <p className="flex items-start gap-1.5 text-sm text-silver">
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+          <span className="min-w-0">{pickup.address}</span>
+        </p>
+        {moved && (
+          <p role="status" className="flex items-center gap-1.5 text-sm text-success">
+            <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {t('ride.pinMoved')}
+          </p>
+        )}
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel}>
             {t('ride.pinBack')}
@@ -336,7 +368,10 @@ export function PickupPicker({
               setOpen(true);
               window.setTimeout(() => inputRef.current?.focus(), 0);
             }}
-            className="shrink-0 rounded px-1.5 py-0.5 text-xs text-silver hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            // The undo for a wrong pickup, and it was a 45x20px word. On a
+            // finger it goes to the 44px floor — missing it taps the chip,
+            // which does nothing, so a miss reads as "the app is stuck".
+            className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-xs text-silver hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11 coarse:px-3 coarse:text-sm"
           >
             {t('ride.pickChange')}
           </button>
@@ -375,8 +410,12 @@ export function PickupPicker({
           placeholder={t('ride.pickPlaceholder')}
           autoComplete="off"
           className={cn(
+            // text-base, not text-sm: below 16px iOS zooms the whole page
+            // on focus and the form has to be pinched back out.
             'h-11 w-full rounded-md border bg-navy-secondary/40 pl-9 pr-9 text-base text-white placeholder:text-silver/50',
             'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+            // Room for the clear button once a finger widens it.
+            'coarse:pr-12',
             invalid ? 'border-alert' : 'border-navy-secondary',
           )}
         />
@@ -388,7 +427,9 @@ export function PickupPicker({
               inputRef.current?.focus();
             }}
             aria-label={t('common.clear')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-silver/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            // A 24px target for the one control that undoes a mistyped
+            // address; on a finger it fills the field's height instead.
+            className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-silver/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:h-11 coarse:w-11"
           >
             <X className="h-4 w-4" />
           </button>
@@ -405,7 +446,10 @@ export function PickupPicker({
           id={listId}
           role="listbox"
           aria-label={label}
-          className="max-h-64 overflow-y-auto rounded-lg border border-navy-secondary bg-navy"
+          // overscroll-contain: flicking past the end of the suggestions
+          // used to hand the fling to the booking sheet behind it, which
+          // scrolled the whole form away mid-choice.
+          className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border border-navy-secondary bg-navy"
         >
           {rows.map((r, i) => {
             const Icon = r.icon;
@@ -419,7 +463,9 @@ export function PickupPicker({
                   onMouseEnter={() => setActive(i)}
                   onClick={r.onPick}
                   className={cn(
-                    'flex w-full items-start gap-2.5 px-3 py-2.5 text-left',
+                    // A row with no second line lands at 40px; the tap
+                    // target has to be the whole row, not the text in it.
+                    'flex w-full items-start gap-2.5 px-3 py-2.5 text-left coarse:min-h-11',
                     'focus:outline-none',
                     i === active ? 'bg-navy-secondary/60' : 'hover:bg-navy-secondary/30',
                   )}
@@ -454,7 +500,9 @@ export function PickupPicker({
       )}
 
       {note && (
-        <p role="alert" className="text-xs text-warning">
+        // The only thing said when the phone refuses a location fix, read
+        // outdoors at night — text-sm, not the 12px meta tier.
+        <p role="alert" className="text-sm text-warning">
           {note}
         </p>
       )}

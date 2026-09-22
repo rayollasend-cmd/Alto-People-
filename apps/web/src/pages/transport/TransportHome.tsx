@@ -160,6 +160,41 @@ function shiftDay(ymd: string, n: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
+/**
+ * The pick box — how a run gets built, in all three places it happens: the
+ * riders on Today's board, the proposals in Plan runs, a week's worth in
+ * Rides. A 16px native checkbox is a mouse target, and this page is run off
+ * an iPad, where iPad width lands on the desktop breakpoints but the finger
+ * doesn't shrink to match. A native checkbox ignores padding, so on a coarse
+ * pointer the box itself grows to 24px and a wrapping label carries the rest
+ * of the reach out to ~44px; the desktop keeps the 16px box and the tight
+ * rows a dispatcher reads twenty at a time.
+ */
+function PickBox({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="inline-flex shrink-0 items-center justify-center coarse:p-2.5">
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 accent-gold coarse:h-6 coarse:w-6"
+      />
+    </label>
+  );
+}
+
 export function TransportHome() {
   const { can } = useAuth();
   const manage = can('manage:transport');
@@ -371,7 +406,11 @@ function NeedsAttention({ items }: { items: Attention[] }) {
               <div className="text-sm font-medium text-white">{a.title}</div>
               {a.body && <div className="text-xs text-silver">{a.body}</div>}
             </div>
-            <div className="flex flex-wrap gap-2">
+            {/* The first action here writes something — close a run, message
+                a van's riders, re-offer a seat — and the one beside it just
+                navigates. Same-size neighbours on touch, so they get the
+                wider gap there. */}
+            <div className="flex flex-wrap gap-2 coarse:gap-3">
               {a.actions.map((x, i) =>
                 x.href ? (
                   <Button key={x.label} size="xs" variant={i === 0 ? 'primary' : 'secondary'} asChild>
@@ -680,12 +719,10 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                     <CardContent className="pt-4">
                       <div className="flex items-center gap-2">
                         {manage && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Pick all ${g.rides.length}`}
+                          <PickBox
+                            label={`Pick all ${g.rides.length}`}
                             checked={all}
-                            onChange={(e) => toggle(g.rides.map((r) => r.id), e.target.checked)}
-                            className="h-4 w-4 accent-gold"
+                            onChange={(on) => toggle(g.rides.map((r) => r.id), on)}
                           />
                         )}
                         <div className="min-w-0 flex-1">
@@ -710,13 +747,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                         {g.rides.map((r) => (
                           <li key={r.id} className="flex items-center gap-3 py-2">
                             {manage && (
-                              <input
-                                type="checkbox"
-                                aria-label={`Pick ${r.rider.name}`}
-                                checked={picked.has(r.id)}
-                                onChange={(e) => toggle([r.id], e.target.checked)}
-                                className="h-4 w-4 accent-gold"
-                              />
+                              <PickBox label={`Pick ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
                             )}
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
@@ -911,7 +942,7 @@ function RunPanel({
           })}
         </ol>
         {manage && (run.status === 'PLANNED' || active) && (
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2 coarse:gap-3">
             <Button size="sm" variant="secondary" onClick={onMessage}>
               <MessageSquare className="h-3.5 w-3.5" />
               Message riders
@@ -929,7 +960,11 @@ function RunPanel({
                 <Button size="sm" variant="secondary" onClick={onEdit}>
                   Edit run
                 </Button>
-                <Button size="sm" variant="ghost" onClick={onCallOff}>
+                {/* Calling off a run puts every rider back on "needs a van"
+                    and tells them so. On touch it is a 44px slab 12px from
+                    "Edit run" — the extra margin gives the one irreversible
+                    button on this card its own moat. */}
+                <Button size="sm" variant="ghost" className="coarse:ml-2" onClick={onCallOff}>
                   Call off
                 </Button>
               </>
@@ -978,7 +1013,11 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+      {/* No max-h here on purpose: DialogContent already caps itself at the
+          viewport minus the notch and home-indicator insets and scrolls
+          inside. A plain `max-h-[90dvh]` merges over that cap and pushes the
+          sheet's grab handle up under the status bar on a notched phone. */}
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Plan runs</DialogTitle>
           <DialogDescription>
@@ -1000,12 +1039,10 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
               return (
                 <div key={p.key} className={cn('rounded-lg border p-3', p.skip ? 'border-navy-secondary opacity-60' : 'border-gold/40')}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-gold"
-                      aria-label={`Include ${p.store.name} ${fmtTimeTz(p.departAt, tz)}`}
+                    <PickBox
+                      label={`Include ${p.store.name} ${fmtTimeTz(p.departAt, tz)}`}
                       checked={!p.skip}
-                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], skip: !e.target.checked } }))}
+                      onChange={(on) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], skip: !on } }))}
                     />
                     <span className="text-sm font-semibold text-white">
                       {p.direction === 'TO_WORK' ? 'To' : 'Home from'} {p.store.name}
@@ -1230,7 +1267,8 @@ function DispatchDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose(false)}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+      {/* See PlanDialog — the primitive owns the height cap and the scroll. */}
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editing ? `Edit ${editing.van.name}` : 'Dispatch a van'}</DialogTitle>
           <DialogDescription>
@@ -1283,7 +1321,10 @@ function DispatchDialog({
                     {order.length}/{van?.capacity ?? '—'}
                   </span>
                 </span>
-                <span className="flex items-center gap-1">
+                {/* Both of these throw away every pickup time in the list
+                    and recompute it. 4px between two 44px slabs on touch
+                    was the tightest pair on the page. */}
+                <span className="flex items-center gap-1 coarse:gap-2">
                   <Button size="xs" variant="secondary" onClick={() => void bestOrder()} loading={routing} disabled={routing}>
                     <Wand2 className="h-3.5 w-3.5" />
                     Best order
@@ -1326,9 +1367,15 @@ function DispatchDialog({
                     <Button size="icon-sm" variant="ghost" aria-label="Move down" disabled={i === order.length - 1} onClick={() => move(i, 1)}>
                       <ArrowDown className="h-4 w-4" />
                     </Button>
+                    {/* Three icon-only buttons in a row, and this is the
+                        one that drops a rider. Reorder is a nudge you can
+                        undo by nudging back; losing someone off the run is
+                        only noticed after it dispatches — so it sits a
+                        finger's width clear of Move down. */}
                     <Button
                       size="icon-sm"
                       variant="ghost"
+                      className="coarse:ml-1"
                       aria-label={`Take ${o.ride.rider.name} off this run`}
                       onClick={() => setOrder((prev) => prev.filter((x) => x.ride.id !== o.ride.id))}
                     >
@@ -1587,10 +1634,14 @@ function RidesTab({ manage }: { manage: boolean }) {
 
   return (
     <div className="space-y-3">
+      {/* The sm inputs go from 12px to 16px text on a touch pointer (so iOS
+          doesn't zoom the whole board on focus), and 16px "09/22/2026" plus
+          the native picker glyph no longer fits w-36. Widened only there —
+          a mouse keeps the compact filter row. */}
       <div className="flex flex-wrap items-end gap-2">
         <Input size="sm" className="w-48" placeholder="Search a rider" aria-label="Search a rider" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" />
-        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" />
+        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36 coarse:w-44" />
+        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36 coarse:w-44" />
         <Select size="sm" aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as RideStatus | '')} className="w-40">
           <option value="">Every status</option>
           {(Object.keys(STATUS_LABEL) as RideStatus[]).map((s) => (
@@ -1639,19 +1690,23 @@ function RidesTab({ manage }: { manage: boolean }) {
       ) : (rides.data?.rides.length ?? 0) === 0 ? (
         <EmptyState icon={Bus} title="No rides" description="Nothing matches — widen the dates or clear the search." />
       ) : (
+        // Eight columns of ride: it is wider than an iPad in portrait and
+        // far wider than a phone. It slides inside this box — the page body
+        // itself never goes pannable, which is what would make the header
+        // and the tab strip drift off-screen mid-dispatch.
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
                 {manage && (
-                  <TableHead className="w-8">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-gold"
-                      aria-label={`Select all ${eligible.length} waiting for a van`}
+                  /* The pick column is sized to its control, so it widens
+                     with it on touch rather than squeezing "When". */
+                  <TableHead className="w-8 coarse:w-14">
+                    <PickBox
+                      label={`Select all ${eligible.length} waiting for a van`}
                       checked={allPicked}
                       disabled={eligible.length === 0}
-                      onChange={(e) => toggle(eligible.map((r) => r.id), e.target.checked)}
+                      onChange={(on) => toggle(eligible.map((r) => r.id), on)}
                     />
                   </TableHead>
                 )}
@@ -1671,13 +1726,7 @@ function RidesTab({ manage }: { manage: boolean }) {
                   {manage && (
                     <TableCell>
                       {r.status === 'REQUESTED' && !r.run ? (
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-gold"
-                          aria-label={`Select ${r.rider.name}`}
-                          checked={picked.has(r.id)}
-                          onChange={(e) => toggle([r.id], e.target.checked)}
-                        />
+                        <PickBox label={`Select ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
                       ) : null}
                     </TableCell>
                   )}
@@ -1700,16 +1749,24 @@ function RidesTab({ manage }: { manage: boolean }) {
                     {r.charged && <div className="text-2xs text-silver">from pay</div>}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-right">
-                    {manage && (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.run?.status !== 'ACTIVE' && (
-                      <Button size="xs" variant="ghost" onClick={() => void actions.cancel(r)}>
-                        Cancel
-                      </Button>
-                    )}
-                    {manage && r.owedCents > 0 && !r.charged && (
-                      <Button size="xs" variant="ghost" onClick={() => void actions.waive(r)}>
-                        Waive
-                      </Button>
-                    )}
+                    {/* These two were siblings with nothing between them —
+                        JSX eats the newline, so Cancel and Waive rendered
+                        edge to edge. Two ghost buttons sharing a border is
+                        a coin toss under a finger, and one of them tells a
+                        rider their ride is off. Separated always, wider on
+                        touch where both are 44px tall. */}
+                    <div className="flex items-center justify-end gap-1 coarse:gap-3">
+                      {manage && (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.run?.status !== 'ACTIVE' && (
+                        <Button size="xs" variant="ghost" onClick={() => void actions.cancel(r)}>
+                          Cancel
+                        </Button>
+                      )}
+                      {manage && r.owedCents > 0 && !r.charged && (
+                        <Button size="xs" variant="ghost" onClick={() => void actions.waive(r)}>
+                          Waive
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -2041,7 +2098,11 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                     <Spark daily={st.daily} from={fleet.data!.from} to={fleet.data!.to} />
                   </div>
                   {manage && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    // "Call <driver>" dials the moment it's hit and "Take out
+                    // of service" pulls a van from dispatch with no confirm
+                    // step — neither is something to catch with a thumb aimed
+                    // at its neighbour.
+                    <div className="mt-3 flex flex-wrap gap-2 coarse:gap-3">
                       {v.now && (
                         <Button size="xs" variant="secondary" onClick={() => setParams({ tab: 'live' })}>
                           <MapPin className="h-3.5 w-3.5" />
@@ -2116,7 +2177,8 @@ function VanDialog({ van, drivers, onClose }: { van: Van | null; drivers: Transp
   const valid = name.trim().length > 0 && Number(capacity) >= 1 && Number(capacity) <= 60 && (!year || (Number(year) >= 1990 && Number(year) <= 2100));
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      {/* See PlanDialog — the primitive owns the height cap and the scroll. */}
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{van ? `Edit ${van.name}` : 'Add a van'}</DialogTitle>
           <DialogDescription>What riders look for at the curb, and who drives it.</DialogDescription>
@@ -2314,8 +2376,9 @@ function ChargesTab() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
-        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" />
-        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" />
+        {/* w-36 clips the picker glyph once the text goes 16px — see Rides. */}
+        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36 coarse:w-44" />
+        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36 coarse:w-44" />
         <Button size="sm" variant="secondary" onClick={exportCsv} disabled={rows.length === 0}>
           <Download className="h-3.5 w-3.5" />
           CSV

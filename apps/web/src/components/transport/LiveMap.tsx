@@ -347,7 +347,19 @@ export default function LiveMap({
       fittedFor.current = key;
       m.resize();
       if (markers.length === 1) {
-        m.easeTo({ center: [markers[0]!.lng, markers[0]!.lat], zoom: Math.min(14, maxZoom), duration: first ? 0 : 700 });
+        // ONE marker has no bounds to fit, so there is nothing for maxZoom
+        // to cap — it is simply the zoom the caller asked for. It used to
+        // be `Math.min(14, maxZoom)`, which meant the prop could only ever
+        // zoom OUT: both pin dialogs pass 17 and both got 14.
+        //
+        // At z14 near 30°N the scale is ~8.3 m/px, so a 390px phone shows
+        // ~3.2km and a fingertip covers ~365m of ground. "Tap the map
+        // where the van should stop" cannot be done at that zoom — you are
+        // tapping a city block — so a rider either gave up or dropped a
+        // pin a few hundred metres from their door and the driver could
+        // not find them, which is the exact failure the pin exists to
+        // prevent. It hit the driver's own pin dialog the same way.
+        m.easeTo({ center: [markers[0]!.lng, markers[0]!.lat], zoom: maxZoom, duration: first ? 0 : 700 });
       } else {
         const b = new LngLatBounds();
         for (const x of markers) b.extend([x.lng, x.lat]);

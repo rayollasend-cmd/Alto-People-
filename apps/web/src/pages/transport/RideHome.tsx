@@ -102,6 +102,19 @@ const ISSUE_CATEGORIES: TransportIssueCategory[] = [
 
 const cents = (n: number) => fmtMoney(n / 100);
 
+/**
+ * What a rider is told when something didn't go through.
+ *
+ * ApiError carries the server's own sentence, which is always the better
+ * one. Everything else was going straight to String(): an associate in a
+ * parking lot with one bar got "TypeError: Failed to fetch" on the button
+ * they just pressed, which reads as "the app is broken" rather than "say
+ * that again". Same fallback wording as QueryError, for the same reason.
+ */
+function why(err: unknown): string {
+  return err instanceof ApiError ? err.message : 'The request didn’t get through. Check your signal and try again.';
+}
+
 export function statusVariant(s: RideStatus): 'accent' | 'info' | 'success' | 'pending' | 'destructive' | 'default' {
   return s === 'REQUESTED'
     ? 'pending'
@@ -214,7 +227,7 @@ function ConsentCard({ data }: { data: MyTransport }) {
       toast.success(t('ride.consentDone'));
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : String(err)),
+    onError: (err) => toast.error(why(err)),
   });
   const s = data.settings;
   const points = [
@@ -281,7 +294,7 @@ function useCancelRide() {
       toast.success(t('ride.cancelled'));
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
+      toast.error(why(err));
     }
   };
 }
@@ -406,7 +419,7 @@ function NextRideHero({
       toast.success(kind === 'OUTSIDE' ? t('ride.toldOutside', { driver: driverFirst }) : t('ride.toldLate', { driver: driverFirst }));
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
+      toast.error(why(err));
     } finally {
       setSignalling(false);
     }
@@ -586,7 +599,9 @@ function NextRideHero({
                 href={mapsUrl(next.pickup.address)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex shrink-0 items-center text-sm text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                // min-h-9 was a half-measure: 36px is still under the 44px
+                // floor, and this one opens Maps while they're walking out.
+                className="inline-flex shrink-0 items-center text-sm text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11"
               >
                 {t('shift.directions')}
               </a>
@@ -771,7 +786,7 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
       hapticConfirm();
       toast.success(n === 1 ? t('ride.booked') : t('ride.bookedCount', { count: n }));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
+      toast.error(why(err));
     } finally {
       setBusy(null);
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
@@ -1201,7 +1216,7 @@ function SavedPlaces({ data }: { data: MyTransport }) {
       await deleteRidePlace(id);
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
+      toast.error(why(err));
     }
   };
   return (
@@ -1472,7 +1487,13 @@ export function BookRideDialog({
     if (!store) return setError(t('ride.pickStore'));
     if (!pickup) return setError(t('ride.pickRequired'));
     if (byShift && !picked) return setError(t('ride.pickShift'));
-    if (tooSoon || legs.some((l) => !l.at)) return;
+    // A cleared date or time field leaves a leg with no instant. This used
+    // to `return` bare: the button did nothing, said nothing, and stayed
+    // enabled — tap it again and it does nothing again. That is the shape
+    // of "I pressed save and it just sat there". tooSoon keeps its silent
+    // return because it already has its own banner above the button.
+    if (legs.some((l) => !l.at)) return setError(t('ride.pickWhen'));
+    if (tooSoon) return;
     setBusy(true);
     setError(null);
     try {
@@ -1507,7 +1528,7 @@ export function BookRideDialog({
           if (ride.waitlist) inLine = { position: ride.waitlist.position, direction: leg.direction };
           booked += 1;
         } catch (err) {
-          const msg = err instanceof ApiError ? err.message : String(err);
+          const msg = why(err);
           if (booked === 0) throw err;
           toast.warning(t('ride.bookedHalf', { error: msg }));
           await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
@@ -1525,7 +1546,7 @@ export function BookRideDialog({
       await queryClient.invalidateQueries({ queryKey: ['transport', 'trips'] });
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(why(err));
     } finally {
       setBusy(false);
     }
@@ -1709,9 +1730,18 @@ export function BookRideDialog({
             </p>
           )}
         </div>
-        <DialogFooter className="items-center sm:justify-between">
-          <span className="text-sm text-silver tabular-nums">{t('ride.total', { amount: cents(total) })}</span>
-          <Button onClick={() => void submit()} loading={busy} disabled={busy || tooSoon || !store || (byShift && !picked)}>
+        {/* One bar, price then button, on every size. DialogFooter stacks
+            column-REVERSE on phones, which put the gold button above the
+            price it charges and left it floating mid-sheet rather than in
+            the bottom corner a thumb rests on. */}
+        <DialogFooter className="flex-row items-center justify-between gap-3 sm:justify-between">
+          <span className="min-w-0 text-sm text-silver tabular-nums">{t('ride.total', { amount: cents(total) })}</span>
+          <Button
+            className="shrink-0"
+            onClick={() => void submit()}
+            loading={busy}
+            disabled={busy || tooSoon || !store || (byShift && !picked)}
+          >
             {fullLegs.length === legs.length && fullLegs.length > 0
               ? t('ride.joinWaitlist')
               : legs.length === 2
@@ -1846,7 +1876,7 @@ function ReportDialog({
       toast.success(t('ride.reportSent'));
       onOpenChange(false);
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : String(err)),
+    onError: (err) => toast.error(why(err)),
   });
   const choices = rides
     .filter((r) => r.status !== 'CANCELLED')

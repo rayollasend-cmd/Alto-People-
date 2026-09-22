@@ -146,7 +146,11 @@ function RideStripInner() {
       hapticConfirm();
       toast.success(n === 1 ? t('ride.booked') : t('ride.bookedCount', { count: n }));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
+      // Not String(err): a dropped connection surfaced here as "TypeError:
+      // Failed to fetch" on the one-tap book button. Kept inline rather
+      // than imported from RideHome — that module is the whole Rides page
+      // and the dashboard should not be pulling it in for one sentence.
+      toast.error(err instanceof ApiError ? err.message : 'The request didn’t get through. Check your signal and try again.');
     } finally {
       setBusy(false);
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });

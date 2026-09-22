@@ -376,19 +376,30 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
               <ol className="mt-2.5 space-y-1.5">
                 {run.riders.map((r, i) => (
                   <li key={r.rideId}>
+                    {/* The rider's pickup place belongs INSIDE the button.
+                        It used to be a sibling div under a 32px-tall row, so
+                        the bottom third of what reads as one rider did
+                        nothing when a thumb landed there — and its indent
+                        was a hand-measured 3.35rem that never lined up with
+                        the avatar column anyway. In the name's column it
+                        aligns by construction. coarse:min-h-11 then buys the
+                        row the 44px a finger needs, without padding out the
+                        dense list a mouse is perfectly happy with. */}
                     <button
                       type="button"
                       onClick={() => onRider(r.associateId)}
-                      className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-0.5 text-left hover:bg-navy-secondary/30"
+                      className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-0.5 text-left hover:bg-navy-secondary/30 coarse:min-h-11"
                     >
                       <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-silver/70">{i + 1}</span>
                       <Avatar src={r.photoUrl ?? undefined} name={r.name} email="" size="sm" />
-                      <span className="min-w-0 flex-1 truncate text-sm text-white">{r.name}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-white">{r.name}</span>
+                        <span className="block truncate text-2xs text-silver/80">{r.place}</span>
+                      </span>
                       <span className="shrink-0 text-xs tabular-nums text-silver">
                         {r.pickupAt ? fmtTimeTz(r.pickupAt, run.timezone) : ''}
                       </span>
                     </button>
-                    <div className="ml-[3.35rem] truncate text-2xs text-silver/80">{r.place}</div>
                   </li>
                 ))}
               </ol>
@@ -595,7 +606,16 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
             return (
               <li key={r.id} className="rounded-lg border border-gold/40 bg-gold/[0.05] p-3.5 animate-enter">
                 <div className="flex items-start gap-3">
-                  <button type="button" onClick={() => onRider(r.rider.associateId)} aria-label={`${t('drive.riderProfile')}: ${r.rider.name}`} className="rounded-full">
+                  {/* A portrait used as a button still has to be a 44px
+                      button: Avatar `md` is a 40px near-miss. The BOX grows
+                      on touch, not the picture — place-items-center keeps
+                      the 40px headshot where it was. */}
+                  <button
+                    type="button"
+                    onClick={() => onRider(r.rider.associateId)}
+                    aria-label={`${t('drive.riderProfile')}: ${r.rider.name}`}
+                    className="grid shrink-0 place-items-center rounded-full coarse:h-11 coarse:w-11"
+                  >
                     <Avatar src={`/api/associates/${r.rider.associateId}/photo`} name={r.rider.name} email="" size="md" />
                   </button>
                   <div className="min-w-0 flex-1">
@@ -629,7 +649,11 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
                     )}
                   </div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                {/* Decline and Accept are the same size, side by side, and
+                    only one of them is recoverable from this screen — the
+                    declined rider goes back in the pool. 8px between them is
+                    a fat-finger miss; on touch they get a real gutter. */}
+                <div className="mt-3 grid grid-cols-2 gap-2 coarse:gap-3">
                   <Button variant="secondary" onClick={() => void decline(r)} disabled={busy === r.id}>
                     {t('drive.decline')}
                   </Button>
@@ -654,7 +678,14 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
   const r = q.data?.rider;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm">
+      {/* `sm:`-scoped on purpose. Below sm the DialogContent IS the phone's
+          bottom sheet — inset-x-0 + w-full — and an unscoped max-width caps
+          that sheet and leaves it pinned to the left edge (384px of sheet
+          against 430px of Pro Max, with the sliver of page showing down the
+          right). Worse, the cap never applied on desktop anyway: Dialog's
+          own `sm:max-w-lg` is a media rule and outranks it there. Scoping it
+          both unbreaks the sheet and finally makes the cap mean something. */}
+      <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{t('drive.riderProfile')}</DialogTitle>
         </DialogHeader>
@@ -811,8 +842,14 @@ function StopCard({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={arrivedAt ? 'secondary' : 'secondary'} asChild>
+      {/* The three controls the run is actually driven with. Button's own
+          size="sm" already gives them 44px of height on any finger; what it
+          does NOT do is grow the label, so these read at 12px — too small
+          for a glance from the driver's seat, and far too small in direct
+          sun. Compact 12px stays for the mouse, 14px on touch, and the
+          gutter widens with it so Arrived isn't 8px from All on board. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 coarse:gap-3">
+        <Button size="sm" className="coarse:text-sm" variant="secondary" asChild>
           <a href={directionsUrl(stop.address)} target="_blank" rel="noreferrer">
             <Navigation className="h-3.5 w-3.5" />
             {t('drive.navigate')}
@@ -824,7 +861,12 @@ function StopCard({
             {t('drive.arrivedAt', { time: fmtTimeTz(arrivedAt, tz) })}
           </span>
         ) : (
-          <Button size="sm" onClick={() => void act(() => driverArrived(run.id, waiting.map((r) => r.id)))} disabled={busy}>
+          <Button
+            size="sm"
+            className="coarse:text-sm"
+            onClick={() => void act(() => driverArrived(run.id, waiting.map((r) => r.id)))}
+            disabled={busy}
+          >
             <MapPin className="h-3.5 w-3.5" />
             {t('drive.arrived')}
           </Button>
@@ -832,6 +874,7 @@ function StopCard({
         {waiting.length > 1 && (
           <Button
             size="sm"
+            className="coarse:text-sm"
             variant={arrivedAt ? 'primary' : 'secondary'}
             onClick={() =>
               void act(async () => {
@@ -886,7 +929,17 @@ function RiderAtStop({
   return (
     <li className="py-3">
       <div className="flex items-center gap-3">
-        <button type="button" onClick={() => onRider(ride.rider.associateId)} aria-label={`${t('drive.riderProfile')}: ${ride.rider.name}`} className="rounded-full">
+        {/* The only door into the rider's card from this row — the name
+            isn't a link here, unlike on a seat request — and at Avatar `sm`
+            it was a 32px target. Growing the button to 44 on touch shifts
+            the name column right by the difference, so the mark row below
+            tracks it with coarse:pl-14 (44 + the same gap-3). */}
+        <button
+          type="button"
+          onClick={() => onRider(ride.rider.associateId)}
+          aria-label={`${t('drive.riderProfile')}: ${ride.rider.name}`}
+          className="grid shrink-0 place-items-center rounded-full coarse:h-11 coarse:w-11"
+        >
           <Avatar src={`/api/associates/${ride.rider.associateId}/photo`} name={ride.rider.name} email="" size="sm" />
         </button>
         <div className="min-w-0 flex-1">
@@ -909,12 +962,17 @@ function RiderAtStop({
           </Button>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
-        <Button size="sm" onClick={() => void act(() => markBoarded(ride.id))} disabled={busy}>
+      {/* The two marks that put money on or off a rider's account, named at
+          12px until now. 14px on touch so the pair can be told apart at
+          arm's length in sun, and a finger's width of dead space between
+          them — On board and a no-show fee should not be 8px apart when the
+          phone is being held one-handed on a kerb. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 pl-11 coarse:gap-3 coarse:pl-14">
+        <Button size="sm" className="coarse:text-sm" onClick={() => void act(() => markBoarded(ride.id))} disabled={busy}>
           <Check className="h-3.5 w-3.5" />
           {t('drive.onBoard')}
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => void noShow()} disabled={busy || !canNoShow}>
+        <Button size="sm" className="coarse:text-sm" variant="secondary" onClick={() => void noShow()} disabled={busy || !canNoShow}>
           {canNoShow || openAt === null ? <UserX className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
           {openAt !== null && !canNoShow ? t('drive.noShowIn', { time: fmtClock(openAt - now) }) : t('drive.noShow')}
         </Button>
@@ -945,8 +1003,11 @@ function MarkedRow({
       <Badge size="sm" variant={noShow ? 'destructive' : 'success'}>
         {t(`ride.status.${ride.status}` as MessageKey)}
       </Badge>
+      {/* The entire safety net under a mis-tapped On board / No-show. A
+          12px ghost label reads as chrome; on the device where the mis-tap
+          happens it should read as a way out. */}
       {(ride.status === 'BOARDED' || noShow) && (
-        <Button size="xs" variant="ghost" onClick={() => void act(() => undoRideMark(ride.id))} disabled={busy}>
+        <Button size="xs" variant="ghost" className="coarse:text-sm" onClick={() => void act(() => undoRideMark(ride.id))} disabled={busy}>
           <RotateCcw className="h-3.5 w-3.5" />
           {t('drive.undo')}
         </Button>
@@ -997,7 +1058,12 @@ function DropCard({
           </li>
         ))}
       </ol>
-      <Button className="mt-3 w-full sm:w-auto" onClick={() => void act(() => completeDriverRun(run.id), t('drive.finished'))} disabled={busy}>
+      {/* `sm:w-auto` was handing the run's last and least reversible action
+          back to a text-width button on an iPad — 768-1194px is "desktop"
+          by breakpoint and every tap on it is still a finger. Gating the
+          shrink behind fine: keeps the wide, unmissable bar on all touch
+          and the tidy inline button on a mouse. */}
+      <Button className="mt-3 w-full fine:sm:w-auto" onClick={() => void act(() => completeDriverRun(run.id), t('drive.finished'))} disabled={busy}>
         <Check className="h-4 w-4" />
         {t('drive.finish')}
         {aboard > 0 ? ` · ${aboard}` : ''}
@@ -1243,7 +1309,9 @@ function DriverReportDialog({
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      {/* `sm:`-scoped for the same reason as the rider card above: a bare
+          max-width is a desktop measure aimed at the phone's bottom sheet. */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t('ride.report')}</DialogTitle>
           <DialogDescription>{t('ride.reportDesc')}</DialogDescription>
