@@ -183,6 +183,58 @@ describe('the SOP opens at the store the supervisor actually leads', () => {
   });
 });
 
+describe('a supervisor with nothing scheduled still has a way in', () => {
+  /**
+   * The Floor page's "Nothing scheduled today" is driven by published
+   * Shift rows, which have nothing to do with SOPs. A client that runs
+   * store-ops standards without publishing per-person shifts offered the
+   * supervisor an empty picker — so when the clock-in also failed to
+   * resolve their store, there was no way in at all.
+   */
+  it('offers the SOP their window has assigned, with no shifts scheduled', async () => {
+    const w = await seedTwoStoreClient();
+    expect(await prisma.shift.count()).toBe(0);
+    expect((await w.supAgent.post('/time/me/clock-in').send({})).status).toBe(201);
+    // Close the auto-opened one so this tests the hand-open path.
+    await prisma.opsShift.updateMany({
+      where: { openedById: w.sup.id },
+      data: { status: 'CANCELLED' },
+    });
+
+    const opts = await w.supAgent.get('/ops/open-options');
+    expect(opts.status).toBe(200);
+    expect(opts.body.positions).toEqual([]);
+    expect(opts.body.storeShift).not.toBeNull();
+    expect(opts.body.storeShift.label).toBe('Overnight');
+    expect(opts.body.storeShift.locationName).toBe('Neighbor Hood Market SRB');
+    expect(opts.body.storeShift.sops[0].templateName).toBe('Overnight Standard');
+
+    const opened = await w.supAgent.post('/ops/shifts/open').send({ storeShift: true });
+    expect(opened.status).toBe(201);
+    const shift = await prisma.opsShift.findUniqueOrThrow({
+      where: { id: opened.body.shiftId },
+      select: { locationId: true, windowLabel: true, templateId: true },
+    });
+    // The ASSIGNED standard — not one inferred from a position name and
+    // the hour, which is how the wrong SOP gets picked.
+    expect(shift.locationId).toBe(w.store.id);
+    expect(shift.windowLabel).toBe('Overnight');
+    expect(shift.templateId).toBe(w.template.id);
+  });
+
+  it('says so plainly when no SOP is assigned to a live window', async () => {
+    const w = await seedTwoStoreClient();
+    await prisma.storeShiftSop.deleteMany({});
+    expect((await w.supAgent.post('/time/me/clock-in').send({})).status).toBe(201);
+
+    const opts = await w.supAgent.get('/ops/open-options');
+    expect(opts.body.storeShift).toBeNull();
+    const res = await w.supAgent.post('/ops/shifts/open').send({ storeShift: true });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('no_store_shift');
+  });
+});
+
 describe('the assignment screen shows what the clock-in would honour', () => {
   it('stops listing an SOP whose template was retired', async () => {
     const w = await seedTwoStoreClient();

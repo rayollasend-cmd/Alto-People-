@@ -44,6 +44,7 @@ import {
   addOpsAdhocTask,
   addOpsHandover,
   closeOpsShift,
+  openStoreShiftOps,
   decideOpsHandover,
   getMySop,
   getOpsOpenOptions,
@@ -438,6 +439,18 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   if (error) return <ErrorBanner>{error}</ErrorBanner>;
   if (!options) return <Skeleton className="h-48" />;
 
+  const openStoreShift = async () => {
+    setBusy('__store__');
+    try {
+      const res = await openStoreShiftOps(bounded ? undefined : clientId);
+      onOpened(res.shiftId);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not open your shift.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const open = async (position: string, department?: string) => {
     setBusy(position);
     try {
@@ -496,6 +509,32 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
         </div>
       </div>
 
+      {/* The SOP their window actually has assigned. Offered ahead of the
+          by-position picker because that one infers the standard from the
+          position name and the hour — the afternoon supervisor holding the
+          morning checklist came from there — and because a client that
+          publishes no Shift rows has nothing in the picker at all. */}
+      {!options.resumeShift && options.storeShift && (
+        <button
+          type="button"
+          onClick={() => void openStoreShift()}
+          disabled={busy === '__store__'}
+          className="group flex w-full items-center gap-4 rounded-lg border border-gold/50 bg-gold/[0.06] p-4 text-left transition-colors hover:bg-gold/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-60"
+        >
+          <ClipboardList className="h-5 w-5 shrink-0 text-gold" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">
+              Open your {options.storeShift.label} SOP
+            </div>
+            <div className="mt-0.5 text-xs text-silver">
+              {options.storeShift.locationName} ·{' '}
+              {options.storeShift.sops.map((x) => x.templateName).join(', ')}
+            </div>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-gold transition-transform group-hover:translate-x-0.5" />
+        </button>
+      )}
+
       {options.resumeShift && (
         <button
           type="button"
@@ -531,15 +570,17 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
       )}
 
       {foldPicker && !showPicker ? null : options.positions.length === 0 ? (
-        <Card>
-          <CardContent className="py-8">
-            <EmptyState
-              icon={ClipboardList}
-              title="Nothing scheduled today"
-              description="No shifts are on today's schedule for your store yet."
-            />
-          </CardContent>
-        </Card>
+        options.storeShift ? null : (
+          <Card>
+            <CardContent className="py-8">
+              <EmptyState
+                icon={ClipboardList}
+                title="Nothing scheduled today"
+                description="No shifts are on today's schedule for your store, and no SOP is assigned to a shift running there now. Ask operations to assign one on Store shifts."
+              />
+            </CardContent>
+          </Card>
+        )
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {options.positions.map((p) => {

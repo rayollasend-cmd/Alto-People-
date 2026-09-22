@@ -413,14 +413,14 @@ function occurrenceSops(db: Db, ss: Pick<StoreShift, 'locationId' | 'label'>, en
 
 /** Open a store shift's SOP for whoever runs it — the clock-in and the
  *  cover sweep both land here. */
-async function openStoreShiftSop(
+export async function openStoreShiftSop(
   db: Db,
   input: {
     ss: StoreShift;
     occ: { start: Date; end: Date };
     clientId: string;
     userId: string;
-    timeEntryId: string;
+    timeEntryId?: string | null;
     coveringForId?: string | null;
     at: Date;
     audit: string;
@@ -438,7 +438,7 @@ async function openStoreShiftSop(
     templateIds: ss.sops.map((x) => x.templateId),
     locationId: ss.locationId,
     windowLabel: ss.label,
-    timeEntryId: input.timeEntryId,
+    timeEntryId: input.timeEntryId ?? null,
     dueAt: occ.end,
     coveringForId: input.coveringForId ?? null,
     scheduledBetween: { from: occ.start, to: occ.end },

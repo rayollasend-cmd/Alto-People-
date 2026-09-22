@@ -20,7 +20,12 @@ import {
   ensureOpsSeed,
   periodForPosition,
 } from '../lib/opsSops.js';
-import { createOpsShift } from '../lib/storeShiftSop.js';
+import {
+  createOpsShift,
+  openStoreShiftSop,
+  storeShiftAt,
+  windowOccurrence,
+} from '../lib/storeShiftSop.js';
 import { HAPPENED, requestedShiftStatus } from '../lib/opsShiftStatus.js';
 import { isDueTime } from '../lib/sopDue.js';
 import { currentStoreWindows } from '../lib/shiftWindows.js';
@@ -777,10 +782,48 @@ opsRouter.get('/open-options', RUN, async (req, res, next) => {
         select: { id: true, position: true, department: true },
       }),
     ]);
+    /**
+     * The SOP their window actually has assigned, right now.
+     *
+     * `positions` below is derived from published Shift rows, so a client
+     * that runs store-ops standards without publishing per-person shifts
+     * offers a supervisor NOTHING to open by hand — which, when the
+     * clock-in also failed to resolve their store, left them with no way
+     * in at all and an empty "Nothing scheduled today".
+     *
+     * It is also the honest option: opening by position guesses the
+     * department from the position name and the period from the wall
+     * clock, which is how an afternoon supervisor ends up holding the
+     * morning standard.
+     */
+    const punchLocation =
+      req.user!.locationId ??
+      (
+        await prisma.timeEntry.findFirst({
+          where: { associateId: req.user!.associateId ?? '', status: 'ACTIVE' },
+          select: { locationId: true },
+          orderBy: { clockInAt: 'desc' },
+        })
+      )?.locationId ??
+      null;
+    const ss = punchLocation
+      ? await storeShiftAt(prisma, { userId: req.user!.id, locationId: punchLocation, at: now })
+      : null;
+
     res.json({
       clientId,
       dateKey,
       resumeShift: mine,
+      storeShift: ss
+        ? {
+            locationId: ss.locationId,
+            locationName: ss.locationName,
+            label: ss.label,
+            department: ss.department,
+            period: ss.period,
+            sops: ss.sops.map((x) => ({ templateId: x.templateId, templateName: x.templateName, department: x.department })),
+          }
+        : null,
       positions: shifts
         .map((s) => ({
           position: s.position,
@@ -806,7 +849,13 @@ const OpenShiftSchema = z.object({
    * Destin" unanswerable.
    */
   locationId: z.string().uuid().optional(),
-  position: z.string().trim().min(1).max(120),
+  /**
+   * "Open the SOP my window actually has assigned" — the same resolution
+   * the clock-in runs, rather than guessing a template from the position
+   * name and the hour. `position` is then not needed.
+   */
+  storeShift: z.boolean().optional(),
+  position: z.string().trim().min(1).max(120).optional(),
   /** Explicit override when the position name doesn't say which. */
   department: z.string().trim().max(80).optional(),
 });
@@ -874,6 +923,45 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
 
     const now = new Date();
     const dateKey = orgDateKey(now);
+
+    if (parsed.data.storeShift) {
+      const punchLocation =
+        parsed.data.locationId ??
+        req.user!.locationId ??
+        (
+          await prisma.timeEntry.findFirst({
+            where: { associateId: req.user!.associateId ?? '', status: 'ACTIVE' },
+            select: { locationId: true },
+            orderBy: { clockInAt: 'desc' },
+          })
+        )?.locationId ??
+        null;
+      const ss = punchLocation
+        ? await storeShiftAt(prisma, { userId: req.user!.id, locationId: punchLocation, at: now })
+        : null;
+      if (!ss) {
+        throw new HttpError(
+          404,
+          'no_store_shift',
+          'No SOP is assigned to a shift running at your store right now. Ask operations to assign one on Store shifts.',
+        );
+      }
+      const occ = windowOccurrence(now, ss, ss.timezone);
+      const opened = await openStoreShiftSop(prisma, {
+        ss,
+        occ,
+        clientId,
+        userId: req.user!.id,
+        at: now,
+        audit: 'ops.shift_opened',
+      });
+      res.status(201).json({ shiftId: opened.id, resumed: false });
+      return;
+    }
+
+    if (!parsed.data.position) {
+      throw new HttpError(400, 'position_required', 'Pick a position, or open your store shift.');
+    }
     const department =
       parsed.data.department || departmentForPosition(parsed.data.position);
     if (!department) {

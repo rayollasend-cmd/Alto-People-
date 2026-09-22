@@ -270,6 +270,15 @@ export function getOpsOpenOptions(clientId?: string): Promise<{
   clientId: string;
   dateKey: string;
   resumeShift: { id: string; position: string; department: string } | null;
+  /** The SOP this supervisor's window has assigned right now, if any. */
+  storeShift: {
+    locationId: string;
+    locationName: string;
+    label: string;
+    department: string;
+    period: OpsPeriod;
+    sops: { templateId: string; templateName: string; department: string }[];
+  } | null;
   positions: {
     position: string;
     scheduledCount: number;
@@ -289,6 +298,21 @@ export function openOpsShift(body: {
   department?: string;
 }): Promise<{ shiftId: string; resumed: boolean }> {
   return apiFetch('/ops/shifts/open', { method: 'POST', body });
+}
+
+/**
+ * Open the SOP this supervisor's store shift actually has assigned — the
+ * same resolution the clock-in runs. Preferred over openOpsShift: that one
+ * infers the standard from the position name and the hour, which is how an
+ * afternoon supervisor ends up holding the morning checklist.
+ */
+export function openStoreShiftOps(
+  clientId?: string,
+): Promise<{ shiftId: string; resumed: boolean }> {
+  return apiFetch('/ops/shifts/open', {
+    method: 'POST',
+    body: { storeShift: true, ...(clientId ? { clientId } : {}) },
+  });
 }
 
 export function getOpsShift(id: string): Promise<OpsShiftDetail> {
