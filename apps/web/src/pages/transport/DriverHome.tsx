@@ -849,7 +849,16 @@ function StopCard({
           sun. Compact 12px stays for the mouse, 14px on touch, and the
           gutter widens with it so Arrived isn't 8px from All on board. */}
       <div className="mt-3 flex flex-wrap items-center gap-2 coarse:gap-3">
-        <Button size="sm" className="coarse:text-sm" variant="secondary" asChild>
+        {/* Navigate leads while you are still driving to the stop, and
+            steps back once you are standing at it — at which point the
+            marks are the only thing left to do and a live directions link
+            is just something else to hit by mistake. */}
+        <Button
+          size="sm"
+          className="coarse:text-sm"
+          variant={arrivedAt ? 'secondary' : 'primary'}
+          asChild
+        >
           <a href={directionsUrl(stop.address)} target="_blank" rel="noreferrer">
             <Navigation className="h-3.5 w-3.5" />
             {t('drive.navigate')}

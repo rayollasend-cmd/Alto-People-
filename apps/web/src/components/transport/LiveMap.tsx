@@ -66,6 +66,17 @@ export interface LiveMapProps {
   controls?: boolean;
   /** Off: a thumbnail — no panning, no zooming. */
   interactive?: boolean;
+  /**
+   * One finger scrolls the PAGE, two move the map.
+   *
+   * For a map sitting INLINE in a scrolling page: a tall map under the
+   * thumb swallows every vertical swipe that starts on it, so the page
+   * behind it cannot be scrolled past. Off — the default — for a map that
+   * owns its screen: a full-screen view or a pin dialog is the only thing
+   * you can be touching, so one finger should just work there, and asking
+   * for two would be an obstacle rather than a rescue.
+   */
+  cooperativeGestures?: boolean;
   /** Px a sheet overlaps the map's foot — the map credit sits above it. */
   footInset?: number;
   /** Set: tapping the map reports that spot — dropping a pickup's pin. */
@@ -193,6 +204,7 @@ export default function LiveMap({
   fitKey,
   controls = true,
   interactive = true,
+  cooperativeGestures = false,
   footInset = 0,
   onPick,
 }: LiveMapProps) {
@@ -238,6 +250,15 @@ export default function LiveMap({
         zoom: 10,
         attributionControl: { compact: true },
         interactive,
+        cooperativeGestures,
+        // MapLibre's own wording is "Use two fingers to move the map" and
+        // "Use ⌘ + scroll to zoom the map". Said plainly, and as an
+        // instruction rather than a description of the feature.
+        locale: {
+          'CooperativeGesturesHandler.MobileHelpText': 'Use two fingers to move the map',
+          'CooperativeGesturesHandler.MacHelpText': 'Hold ⌘ and scroll to zoom the map',
+          'CooperativeGesturesHandler.WindowsHelpText': 'Hold Ctrl and scroll to zoom the map',
+        },
         dragRotate: false,
         pitchWithRotate: false,
         touchPitch: false,

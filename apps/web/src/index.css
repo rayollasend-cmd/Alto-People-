@@ -632,6 +632,34 @@ input[type='radio'] {
   }
 }
 
+/* The two-finger hint on an inline map (LiveMap cooperativeGestures).
+   MapLibre ships it as 1.4em white text over rgba(0,0,0,.4) — which on our
+   dark basemap is dark grey on dark grey, reading as a dimming glitch
+   rather than as a sentence telling you what to do. It appears for a
+   fraction of a second, exactly once, at the moment someone is confused
+   about why the page will not scroll, so it has to land first time.
+
+   Scrim to .6 so the map recedes, and the sentence itself on a solid
+   navy pill with a gold border — the app's own "this is a message"
+   vocabulary, at a size that survives a thumb over half the screen. */
+.maplibregl-cooperative-gesture-screen {
+  background: rgb(0 0 0 / 0.6);
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  text-align: center;
+}
+.maplibregl-cooperative-gesture-screen .maplibregl-mobile-message,
+.maplibregl-cooperative-gesture-screen .maplibregl-desktop-message {
+  background: rgb(var(--color-navy));
+  border: 1px solid rgb(var(--color-gold) / 0.55);
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  color: rgb(255 255 255);
+  font-weight: 500;
+  max-width: 17rem;
+  padding: 0.625rem 0.875rem;
+}
+
 /* Tell the browser the chrome is dark/light so native date pickers, file
    buttons, scrollbars, etc. paint in the matching scheme. Without this,
    the date input's calendar icon is black on dark navy = invisible. */

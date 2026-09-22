@@ -147,6 +147,14 @@ export function TripMap({
           fitKey={`${stage}:${recenter}`}
           controls={false}
           footInset={20}
+          // Inline, and tall: at 42vh it sits under the thumb at the top
+          // of the Rides page and swallowed every downward swipe that
+          // started on it, so the driver row and the rest of the page
+          // could not be reached by the obvious gesture. One finger
+          // scrolls the page now; two still move the map. The full-screen
+          // map below keeps one-finger panning — it owns the screen, so
+          // there is nothing behind it to scroll to.
+          cooperativeGestures
         />
         <div className="pointer-events-none absolute left-3 top-3">{chip}</div>
         <div className="absolute right-3 top-3">{buttons(false)}</div>
