@@ -1425,8 +1425,13 @@ function TaskRow({
               {isNumeric && (
                 <>
                   {/* Freezers read below zero and the tablet's decimal
-                      keypad has no minus — this is how the sign is typed. */}
-                  {task.responseType === 'TEMPERATURE' && (
+                      keypad has no minus — this is how the sign is typed.
+                      Offered on ANY numeric field, not just a task typed
+                      TEMPERATURE: a freezer check authored as a plain
+                      count is still a freezer check, and the supervisor
+                      standing at it cannot retype the task. A count that
+                      is never negative simply never uses this. */}
+                  {(
                     <Button
                       size="sm"
                       variant={isNegativeReading(numberDraft) ? 'primary' : 'outline'}
@@ -1550,8 +1555,10 @@ function TaskRow({
                       }
                     />
                   </div>
-                  {/* Same minus the inline row carries — the keypad has none. */}
-                  {task.responseType === 'TEMPERATURE' && (
+                  {/* Same minus the inline row carries — the keypad has
+                      none, and a freezer check authored as a plain count
+                      still reads below zero. */}
+                  {(
                     <Button
                       size="sm"
                       variant={isNegativeReading(numberDraft) ? 'primary' : 'outline'}

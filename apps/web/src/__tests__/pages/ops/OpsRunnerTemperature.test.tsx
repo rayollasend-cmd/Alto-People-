@@ -46,9 +46,9 @@ function detail(tasks: OpsTaskRow[]): OpsShiftDetail {
   } as OpsShiftDetail;
 }
 
-function renderRunner() {
-  vi.mocked(getOpsShift).mockResolvedValue(detail([freezerTask()]));
-  vi.mocked(patchOpsTask).mockResolvedValue({ task: freezerTask(), followUp: null });
+function renderRunner(task: OpsTaskRow = freezerTask()) {
+  vi.mocked(getOpsShift).mockResolvedValue(detail([task]));
+  vi.mocked(patchOpsTask).mockResolvedValue({ task, followUp: null });
   const caps = ROLE_CAPABILITIES.SHIFT_SUPERVISOR;
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -125,5 +125,33 @@ describe('<OpsRunner> — a freezer reading is below zero', () => {
     await user.click(await screen.findByRole('button', { name: /below zero \(minus\)/ }));
     await user.click(screen.getByRole('button', { name: /^Record$/ }));
     expect(patchOpsTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('a freezer check that was not authored as a temperature', () => {
+  /**
+   * The sign toggle used to render only for responseType TEMPERATURE.
+   * The library defaults a new task to CHECK and HR picks the type by
+   * hand, so a freezer reading authored as a plain NUMBER had no minus
+   * at all — and on a store tablet the decimal keypad has no minus key
+   * either, which is the whole reason the toggle exists. The supervisor
+   * standing at the freezer cannot retype the task.
+   *
+   * Worth knowing separately: a mistyped task like this also gets no
+   * out-of-range alert, because opsShifts.ts gates that on TEMPERATURE
+   * too. The fix for THAT is correcting the task in the library; this
+   * only makes sure the reading can be entered at all.
+   */
+  const countTask = (): OpsTaskRow =>
+    ({ ...freezerTask(), responseType: 'NUMBER', tempLabel: null, tempMin: null, tempMax: null }) as OpsTaskRow;
+
+  it('still lets the minus be entered', async () => {
+    const user = renderRunner(countTask());
+    await user.type(await screen.findByRole('textbox', { name: /count$/ }), '30');
+    await user.click(screen.getByRole('button', { name: /below zero \(minus\)/ }));
+    await user.click(screen.getByRole('button', { name: /^Record$/ }));
+    await waitFor(() =>
+      expect(patchOpsTask).toHaveBeenCalledWith('t1', { answerNumber: -30, status: 'DONE' }),
+    );
   });
 });
