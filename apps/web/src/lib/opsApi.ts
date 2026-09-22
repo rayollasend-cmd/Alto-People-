@@ -493,20 +493,47 @@ export function getOpsInsights(): Promise<{
 export interface OpsFeedEvent {
   at: string;
   kind: 'task' | 'temp' | 'photo' | 'open' | 'close';
+  /** The building — the client's name only when the shift has no store. */
   store: string;
   department: string;
+  period: string;
+  /** Every line opens the shift it came from. */
+  shiftId: string;
   headline: string;
   detail: string | null;
   alert: boolean;
   photoId: string | null;
 }
 
+export interface OpsFeedPhoto {
+  id: string;
+  at: string;
+  store: string;
+  department: string;
+  period: string;
+  shiftId: string;
+  title: string;
+}
+
 /** The live pulse: recent completions, temps, photos, opens/closes. */
-export function getOpsFeed(): Promise<{
+export function getOpsFeed(
+  filters: {
+    locationId?: string;
+    period?: string;
+    department?: string;
+    /** How far back to read, 1-72. Default 36. */
+    hours?: number;
+  } = {},
+): Promise<{
+  generatedAt: string;
+  hours: number;
   events: OpsFeedEvent[];
-  photos: { id: string; at: string; store: string; department: string; title: string }[];
+  photos: OpsFeedPhoto[];
 }> {
-  return apiFetch('/ops/feed');
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v) params.set(k, String(v));
+  const qs = params.toString();
+  return apiFetch(`/ops/feed${qs ? `?${qs}` : ''}`);
 }
 
 export function getOpsScorecard(weeks = 4, sort: 'worst' | 'store' = 'worst'): Promise<{

@@ -3,10 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
-  Camera,
   CheckCircle2,
   ClipboardList,
-  DoorOpen,
   Flag,
   Thermometer,
   Users,
@@ -45,12 +43,11 @@ import {
   getOpsScorecard,
   getOpsStores,
   metricLabel,
-  opsPhotoUrl,
-  type OpsFeedEvent,
   type OpsShiftHeader,
 } from '@/lib/opsApi';
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
 import { OpsHistory } from './OpsHistory';
+import { OpsFloorFeed, OpsPhotoWall } from './OpsFloorFeed';
 import { fmtAgo, fmtClock, fmtDayKey, fmtFull, OPS_TZ, opsToday, shiftDayKey } from './opsTime';
 
 /**
@@ -87,17 +84,6 @@ const PERIOD_LABEL: Record<string, string> = {
 };
 
 type BoardShift = OpsShiftHeader & { clientName: string; openedByEmail: string };
-
-/* Cached relative-time formatter (toLocale* is lint-banned). */
-const REL_FMT = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' });
-function relTime(iso: string): string {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (mins < 1) return 'now';
-  if (mins < 60) return REL_FMT.format(-mins, 'minute');
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return REL_FMT.format(-hours, 'hour');
-  return REL_FMT.format(-Math.round(hours / 24), 'day');
-}
 
 /** SVG completion ring — the tile's heartbeat. */
 function ProgressRing({ pct, alert }: { pct: number; alert: boolean }) {
@@ -141,14 +127,6 @@ function ProgressRing({ pct, alert }: { pct: number; alert: boolean }) {
     </svg>
   );
 }
-
-const FEED_ICON: Record<OpsFeedEvent['kind'], typeof Activity> = {
-  task: CheckCircle2,
-  temp: Thermometer,
-  photo: Camera,
-  open: DoorOpen,
-  close: Flag,
-};
 
 
 /** Store, period, department, dates, order — the whole query, in one row. */
@@ -306,6 +284,9 @@ export function OpsBoard() {
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stores, setStores] = useState<Awaited<ReturnType<typeof getOpsStores>> | null>(null);
+  // A feed that failed and a floor that is quiet used to render the same
+  // sentence. They are different facts.
+  const [feedFailed, setFeedFailed] = useState(false);
   // The record drill-in: which shift's full evidence is open.
   const [recordId, setRecordId] = useState<string | null>(null);
 
@@ -385,11 +366,15 @@ export function OpsBoard() {
             setError(err instanceof ApiError ? err.message : 'Could not load the board.');
           }
         });
-      getOpsFeed()
+      getOpsFeed({ locationId: storeId, period, department })
         .then((f) => {
-          if (!cancelled) setFeed(f);
+          if (cancelled) return;
+          setFeed(f);
+          setFeedFailed(false);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (!cancelled) setFeedFailed(true);
+        });
       getOpsInsights()
         .then((ins) => {
           if (!cancelled) setInsights(ins);
@@ -1003,48 +988,12 @@ export function OpsBoard() {
             </CardContent>
           </Card>
 
-          {/* ===== Photo wall ===== */}
-          {feed && feed.photos.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  From the floor
-                  <span className="ml-2 text-xs font-normal text-silver/60">
-                    latest photos, straight off the aisles
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-2.5 overflow-x-auto pb-1">
-                  {feed.photos.map((p) => (
-                    <a
-                      key={p.id}
-                      href={opsPhotoUrl(p.id)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="group relative block h-32 w-44 shrink-0 overflow-hidden rounded-lg border border-navy-secondary"
-                      title={`${p.title} — ${p.store}`}
-                    >
-                      <img
-                        src={opsPhotoUrl(p.id)}
-                        alt={p.title}
-                        loading="lazy"
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-navy/95 to-transparent p-2">
-                        <div className="truncate text-2xs font-medium text-white">
-                          {p.department} · {p.store}
-                        </div>
-                        <div className="truncate text-2xs text-silver/70">
-                          {p.title} · {relTime(p.at)}
-                        </div>
-                      </div>
-                    </a>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* ===== From the floor — the photographs as evidence ===== */}
+          <OpsPhotoWall
+            photos={feed?.photos ?? null}
+            loading={feed === null && !feedFailed}
+            onOpenRecord={setRecordId}
+          />
 
           {/* ===== Closed today ===== */}
           <Card>
@@ -1268,98 +1217,15 @@ export function OpsBoard() {
           )}
         </div>
 
-        {/* ===== The floor feed — presence itself ===== */}
-        <Card className="xl:sticky xl:top-4 xl:self-start">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">
-              <Activity className="mr-1.5 inline h-4 w-4 text-gold" aria-hidden="true" />
-              Floor feed
-              <span className="ml-2 text-2xs font-normal uppercase tracking-wider text-silver/50">
-                {/* Not "30s refresh" as a promise — the time it last
-                    actually answered. A frozen board and a quiet floor
-                    look identical without this. */}
-                as of {fmtClock(board.generatedAt)}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!feed || feed.events.length === 0 ? (
-              <p className="text-sm text-silver">
-                Quiet — events appear here the moment a supervisor records them.
-              </p>
-            ) : (
-              <ul
-                // A scroll container with no tab stop can only be scrolled
-                // by tabbing through whatever links happen to be inside it
-                // — an event list without photos was unreachable.
-                tabIndex={0}
-                role="region"
-                aria-label="Floor feed, newest first"
-                className="relative space-y-0 max-h-[560px] overflow-y-auto pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-              >
-                {feed.events.map((e, i) => {
-                  const Icon = FEED_ICON[e.kind];
-                  return (
-                    <li key={`${e.at}-${i}`} className="relative flex gap-3 pb-4">
-                      {/* Timeline spine */}
-                      {i < feed.events.length - 1 && (
-                        <span
-                          aria-hidden
-                          className="absolute left-[11px] top-6 h-full w-px bg-navy-secondary"
-                        />
-                      )}
-                      <span
-                        className={cn(
-                          'relative z-[1] mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border',
-                          e.alert
-                            ? 'border-alert/60 bg-alert/15 text-alert'
-                            : e.kind === 'photo'
-                              ? 'border-sky/40 bg-sky/10 text-sky'
-                              : e.kind === 'temp'
-                                ? 'border-teal/40 bg-teal/10 text-teal'
-                                : 'border-navy-secondary bg-navy-secondary/40 text-silver/70',
-                        )}
-                      >
-                        <Icon className="h-3 w-3" aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="truncate text-xs font-medium text-white">
-                            {e.headline}
-                          </span>
-                          <span className="shrink-0 text-2xs tabular-nums text-silver/50">
-                            {relTime(e.at)}
-                          </span>
-                        </div>
-                        <div className="truncate text-2xs text-silver/60">
-                          {e.department} · {e.store}
-                          {e.detail && (
-                            <span className={cn(e.alert && 'text-alert')}> · {e.detail}</span>
-                          )}
-                        </div>
-                        {e.photoId && (
-                          <a
-                            href={opsPhotoUrl(e.photoId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 block h-16 w-24 overflow-hidden rounded border border-navy-secondary"
-                          >
-                            <img
-                              src={opsPhotoUrl(e.photoId)}
-                              alt={e.headline}
-                              loading="lazy"
-                              className="h-full w-full object-cover"
-                            />
-                          </a>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        {/* ===== Floor feed — the narration, and a way into each line ===== */}
+        <OpsFloorFeed
+          events={feed?.events ?? null}
+          generatedAt={feed?.generatedAt ?? null}
+          hours={feed?.hours ?? 36}
+          loading={feed === null && !feedFailed}
+          failed={feedFailed}
+          onOpenRecord={setRecordId}
+        />
       </div>
 
       {recordId && (

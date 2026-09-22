@@ -2375,14 +2375,19 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
  * notes across all stores, merged newest-first: what an executive would
  * see standing in the store, without standing in the store.
  */
-opsRouter.get('/feed', BOARD, async (_req, res, next) => {
+opsRouter.get('/feed', BOARD, async (req, res, next) => {
   try {
-    const since = new Date(Date.now() - 36 * 3_600_000);
+    // The feed is the board's narration, so it answers to the same
+    // filters: pick Destin and Overnight and the feed is Destin's
+    // overnight, not every store at once.
+    const filters = opsFilters(req);
+    const hours = Math.min(72, Math.max(1, Number(req.query.hours) || 36));
+    const since = new Date(Date.now() - hours * 3_600_000);
     const [tasks, photos, shifts] = await Promise.all([
       prisma.opsTask.findMany({
-        where: { completedAt: { gte: since } },
+        where: { completedAt: { gte: since }, opsShift: { is: filters } },
         orderBy: { completedAt: 'desc' },
-        take: 40,
+        take: 120,
         select: {
           id: true,
           title: true,
@@ -2396,7 +2401,9 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
           completedBy: { select: { email: true } },
           opsShift: {
             select: {
+              id: true,
               department: true,
+              period: true,
               client: { select: { name: true } },
               location: { select: { name: true } },
             },
@@ -2404,9 +2411,9 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         },
       }),
       prisma.opsTaskPhoto.findMany({
-        where: { createdAt: { gte: since } },
+        where: { createdAt: { gte: since }, task: { is: { opsShift: { is: filters } } } },
         orderBy: { createdAt: 'desc' },
-        take: 12,
+        take: 24,
         select: {
           id: true,
           createdAt: true,
@@ -2415,7 +2422,9 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
               title: true,
               opsShift: {
                 select: {
+                  id: true,
                   department: true,
+                  period: true,
                   client: { select: { name: true } },
                   location: { select: { name: true } },
                 },
@@ -2426,10 +2435,11 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
       }),
       prisma.opsShift.findMany({
         where: {
+          ...filters,
           OR: [{ openedAt: { gte: since } }, { closedAt: { gte: since } }],
         },
         orderBy: { openedAt: 'desc' },
-        take: 30,
+        take: 60,
         select: {
           id: true,
           department: true,
@@ -2452,6 +2462,9 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
       kind: 'task' | 'temp' | 'photo' | 'open' | 'close';
       store: string;
       department: string;
+      period: string;
+      /** The shift this came from — every line opens its own record. */
+      shiftId: string;
       headline: string;
       detail: string | null;
       alert: boolean;
@@ -2467,6 +2480,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
           at: t.completedAt!.toISOString(),
           kind: 'temp',
           store: t.opsShift.location?.name ?? t.opsShift.client.name,
+          period: t.opsShift.period,
+          shiftId: t.opsShift.id,
           department: t.opsShift.department,
           headline: `${t.tempLabel ?? 'Temperature'}: ${Number(t.answerNumber)}°F`,
           detail: t.tempOutOfRange ? 'OUT OF RANGE — alerted' : 'in range',
@@ -2478,6 +2493,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
           at: t.completedAt!.toISOString(),
           kind: 'task',
           store: t.opsShift.location?.name ?? t.opsShift.client.name,
+          period: t.opsShift.period,
+          shiftId: t.opsShift.id,
           department: t.opsShift.department,
           headline: t.title,
           detail: [
@@ -2497,6 +2514,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         at: p.createdAt.toISOString(),
         kind: 'photo',
         store: p.task.opsShift.location?.name ?? p.task.opsShift.client.name,
+        period: p.task.opsShift.period,
+        shiftId: p.task.opsShift.id,
         department: p.task.opsShift.department,
         headline: p.task.title,
         detail: 'photo from the floor',
@@ -2509,6 +2528,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         at: s.openedAt.toISOString(),
         kind: 'open',
         store: s.location?.name ?? s.client.name,
+        period: s.period,
+        shiftId: s.id,
         department: s.department,
         headline: `${s.department} shift opened`,
         detail: s.openedBy.email,
@@ -2520,6 +2541,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
           at: s.closedAt.toISOString(),
           kind: 'close',
           store: s.location?.name ?? s.client.name,
+          period: s.period,
+          shiftId: s.id,
           department: s.department,
           headline: `${s.department} shift closed — SOP ${s.sopDone}/${s.sopTotal}`,
           detail: s.closedIncomplete ? 'closed incomplete' : 'complete',
@@ -2535,6 +2558,8 @@ opsRouter.get('/feed', BOARD, async (_req, res, next) => {
         id: p.id,
         at: p.createdAt.toISOString(),
         store: p.task.opsShift.location?.name ?? p.task.opsShift.client.name,
+        period: p.task.opsShift.period,
+        shiftId: p.task.opsShift.id,
         department: p.task.opsShift.department,
         title: p.task.title,
       })),
