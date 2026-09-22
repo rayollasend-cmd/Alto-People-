@@ -21,6 +21,7 @@ import {
   periodForPosition,
 } from '../lib/opsSops.js';
 import { createOpsShift } from '../lib/storeShiftSop.js';
+import { HAPPENED, requestedShiftStatus } from '../lib/opsShiftStatus.js';
 import { isDueTime } from '../lib/sopDue.js';
 import { currentStoreWindows } from '../lib/shiftWindows.js';
 import { personName, validLead } from '../lib/floorLeads.js';
@@ -1650,7 +1651,16 @@ opsRouter.get('/store-shifts', LIB_READ, async (req, res, next) => {
     const [defs, assigned, templates] = await Promise.all([
       currentStoreWindows(prisma, stores.map((st) => st.id)),
       prisma.storeShiftSop.findMany({
-        where: { locationId: { in: stores.map((st) => st.id) } },
+        // Only assignments a supervisor's clock-in would actually honour.
+        // storeShiftAt skips a retired or deactivated template, so without
+        // this filter the assignment screen shows an SOP on the window and
+        // the supervisor who clocks into it gets nothing — the same
+        // "assigned but invisible" symptom, from the other end. HR now
+        // sees the window as unassigned, which is what it effectively is.
+        where: {
+          locationId: { in: stores.map((st) => st.id) },
+          template: { active: true, retiredAt: null },
+        },
         select: { locationId: true, label: true, templateId: true },
       }),
       prisma.opsSopTemplate.findMany({
@@ -1766,6 +1776,97 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
       'ops.library',
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Cancel ============================================================ */
+
+/**
+ * POST /ops/shifts/:id/cancel — HR voids an SOP opened by mistake.
+ *
+ * The afternoon supervisor clocks in and picks the morning standard. Until
+ * now the only ways out were to close it, which files a wrong record and
+ * counts as a completed shift, or to leave it open, which holds their
+ * clock-out hostage until someone works a checklist for a shift that is
+ * not theirs. Neither is the intent, which is "this never happened".
+ *
+ * manage:ops-library, not run:ops-shifts — deliberately NOT the supervisor
+ * running it. The clock-out gate is the point of this feature; a
+ * supervisor who could cancel their own SOP could walk out of any shift by
+ * cancelling on the way. HR and the admin roles hold this; SHIFT_SUPERVISOR
+ * does not.
+ */
+opsRouter.post('/shifts/:id/cancel', LIB, async (req, res, next) => {
+  try {
+    const shift = await loadShiftScoped(req, req.params.id);
+    const parsed = z
+      .object({ reason: z.string().trim().min(3).max(500) })
+      .safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(
+        400,
+        'reason_required',
+        'Say why this SOP is being cancelled — it stays on the record.',
+        parsed.error.flatten(),
+      );
+    }
+    if (shift.status === 'CANCELLED') {
+      throw new HttpError(409, 'already_cancelled', 'This SOP is already cancelled.');
+    }
+    // A submitted shift is a filed record with a handover other shifts may
+    // already have read. Reopening that is a different, larger act than
+    // voiding a mistake nobody has acted on.
+    if (shift.status !== 'ACTIVE') {
+      throw new HttpError(
+        409,
+        'shift_closed',
+        'This SOP was already submitted. A submitted shift is a filed record — correct it on the shift itself rather than cancelling it.',
+      );
+    }
+
+    const cancelled = await prisma.opsShift.update({
+      where: { id: shift.id },
+      data: {
+        status: 'CANCELLED',
+        closedAt: new Date(),
+        cancelledReason: parsed.data.reason,
+        cancelledById: req.user!.id,
+      },
+      select: { id: true, openedById: true, windowLabel: true, position: true },
+    });
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: shift.clientId,
+        action: 'ops.shift_cancelled',
+        entityType: 'OpsShift',
+        entityId: shift.id,
+        metadata: {
+          reason: parsed.data.reason,
+          window: shift.windowLabel,
+          openedById: shift.openedById,
+        },
+      },
+      'ops.shifts',
+    );
+
+    // The supervisor is still on the clock with no SOP. Tell them, and say
+    // what to do next — otherwise the gate simply vanishes and they never
+    // open the right one.
+    void notifyUser(cancelled.openedById, {
+      subject: 'Your shift SOP was cancelled',
+      body:
+        `The ${cancelled.windowLabel ?? cancelled.position} SOP you opened was cancelled: ` +
+        `${parsed.data.reason}. Open the standard for the shift you are actually working ` +
+        `from the Store ops page — you can clock out once that one is submitted.`,
+      category: 'ops.sop',
+      linkUrl: '/ops',
+    });
+
+    res.json({ ok: true, id: cancelled.id });
   } catch (err) {
     next(err);
   }
@@ -1933,7 +2034,7 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
     const rows = await prisma.opsShift.findMany({
       where: {
         ...(clientId ? { clientId } : {}),
-        ...(status === 'ACTIVE' || status === 'CLOSED' ? { status } : {}),
+        ...requestedShiftStatus(status),
         ...(dateKey ? { dateKey } : {}),
       },
       orderBy: { openedAt: 'desc' },
@@ -2083,7 +2184,7 @@ opsRouter.get('/history', BOARD, async (req, res, next) => {
       where: {
         ...opsFilters(req),
         dateKey: { gte: from, lte: to },
-        ...(status === 'ACTIVE' || status === 'CLOSED' ? { status } : {}),
+        ...requestedShiftStatus(status),
       },
       orderBy: [{ dateKey: 'desc' }, { openedAt: 'desc' }],
       take: 500,
@@ -2232,7 +2333,7 @@ opsRouter.get('/stores', BOARD, async (req, res, next) => {
   try {
     const clientId = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const rows = await prisma.opsShift.findMany({
-      where: { ...(clientId ? { clientId } : {}), locationId: { not: null } },
+      where: { ...HAPPENED, ...(clientId ? { clientId } : {}), locationId: { not: null } },
       distinct: ['locationId'],
       select: {
         locationId: true,
@@ -2251,7 +2352,7 @@ opsRouter.get('/stores', BOARD, async (req, res, next) => {
     // Shifts opened before the store was recorded — the count is the
     // honest caveat on any per-store number.
     const unplaced = await prisma.opsShift.count({
-      where: { ...(clientId ? { clientId } : {}), locationId: null },
+      where: { ...HAPPENED, ...(clientId ? { clientId } : {}), locationId: null },
     });
     res.json({ stores, unplaced });
   } catch (err) {

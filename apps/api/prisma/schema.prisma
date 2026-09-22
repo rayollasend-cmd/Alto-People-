@@ -483,6 +483,7 @@ model User {
   opsSopTemplatesCreated            OpsSopTemplate[]              @relation("OpsSopTemplateCreator")
   opsShiftsOpened                   OpsShift[]                    @relation("OpsShiftOpener")
   opsShiftsClosed                   OpsShift[]                    @relation("OpsShiftCloser")
+  opsShiftsCancelled                OpsShift[]                    @relation("OpsShiftCanceller")
   opsTasksCompleted                 OpsTask[]                     @relation("OpsTaskCompleter")
   opsTasksCreated                   OpsTask[]                     @relation("OpsTaskCreator")
   opsPhotosUploaded                 OpsTaskPhoto[]                @relation("OpsPhotoUploader")
@@ -2146,6 +2147,11 @@ enum OpsPeriod {
 enum OpsShiftStatus {
   ACTIVE
   CLOSED
+  /// Opened by mistake and voided by HR — the afternoon supervisor who
+  /// picked the morning SOP. Not a completed shift and not an open one:
+  /// the clock-out gate lifts, and the occurrence can be opened again
+  /// with the right standard.
+  CANCELLED
 }
 
 enum OpsResponseType {
@@ -2277,6 +2283,12 @@ model OpsShift {
   closedById         String?        @db.Uuid
   closedBy           User?          @relation("OpsShiftCloser", fields: [closedById], references: [id], onDelete: SetNull)
   closedAt           DateTime?      @db.Timestamptz(6)
+  /// Why HR voided this SOP, and who did. Kept on the row rather than
+  /// only in the audit log so the shift can say for itself why it does
+  /// not count — the ops board reads it beside the record.
+  cancelledReason    String?        @db.VarChar(500)
+  cancelledById      String?        @db.Uuid
+  cancelledBy        User?          @relation("OpsShiftCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
   scheduledHeadcount Int            @default(0)
   actualHeadcount    Int            @default(0)
   templateId         String?        @db.Uuid

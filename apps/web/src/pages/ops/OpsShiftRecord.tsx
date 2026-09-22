@@ -10,6 +10,10 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { usePrompt } from '@/lib/confirm';
+import { toast } from 'sonner';
+import { cancelOpsShift } from '@/lib/opsApi';
 import { OpsShiftPacketLink } from './OpsPacketButton';
 import { fmtClock, fmtDayKey, fmtDuration, fmtFull } from './opsTime';
 import { cn } from '@/lib/cn';
@@ -21,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -51,6 +56,42 @@ export function OpsShiftRecordDialog({
 }) {
   const [detail, setDetail] = useState<OpsShiftDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { can } = useAuth();
+  const prompt = usePrompt();
+  const [cancelling, setCancelling] = useState(false);
+
+  /**
+   * An SOP opened against the wrong standard — the afternoon supervisor who
+   * took the morning one. Only offered on a LIVE shift and only to
+   * manage:ops-library: a submitted shift is a filed record, and a
+   * supervisor who could void their own would have no clock-out gate at all.
+   */
+  const mayCancel = can('manage:ops-library') && detail?.shift.status === 'ACTIVE';
+
+  async function onCancel() {
+    const reason = await prompt({
+      title: 'Cancel this SOP?',
+      description:
+        'For an SOP opened against the wrong standard. It stops counting, the ' +
+        'supervisor can clock out, and the right one can be opened for this ' +
+        'shift. The record stays, marked cancelled.',
+      reasonLabel: 'Why',
+      reasonPlaceholder: 'e.g. Afternoon supervisor opened the morning standard',
+      confirmLabel: 'Cancel the SOP',
+      destructive: true,
+    });
+    if (!reason || !reason.trim()) return;
+    setCancelling(true);
+    try {
+      await cancelOpsShift(shiftId, reason.trim());
+      toast.success('SOP cancelled. The supervisor can open the right one now.');
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not cancel it.');
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   useEffect(() => {
     getOpsShift(shiftId)
@@ -118,6 +159,20 @@ export function OpsShiftRecordDialog({
                 {detail.shift.templateName ? ` · ${detail.shift.templateName}` : ''} — the
                 shift as it was recorded. Nothing here can be edited.
               </DialogDescription>
+              {mayCancel && (
+                <div className="pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={onCancel}
+                    loading={cancelling}
+                    disabled={cancelling}
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    Wrong SOP — cancel it
+                  </Button>
+                </div>
+              )}
             </DialogHeader>
 
             {/* Fact strip. The clock comes first: a checklist with no

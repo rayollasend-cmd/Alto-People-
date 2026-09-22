@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { HAPPENED } from './opsShiftStatus.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 
 /**
@@ -406,6 +407,8 @@ export async function buildOpsPacket(
 
   // --- the scope ----------------------------------------------------
   const where: Prisma.OpsShiftWhereInput = {
+    // A cancelled shift never happened — it does not belong in the packet.
+    ...HAPPENED,
     ...(clientClamp !== undefined ? { clientId: clientClamp } : q.clientId ? { clientId: q.clientId } : {}),
     ...(q.locationId ? { locationId: q.locationId } : {}),
     ...(q.period ? { period: q.period as Prisma.OpsShiftWhereInput['period'] } : {}),

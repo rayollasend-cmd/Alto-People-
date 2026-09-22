@@ -392,6 +392,22 @@ export function decideOpsHandover(
   return apiFetch(`/ops/handover/${itemId}/decide`, { method: 'POST', body });
 }
 
+/**
+ * Void an SOP opened by mistake — the afternoon supervisor who picked the
+ * morning standard. HR only (manage:ops-library); the supervisor running
+ * it cannot, or the clock-out gate would mean nothing. Lifts the gate and
+ * frees the occurrence so the right SOP can be opened.
+ */
+export function cancelOpsShift(
+  shiftId: string,
+  reason: string,
+): Promise<{ ok: true; id: string }> {
+  return apiFetch(`/ops/shifts/${shiftId}/cancel`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
 /** Submit the SOP. Every submit hands over (a note on the shift, or
  *  `handoverNone`); required items still open need `incompleteReason`. */
 export function closeOpsShift(

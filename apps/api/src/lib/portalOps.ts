@@ -1,5 +1,6 @@
 import type { OpsPeriod, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { HAPPENED } from './opsShiftStatus.js';
 import { METRIC_LABEL } from './opsSops.js';
 import { personName } from './floorLeads.js';
 import { currentStoreWindows } from './shiftWindows.js';
@@ -150,6 +151,7 @@ export async function buildStoreOps(
   const [shifts, windows, assigned] = await Promise.all([
     prisma.opsShift.findMany({
       where: {
+        ...HAPPENED,
         clientId: scope.clientId,
         ...locWhere,
         ...(opts.period ? { period: opts.period } : {}),
@@ -696,9 +698,12 @@ async function isSoleStore(clientId: string): Promise<boolean> {
 export async function opsShiftScope(
   scope: PortalScope,
 ): Promise<Prisma.OpsShiftWhereInput> {
-  if (!scope.locationId) return { clientId: scope.clientId };
+  // A shift HR voided never happened, and must never reach a client's own
+  // report as a 0-of-N failure.
+  if (!scope.locationId) return { ...HAPPENED, clientId: scope.clientId };
   const sole = await isSoleStore(scope.clientId);
   return {
+    ...HAPPENED,
     clientId: scope.clientId,
     ...(sole
       ? { OR: [{ locationId: scope.locationId }, { locationId: null }] }

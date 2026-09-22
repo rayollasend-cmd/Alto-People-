@@ -113,8 +113,46 @@ export function windowOccurrence(
  * a window of theirs there that the punch falls in, else — covering for
  * someone — any of the store's windows it falls in. Only windows with an
  * SOP assigned count; none → nothing opens automatically.
+ *
+ * WHICH STORE, THOUGH.
+ *
+ * The locationId handed in comes from the punch, and the punch gets it
+ * from resolveAssociateGeofence: the associate's open assignment, or —
+ * when they have none — the client's OLDEST active Location. For a
+ * supervisor that is a guess, and at a client with more than one store it
+ * is usually the wrong one: the SOP is assigned to a store
+ * (StoreShiftSop), the supervisor's shift is assigned to a store
+ * (SupervisorShiftWindow), and nothing reconciled either with the store
+ * the punch happened to name. The SOP was assigned, the supervisor
+ * clocked in, and nothing opened — a null return here reads as "no SOP
+ * configured at this store", which was true of the store we looked at and
+ * not of the one they were standing in.
+ *
+ * So: try the punch's store first, and only if that yields nothing, fall
+ * back to a store this user is assigned to lead a live window at. Second,
+ * not first — a supervisor covering a sibling store today is punched in
+ * THERE, and that punch should keep winning over their usual assignment.
+ * Changing behaviour only where the answer was previously null means this
+ * cannot break a case that already worked.
  */
 export async function storeShiftAt(
+  db: Db,
+  input: { userId: string; locationId: string; at: Date },
+): Promise<StoreShift | null> {
+  const here = await storeShiftAtLocation(db, input);
+  if (here) return here;
+
+  for (const w of await ledWindows(db, { userId: input.userId }, input.at)) {
+    if (w.locationId === input.locationId) continue; // already tried
+    const minute = minuteOfDayInZone(new Date(input.at.getTime() + EARLY_MIN * MIN_MS), w.timezone);
+    if (!inShiftWindow(minute, w)) continue;
+    const led = await storeShiftAtLocation(db, { ...input, locationId: w.locationId });
+    if (led) return led;
+  }
+  return null;
+}
+
+async function storeShiftAtLocation(
   db: Db,
   input: { userId: string; locationId: string; at: Date },
 ): Promise<StoreShift | null> {
@@ -351,7 +389,15 @@ export async function createOpsShift(
  *  first, whoever runs it. */
 function occurrenceSops(db: Db, ss: Pick<StoreShift, 'locationId' | 'label'>, end: Date) {
   return db.opsShift.findMany({
-    where: { locationId: ss.locationId, windowLabel: ss.label, dueAt: end },
+    // A cancelled one never happened. Counting it here would mean HR
+    // voiding a mistake permanently blocks that occurrence from ever
+    // getting its real SOP — the opposite of why they cancelled it.
+    where: {
+      locationId: ss.locationId,
+      windowLabel: ss.label,
+      dueAt: end,
+      status: { not: 'CANCELLED' },
+    },
     orderBy: { openedAt: 'desc' },
     select: {
       id: true,
@@ -450,7 +496,31 @@ export async function openSopOnClockIn(
   if (existing) return { shiftId: existing.id, resumed: true };
 
   const ss = await storeShiftAt(db, { userId: input.userId, locationId: input.locationId, at: input.at });
-  if (!ss) return null;
+  if (!ss) {
+    // Say so. This returned a bare null for every reason at once — the
+    // store has no SOPs, the window is not running, the punch named the
+    // wrong store, the template was retired — and the supervisor just saw
+    // nothing open. It took someone noticing and asking to find out which.
+    // One line, only when the client HAS store shifts configured, so a
+    // client that simply does not use SOPs stays quiet.
+    const configured = await db.storeShiftSop.count({
+      where: { location: { is: { clientId: input.clientId } } },
+    });
+    if (configured > 0) {
+      console.warn(
+        '[ops] no store shift SOP opened on clock-in',
+        JSON.stringify({
+          userId: input.userId,
+          role: input.role,
+          punchLocationId: input.locationId,
+          clientId: input.clientId,
+          at: input.at.toISOString(),
+          clientHasAssignedSops: configured,
+        }),
+      );
+    }
+    return null;
+  }
   const occ = windowOccurrence(input.at, ss, ss.timezone);
   const sops = await occurrenceSops(db, ss, occ.end);
 

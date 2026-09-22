@@ -64,6 +64,7 @@ import {
   HANDOVER_KIND_LABEL,
   PERIOD_LABEL,
 } from './opsVisuals';
+import { flipReadingSign, isNegativeReading, parseReading } from './reading';
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
 
 /**
@@ -1222,8 +1223,8 @@ function TaskRow({
   const isPhotoTask = task.responseType === 'PHOTO';
 
   const recordNumber = () => {
-    const n = Number(numberDraft);
-    if (!Number.isFinite(n) || numberDraft.trim() === '') {
+    const n = parseReading(numberDraft);
+    if (n == null) {
       toast.error('Enter a number.');
       return;
     }
@@ -1382,6 +1383,21 @@ function TaskRow({
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {isNumeric && (
                 <>
+                  {/* Freezers read below zero and the tablet's decimal
+                      keypad has no minus — this is how the sign is typed. */}
+                  {task.responseType === 'TEMPERATURE' && (
+                    <Button
+                      size="sm"
+                      variant={isNegativeReading(numberDraft) ? 'primary' : 'outline'}
+                      className="px-2.5"
+                      aria-pressed={isNegativeReading(numberDraft)}
+                      aria-label={`${task.title} — below zero (minus)`}
+                      title="Below zero — a freezer reading"
+                      onClick={() => setNumberDraft(flipReadingSign)}
+                    >
+                      ±
+                    </Button>
+                  )}
                   <Input
                     inputMode="decimal"
                     className="h-8 w-24 coarse:h-10 coarse:w-28 tabular-nums"
@@ -1488,21 +1504,25 @@ function TaskRow({
                       className="w-32 tabular-nums"
                       value={numberDraft}
                       onChange={(e) => setNumberDraft(e.target.value)}
-                      placeholder={task.responseType === 'TEMPERATURE' ? 'e.g. 36' : 'e.g. 84'}
+                      placeholder={
+                        task.responseType === 'TEMPERATURE' ? 'e.g. 36 or -10' : 'e.g. 84'
+                      }
                     />
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      const n = Number(numberDraft);
-                      if (!Number.isFinite(n)) {
-                        toast.error('Enter a number.');
-                        return;
-                      }
-                      void patch({ answerNumber: n, status: 'DONE' });
-                    }}
-                    loading={busy}
-                  >
+                  {/* Same minus the inline row carries — the keypad has none. */}
+                  {task.responseType === 'TEMPERATURE' && (
+                    <Button
+                      size="sm"
+                      variant={isNegativeReading(numberDraft) ? 'primary' : 'outline'}
+                      className="mb-0.5 px-2.5"
+                      aria-pressed={isNegativeReading(numberDraft)}
+                      aria-label={`${task.title} — below zero (minus)`}
+                      onClick={() => setNumberDraft(flipReadingSign)}
+                    >
+                      ±
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={recordNumber} loading={busy}>
                     {task.responseType === 'TEMPERATURE' ? (
                       <Thermometer className="h-3.5 w-3.5" />
                     ) : null}

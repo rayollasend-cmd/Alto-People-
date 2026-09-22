@@ -74,7 +74,18 @@ export function RoleSwitcher({ onSwitched }: { onSwitched?: () => void }) {
             {ROLE_LABELS[role]}
           </span>
         </DropdownMenuSubTrigger>
-        <DropdownMenuSubContent className="max-w-[18rem]">
+        <DropdownMenuSubContent
+          // Radix never shrinks a submenu to fit — it only flips it to the
+          // other side. On a phone an 18rem menu opening beside a 15rem
+          // account menu does not fit on either side, so it flipped left and
+          // hung ~145px off the screen: the tick and the role's NAME are the
+          // half that lands outside, which is the half you came here to read.
+          // So take the room Radix says it actually has (min-w-0 because the
+          // primitive's 10rem floor is itself wider than what a phone leaves
+          // beside an open menu), and scroll rather than clip when four hats
+          // and their descriptions are taller than the screen.
+          className="max-h-[var(--radix-dropdown-menu-content-available-height,100dvh)] min-w-0 max-w-[min(18rem,var(--radix-dropdown-menu-content-available-width,18rem))] overflow-y-auto"
+        >
           <DropdownMenuLabel className="text-2xs font-normal normal-case text-silver/70">
             This account does more than one job. Pick the one you are doing now.
           </DropdownMenuLabel>

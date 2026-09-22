@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE } from './opsVisuals';
+import { flipReadingSign, isNegativeReading, parseReading } from './reading';
 import { StoreShiftSops } from './StoreShiftSops';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
@@ -514,6 +515,46 @@ function SectionDue({
   );
 }
 
+/**
+ * One end of a temperature band. The ± is not decoration: a freezer runs
+ * -30–0°F, and the decimal keypad a store tablet raises has no minus key.
+ */
+function BoundField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const negative = isNegativeReading(value);
+  return (
+    <div className="w-28">
+      <Label className="text-xs">{label}</Label>
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant={negative ? 'primary' : 'outline'}
+          className="px-2.5"
+          aria-pressed={negative}
+          aria-label={`${label} — below zero (minus)`}
+          onClick={() => onChange(flipReadingSign(value))}
+        >
+          ±
+        </Button>
+        <Input
+          inputMode="decimal"
+          className="tabular-nums"
+          aria-label={label}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function TemplateTasks({
   tpl,
   onChanged,
@@ -734,22 +775,10 @@ function TemplateTasks({
         </div>
         {responseType === 'TEMPERATURE' && (
           <>
-            <div className="w-20">
-              <Label className="text-xs">Min °F</Label>
-              <Input
-                inputMode="decimal"
-                value={tempMin}
-                onChange={(e) => setTempMin(e.target.value)}
-              />
-            </div>
-            <div className="w-20">
-              <Label className="text-xs">Max °F</Label>
-              <Input
-                inputMode="decimal"
-                value={tempMax}
-                onChange={(e) => setTempMax(e.target.value)}
-              />
-            </div>
+            {/* A freezer band is -30–0: the ± carries the sign the tablet's
+                decimal keypad never offers. */}
+            <BoundField label="Min °F" value={tempMin} onChange={setTempMin} />
+            <BoundField label="Max °F" value={tempMax} onChange={setTempMax} />
           </>
         )}
         <Button
@@ -764,11 +793,13 @@ function TemplateTasks({
                 title: title.trim(),
                 responseType,
                 photoRequired: responseType === 'PHOTO',
-                ...(responseType === 'TEMPERATURE' && tempMin !== ''
-                  ? { tempMin: Number(tempMin) }
+                // parseReading, not Number(): a band typed with the ± (or
+                // pasted with a Unicode minus) must reach the server as -30.
+                ...(responseType === 'TEMPERATURE' && parseReading(tempMin) != null
+                  ? { tempMin: parseReading(tempMin)! }
                   : {}),
-                ...(responseType === 'TEMPERATURE' && tempMax !== ''
-                  ? { tempMax: Number(tempMax) }
+                ...(responseType === 'TEMPERATURE' && parseReading(tempMax) != null
+                  ? { tempMax: parseReading(tempMax)! }
                   : {}),
               });
               setTitle('');
@@ -865,22 +896,8 @@ function EditTaskDialog({
                   placeholder="e.g. Cooler °F"
                 />
               </div>
-              <div className="w-24">
-                <Label className="text-xs">Min °F</Label>
-                <Input
-                  inputMode="decimal"
-                  value={tempMin}
-                  onChange={(e) => setTempMin(e.target.value)}
-                />
-              </div>
-              <div className="w-24">
-                <Label className="text-xs">Max °F</Label>
-                <Input
-                  inputMode="decimal"
-                  value={tempMax}
-                  onChange={(e) => setTempMax(e.target.value)}
-                />
-              </div>
+              <BoundField label="Min °F" value={tempMin} onChange={setTempMin} />
+              <BoundField label="Max °F" value={tempMax} onChange={setTempMax} />
             </div>
           )}
           {responseType === 'NUMBER' && (
@@ -974,8 +991,10 @@ function EditTaskDialog({
                   ...(responseType === 'TEMPERATURE'
                     ? {
                         tempLabel: tempLabel.trim() || null,
-                        tempMin: tempMin.trim() === '' ? null : Number(tempMin),
-                        tempMax: tempMax.trim() === '' ? null : Number(tempMax),
+                        // Below-zero bands survive the round trip: -30 in,
+                        // -30 back out of the field on the next edit.
+                        tempMin: parseReading(tempMin),
+                        tempMax: parseReading(tempMax),
                       }
                     : {}),
                 });
