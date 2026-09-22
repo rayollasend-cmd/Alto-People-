@@ -3,12 +3,17 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { initSentry } from '@/lib/sentry';
+import { watchHistoryChurn } from '@/lib/historyChurn';
 import { readOfflineSession } from '@/lib/offlineSession';
 import { restorePersistedQueries } from '@/lib/queryPersist';
 
 // Initialise error tracking before any render path can throw. No-op
 // when VITE_SENTRY_DSN is unset; safe in dev.
 initSentry();
+// After initSentry so the capture has somewhere to go, and before React
+// mounts so the very first navigation is counted. Diagnostic only — see
+// lib/historyChurn for why the SecurityError's own stack is useless.
+watchHistoryChurn();
 
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
