@@ -138,6 +138,16 @@ export type Capability =
   // roles could pull every worker's identity documents. Its own header
   // said it took "the same posture as the SSN reveal"; it did not.
   | 'export:audit-packet'
+  // Downloading ANOTHER person's payroll document — their paystub, their
+  // W-2 copy, the employer's 941/940 working sheets. Distinct from
+  // process:payroll, which runs the cycle: six roles hold that, including
+  // MARKETING_MANAGER, and "may run payroll" is not "may pull up this
+  // named person's paystub". The owner never needs it for their own.
+  //
+  // Where the document carries a full SSN — an individual W-2 or 1099 —
+  // export:payroll-pii is required ON TOP of this. Same document, two
+  // different acts.
+  | 'view:payroll-documents'
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
   // Phase 93 — public API keys + outbound webhooks.
@@ -250,6 +260,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // The owner's copy of the audit packet. Note this is the ONE export
     // capability a read-only role holds — deliberate, and narrow.
     'export:audit-packet',
+    // Reading a paystub or a 941 is oversight, which is this role's whole
+    // remit. An SSN-bearing W-2 is not: that needs export:payroll-pii,
+    // which the chairman does not hold.
+    'view:payroll-documents',
     'view:time-live',
     // Store-ops oversight + the chairman's ONE write: the SOP standard.
     'view:ops',
@@ -270,12 +284,18 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'export:audit-packet',
     'void:payroll',
     'export:payroll-pii',
+    // HR owns both halves: the paystub AND the SSN-bearing W-2.
+    'view:payroll-documents',
     'submit:reimbursement',
     'approve:reimbursement',
     'settle:reimbursement',
   ]),
   OPERATIONS_MANAGER: new Set<Capability>([
     ...FULL_ADMIN,
+    // Ops fields "I never got my paystub". They can pull the paystub and
+    // re-send a W-2 to its owner; they cannot download the W-2 itself,
+    // which is where the full SSN is.
+    'view:payroll-documents',
     'submit:reimbursement',
     'approve:reimbursement',
   ]),
@@ -315,6 +335,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // attendance base — not just read access.
     'manage:time',
     'view:time-live',
+    // Finance issues the paystubs and files the W-2s, and holds
+    // export:payroll-pii below for the SSN-bearing half.
+    'view:payroll-documents',
     'view:scheduling',
     // Full scheduling authority (owner decision 2026-09-06, reversing the
     // earlier read-only stance): finance runs the whole hours→pay cycle,

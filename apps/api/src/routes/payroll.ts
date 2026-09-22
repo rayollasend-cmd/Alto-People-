@@ -29,6 +29,7 @@ import {
   type PayrollSchedule as PayrollScheduleDto,
   type PayrollScheduleListResponse,
   type PayrollUpcomingSummary,
+  hasCapability,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -2918,7 +2919,15 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
 
     const user = req.user!;
     const isOwner = user.associateId && user.associateId === item.associateId;
-    const canManage = ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'FINANCE_ACCOUNTANT', 'EXECUTIVE_CHAIRMAN'].includes(user.role);
+    // Was a hardcoded list of four role names. The capability now says the
+    // same thing in the one place the matrix can be reasoned about: a
+    // hardcoded array cannot be audited by the roles tests, and drifts
+    // silently the moment a role is added or a capability is re-granted.
+    //
+    // NOT process:payroll, which guards the rest of this router: six roles
+    // hold that, including MARKETING_MANAGER, and "may run payroll" is not
+    // "may pull up this named person's paystub".
+    const canManage = hasCapability(user.role, 'view:payroll-documents');
     if (!isOwner && !canManage) {
       throw new HttpError(404, 'item_not_found', 'Paystub not found');
     }

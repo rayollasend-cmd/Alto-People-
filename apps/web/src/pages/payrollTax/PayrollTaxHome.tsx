@@ -758,6 +758,10 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
 }
 
 function TaxFormsTab({ canManage }: { canManage: boolean }) {
+  // An individual W-2 / 1099 PDF carries the recipient's full SSN and
+  // now needs export:payroll-pii server-side; 941/940 summary sheets do
+  // not and stay on view:payroll-documents.
+  const canExportPii = useAuth().can('export:payroll-pii');
   const confirm = useConfirm();
   const prompt = usePrompt();
   const [rows, setRows] = useState<TaxForm[] | null>(null);
@@ -1142,7 +1146,14 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                       {fmtDate(f.filedAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
-                      {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && (
+                      {/* A W-2 or 1099 PDF prints the recipient's full SSN,
+                          so the server requires export:payroll-pii for
+                          someone else's. Filing, voiding and sending each
+                          recipient their own copy stay available to
+                          everyone who runs payroll. */}
+                      {(f.kind === 'W2' || f.kind === 'W2C') &&
+                        f.status !== 'VOIDED' &&
+                        canExportPii && (
                         <span className="inline-flex">
                           <Button size="sm" variant="ghost" asChild className="rounded-r-none">
                             <a href={taxFormPdfUrl(f.id)} download>
@@ -1309,6 +1320,10 @@ function W2GenerateDrawer({
   onClose: () => void;
   onDone: () => void;
 }) {
+  // Bulk download prints every recipient's full SSN; the server now
+  // requires export:payroll-pii for it, so do not offer the button to
+  // the roles that would only get a 403.
+  const canExportPii = useAuth().can('export:payroll-pii');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
   const clients = useClientOptions();
@@ -1376,7 +1391,7 @@ function W2GenerateDrawer({
             <div>Eligible associates: {result.eligibleAssociateCount}</div>
             <div>Created: {result.createdCount}</div>
             <div>Skipped (already on file): {result.skippedCount}</div>
-            {result.createdCount > 0 && (
+            {result.createdCount > 0 && canExportPii && (
               <div className="flex flex-wrap gap-2 mt-1">
                 <Button asChild variant="ghost" size="sm">
                   <a
@@ -1406,6 +1421,14 @@ function W2GenerateDrawer({
                     </Button>
                   </>
                 )}
+              </div>
+            )}
+            {result.createdCount > 0 && !canExportPii && (
+              <div className="text-xs text-silver">
+                The forms are created. Downloading them in bulk prints a full
+                SSN for every recipient, so it is restricted to HR and
+                Finance — ask them for the file, or send each recipient their
+                own copy from the list.
               </div>
             )}
             {result.createdCount > 0 && !clientId.trim() && (
@@ -1590,6 +1613,10 @@ function F1099NecGenerateDrawer({
   onClose: () => void;
   onDone: () => void;
 }) {
+  // Bulk download prints every recipient's full SSN; the server now
+  // requires export:payroll-pii for it, so do not offer the button to
+  // the roles that would only get a 403.
+  const canExportPii = useAuth().can('export:payroll-pii');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
   const clients = useClientOptions();
@@ -1683,7 +1710,7 @@ function F1099NecGenerateDrawer({
             <div>Eligible contractors: {result.eligibleAssociateCount}</div>
             <div>Created: {result.createdCount}</div>
             <div>Skipped (already on file): {result.skippedCount}</div>
-            {result.createdCount > 0 && (
+            {result.createdCount > 0 && canExportPii && (
               <div className="flex flex-wrap gap-2 mt-1">
                 <Button asChild variant="ghost" size="sm">
                   <a
@@ -1712,6 +1739,14 @@ function F1099NecGenerateDrawer({
                 )}
               </div>
             )}
+            {result.createdCount > 0 && !canExportPii && (
+              <div className="text-xs text-silver">
+                The forms are created. Downloading them in bulk prints a full
+                SSN for every recipient, so it is restricted to HR and
+                Finance — ask them for the file, or send each recipient their
+                own copy from the list.
+              </div>
+            )}
             {result.createdCount > 0 && !clientId.trim() && (
               <div className="text-xs text-silver">
                 IRS FIRE e-file requires a per-client scope. Pick a single
@@ -1738,6 +1773,10 @@ function F1099MiscGenerateDrawer({
   onClose: () => void;
   onDone: () => void;
 }) {
+  // Bulk download prints every recipient's full SSN; the server now
+  // requires export:payroll-pii for it, so do not offer the button to
+  // the roles that would only get a 403.
+  const canExportPii = useAuth().can('export:payroll-pii');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
   const clients = useClientOptions();
@@ -1830,7 +1869,7 @@ function F1099MiscGenerateDrawer({
             <div>Eligible contractors: {result.eligibleAssociateCount}</div>
             <div>Created: {result.createdCount}</div>
             <div>Skipped (already on file): {result.skippedCount}</div>
-            {result.createdCount > 0 && (
+            {result.createdCount > 0 && canExportPii && (
               <div className="flex flex-wrap gap-2 mt-1">
                 <Button asChild variant="ghost" size="sm">
                   <a
@@ -1857,6 +1896,14 @@ function F1099MiscGenerateDrawer({
                     </a>
                   </Button>
                 )}
+              </div>
+            )}
+            {result.createdCount > 0 && !canExportPii && (
+              <div className="text-xs text-silver">
+                The forms are created. Downloading them in bulk prints a full
+                SSN for every recipient, so it is restricted to HR and
+                Finance — ask them for the file, or send each recipient their
+                own copy from the list.
               </div>
             )}
             {result.createdCount > 0 && !clientId.trim() && (

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { hasCapability } from '@alto-people/shared';
+import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
@@ -72,6 +74,34 @@ export const payrollTax91Router = Router();
 // With the old gate any hourly worker could GET /garnishments.
 const VIEW = requireCapability('process:payroll');
 const MANAGE = requireCapability('process:payroll');
+/**
+ * The bulk SSN artifacts.
+ *
+ * Running payroll and walking off with every SSN in the company are not
+ * the same act, and process:payroll — six roles, MARKETING_MANAGER and
+ * INTERNAL_RECRUITER among them — was guarding both. What sat behind it:
+ *
+ *   w2/bulk.zip, 1099-nec/bulk.zip, 1099-misc/bulk.zip
+ *     every form for the year, each printing a full SSN, in one download.
+ *   w2/efw2.txt, w2/efw2c.txt
+ *     the SSA wage file: every employee's full SSN in fixed-width text.
+ *   1099-nec/fire.txt, 1099-misc/fire.txt
+ *     the IRS FIRE equivalent, every payee TIN.
+ *
+ * These are the same class of file as the payroll census, which moved to
+ * export:payroll-pii for exactly this reason; these were simply missed at
+ * the time. Generating the forms, filing them and mailing each recipient
+ * their own copy all stay on process:payroll — it is only pulling the
+ * whole set down in one file that narrows.
+ *
+ * And they take the SECOND gate too (1846e72c): the capability answers
+ * "does this job need SSNs", assertBulkPiiExporter answers "is this the
+ * named person who does that work". A W-2 zip for two thousand people is
+ * the case that commit was written for; it listed the census, the
+ * new-hire report, the sheet and the audit packet, and these seven were
+ * still on process:payroll at the time so they were not on the list.
+ */
+const EXPORT_PII = requireCapability('export:payroll-pii');
 
 // ----- Garnishments ------------------------------------------------------
 
@@ -1557,13 +1587,25 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
 
     const user = req.user!;
     const isOwner = user.associateId && user.associateId === form.associateId;
-    const canManage = [
-      'HR_ADMINISTRATOR',
-      'OPERATIONS_MANAGER',
-      'FINANCE_ACCOUNTANT',
-      'EXECUTIVE_CHAIRMAN',
-    ].includes(user.role);
-    if (!isOwner && !canManage) {
+    // One handler, two very different documents, and the hardcoded role
+    // array treated them as one:
+    //
+    //   941 / 940  employer totals. No personal SSN anywhere on the sheet.
+    //   W-2 / 1099 ONE named person's FULL SSN, printed in box a.
+    //
+    // So the baseline is view:payroll-documents, and the SSN-bearing kinds
+    // need export:payroll-pii on top — the same capability the census and
+    // the audit packet sit behind, because it is the same act. An ops
+    // manager keeps the 941 and keeps /send-recipient-copy, which mails a
+    // W-2 to the person it belongs to; what they lose is the ability to
+    // pull that person's SSN onto their own screen.
+    //
+    // The owner is never gated: it is their form.
+    const SSN_BEARING = new Set(['W2', 'W2C', 'F1099_NEC', 'F1099_MISC']);
+    const canRead = hasCapability(user.role, 'view:payroll-documents');
+    const canReadPii =
+      !SSN_BEARING.has(form.kind) || hasCapability(user.role, 'export:payroll-pii');
+    if (!isOwner && !(canRead && canReadPii)) {
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
@@ -1676,8 +1718,10 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
  * Capability: process:payroll. Associates can't bulk-download (they only
  * see their own via the per-form route).
  */
-payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) => {
+payrollTax91Router.get('/tax-forms/w2/bulk.zip', EXPORT_PII, async (req, res, next) => {
   try {
+    // Named people only — the capability is not the whole gate.
+    assertBulkPiiExporter(req);
     const taxYear = z
       .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
       .parse(req.query.taxYear);
@@ -1772,8 +1816,10 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) 
  * year (and optional client scope), skips forms that fail to render, and
  * appends a manifest.txt listing the skips.
  */
-payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', MANAGE, async (req, res, next) => {
+payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', EXPORT_PII, async (req, res, next) => {
   try {
+    // Named people only — the capability is not the whole gate.
+    assertBulkPiiExporter(req);
     const taxYear = z
       .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
       .parse(req.query.taxYear);
@@ -1862,8 +1908,10 @@ payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', MANAGE, async (req, res, 
  * GET /tax-forms/1099-misc/bulk.zip?taxYear=YYYY&clientId=UUID — sibling
  * of the 1099-NEC bulk endpoint for 1099-MISC forms.
  */
-payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', MANAGE, async (req, res, next) => {
+payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', EXPORT_PII, async (req, res, next) => {
   try {
+    // Named people only — the capability is not the whole gate.
+    assertBulkPiiExporter(req);
     const taxYear = z
       .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
       .parse(req.query.taxYear);
@@ -2013,8 +2061,10 @@ payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
  * Output is plain ASCII (Windows-1252 compatible). Capability:
  * process:payroll.
  */
-payrollTax91Router.get('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) => {
+payrollTax91Router.get('/tax-forms/w2/efw2.txt', EXPORT_PII, async (req, res, next) => {
   try {
+    // Named people only — the capability is not the whole gate.
+    assertBulkPiiExporter(req);
     const input = {
       taxYear: z
         .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
@@ -2211,9 +2261,11 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) 
  */
 payrollTax91Router.get(
   '/tax-forms/w2/efw2c.txt',
-  MANAGE,
+  EXPORT_PII,
   async (req, res, next) => {
     try {
+      // Named people only — the capability is not the whole gate.
+      assertBulkPiiExporter(req);
       const input = {
         taxYear: z
           .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
@@ -2426,9 +2478,11 @@ payrollTax91Router.get(
  */
 payrollTax91Router.get(
   '/tax-forms/1099-nec/fire.txt',
-  MANAGE,
+  EXPORT_PII,
   async (req, res, next) => {
     try {
+      // Named people only — the capability is not the whole gate.
+      assertBulkPiiExporter(req);
       const input = {
         taxYear: z
           .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
@@ -2656,9 +2710,11 @@ payrollTax91Router.get(
  */
 payrollTax91Router.get(
   '/tax-forms/1099-misc/fire.txt',
-  MANAGE,
+  EXPORT_PII,
   async (req, res, next) => {
     try {
+      // Named people only — the capability is not the whole gate.
+      assertBulkPiiExporter(req);
       const input = {
         taxYear: z
           .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))

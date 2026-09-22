@@ -219,6 +219,35 @@ describe('hasCapability', () => {
     }
   });
 
+  it('view:payroll-documents is the oversight set, and never reaches an SSN on its own', () => {
+    // Someone else's paystub, and the 941/940 working sheets. This exists
+    // because the two PDF routes were guarding themselves with a hardcoded
+    // list of four role names, which no test could see and which drifts
+    // the moment the matrix changes. The holders are exactly that list.
+    const holders = HUMAN_ROLES.filter((r) => hasCapability(r, 'view:payroll-documents'));
+    expect(holders.slice().sort()).toEqual([
+      'EXECUTIVE_CHAIRMAN',
+      'FINANCE_ACCOUNTANT',
+      'HR_ADMINISTRATOR',
+      'OPERATIONS_MANAGER',
+    ]);
+
+    // It is deliberately NOT process:payroll: running the pay cycle is a
+    // job six roles do, and "may run payroll" is not "may pull up this
+    // named person's paystub".
+    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER'] as const) {
+      expect(hasCapability(role, 'process:payroll'), role).toBe(true);
+      expect(hasCapability(role, 'view:payroll-documents'), role).toBe(false);
+    }
+
+    // And holding it is not enough for an SSN-bearing form: the W-2 route
+    // also demands export:payroll-pii, which two of these four hold. If
+    // that ever became a subset relation, the escalation would be dead
+    // code and the chairman would be reading SSNs.
+    expect(hasCapability('EXECUTIVE_CHAIRMAN', 'export:payroll-pii')).toBe(false);
+    expect(hasCapability('OPERATIONS_MANAGER', 'export:payroll-pii')).toBe(false);
+  });
+
   it('no role can reach the PII export via manage:time', () => {
     for (const role of HUMAN_ROLES) {
       if (
