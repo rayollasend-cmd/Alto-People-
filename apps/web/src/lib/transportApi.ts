@@ -428,7 +428,15 @@ export interface TransportBoard {
   rides: Ride[];
   runs: RideRun[];
   vans: Array<{ id: string; name: string; plate: string | null; capacity: number; driverUserId: string | null }>;
-  drivers: Array<{ userId: string; name: string; role: string; phone: string | null }>;
+  drivers: Array<{
+    userId: string;
+    name: string;
+    role: string;
+    /** Driving is their trade — their main role, or a second one they
+     *  hold. The transportation director drives only in a pinch. */
+    drivesByTrade: boolean;
+    phone: string | null;
+  }>;
 }
 
 export const getTransportBoard = (date?: string) =>

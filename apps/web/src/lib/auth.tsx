@@ -43,7 +43,16 @@ interface AuthState {
   /** True iff a network call (login/logout/me) was disrupted; UI can hint. */
   isOffline: boolean;
   user: AuthUser | null;
+  /** The role the account is WEARING. Capabilities and navigation follow it. */
   role: Role | null;
+  /** The account's home role — differs from `role` only while switched. */
+  primaryRole: Role | null;
+  /**
+   * Every role this one account may act as, primary first. Length 1 for
+   * almost everyone: a person with two jobs (a shift supervisor who also
+   * drives an Alto van) is the exception the switcher exists for.
+   */
+  availableRoles: Role[];
   capabilities: ReadonlySet<Capability>;
   /**
    * POST /auth/login. Returns `{ mfaRequired: true }` when the account
@@ -69,6 +78,15 @@ interface AuthState {
    * stays put and the next poll/route change can retry.
    */
   refreshUser: () => Promise<void>;
+  /**
+   * Put on another of this account's roles.
+   *
+   * The whole app re-reads from the new role, so everything cached under
+   * the old one is thrown away first — a supervisor's store lists and a
+   * driver's van runs are not the same data and must never be mixed.
+   * Throws if the role was never granted.
+   */
+  switchRole: (role: Role) => Promise<void>;
   can: (capability: Capability) => boolean;
 }
 
@@ -362,6 +380,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const switchRole = useCallback(async (role: Role) => {
+    const res = await apiFetch<MeResponse>('/auth/me/active-role', {
+      method: 'POST',
+      body: { role },
+    });
+    if (!res.user) throw new Error('Could not switch role.');
+    // Every cached answer was fetched as somebody else. Keeping any of it
+    // is how a driver ends up looking at a store's roster.
+    void clearPersistedQueries();
+    setUser(res.user);
+    saveOfflineSession(res.user);
+    setIsOffline(false);
+  }, []);
+
   const refreshUser = useCallback(async () => {
     try {
       const me = await apiFetch<MeResponse>('/auth/me');
@@ -382,14 +414,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isOffline,
       user,
       role,
+      primaryRole: user?.primaryRole ?? role,
+      // An older server, or an offline session saved before this existed,
+      // says nothing about extra roles — which correctly means "just the
+      // one", and the switcher stays hidden.
+      availableRoles: user?.availableRoles ?? (role ? [role] : []),
       capabilities,
       signIn,
       submitMfaChallenge,
       signOut,
       refreshUser,
+      switchRole,
       can: (cap) => (role ? hasCapability(role, cap) : false),
     };
-  }, [isInitializing, isOffline, user, signIn, submitMfaChallenge, signOut, refreshUser]);
+  }, [
+    isInitializing,
+    isOffline,
+    user,
+    signIn,
+    submitMfaChallenge,
+    signOut,
+    refreshUser,
+    switchRole,
+  ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

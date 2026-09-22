@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { actsAs, actsAsAny } from '../lib/roleScope.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyUser, trackNotificationWork } from '../lib/notify.js';
@@ -478,7 +479,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   );
   // A new seat request: every driver's list (and the desk) refreshes now.
   const watchers = await prisma.user.findMany({
-    where: { role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
+    where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
     select: { id: true },
   });
   for (const u of watchers) emitLiveEvent(u.id, 'transport');
@@ -1571,7 +1572,12 @@ transportRouter.post('/driver/requests/:rideId/decline', DRIVE, async (req, res)
     update: { reason: reason || null },
   });
   const drivers = await prisma.user.findMany({
-    where: { role: 'DRIVER', status: 'ACTIVE', deletedAt: null, assignedVans: { some: { isActive: true } } },
+    where: {
+      ...actsAs('DRIVER'),
+      status: 'ACTIVE',
+      deletedAt: null,
+      assignedVans: { some: { isActive: true } },
+    },
     select: { id: true },
   });
   const declined = await prisma.rideRejection.count({ where: { rideId, driverUserId: { in: drivers.map((d) => d.id) } } });
@@ -1696,8 +1702,8 @@ transportRouter.get('/board', VIEW, async (req, res) => {
     prisma.rideRun.findMany({ where: { serviceDate: date }, orderBy: { departAt: 'asc' }, include: runInclude }),
     prisma.van.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
     prisma.user.findMany({
-      where: { role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
-      select: { id: true, email: true, role: true, associate: { select: { firstName: true, lastName: true, phone: true } } },
+      where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
+      select: { id: true, email: true, role: true, additionalRoles: true, associate: { select: { firstName: true, lastName: true, phone: true } } },
     }),
     prisma.transportIssue.count({ where: { status: { not: 'RESOLVED' } } }),
     getTransportSettings(),
@@ -1722,7 +1728,16 @@ transportRouter.get('/board', VIEW, async (req, res) => {
     runs: runs.map(toRunView),
     vans: vans.map((v) => ({ id: v.id, name: v.name, plate: v.plate, capacity: v.capacity, driverUserId: v.driverUserId })),
     drivers: drivers
-      .map((d) => ({ userId: d.id, name: personName(d), role: d.role, phone: d.associate?.phone ?? null }))
+      .map((d) => ({
+        userId: d.id,
+        name: personName(d),
+        role: d.role,
+        // Whether driving is their trade or something they do in a pinch.
+        // A shift supervisor who holds DRIVER as a second role drives by
+        // trade; the transportation director does not.
+        drivesByTrade: d.role === 'DRIVER' || d.additionalRoles.includes('DRIVER'),
+        phone: d.associate?.phone ?? null,
+      }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   });
 });
@@ -1835,7 +1850,7 @@ async function assertVanAndDriver(vanId: string, driverUserId: string, riders: n
   const [van, driver] = await Promise.all([
     prisma.van.findFirst({ where: { id: vanId, isActive: true } }),
     prisma.user.findFirst({
-      where: { id: driverUserId, role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
+      where: { id: driverUserId, ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
       select: { id: true },
     }),
   ]);
@@ -2181,7 +2196,7 @@ async function assignDriver(vanId: string, driverUserId: string | null | undefin
   if (driverUserId === undefined) return;
   if (driverUserId) {
     const driver = await prisma.user.findFirst({
-      where: { id: driverUserId, role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
+      where: { id: driverUserId, ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
       select: { id: true },
     });
     if (!driver) throw new HttpError(400, 'driver_not_found', 'Pick an active driver.');

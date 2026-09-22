@@ -1130,7 +1130,9 @@ function DispatchDialog({
   const [driverUserId, setDriverUserId] = useState(
     editing?.driver.userId ??
       board.vans.find((v) => v.id === firstVan)?.driverUserId ??
-      board.drivers.find((d) => d.role === 'DRIVER')?.userId ??
+      // Someone whose trade is driving — which includes the shift
+      // supervisor who also drives, not just accounts filed as DRIVER.
+      board.drivers.find((d) => d.drivesByTrade)?.userId ??
       '',
   );
   const setVanId = (id: string) => {

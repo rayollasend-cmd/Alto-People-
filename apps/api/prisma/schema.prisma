@@ -377,7 +377,19 @@ model User {
   id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email              String     @unique
   passwordHash       String?    @db.VarChar(255)
+  /// The account's PRIMARY role — the one it falls back to and the one an
+  /// administrator manages it as.
   role               Role
+  /// The other roles this one account may act as. A shift supervisor who
+  /// also drives an Alto van holds DRIVER here rather than keeping a
+  /// second login. Empty for almost every account; see
+  /// additionalRoleRefusal() in shared/roles.ts for what may be combined.
+  additionalRoles    Role[]     @default([])
+  /// Which granted role the account is wearing right now. Null means the
+  /// primary role. Always one of {role} ∪ additionalRoles — a value that
+  /// is no longer granted stops applying rather than continuing to
+  /// authorize anything (effectiveRoleOf fails closed to `role`).
+  activeRole         Role?
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
   // SCIM 2.0 externalId passthrough — the identity provider's (Entra ID /

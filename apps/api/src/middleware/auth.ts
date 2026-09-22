@@ -1,5 +1,11 @@
 import type { Request, Response, NextFunction } from 'express';
-import { HUMAN_ROLES, type Capability, hasCapability } from '@alto-people/shared';
+import {
+  HUMAN_ROLES,
+  effectiveRoleOf,
+  rolesAvailableTo,
+  type Capability,
+  hasCapability,
+} from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
@@ -140,6 +146,8 @@ export async function attachUser(
         id: true,
         email: true,
         role: true,
+        additionalRoles: true,
+        activeRole: true,
         status: true,
         clientId: true,
         locationId: true,
@@ -200,9 +208,22 @@ export async function attachUser(
       }
     }
 
-    const { associate: _a, associateId: _aid, mfaEnabledAt, ...rest } = user;
+    const {
+      associate: _a,
+      associateId: _aid,
+      mfaEnabledAt,
+      additionalRoles,
+      activeRole,
+      ...rest
+    } = user;
     const sessionUser: SessionUser = {
       ...rest,
+      // The hat, not the wardrobe. effectiveRoleOf fails closed to the
+      // primary role, so an activeRole an administrator has since revoked
+      // stops authorizing anything on the next cache miss.
+      role: effectiveRoleOf(user),
+      primaryRole: user.role,
+      availableRoles: rolesAvailableTo(user),
       associateId,
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
@@ -322,6 +343,8 @@ export async function allowMfaEnrollToken(
         id: true,
         email: true,
         role: true,
+        additionalRoles: true,
+        activeRole: true,
         status: true,
         clientId: true,
         locationId: true,
@@ -350,9 +373,12 @@ export async function allowMfaEnrollToken(
       return next();
     }
 
-    const { associate, mfaEnabledAt, ...rest } = user;
+    const { associate, mfaEnabledAt, additionalRoles, activeRole, ...rest } = user;
     req.user = {
       ...rest,
+      role: effectiveRoleOf(user),
+      primaryRole: user.role,
+      availableRoles: rolesAvailableTo(user),
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,

@@ -361,7 +361,9 @@ describe('<TransportHome> — the command center', () => {
       rides: [a, b],
       runs: [],
       vans: [{ id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12 }],
-      drivers: [{ userId: 'd1', name: 'Mike Chen', role: 'DRIVER' }],
+      // drivesByTrade: driving is their job, whether it is their main
+      // role or the second hat a shift supervisor wears on Sundays.
+      drivers: [{ userId: 'd1', name: 'Mike Chen', role: 'DRIVER', drivesByTrade: true }],
     };
   }
 

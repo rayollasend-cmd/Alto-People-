@@ -563,3 +563,84 @@ export function mfaPolicyAppliesTo(
   if (requirement === 'ALL') return true;
   return isMfaAdminRole(role);
 }
+
+/* ===== One account, more than one hat ==================================== */
+
+/**
+ * Some people do two jobs. A shift supervisor who also drives the van is
+ * one person with one email, and making them keep a second login is how
+ * you end up with two half-maintained accounts, two sets of notifications,
+ * and a driver nobody can tie back to the supervisor who ran the shift.
+ *
+ * So an account carries a PRIMARY role and, rarely, a small number of
+ * ADDITIONAL roles it may act as. Exactly one is active at a time — the
+ * account is never both at once, and every request is authorized against
+ * the single role it is currently wearing. Switching is a deliberate act,
+ * it is audited, and it never grants anything an administrator did not
+ * already grant.
+ *
+ * The rules below are the whole of what may be combined.
+ */
+
+/** How many extra hats one account may hold. Two jobs is a person; five
+ *  is an account that should have been split. */
+export const MAX_ADDITIONAL_ROLES = 3;
+
+/**
+ * Why `extra` may not be added to an account whose primary role is
+ * `primary` — or null when it may.
+ *
+ * The hard line is the tenant boundary: CLIENT_PORTAL is a customer's own
+ * staff looking at their own stores, and no amount of administrative
+ * intent should let one account be both a customer and an employee. The
+ * rest is bookkeeping.
+ */
+export function additionalRoleRefusal(primary: Role, extra: Role): string | null {
+  if (!HUMAN_ROLES.includes(extra)) {
+    return 'LIVE_ASN is reserved for system integrations and cannot be worn by a person.';
+  }
+  if (extra === primary) {
+    return 'That is already this account’s primary role.';
+  }
+  if (primary === 'CLIENT_PORTAL' || extra === 'CLIENT_PORTAL') {
+    // A client portal account belongs to the customer, not to us. One
+    // login that is both a customer and an employee is a tenant breach
+    // waiting for the first person who forgets which hat they are wearing.
+    return 'A client portal account cannot hold a second role, and no account can switch into one.';
+  }
+  return null;
+}
+
+/**
+ * Every role this account may act as, primary first. This is the list a
+ * switcher offers and the ONLY list a switch may choose from.
+ */
+export function rolesAvailableTo(user: {
+  role: Role;
+  additionalRoles?: readonly Role[] | null;
+}): Role[] {
+  const out: Role[] = [user.role];
+  for (const r of user.additionalRoles ?? []) {
+    if (r !== user.role && !out.includes(r) && !additionalRoleRefusal(user.role, r)) {
+      out.push(r);
+    }
+  }
+  return out;
+}
+
+/**
+ * The role an account is actually wearing right now.
+ *
+ * Fails closed to the primary role: an `activeRole` that is no longer
+ * granted — because an administrator revoked it while the person was
+ * signed in — silently stops applying rather than continuing to authorize
+ * anything.
+ */
+export function effectiveRoleOf(user: {
+  role: Role;
+  additionalRoles?: readonly Role[] | null;
+  activeRole?: Role | null;
+}): Role {
+  if (!user.activeRole || user.activeRole === user.role) return user.role;
+  return rolesAvailableTo(user).includes(user.activeRole) ? user.activeRole : user.role;
+}

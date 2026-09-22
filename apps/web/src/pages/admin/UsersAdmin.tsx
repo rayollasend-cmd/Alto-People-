@@ -8,6 +8,7 @@ import {
   KeyRound,
   Lock,
   RefreshCw,
+  Repeat,
   ShieldCheck,
   Unlock,
   UserRound,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
+import { SecondRoleDialog } from './SecondRoleDialog';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
@@ -156,6 +158,8 @@ export function UsersAdmin() {
     return () => clearTimeout(t);
   }, [q]);
   const [role, setRole] = useState<Role | ''>('');
+  // Whose second-role dialog is open.
+  const [secondRoleFor, setSecondRoleFor] = useState<AdminUser | null>(null);
   const [status, setStatus] = useState<UserStatus | ''>('');
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -930,6 +934,32 @@ export function UsersAdmin() {
                             </option>
                           ))}
                         </Select>
+                        {/* One person, two jobs — the supervisor who also
+                            drives. A second hat on this account, not a
+                            second account. */}
+                        {!isMe && u.role !== 'CLIENT_PORTAL' && !draftRole[u.id] && (
+                          <button
+                            type="button"
+                            onClick={() => setSecondRoleFor(u)}
+                            disabled={busy}
+                            className="mt-1 flex w-full items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs2 text-silver/80 hover:border-silver/40 hover:text-white"
+                            title="Other roles this account can switch into"
+                          >
+                            <Repeat className="h-3 w-3 shrink-0 text-gold" aria-hidden="true" />
+                            {u.additionalRoles && u.additionalRoles.length > 0 ? (
+                              <span className="truncate">
+                                also {u.additionalRoles.map((r) => ROLE_LABELS[r]).join(', ')}
+                              </span>
+                            ) : (
+                              <span className="truncate text-silver/50">also works as…</span>
+                            )}
+                          </button>
+                        )}
+                        {u.activeRole && u.activeRole !== u.role && (
+                          <div className="mt-1 text-xs2 text-gold">
+                            working as {ROLE_LABELS[u.activeRole]} now
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -1110,6 +1140,22 @@ export function UsersAdmin() {
           )}
         </CardContent>
       </Card>
+
+      {secondRoleFor && (
+
+        <SecondRoleDialog
+
+          user={secondRoleFor}
+
+          open
+
+          onOpenChange={(o) => !o && setSecondRoleFor(null)}
+
+          onSaved={() => void load()}
+
+        />
+
+      )}
 
       {shiftFor && (
         <SupervisorShiftDialog

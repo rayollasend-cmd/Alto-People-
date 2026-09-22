@@ -5,6 +5,7 @@ import { emitLiveEvent } from './liveEvents.js';
 import { currentStoreWindows } from './shiftWindows.js';
 import { zonedWallTimeToUtcInstant } from './timezone.js';
 import { orderAndTime, planRideSelect } from './transportPlan.js';
+import { actsAsAny } from './roleScope.js';
 
 /**
  * Seats by store shift — riders plan ahead by the shift they work.
@@ -276,7 +277,7 @@ export async function announceWaitlist(k: TripKey): Promise<void> {
 async function nudgeTrip(k: TripKey): Promise<void> {
   const [riders, desk] = await Promise.all([
     prisma.ride.findMany({ where: { ...tripWhere(k), status: { in: ['REQUESTED', 'SCHEDULED'] } }, select: { associateId: true } }),
-    prisma.user.findMany({ where: { role: { in: ['TRANSPORTATION_DIRECTOR', 'DRIVER'] }, status: 'ACTIVE', deletedAt: null }, select: { id: true } }),
+    prisma.user.findMany({ where: { ...actsAsAny(['TRANSPORTATION_DIRECTOR', 'DRIVER']), status: 'ACTIVE', deletedAt: null }, select: { id: true } }),
   ]);
   const users = await prisma.user.findMany({
     where: { associateId: { in: riders.map((r) => r.associateId) }, status: 'ACTIVE', deletedAt: null },

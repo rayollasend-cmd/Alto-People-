@@ -447,7 +447,15 @@ export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
 export const AuthUserSchema = z.object({
   id: UuidSchema,
   email: z.string().email(),
+  /** The role this account is WEARING right now. Everything downstream —
+   *  capabilities, navigation, scope — keys off this and nothing else. */
   role: RoleSchema,
+  /** The account's home role. Equal to `role` unless the person has
+   *  switched hats (a shift supervisor driving a van today). */
+  primaryRole: RoleSchema.optional(),
+  /** Every role this account may switch to, primary first. Length 1 for
+   *  almost everyone; the switcher only appears above that. */
+  availableRoles: z.array(RoleSchema).optional(),
   status: UserStatusSchema,
   clientId: UuidSchema.nullable(),
   /** Display name of the bound client for client-scoped roles

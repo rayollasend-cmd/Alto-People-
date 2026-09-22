@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import type { GeoPoint } from './geocode.js';
 import { DWELL_S, driveSeconds, haversineM, homePoint, storePoint } from './transportLive.js';
+import { actsAsAny } from './roleScope.js';
 
 /**
  * Dispatch, planned — the command center's click-saver.
@@ -162,12 +163,14 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
     }),
     prisma.van.findMany({ where: { isActive: true }, orderBy: [{ capacity: 'desc' }, { name: 'asc' }] }),
     prisma.user.findMany({
-      where: { role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
-      select: { id: true, role: true },
+      where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
+      select: { id: true, role: true, additionalRoles: true },
     }),
   ]);
   // Drivers first; the director only when no driver is free.
-  drivers.sort((a, b) => (a.role === 'DRIVER' ? 0 : 1) - (b.role === 'DRIVER' ? 0 : 1));
+  const drivesByTrade = (u: { role: string; additionalRoles?: string[] }) =>
+    u.role === 'DRIVER' || (u.additionalRoles ?? []).includes('DRIVER') ? 0 : 1;
+  drivers.sort((a, b) => drivesByTrade(a) - drivesByTrade(b));
 
   const busy: Array<{ vanId: string | null; driverUserId: string | null; from: number; to: number }> = runs.map((r) => ({
     vanId: r.vanId,

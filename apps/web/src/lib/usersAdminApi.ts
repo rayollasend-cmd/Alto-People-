@@ -6,7 +6,13 @@ export type UserStatus = 'ACTIVE' | 'DISABLED' | 'INVITED';
 export interface AdminUser {
   id: string;
   email: string;
+  /** The account's PRIMARY role — what an administrator manages it as. */
   role: Role;
+  /** Other roles this one account may switch into. A shift supervisor who
+   *  also drives holds DRIVER here rather than a second login. */
+  additionalRoles?: Role[];
+  /** Which granted role they are working as right now; null = the primary. */
+  activeRole?: Role | null;
   status: UserStatus;
   createdAt: string;
   associateId: string | null;
@@ -71,6 +77,8 @@ export function patchAdminUser(
   id: string,
   body: {
     role?: Role;
+    /** Sent whole — the array replaces what is there, so [] revokes all. */
+    additionalRoles?: Role[];
     status?: UserStatus;
     clientId?: string | null;
     locationId?: string | null;

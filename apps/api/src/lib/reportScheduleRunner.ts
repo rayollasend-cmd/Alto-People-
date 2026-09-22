@@ -151,7 +151,13 @@ async function resolveRunAsUser(
   return {
     id: u.id,
     email: u.email,
+    // A scheduled report runs as its creator's PRIMARY role, never as
+    // whatever hat they happen to be wearing when the cron fires. A
+    // supervisor's saved report must not narrow to a van run because they
+    // were driving that morning.
     role: u.role,
+    primaryRole: u.role,
+    availableRoles: [u.role],
     status: u.status,
     clientId: u.clientId,
     locationId: u.locationId,

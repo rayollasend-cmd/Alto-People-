@@ -23,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
 import { InstallAppButton } from './InstallAppButton';
+import { RoleSwitcher } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
 
 interface TopbarProps {
@@ -310,6 +311,8 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
                 <User className="h-4 w-4" />
                 Account settings
               </DropdownMenuItem>
+              {/* Only for the few accounts that do two jobs. */}
+              <RoleSwitcher />
               <DropdownMenuItem
                 destructive
                 onSelect={(e) => {

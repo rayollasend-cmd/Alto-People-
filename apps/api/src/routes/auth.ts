@@ -7,6 +7,9 @@ import {
   ChangePasswordInputSchema,
   ConfirmEmailChangeInputSchema,
   HUMAN_ROLES,
+  RoleSchema,
+  effectiveRoleOf,
+  rolesAvailableTo,
   NOTIFICATION_CATEGORIES,
   notificationCategoriesFor,
   PatchNotificationPreferenceInputSchema,
@@ -29,6 +32,7 @@ import {
 } from '../lib/jwt.js';
 import { mfaPolicyAppliesTo } from '@alto-people/shared';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -47,6 +51,7 @@ import {
 } from '../lib/passwords.js';
 import {
   enqueueAudit,
+  recordCriticalAudit,
   recordLoginFailure,
   recordLoginSuccess,
   recordLogout,
@@ -226,6 +231,12 @@ function toAuthUser(u: {
   id: string;
   email: string;
   role: string;
+  // Present on a SessionUser (already resolved) and on a raw Prisma User
+  // (where the hat has to be worked out from the two columns).
+  primaryRole?: string;
+  availableRoles?: string[];
+  additionalRoles?: string[];
+  activeRole?: string | null;
   status: string;
   clientId: string | null;
   locationId?: string | null;
@@ -240,10 +251,26 @@ function toAuthUser(u: {
   mfaEnabled?: boolean;
   mfaEnabledAt?: Date | null;
 }): AuthUser {
+  const primaryRole = (u.primaryRole ?? u.role) as AuthUser['role'];
+  const availableRoles = (u.availableRoles ??
+    rolesAvailableTo({
+      role: primaryRole,
+      additionalRoles: (u.additionalRoles ?? []) as AuthUser['role'][],
+    })) as AuthUser['role'][];
   return {
     id: u.id,
     email: u.email,
-    role: u.role as AuthUser['role'],
+    // The hat. A login response resolves it the same way attachUser does,
+    // so the first render after sign-in already shows the right app.
+    role: (u.primaryRole
+      ? u.role
+      : effectiveRoleOf({
+          role: primaryRole,
+          additionalRoles: (u.additionalRoles ?? []) as AuthUser['role'][],
+          activeRole: (u.activeRole ?? null) as AuthUser['role'] | null,
+        })) as AuthUser['role'],
+    primaryRole,
+    availableRoles,
     status: u.status as AuthUser['status'],
     clientId: u.clientId,
     locationId: u.locationId ?? null,
@@ -1794,6 +1821,89 @@ authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
     });
     invalidateUserCache(req.user!.id);
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/me/active-role { role }
+ *
+ * Put on one of the hats this account has been granted.
+ *
+ * Some people do two jobs — a shift supervisor who also drives an Alto
+ * van. Rather than a second login, the account holds the second role and
+ * wears one at a time. This is the switch.
+ *
+ * Three things make it safe. It can only choose from the roles an
+ * administrator already granted, so it grants nothing. It writes to the
+ * account rather than the session, so the person is one role everywhere
+ * at once and can never be a supervisor in one tab and a driver in the
+ * next. And every switch is audited, because "who did this" has to
+ * survive the answer "well, which hat were they wearing".
+ */
+authRouter.post('/me/active-role', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({ role: RoleSchema })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Pick a role to switch to.', parsed.error.flatten());
+    }
+    const wanted = parsed.data.role;
+    const me = req.user!;
+
+    if (!me.availableRoles.includes(wanted)) {
+      // Not "you may not" but "there is no such hat" — the account was
+      // never granted it, or the grant was revoked while they were signed in.
+      throw new HttpError(
+        403,
+        'role_not_granted',
+        'This account has not been given that role.',
+      );
+    }
+    if (me.role === wanted) {
+      res.json({ user: { ...toAuthUser(me), ...(await scopeNamesFor(me)) } });
+      return;
+    }
+
+    // A supervisor cannot clock out over the top of an unsubmitted SOP,
+    // and must not be able to walk away from one by changing hats either.
+    // Same rule, same sentence, one more door.
+    const openSop = await sopBlockingClockOut(prisma, { id: me.id, role: me.role });
+    if (openSop) {
+      throw new HttpError(409, 'sop_open', sopOpenMessage(openSop), {
+        opsShiftId: openSop.id,
+      });
+    }
+
+    // Null rather than the primary role itself, so a later change of
+    // primary role does not leave a stale pin behind it.
+    await prisma.user.update({
+      where: { id: me.id },
+      data: { activeRole: wanted === me.primaryRole ? null : wanted },
+    });
+    invalidateUserCache(me.id);
+
+    await recordCriticalAudit(
+      {
+        actorUserId: me.id,
+        action: 'auth.role_switched',
+        entityType: 'User',
+        entityId: me.id,
+        metadata: {
+          from: me.role,
+          to: wanted,
+          primaryRole: me.primaryRole,
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.role_switched',
+    );
+
+    const next_ = { ...me, role: wanted };
+    res.json({ user: { ...toAuthUser(next_), ...(await scopeNamesFor(next_)) } });
   } catch (err) {
     next(err);
   }

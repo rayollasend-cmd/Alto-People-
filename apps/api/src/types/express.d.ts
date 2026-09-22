@@ -5,7 +5,18 @@ import type { RequestLogger } from '../lib/logger.js';
 export interface SessionUser {
   id: string;
   email: string;
+  /**
+   * The role this request is authorized against — the hat the account is
+   * WEARING, which for almost everyone is the only one they have. Every
+   * capability check, scope clamp and query filter reads this and nothing
+   * else, so a supervisor driving a van today is a driver to the whole
+   * API for exactly as long as that is true.
+   */
   role: Role;
+  /** The account's home role, unchanged by switching. */
+  primaryRole: Role;
+  /** Every role this account may switch to, primary first. */
+  availableRoles: Role[];
   status: UserStatus;
   clientId: string | null;
   /** CLIENT_PORTAL store scope — one Location under clientId, or null for

@@ -52,6 +52,7 @@ import {
 } from '@/components/ui/DropdownMenu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { openKeyboardShortcuts } from './KeyboardShortcutsDialog';
+import { RoleSwitcher } from './RoleSwitcher';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
   'workforce',
@@ -661,6 +662,8 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
             <User className="h-4 w-4" />
             Account settings
           </DropdownMenuItem>
+          {/* Only for the few accounts that do two jobs. */}
+          <RoleSwitcher />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               {preference === 'system' ? (

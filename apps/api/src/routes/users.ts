@@ -4,6 +4,8 @@ import {
   ROLES,
   ROLE_CAPABILITIES,
   HUMAN_ROLES,
+  MAX_ADDITIONAL_ROLES,
+  additionalRoleRefusal,
   type Role,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -78,6 +80,8 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       id: true,
       email: true,
       role: true,
+      additionalRoles: true,
+      activeRole: true,
       status: true,
       createdAt: true,
       clientId: true,
@@ -124,6 +128,10 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       id: u.id,
       email: u.email,
       role: u.role,
+      // The other jobs this one person does, and the one they are doing
+      // right now — a supervisor who drives is not a second account.
+      additionalRoles: u.additionalRoles,
+      activeRole: u.activeRole,
       status: u.status,
       createdAt: u.createdAt.toISOString(),
       associateId: u.associateId,
@@ -192,6 +200,9 @@ usersRouter.get(
 const PatchInputSchema = z
   .object({
     role: ROLE_FILTER.optional(),
+    // The other roles this account may switch into. Sent whole — the
+    // array replaces what is there, so [] revokes every extra hat.
+    additionalRoles: z.array(ROLE_FILTER).max(MAX_ADDITIONAL_ROLES).optional(),
     status: STATUS_FILTER.optional(),
     // Client scope for client-bounded roles (SHIFT_SUPERVISOR, CLIENT_PORTAL).
     // null clears it; omitted leaves it unchanged.
@@ -207,11 +218,15 @@ const PatchInputSchema = z
   .refine(
     (v) =>
       v.role !== undefined ||
+      v.additionalRoles !== undefined ||
       v.status !== undefined ||
       v.clientId !== undefined ||
       v.locationId !== undefined ||
       v.regionId !== undefined,
-    { message: 'At least one of role, status, clientId, locationId, or regionId is required' },
+    {
+      message:
+        'At least one of role, additionalRoles, status, clientId, locationId, or regionId is required',
+    },
   );
 
 // Roles that must be pinned to a single client to function.
@@ -237,7 +252,17 @@ usersRouter.patch(
 
     const target = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, role: true, status: true, clientId: true, locationId: true, regionId: true, deletedAt: true },
+      select: {
+        id: true,
+        role: true,
+        additionalRoles: true,
+        activeRole: true,
+        status: true,
+        clientId: true,
+        locationId: true,
+        regionId: true,
+        deletedAt: true,
+      },
     });
     if (!target || target.deletedAt) {
       throw new HttpError(404, 'not_found', 'User not found.');
@@ -274,6 +299,32 @@ usersRouter.patch(
           'role_escalation_forbidden',
           `You cannot grant ${input.role}: it holds capabilities you don't have (${escalating.join(', ')}).`,
         );
+      }
+    }
+
+    // A second role is exactly as powerful as the role itself, so it
+    // answers to the same two rules: what may be combined at all, and the
+    // no-escalation rule above. Without the second check, "additional"
+    // would be a quiet way around "role".
+    if (input.additionalRoles) {
+      const primary = input.role ?? target.role;
+      const seen = new Set<Role>();
+      for (const extra of input.additionalRoles) {
+        if (seen.has(extra)) continue;
+        seen.add(extra);
+        const refusal = additionalRoleRefusal(primary, extra);
+        if (refusal) {
+          throw new HttpError(400, 'role_combination_forbidden', refusal);
+        }
+        const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+        const escalating = [...ROLE_CAPABILITIES[extra]].filter((c) => !callerCaps.has(c));
+        if (escalating.length > 0) {
+          throw new HttpError(
+            403,
+            'role_escalation_forbidden',
+            `You cannot grant ${extra}: it holds capabilities you don't have (${escalating.join(', ')}).`,
+          );
+        }
       }
     }
 
@@ -344,6 +395,8 @@ usersRouter.patch(
 
     const data: {
       role?: Role;
+      additionalRoles?: Role[];
+      activeRole?: Role | null;
       status?: 'ACTIVE' | 'DISABLED' | 'INVITED';
       clientId?: string | null;
       locationId?: string | null;
@@ -356,6 +409,24 @@ usersRouter.patch(
       if (target.locationId) data.locationId = null;
     }
     if (input.role && input.role !== target.role) data.role = input.role;
+    // The extra hats. Deduped, and never the primary role twice over.
+    const nextPrimary = input.role ?? target.role;
+    const nextAdditional =
+      input.additionalRoles !== undefined
+        ? [...new Set(input.additionalRoles)].filter((r) => r !== nextPrimary)
+        : target.additionalRoles.filter((r) => r !== nextPrimary);
+    const additionalChanged =
+      nextAdditional.length !== target.additionalRoles.length ||
+      nextAdditional.some((r) => !target.additionalRoles.includes(r));
+    if (additionalChanged) data.additionalRoles = nextAdditional;
+    // A hat that is no longer granted cannot stay on. The session already
+    // fails closed to the primary role, but leave the pin behind and it
+    // would silently come back if the role were ever re-granted.
+    const activeStillGranted =
+      !target.activeRole ||
+      target.activeRole === nextPrimary ||
+      nextAdditional.includes(target.activeRole);
+    if (!activeStillGranted) data.activeRole = null;
     if (input.status && input.status !== target.status) data.status = input.status;
     if (input.clientId !== undefined && input.clientId !== target.clientId) {
       data.clientId = input.clientId;
@@ -373,7 +444,11 @@ usersRouter.patch(
       data.clientId !== undefined ||
       data.locationId !== undefined ||
       data.regionId !== undefined ||
-      data.status === 'DISABLED'
+      data.status === 'DISABLED' ||
+      // Taking a hat away is a demotion and must bite immediately.
+      // Granting one changes nothing about what they can do right now —
+      // they still have to choose it — so it does not cost them a session.
+      data.activeRole === null
     ) {
       data.tokenVersion = { increment: 1 };
     }
@@ -436,6 +511,17 @@ usersRouter.patch(
           userAgent: req.headers['user-agent'] ?? null,
           changes: {
             ...(data.role ? { role: { from: target.role, to: data.role } } : {}),
+            ...(data.additionalRoles
+              ? {
+                  additionalRoles: {
+                    from: target.additionalRoles,
+                    to: data.additionalRoles,
+                  },
+                }
+              : {}),
+            ...(data.activeRole === null && target.activeRole
+              ? { activeRole: { from: target.activeRole, to: null } }
+              : {}),
             ...(data.status ? { status: { from: target.status, to: data.status } } : {}),
             ...(data.clientId !== undefined
               ? { clientId: { from: target.clientId, to: data.clientId } }
