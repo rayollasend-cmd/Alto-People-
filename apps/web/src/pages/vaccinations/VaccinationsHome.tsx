@@ -37,14 +37,9 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 
@@ -232,93 +227,92 @@ export function VaccinationsHome() {
                 description="Add the first vaccination or TB test record."
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead className="hidden lg:table-cell">Dose</TableHead>
-                    <TableHead className="hidden md:table-cell">Administered</TableHead>
-                    <TableHead className="hidden md:table-cell">Expires</TableHead>
-                    <TableHead className="text-right"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {records.map((r) => (
-                    <TableRow key={r.id} className="group">
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          {r.associateName}
-                        </div>
-                        <div className="text-xs text-silver">
-                          {r.associateEmail}
-                        </div>
-                        <div className="text-xs2 text-silver/70 md:hidden">
-                          {fmtDate(parseYmd(r.administeredOn))}
-                          {r.expiresOn
-                            ? ` · exp ${fmtDate(parseYmd(r.expiresOn))}`
-                            : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {r.kind === 'OTHER' && r.customLabel
-                          ? r.customLabel
-                          : KIND_LABELS[r.kind]}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell text-sm text-silver tabular-nums">
-                        {r.doseNumber}
-                        {r.totalDoses ? ` / ${r.totalDoses}` : ''}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-silver tabular-nums">
-                        {fmtDate(parseYmd(r.administeredOn))}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm tabular-nums">
-                        {r.expiresOn ? (
-                          <span
-                            className={
-                              (parseYmd(r.expiresOn)?.getTime() ?? Infinity) <
-                              Date.now()
-                                ? 'text-alert'
-                                : 'text-silver'
-                            }
-                          >
-                            {fmtDate(parseYmd(r.expiresOn))}
-                          </span>
-                        ) : (
-                          <span className="text-silver">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {canManage && (
-                          <button
-                            aria-label="Delete vaccination record"
-                            disabled={actionKey !== null}
-                            onClick={async () => {
-                              if (!(await confirm({ title: 'Delete this record?', destructive: true }))) return;
-                              await act(`del-${r.id}`, async () => {
-                                try {
-                                  await deleteVaccination(r.id);
-                                  toast.success('Record deleted.');
-                                  refresh();
-                                } catch (err) {
-                                  toast.error(
-                                    err instanceof ApiError
-                                      ? err.message
-                                      : 'Failed.',
-                                  );
-                                }
-                              });
-                            }}
-                            className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert disabled:opacity-40"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<(typeof records)[number]>
+                id="vaccinations"
+                caption="Vaccination and TB test records"
+                rows={records}
+                rowKey={(r) => r.id}
+                search={{ placeholder: 'Associate, kind…' }}
+                urlState={false}
+                exportCsv={{ filename: 'vaccinations' }}
+                columns={[
+                  { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'email', header: 'Email', accessor: (r) => r.associateEmail, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
+                  { key: 'kind', header: 'Kind', accessor: (r) => (r.kind === 'OTHER' && r.customLabel ? r.customLabel : KIND_LABELS[r.kind]), sortable: true, cardMeta: true, className: 'text-sm' },
+                  {
+                    key: 'dose',
+                    header: 'Dose',
+                    accessor: (r) => r.doseNumber,
+                    csv: (r) => `${r.doseNumber}${r.totalDoses ? ` / ${r.totalDoses}` : ''}`,
+                    sortable: true,
+                    searchable: false,
+                    defaultHidden: true,
+                    className: 'text-sm text-silver tabular-nums',
+                    cell: (r) => `${r.doseNumber}${r.totalDoses ? ` / ${r.totalDoses}` : ''}`,
+                  },
+                  {
+                    key: 'administered',
+                    header: 'Administered',
+                    accessor: (r) => r.administeredOn,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-sm text-silver tabular-nums whitespace-nowrap',
+                    cell: (r) => fmtDate(parseYmd(r.administeredOn)),
+                  },
+                  {
+                    key: 'expires',
+                    header: 'Expires',
+                    accessor: (r) => r.expiresOn,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-sm tabular-nums whitespace-nowrap',
+                    cell: (r) =>
+                      r.expiresOn ? (
+                        <span className={(parseYmd(r.expiresOn)?.getTime() ?? Infinity) < Date.now() ? 'text-alert' : 'text-silver'}>
+                          {fmtDate(parseYmd(r.expiresOn))}
+                        </span>
+                      ) : (
+                        <span className="text-silver">—</span>
+                      ),
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          cell: (r: (typeof records)[number]) => (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="Delete vaccination record"
+                              disabled={actionKey !== null}
+                              onClick={async () => {
+                                if (!(await confirm({ title: 'Delete this record?', destructive: true }))) return;
+                                await act(`del-${r.id}`, async () => {
+                                  try {
+                                    await deleteVaccination(r.id);
+                                    toast.success('Record deleted.');
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  }
+                                });
+                              }}
+                              className="text-silver hover:text-alert"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
             )}
           </CardContent>
         </Card>
@@ -352,47 +346,43 @@ export function VaccinationsHome() {
                 description="Everyone's records are current for the next 60 days."
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead className="hidden md:table-cell">Expires</TableHead>
-                    <TableHead>Days</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {expiring.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-medium text-white">
-                        {r.associateName}
-                        <div className="text-xs2 text-silver/70 md:hidden tabular-nums">
-                          {fmtDate(parseYmd(r.expiresOn))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {r.kind === 'OTHER' && r.customLabel
-                          ? r.customLabel
-                          : KIND_LABELS[r.kind]}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-silver tabular-nums">
-                        {fmtDate(parseYmd(r.expiresOn))}
-                      </TableCell>
-                      <TableCell>
-                        {r.overdue ? (
-                          <Badge variant="destructive">
-                            {Math.abs(r.daysUntil)}d overdue
-                          </Badge>
-                        ) : r.daysUntil <= 14 ? (
-                          <Badge variant="pending">{r.daysUntil}d</Badge>
-                        ) : (
-                          <Badge variant="info">{r.daysUntil}d</Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<(typeof expiring)[number]>
+                id="vaccinations-expiring"
+                caption="Vaccinations expiring soon"
+                rows={expiring}
+                rowKey={(r) => r.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'vaccinations-expiring' }}
+                columns={[
+                  { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'kind', header: 'Kind', accessor: (r) => (r.kind === 'OTHER' && r.customLabel ? r.customLabel : KIND_LABELS[r.kind]), sortable: true, cardMeta: true, className: 'text-sm' },
+                  {
+                    key: 'expires',
+                    header: 'Expires',
+                    accessor: (r) => r.expiresOn,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-sm text-silver tabular-nums whitespace-nowrap',
+                    cell: (r) => fmtDate(parseYmd(r.expiresOn)),
+                  },
+                  {
+                    key: 'days',
+                    header: 'Days',
+                    accessor: (r) => r.daysUntil,
+                    sortable: true,
+                    searchable: false,
+                    cell: (r) =>
+                      r.overdue ? (
+                        <Badge variant="destructive">{Math.abs(r.daysUntil)}d overdue</Badge>
+                      ) : r.daysUntil <= 14 ? (
+                        <Badge variant="pending">{r.daysUntil}d</Badge>
+                      ) : (
+                        <Badge variant="info">{r.daysUntil}d</Badge>
+                      ),
+                  },
+                ]}
+              />
             )}
           </CardContent>
         </Card>

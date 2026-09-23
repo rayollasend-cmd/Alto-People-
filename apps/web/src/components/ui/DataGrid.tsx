@@ -125,6 +125,8 @@ export interface DataGridProps<T> {
   onRowClick?: (row: T) => void;
   /** Label for the row's click affordance, for screen readers. */
   rowActionLabel?: (row: T) => string;
+  /** Extra classes on a row (an overdue tint, a highlighted match). */
+  rowClassName?: (row: T) => string | undefined;
   /** Rows beyond this count are virtualized. Default 150. */
   virtualizeAfter?: number;
   rowHeight?: number;
@@ -255,6 +257,7 @@ function GridCore<T>({
   selectable,
   onRowClick,
   rowActionLabel,
+  rowClassName,
   virtualizeAfter = 150,
   rowHeight = 48,
   empty,
@@ -711,7 +714,7 @@ function GridCore<T>({
                       data-state={isSelected ? 'selected' : undefined}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
                       aria-label={onRowClick ? rowActionLabel?.(row) : undefined}
-                      className={cn(onRowClick && 'cursor-pointer')}
+                      className={cn(onRowClick && 'cursor-pointer', rowClassName?.(row))}
                       style={
                         v
                           ? {

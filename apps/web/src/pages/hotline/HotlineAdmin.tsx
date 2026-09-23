@@ -28,14 +28,9 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { useAuth } from '@/lib/auth';
@@ -265,67 +260,62 @@ export function HotlineAdmin() {
               description="Nothing matches this filter."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tracking code</TableHead>
-                  <TableHead className="hidden md:table-cell">Category</TableHead>
-                  <TableHead>Subject</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>SLA</TableHead>
-                  <TableHead className="hidden md:table-cell">Assignee</TableHead>
-                  <TableHead className="hidden lg:table-cell">Filed</TableHead>
-                  <TableHead className="hidden lg:table-cell text-right">Replies</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow
-                    key={r.id}
-                    className={`cursor-pointer ${r.sla.isOverdue ? 'bg-alert/20' : ''}`}
-                    onClick={() => setOpenId(r.id)}
-                  >
-                    <TableCell className="font-mono text-xs">
-                      {r.trackingCode}
-                    </TableCell>
-                    <TableCell className="text-sm hidden md:table-cell">
-                      {CATEGORY_LABELS[r.category]}
-                    </TableCell>
-                    <TableCell className="text-sm font-medium text-white">
-                      {r.subject}
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {CATEGORY_LABELS[r.category]}
-                      </div>
-                      <div className="text-xs2 text-silver/70 lg:hidden">
-                        {fmtDate(r.createdAt)}
-                        {r.updateCount > 0 ? ` · ${r.updateCount} repl.` : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusTone(r.status, { overrides: HOTLINE_STATUS_TONES })}>
-                        {STATUS_LABELS[r.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <SlaChip sla={r.sla} />
-                    </TableCell>
-                    <TableCell className="text-xs text-silver hidden md:table-cell max-w-40">
-                      <div className="truncate">
-                        {r.assignedToEmail ?? (
-                          <span className="text-silver/50">Unassigned</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-silver hidden lg:table-cell">
-                      {fmtDate(r.createdAt)}
-                    </TableCell>
-                    <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
-                      {r.updateCount}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof rows)[number]>
+              id="hotline"
+              caption="Hotline reports"
+              rows={rows}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Tracking code, subject, assignee…' }}
+              urlState={false}
+              exportCsv={{ filename: 'hotline-reports' }}
+              onRowClick={(r) => setOpenId(r.id)}
+              rowActionLabel={(r) => `Open report ${r.trackingCode}`}
+              // An overdue report is tinted so it cannot be scrolled past.
+              rowClassName={(r) => (r.sla.isOverdue ? 'bg-alert/20' : undefined)}
+              columns={[
+                { key: 'code', header: 'Tracking code', accessor: (r) => r.trackingCode, sortable: true, primary: true, className: 'font-mono text-xs' },
+                { key: 'category', header: 'Category', accessor: (r) => CATEGORY_LABELS[r.category], sortable: true, cardMeta: true, className: 'text-sm' },
+                { key: 'subject', header: 'Subject', accessor: (r) => r.subject, sortable: true, cardMeta: true, className: 'text-sm font-medium text-white' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (r) => STATUS_LABELS[r.status],
+                  sortable: true,
+                  cell: (r) => (
+                    <Badge variant={statusTone(r.status, { overrides: HOTLINE_STATUS_TONES })}>
+                      {STATUS_LABELS[r.status]}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: 'sla',
+                  header: 'SLA',
+                  accessor: (r) => (r.sla.isOverdue ? 0 : 1),
+                  csv: (r) => (r.sla.isOverdue ? 'overdue' : 'on time'),
+                  sortable: true,
+                  searchable: false,
+                  cell: (r) => <SlaChip sla={r.sla} />,
+                },
+                {
+                  key: 'assignee',
+                  header: 'Assignee',
+                  accessor: (r) => r.assignedToEmail,
+                  sortable: true,
+                  className: 'text-xs text-silver max-w-40 truncate',
+                  cell: (r) => r.assignedToEmail ?? <span className="text-silver/50">Unassigned</span>,
+                },
+                {
+                  key: 'filed',
+                  header: 'Filed',
+                  accessor: (r) => r.createdAt,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-xs text-silver whitespace-nowrap',
+                  cell: (r) => fmtDate(r.createdAt),
+                },
+                { key: 'replies', header: 'Replies', accessor: (r) => r.updateCount, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums' },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

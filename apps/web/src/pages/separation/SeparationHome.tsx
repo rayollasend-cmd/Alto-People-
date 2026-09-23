@@ -43,14 +43,9 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 
 // Deliberate departure from the shared vocabulary: an IN_PROGRESS offboarding
@@ -289,68 +284,76 @@ export function SeparationHome() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Reason</TableHead>
-                  <TableHead className="hidden md:table-cell">Last day</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Exit interview</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((s) => (
-                  <TableRow
-                    key={s.id}
-                    className="cursor-pointer"
-                    onClick={() => setOpenRow(s)}
-                  >
-                    <TableCell>
-                      <div className="font-medium text-white">
-                        <AssociateLink associateId={s.associateId}>
-                          {s.associateName}
-                        </AssociateLink>
-                      </div>
-                      <div className="text-xs text-silver">{s.associateEmail}</div>
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {fmtDate(parseYmd(s.lastDayWorked))} ·{' '}
-                        {REASON_LABELS[s.reason]}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-silver">
-                      {REASON_LABELS[s.reason]}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-silver">
-                      {fmtDate(parseYmd(s.lastDayWorked))}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusTone(s.status, { overrides: SEPARATION_STATUS_TONES })}>
-                        {STATUS_LABELS[s.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {s.exitInterviewCompletedAt ? (
-                        <Badge variant="success">
-                          Done {s.rating !== null ? `· ${s.rating}/10` : ''}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Pending</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className="text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Button size="sm" variant="ghost" onClick={() => setOpenRow(s)}>
-                        Open
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof rows)[number]>
+              id="separations"
+              caption="Separations"
+              rows={rows}
+              rowKey={(s) => s.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'separations' }}
+              onRowClick={(s) => setOpenRow(s)}
+              rowActionLabel={(s) => `Open the separation for ${s.associateName}`}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (s) => s.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (s) => <AssociateLink associateId={s.associateId}>{s.associateName}</AssociateLink>,
+                },
+                { key: 'email', header: 'Email', accessor: (s) => s.associateEmail, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
+                { key: 'reason', header: 'Reason', accessor: (s) => REASON_LABELS[s.reason], sortable: true, cardMeta: true, className: 'text-sm text-silver' },
+                {
+                  key: 'lastDay',
+                  header: 'Last day',
+                  accessor: (s) => s.lastDayWorked,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-sm text-silver whitespace-nowrap',
+                  cell: (s) => fmtDate(parseYmd(s.lastDayWorked)),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (s) => STATUS_LABELS[s.status],
+                  sortable: true,
+                  cell: (s) => (
+                    <Badge variant={statusTone(s.status, { overrides: SEPARATION_STATUS_TONES })}>
+                      {STATUS_LABELS[s.status]}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: 'exitInterview',
+                  header: 'Exit interview',
+                  accessor: (s) => (s.exitInterviewCompletedAt ? `done${s.rating !== null ? ` ${s.rating}/10` : ''}` : 'pending'),
+                  sortable: true,
+                  cell: (s) =>
+                    s.exitInterviewCompletedAt ? (
+                      <Badge variant="success">Done {s.rating !== null ? `· ${s.rating}/10` : ''}</Badge>
+                    ) : (
+                      <Badge variant="outline">Pending</Badge>
+                    ),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (s) => (
+                    <Button size="sm" variant="ghost" onClick={() => setOpenRow(s)}>
+                      Open
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

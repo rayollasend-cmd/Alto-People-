@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -116,10 +117,6 @@ export function ClientsHome() {
     }
   };
 
-  const [items, setItems] = useState<ClientListItem[] | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   // Filter + search live in the URL (?status=&q=, replace-mode) so
   // opening a client and coming Back restores the same slice of the list.
@@ -139,44 +136,33 @@ export function ClientsHome() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listClients({
+  // The same cursor-paged shape as the audit log, on the same query: the
+  // pages are one cache entry keyed by the filters, Back restores the
+  // scrolled list instantly, and "Load more" appends a page.
+  const clientsQuery = useInfiniteQuery({
+    queryKey: ['clients', 'list', statusFilter, appliedQuery],
+    queryFn: ({ pageParam }) =>
+      listClients({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
         q: appliedQuery,
-      });
-      setItems(res.clients);
-      setNextCursor(res.nextCursor ?? null);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [statusFilter, appliedQuery]);
-
-  const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const res = await listClients({
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
-        q: appliedQuery,
-        cursor: nextCursor,
-      });
-      setItems((prev) => [...(prev ?? []), ...res.clients]);
-      setNextCursor(res.nextCursor ?? null);
-    } catch (err) {
-      // The "Load more" button stays visible, so pressing it again retries.
-      toast.error('Could not load more clients.', {
-        description: err instanceof ApiError ? err.message : 'Something went wrong.',
-      });
-    } finally {
-      setLoadingMore(false);
-    }
+        ...(pageParam ? { cursor: pageParam } : {}),
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    placeholderData: (prev) => prev,
+  });
+  const items = clientsQuery.data ? clientsQuery.data.pages.flatMap((pg) => pg.clients) : null;
+  const nextCursor = clientsQuery.hasNextPage ? 'more' : null;
+  const loadingMore = clientsQuery.isFetchingNextPage;
+  const error = clientsQuery.error
+    ? clientsQuery.error instanceof ApiError
+      ? clientsQuery.error.message
+      : 'Failed to load.'
+    : null;
+  const refresh = () => clientsQuery.refetch();
+  const loadMore = () => {
+    if (clientsQuery.hasNextPage && !clientsQuery.isFetchingNextPage) void clientsQuery.fetchNextPage();
   };
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Surface "?qbo_error=..." set by the QuickBooks OAuth callback when state
   // validation failed before we knew which client to bounce to. Clear the
