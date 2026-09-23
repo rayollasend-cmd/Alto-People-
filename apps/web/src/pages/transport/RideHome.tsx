@@ -1277,6 +1277,11 @@ export interface BookPrefill {
  * them it is just a string we once failed to place, and pre-filling it
  * would hand the rider back the very pickup the driver couldn't find —
  * so it falls through and they pick again, which now resolves it.
+ *
+ * Someone who has never ridden starts with nothing chosen. This used to
+ * fall back to the company's first stop, alphabetically — a pickup they
+ * never picked, shown ticked as if they had, and booked from if they did
+ * not notice. Every stop is still one tap away in the picker.
  */
 function initialPickup(data: MyTransport, initial: BookPrefill): Pickup | null {
   if (initial.pickup) return initial.pickup;
@@ -1292,10 +1297,9 @@ function initialPickup(data: MyTransport, initial: BookPrefill): Pickup | null {
   if (d?.kind === 'address' && d.lat !== null && d.lng !== null) {
     return { kind: 'address', address: d.address, lat: d.lat, lng: d.lng, precision: 'exact' };
   }
+  // A place they saved is one they chose.
   const p = data.places[0];
   if (p) return { kind: 'place', id: p.id, label: p.label, address: p.address };
-  const st = data.stops[0];
-  if (st) return { kind: 'stop', id: st.id, name: st.name };
   return null;
 }
 

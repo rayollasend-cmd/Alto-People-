@@ -202,6 +202,9 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     await userEvent.click(within(dialog).getByRole('radio', { name: 'Both ways' }));
     await userEvent.click(within(dialog).getByRole('button', { pressed: false, name: /–/ }));
     expect(within(dialog).getByText('$10.00, taken from your pay')).toBeInTheDocument();
+    // Never ridden, so the pickup is theirs to pick — the stop is one tap.
+    await userEvent.click(within(dialog).getByRole('combobox'));
+    await userEvent.click(within(dialog).getByRole('option', { name: /Seaside Housing/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Request both seats' }));
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides', {
@@ -707,6 +710,20 @@ describe('the Ride tab, one tap at a time', () => {
     // what was chosen by name. Repeating a ride brings that choice back.
     expect(within(dialog).getByText('Seaside Housing')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Change' })).toBeInTheDocument();
+  });
+
+  it('someone who has never ridden starts with no pickup chosen — not the first stop', async () => {
+    // It used to tick the company's first stop, alphabetically: a pickup
+    // they never picked, booked from if they didn't notice.
+    routes((path) => (path === '/transport/me' ? me({ places: [], defaultPickup: null }) : undefined));
+    renderAs('ASSOCIATE', <RideHome />);
+    await userEvent.click((await screen.findAllByRole('button', { name: /Request a seat/i }))[0]!);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('combobox')).toHaveValue('');
+    expect(within(dialog).queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
+    // The stops are all still there, one tap away.
+    await userEvent.click(within(dialog).getByRole('combobox'));
+    expect(within(dialog).getByRole('option', { name: /Seaside Housing/ })).toBeInTheDocument();
   });
 
   it('a pickup must be picked — typing a street name is not a pickup', async () => {
