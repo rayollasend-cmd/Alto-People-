@@ -166,7 +166,10 @@ describe('booking by shift', () => {
     const shifts = within(dialog).getByRole('radiogroup', { name: 'Which shift?' });
     const morning = within(shifts).getByRole('radio', { name: /Morning/ });
     expect(await within(morning).findByText('Full — waitlist #3')).toBeInTheDocument();
-    expect(within(shifts).getByRole('radio', { name: /Swing/ })).toHaveTextContent('Open — a driver will take it');
+    // A shift with nothing to report is its name and hours, one line. Its
+    // "Open — a driver will take it", repeated on every shift and every
+    // leg, filled a phone and pushed the Book button off the screen.
+    expect(within(shifts).getByRole('radio', { name: /Swing/ })).not.toHaveTextContent(/driver will take it/);
     // Time inputs are for "Other time" only.
     expect(within(dialog).queryByLabelText(/Be at work by/)).not.toBeInTheDocument();
 

@@ -1650,7 +1650,6 @@ export function BookRideDialog({
               mode={mode}
               picked={windowLabel}
               tripOf={tripOf}
-              loading={trips.isLoading}
               onPick={(label) => {
                 setMode('shift');
                 setWindowLabel(label);
@@ -1733,8 +1732,10 @@ export function BookRideDialog({
         {/* One bar, price then button, on every size. DialogFooter stacks
             column-REVERSE on phones, which put the gold button above the
             price it charges and left it floating mid-sheet rather than in
-            the bottom corner a thumb rests on. */}
-        <DialogFooter className="flex-row items-center justify-between gap-3 sm:justify-between">
+            the bottom corner a thumb rests on. Sticky, because the form is
+            taller than a phone: the button sat a whole screen below where
+            the sheet opens, and associates could not find it. */}
+        <DialogFooter sticky className="flex-row items-center justify-between gap-3 sm:justify-between">
           <span className="min-w-0 text-sm text-silver tabular-nums">{t('ride.total', { amount: cents(total) })}</span>
           <Button
             className="shrink-0"
@@ -1772,7 +1773,6 @@ function ShiftPicker({
   mode,
   picked,
   tripOf,
-  loading,
   onPick,
   onOther,
 }: {
@@ -1781,23 +1781,27 @@ function ShiftPicker({
   mode: 'shift' | 'time';
   picked: string | null;
   tripOf: (w: string, d: RideDirection) => ShiftTrip | undefined;
-  loading: boolean;
   onPick: (label: string) => void;
   onOther: () => void;
 }) {
   const { t } = useI18n();
   const dirs: RideDirection[] = way === 'BOTH' ? ['TO_WORK', 'FROM_WORK'] : [way];
+  // Only what differs between shifts earns a line. "Open — a driver will
+  // take it" is true of nearly every shift, and repeated per leg it turned
+  // five shifts into a screen and a half of the same sentence, pushing the
+  // pickup and the button out of reach. Seats left, a full van or a
+  // too-late shift are what someone picking between them needs to see.
   const line = (w: string, d: RideDirection) => {
     const trip = tripOf(w, d);
+    if (!trip) return null;
     const lead = way === 'BOTH' ? `${d === 'TO_WORK' ? t('ride.legThere') : t('ride.legHome')} · ` : '';
-    if (!trip) return { text: loading ? '…' : '', tone: 'text-silver/60' };
     if (!trip.bookable) return { text: lead + t('ride.seatTooSoon'), tone: 'text-silver/60' };
     if (trip.full) return { text: lead + t('ride.seatFull', { position: trip.waiting + 1 }), tone: 'text-warning' };
     if (trip.seats) {
       const left = trip.seats.capacity - trip.seats.taken;
       return { text: lead + (left === 1 ? t('ride.seatLeftOne') : t('ride.seatsLeft', { count: left })), tone: 'text-success' };
     }
-    return { text: lead + t('ride.seatOpen'), tone: 'text-silver' };
+    return null;
   };
   return (
     <div>
@@ -1813,7 +1817,7 @@ function ShiftPicker({
               aria-checked={on}
               onClick={() => onPick(w.label)}
               className={cn(
-                'rounded-lg border p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
+                'rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
                 on ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
               )}
             >
@@ -1823,11 +1827,11 @@ function ShiftPicker({
               </span>
               {dirs.map((d) => {
                 const l = line(w.label, d);
-                return (
+                return l ? (
                   <span key={d} className={cn('mt-0.5 block text-xs tabular-nums', l.tone)}>
                     {l.text}
                   </span>
-                );
+                ) : null;
               })}
             </button>
           );
@@ -1838,7 +1842,7 @@ function ShiftPicker({
           aria-checked={mode === 'time'}
           onClick={onOther}
           className={cn(
-            'rounded-lg border border-dashed p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
+            'rounded-lg border border-dashed px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11',
             mode === 'time' ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
           )}
         >

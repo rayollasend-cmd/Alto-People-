@@ -293,11 +293,33 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
   );
 }
 
-export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+export function DialogFooter({
+  className,
+  sticky = false,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & {
+  /**
+   * Pin the footer to the bottom of the sheet while the form scrolls
+   * under it. For long forms: without it the action sits at the end of
+   * the content, a screen or more below where the sheet opens, and on a
+   * phone that reads as a form with no button. The negative margins
+   * cancel the sheet's own padding so the bar spans edge to edge, and the
+   * negative `bottom` undoes the inset a sticky box takes from its
+   * scroller's padding — at bottom-0 it stopped a padding's height short
+   * of the edge and the form showed through underneath it. It carries the
+   * safe-area inset itself.
+   */
+  sticky?: boolean;
+}) {
   return (
     <div
       className={cn(
         'flex flex-col-reverse sm:flex-row sm:justify-end sm:gap-2 gap-2 pt-2',
+        sticky && [
+          'sticky z-10 -mx-6 border-t border-navy-secondary bg-navy px-6 pt-3',
+          '-bottom-[max(1.5rem,env(safe-area-inset-bottom))] -mb-[max(1.5rem,env(safe-area-inset-bottom))] pb-[max(1.5rem,env(safe-area-inset-bottom))]',
+          'sm:-bottom-6 sm:-mb-6 sm:pb-6',
+        ],
         className
       )}
       {...props}
