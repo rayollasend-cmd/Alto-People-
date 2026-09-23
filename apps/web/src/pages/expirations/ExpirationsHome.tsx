@@ -30,19 +30,13 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   ErrorBanner,
   Input,
   PageHeader,
   SegmentedControl,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
@@ -424,20 +418,96 @@ function Bucket({
   onRenew: (item: ExpirationItem) => void;
   selection: Selection | null;
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const truncated = !showAll && items.length > 100;
-  const shown = truncated ? items.slice(0, 100) : items;
-  // Header checkbox covers exactly the rows on screen — never rows hidden
-  // behind the 100-row truncation.
-  const shownIds = shown.map((i) => i.id);
-  const allShown =
-    selection !== null &&
-    shownIds.length > 0 &&
-    shownIds.every((id) => selection.isSelected(id));
-  const someShown =
-    selection !== null &&
-    !allShown &&
-    shownIds.some((id) => selection.isSelected(id));
+  // The bucket keeps nothing of its own: the page owns the selection
+  // (one choice spans every bucket, and the bulk renew reads it), the grid
+  // draws the boxes, and the old 100-row truncation with its "Show all"
+  // button is gone — the grid virtualizes a long bucket instead of hiding
+  // most of it.
+  const columns: GridColumn<ExpirationItem>[] = [
+    {
+      key: 'associate',
+      header: 'Associate',
+      accessor: (i) => i.associateName,
+      sortable: true,
+      primary: true,
+      className: 'font-medium text-white',
+      cell: (i) => <AssociateLink associateId={i.associateId}>{i.associateName}</AssociateLink>,
+    },
+    {
+      key: 'email',
+      header: 'Email',
+      accessor: (i) => i.associateEmail,
+      sortable: true,
+      cardMeta: true,
+      className: 'text-silver text-xs',
+    },
+    {
+      key: 'qualification',
+      header: 'Qualification',
+      accessor: (i) => i.qualificationName,
+      sortable: true,
+      cardMeta: true,
+      cell: (i) => (
+        <div className="flex items-center gap-2">
+          {i.qualificationName}
+          {i.isCert && <Badge variant="accent">cert</Badge>}
+        </div>
+      ),
+    },
+    {
+      key: 'code',
+      header: 'Code',
+      accessor: (i) => i.qualificationCode,
+      sortable: true,
+      defaultHidden: true,
+      className: 'font-mono text-xs',
+    },
+    {
+      key: 'expires',
+      header: 'Expires',
+      accessor: (i) => i.expiresAt,
+      sortable: true,
+      searchable: false,
+      className: 'whitespace-nowrap',
+      cell: (i) => fmtDate(i.expiresAt),
+    },
+    {
+      key: 'in',
+      header: 'In',
+      accessor: (i) => i.daysUntilExpiry,
+      csv: (i) => (i.daysUntilExpiry < 0 ? `${-i.daysUntilExpiry}d ago` : `${i.daysUntilExpiry}d`),
+      sortable: true,
+      searchable: false,
+      className: 'whitespace-nowrap tabular-nums',
+      cell: (i) =>
+        i.daysUntilExpiry < 0 ? (
+          <span className="text-alert">{-i.daysUntilExpiry}d ago</span>
+        ) : i.daysUntilExpiry < 30 ? (
+          <span className="text-warning">{i.daysUntilExpiry}d</span>
+        ) : (
+          <span className="text-silver">{i.daysUntilExpiry}d</span>
+        ),
+    },
+    ...(canRenew
+      ? [
+          {
+            key: 'action',
+            header: 'Action',
+            accessor: () => null,
+            searchable: false,
+            csv: () => '',
+            align: 'right' as const,
+            stopRowClick: true,
+            cell: (i: ExpirationItem) => (
+              <Button size="sm" variant="ghost" onClick={() => onRenew(i)}>
+                Renew
+              </Button>
+            ),
+          } satisfies GridColumn<ExpirationItem>,
+        ]
+      : []),
+  ];
+
   return (
     <Card>
       <CardContent className="p-0">
@@ -448,112 +518,26 @@ function Bucket({
           </div>
           <Badge variant="outline">{count}</Badge>
         </div>
-        {items.length === 0 ? (
-          <EmptyState icon={Clock} title="" description={emptyHint} />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {selection && (
-                  <TableHead className="w-8">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select all in ${title}`}
-                      checked={allShown}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someShown;
-                      }}
-                      onChange={() => selection.setMany(shownIds, !allShown)}
-                    />
-                  </TableHead>
-                )}
-                <TableHead>Associate</TableHead>
-                <TableHead className="hidden md:table-cell">Email</TableHead>
-                <TableHead>Qualification</TableHead>
-                <TableHead className="hidden lg:table-cell">Code</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>In</TableHead>
-                {canRenew && <TableHead className="text-right">Action</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {shown.map((i) => (
-                <TableRow
-                  key={i.id}
-                  className={canRenew ? 'cursor-pointer' : ''}
-                  onClick={canRenew ? () => onRenew(i) : undefined}
-                >
-                  {selection && (
-                    <TableCell
-                      className="w-8"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${i.qualificationName} for ${i.associateName}`}
-                        checked={selection.isSelected(i.id)}
-                        onChange={() => selection.toggle(i.id)}
-                      />
-                    </TableCell>
-                  )}
-                  <TableCell className="font-medium text-white">
-                    <AssociateLink associateId={i.associateId}>{i.associateName}</AssociateLink>
-                    <div className="text-xs2 text-silver/70 md:hidden">{i.associateEmail}</div>
-                  </TableCell>
-                  <TableCell className="text-silver text-xs hidden md:table-cell">{i.associateEmail}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {i.qualificationName}
-                      {i.isCert && <Badge variant="accent">cert</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs hidden lg:table-cell">{i.qualificationCode}</TableCell>
-                  <TableCell>{fmtDate(i.expiresAt)}</TableCell>
-                  <TableCell>
-                    {i.daysUntilExpiry < 0 ? (
-                      <span className="text-alert">{-i.daysUntilExpiry}d ago</span>
-                    ) : i.daysUntilExpiry < 30 ? (
-                      <span className="text-warning">{i.daysUntilExpiry}d</span>
-                    ) : (
-                      <span className="text-silver">{i.daysUntilExpiry}d</span>
-                    )}
-                  </TableCell>
-                  {canRenew && (
-                    <TableCell
-                      className="text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onRenew(i)}
-                      >
-                        Renew
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        {items.length > 100 && (
-          <div className="px-4 py-2 flex items-center gap-3 text-xs text-silver border-t border-navy-secondary">
-            <span>
-              {truncated
-                ? `Showing 100 of ${items.length}`
-                : `Showing all ${items.length}`}
-            </span>
-            <Button
-              type="button"
-              size="xs"
-              variant="secondary"
-              onClick={() => setShowAll((v) => !v)}
-            >
-              {truncated ? 'Show all' : 'Show first 100'}
-            </Button>
-          </div>
-        )}
+        <div className="px-3 pb-3">
+          <DataGrid<ExpirationItem>
+            id={`expirations-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+            caption={`${title} — expiring qualifications`}
+            rows={items}
+            columns={columns}
+            rowKey={(i) => i.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: `expirations-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` }}
+            onRowClick={canRenew ? onRenew : undefined}
+            rowActionLabel={(i) => `Renew ${i.qualificationName} for ${i.associateName}`}
+            selectable={
+              selection
+                ? { selection: { selected: selection.selected, onChange: selection.replace } }
+                : undefined
+            }
+            empty={{ icon: Clock, title: emptyHint }}
+          />
+        </div>
       </CardContent>
     </Card>
   );

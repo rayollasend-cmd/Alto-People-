@@ -195,4 +195,26 @@ describe('DataGrid — controlled selection', () => {
     await userEvent.click(within(table).getByRole('checkbox', { name: 'Select every row' }));
     expect(onChange).toHaveBeenLastCalledWith(new Set(['a', 'b', 'c']));
   });
+
+  it('adds and removes only its own rows from a choice that spans other grids', async () => {
+    // 'z' belongs to some other grid on the page (another expiry bucket).
+    const onChange = vi.fn();
+    renderGrid({
+      selectable: { selection: { selected: new Set(['z']), onChange } },
+    });
+    const table = screen.getByRole('table', { name: 'Test rows' });
+    await userEvent.click(within(table).getByRole('checkbox', { name: 'Select every row' }));
+    expect(onChange).toHaveBeenLastCalledWith(new Set(['z', 'a', 'b', 'c']));
+
+    onChange.mockClear();
+    const { unmount } = renderGrid({
+      selectable: { selection: { selected: new Set(['z', 'a', 'b', 'c']), onChange } },
+    });
+    const tables = screen.getAllByRole('table', { name: 'Test rows' });
+    await userEvent.click(
+      within(tables[tables.length - 1]!).getByRole('checkbox', { name: 'Clear selection' }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith(new Set(['z']));
+    unmount();
+  });
 });

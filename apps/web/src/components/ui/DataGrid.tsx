@@ -336,8 +336,17 @@ function GridCore<T>({
   };
   const selectableRows = selectable ? sorted.filter((r) => !selectable.disabled?.(r)) : [];
   const allSelected = selectableRows.length > 0 && selectableRows.every((r) => selected.has(rowKey(r)));
+  // Union and difference, never replace: a controlled selection may span
+  // several grids (renew across every expiry bucket), and this grid's
+  // header box must only ever add or remove ITS rows from that choice.
   const toggleAll = () =>
-    setSelected(allSelected ? new Set() : new Set(selectableRows.map(rowKey)));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const mine = selectableRows.map(rowKey);
+      if (allSelected) for (const k of mine) next.delete(k);
+      else for (const k of mine) next.add(k);
+      return next;
+    });
   const toggleOne = (key: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
