@@ -48,6 +48,7 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 
 const TRIGGERS: WorkflowTrigger[] = [
@@ -257,64 +258,39 @@ export function WorkflowsHome() {
                   No workflows match the current search / filter.
                 </p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Trigger</TableHead>
-                      <TableHead className="hidden md:table-cell">Actions</TableHead>
-                      <TableHead>Active</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">Runs</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredDefs.map((d) => (
-                      <TableRow
-                        key={d.id}
-                        className="group cursor-pointer"
-                        onClick={(e) => {
-                          const t = e.target as HTMLElement;
-                          if (t.closest('button, a, input, label, [data-no-row-click]')) return;
-                          setDrawerTarget(d);
-                        }}
-                      >
-                        <TableCell className="font-medium">
-                          {d.name}
-                          <div className="md:hidden text-xs2 text-silver/70 truncate">
-                            {d.actions.length} action{d.actions.length === 1 ? '' : 's'} · {d.runCount} run{d.runCount === 1 ? '' : 's'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{TRIGGER_LABELS[d.trigger]}</Badge>
-                        </TableCell>
-                        <TableCell className="text-silver hidden md:table-cell">{d.actions.length}</TableCell>
-                        <TableCell>
-                          {canManage ? (
-                            <label
-                              data-no-row-click
-                              className="inline-flex items-center gap-2 text-xs text-silver cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={d.isActive}
-                                onChange={() => toggleActive(d)}
-                                aria-label={`Toggle "${d.name}" active`}
-                              />
-                              {d.isActive ? 'Active' : 'Disabled'}
-                            </label>
-                          ) : (
-                            <Badge variant={d.isActive ? 'success' : 'default'}>
-                              {d.isActive ? 'Active' : 'Disabled'}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums hidden md:table-cell">
-                          {d.runCount}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<(typeof filteredDefs)[number]>
+                  id="workflow-definitions"
+                  caption="Workflow definitions"
+                  rows={filteredDefs}
+                  rowKey={(d) => d.id}
+                  search={false}
+                  urlState={false}
+                  exportCsv={{ filename: 'workflows' }}
+                  onRowClick={(d) => setDrawerTarget(d)}
+                  rowActionLabel={(d) => `Open ${d.name}`}
+                  columns={[
+                    { key: 'name', header: 'Name', accessor: (d) => d.name, sortable: true, primary: true, className: 'font-medium' },
+                    { key: 'trigger', header: 'Trigger', accessor: (d) => TRIGGER_LABELS[d.trigger], sortable: true, cardMeta: true, cell: (d) => <Badge variant="outline">{TRIGGER_LABELS[d.trigger]}</Badge> },
+                    { key: 'actions', header: 'Actions', accessor: (d) => d.actions.length, sortable: true, searchable: false, cardMeta: true, className: 'text-silver' },
+                    {
+                      key: 'active',
+                      header: 'Active',
+                      accessor: (d) => (d.isActive ? 'Active' : 'Disabled'),
+                      sortable: true,
+                      stopRowClick: true,
+                      cell: (d) =>
+                        canManage ? (
+                          <label className="inline-flex items-center gap-2 text-xs text-silver cursor-pointer">
+                            <input type="checkbox" checked={d.isActive} onChange={() => toggleActive(d)} aria-label={`Toggle "${d.name}" active`} />
+                            {d.isActive ? 'Active' : 'Disabled'}
+                          </label>
+                        ) : (
+                          <Badge variant={d.isActive ? 'success' : 'default'}>{d.isActive ? 'Active' : 'Disabled'}</Badge>
+                        ),
+                    },
+                    { key: 'runs', header: 'Runs', accessor: (d) => d.runCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                  ]}
+                />
               )}
             </div>
           )}

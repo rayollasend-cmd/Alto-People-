@@ -42,14 +42,9 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { FormHint, Label } from '@/components/ui/Label';
 import { downloadDocumentUrl, uploadMyDocument } from '@/lib/documentsApi';
 import { toast } from 'sonner';
@@ -188,15 +183,6 @@ export function ReimbursementsHome() {
   );
   const pendingTotal = pending.reduce((s, r) => s + Number(r.totalAmount), 0);
 
-  const toggleSelected = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const onBulkApprove = async () => {
     const ids = Array.from(selected);
     if (ids.length === 0) return;
@@ -321,63 +307,39 @@ export function ReimbursementsHome() {
               {t('rmb.noMatch')}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {canApprove && <TableHead className="w-8"></TableHead>}
-                  <TableHead>{t('rmb.colTitle')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('rmb.colSubmitter')}</TableHead>
-                  <TableHead className="hidden lg:table-cell text-right">{t('rmb.colLines')}</TableHead>
-                  <TableHead className="text-right">{t('rmb.colTotal')}</TableHead>
-                  <TableHead>{t('rmb.colStatus')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('rmb.colSubmitted')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((r) => (
-                  <TableRow
-                    key={r.id}
-                    className="cursor-pointer"
-                    onClick={() => setActive(r)}
-                  >
-                    {canApprove && (
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        {r.status === 'SUBMITTED' && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${r.title} for bulk approval`}
-                            checked={selected.has(r.id)}
-                            onChange={() => toggleSelected(r.id)}
-                          />
-                        )}
-                      </TableCell>
-                    )}
-                    <TableCell className="font-medium text-white">
-                      {r.title}
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {r.associateName}
-                        {r.submittedAt && ` · ${fmtDate(r.submittedAt)}`}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
-                      {r.lineCount}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(r.totalAmount, { currency: r.currency })}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, r.status)} />
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {fmtDate(r.submittedAt)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof visible)[number]>
+              id="reimbursements"
+              caption={t('rmb.title')}
+              rows={visible}
+              rowKey={(r) => r.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'reimbursements' }}
+              onRowClick={(r) => setActive(r)}
+              rowActionLabel={(r) => `${t('rmb.colTitle')}: ${r.title}`}
+              selectable={canApprove ? { disabled: (r) => r.status !== 'SUBMITTED', selection: { selected, onChange: setSelected } } : undefined}
+              columns={[
+                { key: 'title', header: t('rmb.colTitle'), accessor: (r) => r.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'submitter',
+                  header: t('rmb.colSubmitter'),
+                  accessor: (r) => r.associateName,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>,
+                },
+                { key: 'lines', header: t('rmb.colLines'), accessor: (r) => r.lineCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'total', header: t('rmb.colTotal'), accessor: (r) => Number(r.totalAmount), csv: (r) => fmtMoney(r.totalAmount, { currency: r.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtMoney(r.totalAmount, { currency: r.currency }) },
+                {
+                  key: 'status',
+                  header: t('rmb.colStatus'),
+                  accessor: (r) => reimbStatusLabel(t, r.status),
+                  sortable: true,
+                  cell: (r) => <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, r.status)} />,
+                },
+                { key: 'submitted', header: t('rmb.colSubmitted'), accessor: (r) => r.submittedAt, sortable: true, searchable: false, cardMeta: true, cell: (r) => fmtDate(r.submittedAt) },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -640,43 +602,40 @@ function ReimbursementDrawer({
                 {data.lines.length === 0 ? (
                   <div className="text-sm text-silver">{t('rmb.noLines')}</div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('rmb.colDate')}</TableHead>
-                        <TableHead className="hidden md:table-cell">{t('rmb.colKind')}</TableHead>
-                        <TableHead>{t('rmb.colDescription')}</TableHead>
-                        <TableHead className="text-right">{t('rmb.colAmount')}</TableHead>
-                        {editable && <TableHead className="w-12"></TableHead>}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.lines.map((l) => (
-                        <TableRow key={l.id}>
-                          <TableCell>{fmtDate(parseYmd(l.incurredOn))}</TableCell>
-                          <TableCell className="hidden md:table-cell">{lineKindLabel(t, l.kind)}</TableCell>
-                          <TableCell>
-                            {l.description}
-                            <div className="text-xs2 text-silver/70 md:hidden">{lineKindLabel(t, l.kind)}</div>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {fmtMoney(l.amount, { currency: data.currency })}
-                          </TableCell>
-                          {editable && (
-                            <TableCell>
-                              <button
-                                onClick={() => onDeleteLine(l)}
-                                aria-label={`Remove line ${l.description}`}
-                                className="text-silver hover:text-alert"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DataGrid<NonNullable<typeof data>['lines'][number]>
+                    id="reimbursement-lines"
+                    caption={t('rmb.lineItems')}
+                    rows={data.lines}
+                    rowKey={(l) => l.id}
+                    search={false}
+                    urlState={false}
+                    exportCsv={false}
+                    columnChooser={false}
+                    columns={[
+                      { key: 'date', header: t('rmb.colDate'), accessor: (l) => l.incurredOn, sortable: true, searchable: false, primary: true, cell: (l) => fmtDate(parseYmd(l.incurredOn)) },
+                      { key: 'kind', header: t('rmb.colKind'), accessor: (l) => lineKindLabel(t, l.kind), sortable: true, cardMeta: true },
+                      { key: 'description', header: t('rmb.colDescription'), accessor: (l) => l.description, sortable: true, cardMeta: true },
+                      { key: 'amount', header: t('rmb.colAmount'), accessor: (l) => Number(l.amount), csv: (l) => fmtMoney(l.amount, { currency: data.currency }), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (l) => fmtMoney(l.amount, { currency: data.currency }) },
+                      ...(editable
+                        ? [
+                            {
+                              key: 'remove',
+                              header: '',
+                              accessor: () => null,
+                              searchable: false,
+                              csv: () => '',
+                              align: 'right' as const,
+                              stopRowClick: true,
+                              cell: (l: NonNullable<typeof data>['lines'][number]) => (
+                                <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDeleteLine(l)} aria-label={`Remove line ${l.description}`}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 )}
               </CardContent>
             </Card>

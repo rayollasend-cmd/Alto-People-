@@ -37,17 +37,12 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
@@ -269,63 +264,54 @@ function KeysTab({ canManage }: { canManage: boolean }) {
               No keys match the current search / filter.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden sm:table-cell">Key</TableHead>
-                  <TableHead className="hidden lg:table-cell">Capabilities</TableHead>
-                  <TableHead className="hidden md:table-cell">Last used</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((k) => (
-                  <TableRow key={k.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{k.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="sm:hidden font-mono">
-                          altop_…{k.last4}
-                          {' · '}
-                        </span>
-                        {fmtDate(k.lastUsedAt)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs hidden sm:table-cell">altop_…{k.last4}</TableCell>
-                    <TableCell className="text-xs text-silver hidden lg:table-cell">
-                      {k.capabilities.length > 0
-                        ? k.capabilities.join(', ')
-                        : '(inherits creator)'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {fmtDate(k.lastUsedAt)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusTone(keyStatus(k), { overrides: KEY_STATUS_TONES })}>
-                        {KEY_STATUS_LABELS[keyStatus(k)]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && !k.revokedAt && (
-                        <Button size="sm" variant="ghost" onClick={() => onRevoke(k.id)}>
-                          Revoke
-                        </Button>
-                      )}
-                      {canManage && (
-                        <button
-                          onClick={() => onDelete(k.id)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof filtered)[number]>
+              id="api-keys"
+              caption="API keys"
+              rows={filtered}
+              rowKey={(k) => k.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'api-keys' }}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (k) => k.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'key', header: 'Key', accessor: (k) => `altop_…${k.last4}`, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
+                { key: 'capabilities', header: 'Capabilities', accessor: (k) => (k.capabilities.length > 0 ? k.capabilities.join(', ') : '(inherits creator)'), className: 'text-xs text-silver' },
+                { key: 'lastUsed', header: 'Last used', accessor: (k) => k.lastUsedAt, sortable: true, searchable: false, cardMeta: true, cell: (k) => fmtDate(k.lastUsedAt) },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (k) => KEY_STATUS_LABELS[keyStatus(k)],
+                  sortable: true,
+                  cell: (k) => <Badge variant={statusTone(keyStatus(k), { overrides: KEY_STATUS_TONES })}>{KEY_STATUS_LABELS[keyStatus(k)]}</Badge>,
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (k: (typeof filtered)[number]) => (
+                          <>
+                            {!k.revokedAt && (
+                              <Button size="sm" variant="ghost" onClick={() => onRevoke(k.id)}>
+                                Revoke
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(k.id)}>
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -854,68 +840,63 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
               No webhooks match the current search / filter.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden sm:table-cell">URL</TableHead>
-                  <TableHead className="hidden lg:table-cell">Events</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Deliveries</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((w) => (
-                  <TableRow key={w.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{w.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="sm:hidden font-mono">
-                          {w.url}
-                          {' · '}
-                        </span>
-                        <span className="tabular-nums">{w.deliveryCount}</span> deliveries
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px] hidden sm:table-cell">
-                      {w.url}
-                    </TableCell>
-                    <TableCell className="text-xs text-silver hidden lg:table-cell">
-                      {w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {w.deliveryCount}
-                    </TableCell>
-                    <TableCell>
-                      {w.isActive ? (
-                        <Badge variant="success">Active</Badge>
-                      ) : (
-                        <Badge variant="default">Paused</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && (
-                        <>
-                          <Button size="sm" variant="ghost" onClick={() => onTest(w.id)}>
-                            Test
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => onToggle(w.id)}>
-                            {w.isActive ? 'Pause' : 'Resume'}
-                          </Button>
-                          <button
-                            onClick={() => onDelete(w.id)}
-                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof filtered)[number]>
+              id="webhooks"
+              caption="Webhooks"
+              rows={filtered}
+              rowKey={(w) => w.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'webhooks' }}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (w) => w.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'url',
+                  header: 'URL',
+                  accessor: (w) => w.url,
+                  sortable: true,
+                  cardMeta: true,
+                  className: 'font-mono text-xs',
+                  cell: (w) => <span className="block truncate max-w-[200px] md:max-w-[280px]">{w.url}</span>,
+                },
+                { key: 'events', header: 'Events', accessor: (w) => (w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'), className: 'text-xs text-silver' },
+                { key: 'deliveries', header: 'Deliveries', accessor: (w) => w.deliveryCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (w) => (w.isActive ? 'Active' : 'Paused'),
+                  sortable: true,
+                  cell: (w) => (w.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Paused</Badge>),
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (w: (typeof filtered)[number]) => (
+                          <>
+                            <Button size="sm" variant="ghost" onClick={() => onTest(w.id)}>
+                              Test
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => onToggle(w.id)}>
+                              {w.isActive ? 'Pause' : 'Resume'}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(w.id)}>
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>

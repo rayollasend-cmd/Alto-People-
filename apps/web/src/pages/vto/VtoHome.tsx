@@ -38,14 +38,9 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -167,15 +162,6 @@ export function VtoHome() {
         .map((e) => e.id),
     };
   }, [filteredQueue, selected]);
-
-  const toggleSelected = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const runBulk = async (
     ids: string[],
@@ -450,53 +436,33 @@ export function VtoHome() {
                 description={`Log your first session — up to ${mine.capHours} hours per year.`}
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Hours</TableHead>
-                    <TableHead className="hidden md:table-cell">Organization</TableHead>
-                    <TableHead className="hidden lg:table-cell">Cause</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Match</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mine.entries.map((e) => (
-                    <TableRow
-                      key={e.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenMine(e)}
-                    >
-                      <TableCell className="text-xs text-silver">
-                        {fmtDate(parseYmd(e.activityDate))}
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {e.organization}{e.cause ? ` · ${e.cause}` : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm font-medium text-white text-right tabular-nums">
-                        {Number(e.hours).toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {e.organization}
-                      </TableCell>
-                      <TableCell className="text-sm text-silver hidden lg:table-cell">
-                        {e.cause ?? '—'}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} />
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {e.matchAmount
-                          ? `${e.matchCurrency} ${e.matchAmount}`
-                          : e.matchRequested
-                          ? <span className="text-silver text-xs">requested</span>
-                          : <span className="text-silver text-xs">—</span>}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<NonNullable<typeof mine>['entries'][number]>
+                id="vto-mine"
+                caption="My volunteer hours"
+                rows={mine.entries}
+                rowKey={(e) => e.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'my-volunteer-hours' }}
+                onRowClick={(e) => setOpenMine(e)}
+                rowActionLabel={(e) => `Open ${e.organization} on ${e.activityDate}`}
+                columns={[
+                  { key: 'date', header: 'Date', accessor: (e) => e.activityDate, sortable: true, searchable: false, primary: true, className: 'text-xs text-silver', cell: (e) => fmtDate(parseYmd(e.activityDate)) },
+                  { key: 'hours', header: 'Hours', accessor: (e) => Number(e.hours), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm font-medium text-white tabular-nums', cell: (e) => Number(e.hours).toFixed(2) },
+                  { key: 'organization', header: 'Organization', accessor: (e) => e.organization, sortable: true, cardMeta: true, className: 'text-sm' },
+                  { key: 'cause', header: 'Cause', accessor: (e) => e.cause, sortable: true, className: 'text-sm text-silver', cell: (e) => e.cause ?? '—' },
+                  { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cell: (e) => <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} /> },
+                  {
+                    key: 'match',
+                    header: 'Match',
+                    accessor: (e) => (e.matchAmount ? `${e.matchCurrency} ${e.matchAmount}` : e.matchRequested ? 'requested' : null),
+                    sortable: true,
+                    className: 'text-sm',
+                    cell: (e) =>
+                      e.matchAmount ? `${e.matchCurrency} ${e.matchAmount}` : e.matchRequested ? <span className="text-silver text-xs">requested</span> : <span className="text-silver text-xs">—</span>,
+                  },
+                ]}
+              />
             )}
           </CardContent>
         </Card>
@@ -532,89 +498,56 @@ export function VtoHome() {
                 }
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all"
-                        checked={
-                          filteredQueue.length > 0 &&
-                          filteredQueue.every((e) => selected.has(e.id))
-                        }
-                        onChange={(ev) =>
-                          setSelected(
-                            ev.target.checked
-                              ? new Set(filteredQueue.map((e) => e.id))
-                              : new Set(),
-                          )
-                        }
-                      />
-                    </TableHead>
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="hidden md:table-cell">Date</TableHead>
-                    <TableHead className="text-right">Hours</TableHead>
-                    <TableHead className="hidden md:table-cell">Organization</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden lg:table-cell">Match</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredQueue.map((e) => (
-                    <TableRow
-                      key={e.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenQueueId(e.id)}
-                    >
-                      <TableCell onClick={(ev) => ev.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${e.associateName}`}
-                          checked={selected.has(e.id)}
-                          onChange={() => toggleSelected(e.id)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          {e.associateName}
-                        </div>
-                        <div className="text-xs text-silver">
-                          {e.associateEmail}
-                        </div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {fmtDate(parseYmd(e.activityDate))} · {e.organization}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {fmtDate(parseYmd(e.activityDate))}
-                      </TableCell>
-                      <TableCell className="text-sm text-right tabular-nums">
-                        {Number(e.hours).toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {e.organization}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} />
-                      </TableCell>
-                      <TableCell className="text-xs hidden lg:table-cell">
-                        {e.matchRequested ? (
-                          e.matchAmount ? (
-                            <span className="text-success">
-                              {e.matchCurrency} {e.matchAmount}
-                            </span>
-                          ) : (
-                            <span className="text-silver">requested</span>
-                          )
+              <DataGrid<(typeof filteredQueue)[number]>
+                id="vto-queue"
+                caption="Volunteer hours to review"
+                rows={filteredQueue}
+                rowKey={(e) => e.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'vto-queue' }}
+                onRowClick={(e) => setOpenQueueId(e.id)}
+                rowActionLabel={(e) => `Review ${e.associateName}`}
+                selectable={{ selection: { selected, onChange: setSelected } }}
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (e) => e.associateName,
+                    sortable: true,
+                    primary: true,
+                    cell: (e) => (
+                      <>
+                        <div className="font-medium text-white">{e.associateName}</div>
+                        <div className="text-xs text-silver">{e.associateEmail}</div>
+                      </>
+                    ),
+                  },
+                  { key: 'date', header: 'Date', accessor: (e) => e.activityDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (e) => fmtDate(parseYmd(e.activityDate)) },
+                  { key: 'hours', header: 'Hours', accessor: (e) => Number(e.hours), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (e) => Number(e.hours).toFixed(2) },
+                  { key: 'organization', header: 'Organization', accessor: (e) => e.organization, sortable: true, cardMeta: true, className: 'text-sm' },
+                  { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cell: (e) => <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} /> },
+                  {
+                    key: 'match',
+                    header: 'Match',
+                    accessor: (e) => (e.matchRequested ? (e.matchAmount ? `${e.matchCurrency} ${e.matchAmount}` : 'requested') : null),
+                    sortable: true,
+                    className: 'text-xs',
+                    cell: (e) =>
+                      e.matchRequested ? (
+                        e.matchAmount ? (
+                          <span className="text-success">
+                            {e.matchCurrency} {e.matchAmount}
+                          </span>
                         ) : (
-                          <span className="text-silver">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                          <span className="text-silver">requested</span>
+                        )
+                      ) : (
+                        <span className="text-silver">—</span>
+                      ),
+                  },
+                ]}
+              />
             )}
           </CardContent>
         </Card>

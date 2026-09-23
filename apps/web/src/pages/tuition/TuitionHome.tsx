@@ -43,13 +43,8 @@ import {
   Select,
   SkeletonRows,
   Textarea,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 
 const GRADE_OPTIONS = [
@@ -175,18 +170,6 @@ export function TuitionHome() {
   const selectableIds = filteredQueue
     .filter((r) => r.status === 'SUBMITTED')
     .map((r) => r.id);
-  const allSelected =
-    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
-
-  const toggleSelected = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   // The queue segment only exists for payroll processors; building the
   // option list up front keeps the conditional out of the JSX and the
   // generic parameter explicit (inference would otherwise narrow to 'mine').
@@ -354,56 +337,51 @@ export function TuitionHome() {
                 description="Submit your first request once you have a receipt."
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Course</TableHead>
-                    <TableHead className="hidden md:table-cell">School</TableHead>
-                    <TableHead className="hidden lg:table-cell">Term</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Grade</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mine.map((r) => (
-                    <TableRow
-                      key={r.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenMine(r)}
-                    >
-                      <TableCell className="font-medium text-white">
-                        {r.courseName}
-                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {r.schoolName}{r.gradeReceived ? ` · ${r.gradeReceived}` : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
+              <DataGrid<NonNullable<typeof mine>[number]>
+                id="tuition-mine"
+                caption="My tuition requests"
+                rows={mine}
+                rowKey={(r) => r.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'my-tuition-requests' }}
+                onRowClick={(r) => setOpenMine(r)}
+                rowActionLabel={(r) => `Open ${r.courseName}`}
+                columns={[
+                  { key: 'course', header: 'Course', accessor: (r) => r.courseName, sortable: true, primary: true, className: 'font-medium text-white' },
+                  {
+                    key: 'school',
+                    header: 'School',
+                    accessor: (r) => r.schoolName,
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'text-sm',
+                    cell: (r) => (
+                      <>
                         {r.schoolName}
-                        {r.programName && (
-                          <div className="text-xs text-silver">
-                            {r.programName}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-silver hidden lg:table-cell">
+                        {r.programName && <div className="text-xs text-silver">{r.programName}</div>}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'term',
+                    header: 'Term',
+                    accessor: (r) => r.termStartDate,
+                    csv: (r) => `${r.termStartDate} → ${r.termEndDate}`,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-xs text-silver',
+                    cell: (r) => (
+                      <>
                         {fmtDate(parseYmd(r.termStartDate))} → {fmtDate(parseYmd(r.termEndDate))}
-                      </TableCell>
-                      <TableCell className="text-sm text-right tabular-nums">
-                        {fmtMoney(r.amount, { currency: r.currency })}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={r.status} />
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {r.gradeReceived ?? (
-                          <span className="text-silver">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </>
+                    ),
+                  },
+                  { key: 'amount', header: 'Amount', accessor: (r) => Number(r.amount), csv: (r) => fmtMoney(r.amount, { currency: r.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (r) => fmtMoney(r.amount, { currency: r.currency }) },
+                  { key: 'status', header: 'Status', accessor: (r) => r.status, sortable: true, cell: (r) => <StatusBadge status={r.status} /> },
+                  { key: 'grade', header: 'Grade', accessor: (r) => r.gradeReceived, sortable: true, className: 'text-sm', cell: (r) => r.gradeReceived ?? <span className="text-silver">—</span> },
+                ]}
+              />
             )}
           </CardContent>
         </Card>
@@ -457,75 +435,38 @@ export function TuitionHome() {
                   description="Adjust the search or status filter."
                 />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-8">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all pending requests"
-                          checked={allSelected}
-                          disabled={selectableIds.length === 0}
-                          onChange={() =>
-                            setSelected(
-                              allSelected ? new Set() : new Set(selectableIds),
-                            )
-                          }
-                        />
-                      </TableHead>
-                      <TableHead>Associate</TableHead>
-                      <TableHead className="hidden md:table-cell">Course</TableHead>
-                      <TableHead className="hidden lg:table-cell">School</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="hidden lg:table-cell">Grade</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredQueue.map((r) => (
-                      <TableRow
-                        key={r.id}
-                        className="cursor-pointer"
-                        onClick={() => setOpenId(r.id)}
-                      >
-                        <TableCell onClick={(e) => e.stopPropagation()}>
-                          {r.status === 'SUBMITTED' && (
-                            <input
-                              type="checkbox"
-                              aria-label={`Select request from ${r.associateName}`}
-                              checked={selected.has(r.id)}
-                              onChange={() => toggleSelected(r.id)}
-                            />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-white">
-                            {r.associateName}
-                          </div>
-                          <div className="text-xs text-silver">
-                            {r.associateEmail}
-                          </div>
-                          <div className="md:hidden text-xs2 text-silver/70 truncate">
-                            {r.courseName} · {r.schoolName}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm hidden md:table-cell">{r.courseName}</TableCell>
-                        <TableCell className="text-sm hidden lg:table-cell">{r.schoolName}</TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {fmtMoney(r.amount, { currency: r.currency })}
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge status={r.status} />
-                        </TableCell>
-                        <TableCell className="text-sm hidden lg:table-cell">
-                          {r.gradeReceived ?? (
-                            <span className="text-silver">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<(typeof filteredQueue)[number]>
+                  id="tuition-queue"
+                  caption="Tuition requests to review"
+                  rows={filteredQueue}
+                  rowKey={(r) => r.id}
+                  search={false}
+                  urlState={false}
+                  exportCsv={{ filename: 'tuition-queue' }}
+                  onRowClick={(r) => setOpenId(r.id)}
+                  rowActionLabel={(r) => `Review request from ${r.associateName}`}
+                  selectable={{ disabled: (r) => r.status !== 'SUBMITTED', selection: { selected, onChange: setSelected } }}
+                  columns={[
+                    {
+                      key: 'associate',
+                      header: 'Associate',
+                      accessor: (r) => r.associateName,
+                      sortable: true,
+                      primary: true,
+                      cell: (r) => (
+                        <>
+                          <div className="font-medium text-white">{r.associateName}</div>
+                          <div className="text-xs text-silver">{r.associateEmail}</div>
+                        </>
+                      ),
+                    },
+                    { key: 'course', header: 'Course', accessor: (r) => r.courseName, sortable: true, cardMeta: true, className: 'text-sm' },
+                    { key: 'school', header: 'School', accessor: (r) => r.schoolName, sortable: true, cardMeta: true, className: 'text-sm' },
+                    { key: 'amount', header: 'Amount', accessor: (r) => Number(r.amount), csv: (r) => fmtMoney(r.amount, { currency: r.currency }), sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (r) => fmtMoney(r.amount, { currency: r.currency }) },
+                    { key: 'status', header: 'Status', accessor: (r) => r.status, sortable: true, cell: (r) => <StatusBadge status={r.status} /> },
+                    { key: 'grade', header: 'Grade', accessor: (r) => r.gradeReceived, sortable: true, className: 'text-sm', cell: (r) => r.gradeReceived ?? <span className="text-silver">—</span> },
+                  ]}
+                />
               )}
             </CardContent>
           </Card>

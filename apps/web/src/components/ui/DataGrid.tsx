@@ -555,7 +555,11 @@ function GridCore<T>({
               {sorted.map((row) => {
                 const key = rowKey(row);
                 const metaCols = visible.filter((c) => c.cardMeta && c !== primary);
-                const rest = visible.filter((c) => c !== primary && !c.cardMeta);
+                const fields = visible.filter((c) => c !== primary && !c.cardMeta && !c.stopRowClick);
+                // Columns that hold their own controls go under the card,
+                // outside the button that opens the row — a button never
+                // nests inside another.
+                const actionCols = visible.filter((c) => c.stopRowClick && c !== primary && c.cell);
                 const clickable = Boolean(onRowClick);
                 const Body = (
                   <>
@@ -589,9 +593,9 @@ function GridCore<T>({
                         />
                       )}
                     </div>
-                    {rest.length > 0 && (
+                    {fields.length > 0 && (
                       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-                        {rest.map((c) => (
+                        {fields.map((c) => (
                           <div key={c.key} className="min-w-0">
                             <dt className="text-2xs uppercase tracking-wider text-silver/50">
                               {c.header}
@@ -627,6 +631,13 @@ function GridCore<T>({
                         )}
                       >
                         {Body}
+                      </div>
+                    )}
+                    {actionCols.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1">
+                        {actionCols.map((c) => (
+                          <React.Fragment key={c.key}>{c.cell!(row)}</React.Fragment>
+                        ))}
                       </div>
                     )}
                   </li>

@@ -35,17 +35,12 @@ import {
   Input,
   PageHeader,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import {
   fmtDateTime,
@@ -474,18 +469,6 @@ function ClaimsTab() {
     [rows],
   );
 
-  const toggleSelected = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const allSelected =
-    sorted !== null && sorted.length > 0 && selected.size === sorted.length;
-
   const approve = async (c: PendingClaim) => {
     setBusyId(c.id);
     try {
@@ -554,106 +537,68 @@ function ClaimsTab() {
                 </Button>
               </div>
             )}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <input
-                      type="checkbox"
-                      aria-label="Select all claims"
-                      checked={allSelected}
-                      onChange={() =>
-                        setSelected(
-                          allSelected
-                            ? new Set()
-                            : new Set(sorted.map((c) => c.id)),
-                        )
-                      }
-                    />
-                  </TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Position</TableHead>
-                  <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead className="hidden md:table-cell">Shift</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right md:w-44">Decide</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sorted.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        aria-label={`Select claim by ${c.associateName}`}
-                        checked={selected.has(c.id)}
-                        onChange={() => toggleSelected(c.id)}
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">
-                        <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {c.position}
-                        {' · '}
-                        {c.clientName}
-                      </div>
-                      {/* Phone: the shift rides under the name — its own
-                          column squeezed to one word per line. */}
-                      <div className="md:hidden text-xs2 text-silver tabular-nums">
-                        {fmtDateTime(c.startsAt)} – {fmtTime(c.endsAt)}
-                      </div>
-                      {/* Phone: Approve/Reject ride inside the row — their own
-                          column pushed them off the right edge. */}
-                      <div className="mt-2 flex gap-2 sm:hidden">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => approve(c)}
-                          disabled={busyId === c.id || bulkBusy}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setRejectTarget(c)}
-                          disabled={busyId === c.id || bulkBusy}
-                        >
-                          Reject
-                        </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{c.position}</TableCell>
-                    <TableCell className="hidden md:table-cell">{c.clientName}</TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {fmtDateTime(c.startsAt)} –{' '}
-                      {fmtTime(c.endsAt)}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell text-right">
-                      <div className="inline-flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => approve(c)}
-                          disabled={busyId === c.id || bulkBusy}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setRejectTarget(c)}
-                          disabled={busyId === c.id || bulkBusy}
-                        >
-                          Reject
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof sorted>[number]>
+              id="marketplace-claims"
+              caption="Shift claims to decide"
+              rows={sorted}
+              rowKey={(c) => c.id}
+              search={{ placeholder: 'Associate, client, position…' }}
+              urlState={false}
+              exportCsv={{ filename: 'shift-claims' }}
+              selectable={{ selection: { selected, onChange: setSelected } }}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (c) => c.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (c) => (
+                    <div className="truncate">
+                      <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                    </div>
+                  ),
+                },
+                { key: 'position', header: 'Position', accessor: (c) => c.position, sortable: true, cardMeta: true },
+                { key: 'client', header: 'Client', accessor: (c) => c.clientName, sortable: true, cardMeta: true },
+                {
+                  key: 'shift',
+                  header: 'Shift',
+                  accessor: (c) => c.startsAt,
+                  csv: (c) => `${fmtDateTime(c.startsAt)} – ${fmtTime(c.endsAt)}`,
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  className: 'tabular-nums',
+                  cell: (c) => (
+                    <>
+                      {fmtDateTime(c.startsAt)} – {fmtTime(c.endsAt)}
+                    </>
+                  ),
+                },
+                {
+                  key: 'decide',
+                  header: 'Decide',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  width: '11rem',
+                  cell: (c) => (
+                    <div className="inline-flex gap-1">
+                      <Button size="sm" variant="secondary" onClick={() => approve(c)} disabled={busyId === c.id || bulkBusy}>
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setRejectTarget(c)} disabled={busyId === c.id || bulkBusy}>
+                        Reject
+                      </Button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </>
         )}
       </CardContent>
@@ -814,42 +759,39 @@ function CatalogTab() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Cert</TableHead>
-                  <TableHead className="hidden md:table-cell">Scope</TableHead>
-                  <TableHead className="w-24 text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((q) => (
-                  <TableRow key={q.id}>
-                    <TableCell className="font-mono text-xs">
-                      <div className="truncate">{q.code}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-sans">
-                        {q.clientId ? 'Client-scoped' : 'Global'}
-                        {q.isCert ? ' · Cert' : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-white">{q.name}</TableCell>
-                    <TableCell className="hidden md:table-cell">{q.isCert ? <Badge variant="accent">Cert</Badge> : '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">{q.clientId ? 'Client-scoped' : 'Global'}</TableCell>
-                    <TableCell className="text-right">
-                      {canDelete(q) ? (
-                        <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
-                          Delete
-                        </Button>
-                      ) : (
-                        <span className="text-xs2 text-silver/70">—</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="qualifications"
+              caption="Qualifications"
+              rows={rows}
+              rowKey={(q) => q.id}
+              search={{ placeholder: 'Code, name…' }}
+              urlState={false}
+              exportCsv={{ filename: 'qualifications' }}
+              columns={[
+                { key: 'code', header: 'Code', accessor: (q) => q.code, sortable: true, primary: true, className: 'font-mono text-xs' },
+                { key: 'name', header: 'Name', accessor: (q) => q.name, sortable: true, cardMeta: true, className: 'text-white' },
+                { key: 'cert', header: 'Cert', accessor: (q) => (q.isCert ? 'Cert' : ''), sortable: true, searchable: false, cell: (q) => (q.isCert ? <Badge variant="accent">Cert</Badge> : '—') },
+                { key: 'scope', header: 'Scope', accessor: (q) => (q.clientId ? 'Client-scoped' : 'Global'), sortable: true, cardMeta: true },
+                {
+                  key: 'action',
+                  header: 'Action',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  width: '6rem',
+                  cell: (q) =>
+                    canDelete(q) ? (
+                      <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
+                        Delete
+                      </Button>
+                    ) : (
+                      <span className="text-xs2 text-silver/70">—</span>
+                    ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
