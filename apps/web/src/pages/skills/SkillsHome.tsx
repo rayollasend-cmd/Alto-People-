@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Plus, Search, Sparkles, ShieldCheck } from 'lucide-react';
+import { Plus, Search, Sparkles, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -30,22 +30,14 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  SortableTableHead,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
-  useTableSort,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ymdLocal } from '@/lib/format';
-import { downloadCsv } from '@/lib/csv';
 
 const LEVELS: SkillLevel[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'];
 
@@ -145,29 +137,6 @@ function SearchTab({ canManage }: { canManage: boolean }) {
   };
 
   const associates = useMemo(() => data?.associates ?? [], [data]);
-  const {
-    sorted: sortedAssociates,
-    sortState,
-    toggleSort,
-  } = useTableSort(associates, {
-    level: (a) => LEVELS.indexOf(a.level),
-    years: (a) => a.yearsExperience,
-  });
-
-  const onExportCsv = () => {
-    downloadCsv(`skill-search-${ymdLocal()}.csv`, [
-      ['Name', 'Email', 'Skill', 'Level', 'Years', 'Verified'],
-      ...sortedAssociates.map((a) => [
-        a.name,
-        a.email,
-        a.skillName,
-        a.level,
-        a.yearsExperience ?? '',
-        a.verified ? 'Yes' : 'No',
-      ]),
-    ]);
-  };
-
   return (
     <div className="space-y-4">
       <Card>
@@ -252,64 +221,38 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                 }
               />
             ) : (
-              <>
-                <div className="flex justify-end p-2 border-b border-navy-secondary">
-                  <Button size="sm" variant="ghost" onClick={onExportCsv}>
-                    <Download className="mr-2 h-4 w-4" /> Export CSV
-                  </Button>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead className="hidden md:table-cell">Email</TableHead>
-                      <TableHead>Skill</TableHead>
-                      <SortableTableHead
-                        sortKey="level"
-                        state={sortState}
-                        onSort={toggleSort}
-                      >
-                        Level
-                      </SortableTableHead>
-                      <SortableTableHead
-                        sortKey="years"
-                        state={sortState}
-                        onSort={toggleSort}
-                        className="hidden lg:table-cell"
-                      >
-                        Years
-                      </SortableTableHead>
-                      <TableHead className="hidden md:table-cell">Verified</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedAssociates.map((a) => (
-                      <TableRow key={`${a.associateId}-${a.skillName}`}>
-                        <TableCell className="font-medium text-white">
-                          <div className="truncate">{a.name}</div>
-                          <div className="md:hidden text-xs2 text-silver/70 truncate">
-                            {a.verified ? 'Verified' : 'Self-attested'}
-                            {a.yearsExperience ? ` · ${a.yearsExperience}y` : ''}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-silver hidden md:table-cell">{a.email}</TableCell>
-                        <TableCell>{a.skillName}</TableCell>
-                        <TableCell>
-                          <Badge variant={levelVariant(a.level)}>{LEVEL_LABELS[a.level]}</Badge>
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell tabular-nums">{a.yearsExperience ?? '—'}</TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          {a.verified ? (
-                            <ShieldCheck className="h-4 w-4 text-success" />
-                          ) : (
-                            <span className="text-silver text-xs">self-attested</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </>
+                <DataGrid<(typeof associates)[number]>
+                  id="skill-search"
+                  caption="Associates with this skill"
+                  rows={associates}
+                  rowKey={(a) => `${a.associateId}-${a.skillName}`}
+                  search={{ placeholder: 'Name, email…' }}
+                  urlState={false}
+                  exportCsv={{ filename: `skill-search-${ymdLocal()}` }}
+                  columns={[
+                    { key: 'name', header: 'Name', accessor: (a) => a.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                    { key: 'email', header: 'Email', accessor: (a) => a.email, sortable: true, cardMeta: true, className: 'text-silver' },
+                    { key: 'skill', header: 'Skill', accessor: (a) => a.skillName, sortable: true },
+                    {
+                      key: 'level',
+                      header: 'Level',
+                      accessor: (a) => LEVELS.indexOf(a.level),
+                      csv: (a) => a.level,
+                      sortable: true,
+                      searchable: false,
+                      cell: (a) => <Badge variant={levelVariant(a.level)}>{LEVEL_LABELS[a.level]}</Badge>,
+                    },
+                    { key: 'years', header: 'Years', accessor: (a) => a.yearsExperience, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (a) => a.yearsExperience ?? '—' },
+                    {
+                      key: 'verified',
+                      header: 'Verified',
+                      accessor: (a) => (a.verified ? 'Verified' : 'Self-attested'),
+                      sortable: true,
+                      cardMeta: true,
+                      cell: (a) => (a.verified ? <ShieldCheck className="h-4 w-4 text-success" aria-label="Verified" /> : <span className="text-silver text-xs">self-attested</span>),
+                    },
+                  ]}
+                />
             )}
           </CardContent>
         </Card>
@@ -432,55 +375,56 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Category</TableHead>
-                  <TableHead className="text-right">Holders</TableHead>
-                  {canManage && <TableHead className="text-right">Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((s) => (
-                  <TableRow key={s.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{s.name}</div>
-                      {s.category && (
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {s.category}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-silver hidden md:table-cell">{s.category ?? '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{s.associateCount}</TableCell>
-                    {canManage && (
-                      <TableCell className="text-right">
-                        <button
-                          disabled={actionKey !== null}
-                          onClick={async () => {
-                            if (!(await confirm({ title: 'Delete this skill?', description: 'Associate claims will be removed.', destructive: true })))
-                              return;
-                            await act(`del-${s.id}`, async () => {
-                              try {
-                                await deleteSkill(s.id);
-                                toast.success('Skill deleted.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
-                            });
-                          }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs disabled:opacity-40"
-                        >
-                          Delete
-                        </button>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="skills-catalog"
+              caption="Skills catalog"
+              rows={filtered}
+              rowKey={(sk) => sk.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'skills' }}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (sk) => sk.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'category', header: 'Category', accessor: (sk) => sk.category, sortable: true, cardMeta: true, className: 'text-silver', cell: (sk) => sk.category ?? '—' },
+                { key: 'holders', header: 'Holders', accessor: (sk) => sk.associateCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        cell: (sk: NonNullable<typeof filtered>[number]) => (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-silver hover:text-alert"
+                            disabled={actionKey !== null}
+                            onClick={async () => {
+                              if (!(await confirm({ title: 'Delete this skill?', description: 'Associate claims will be removed.', destructive: true })))
+                                return;
+                              await act(`del-${sk.id}`, async () => {
+                                try {
+                                  await deleteSkill(sk.id);
+                                  toast.success('Skill deleted.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              });
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>

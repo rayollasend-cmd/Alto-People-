@@ -28,13 +28,8 @@ import {
   SearchInput,
   SegmentedControl,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 // By-employment-type drills route to the People directory (which
 // filters server-side via ?employmentType=) because the org-associates
@@ -456,42 +451,33 @@ function DrillDrawer({
           </div>
         )}
         {!error && filtered && filtered.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="hidden md:table-cell">Email</TableHead>
-                <TableHead>Job profile</TableHead>
-                <TableHead className="hidden md:table-cell">Manager</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium text-white">
-                    <div className="min-w-0">
-                      <Link
-                        to={`/people?associateId=${a.id}`}
-                        className="truncate block hover:text-gold"
-                      >
-                        {a.firstName} {a.lastName}
-                      </Link>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {a.email}{a.managerName ? ` · ${a.managerName}` : ''}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-xs text-silver">{a.email}</TableCell>
-                  <TableCell className="text-sm">
-                    {a.jobProfileTitle ?? <span className="text-silver">—</span>}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-sm">
-                    {a.managerName ?? <span className="text-silver">—</span>}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<NonNullable<typeof filtered>[number]>
+            id="headcount-segment"
+            caption="Associates in this segment"
+            rows={filtered}
+            rowKey={(a) => a.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'headcount-segment' }}
+            columns={[
+              {
+                key: 'name',
+                header: 'Name',
+                accessor: (a) => `${a.firstName} ${a.lastName}`,
+                sortable: true,
+                primary: true,
+                className: 'font-medium text-white',
+                cell: (a) => (
+                  <Link to={`/people?associateId=${a.id}`} className="truncate block hover:text-gold">
+                    {a.firstName} {a.lastName}
+                  </Link>
+                ),
+              },
+              { key: 'email', header: 'Email', accessor: (a) => a.email, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
+              { key: 'job', header: 'Job profile', accessor: (a) => a.jobProfileTitle, sortable: true, className: 'text-sm', cell: (a) => a.jobProfileTitle ?? <span className="text-silver">—</span> },
+              { key: 'manager', header: 'Manager', accessor: (a) => a.managerName, sortable: true, cardMeta: true, className: 'text-sm', cell: (a) => a.managerName ?? <span className="text-silver">—</span> },
+            ]}
+          />
         )}
         <div className="text-xs text-silver mt-3 tabular-nums">
           {rows && filtered

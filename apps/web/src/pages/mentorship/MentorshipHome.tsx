@@ -33,14 +33,9 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
@@ -211,35 +206,31 @@ export function MentorshipHome() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Mentor</TableHead>
-                  <TableHead>Mentee</TableHead>
-                  <TableHead className="hidden md:table-cell">Focus</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Started</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((m) => (
-                  <TableRow key={m.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{m.mentorName}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {m.focusSkillName ?? '—'} · {fmtDate(m.startedAt)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{m.menteeName}</TableCell>
-                    <TableCell className="text-silver hidden md:table-cell">{m.focusSkillName ?? '—'}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={m.status} />
-                    </TableCell>
-                    <TableCell className="text-xs hidden md:table-cell">
-                      {fmtDate(m.startedAt)}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="mentorships"
+              caption="Mentorship pairings"
+              rows={filtered}
+              rowKey={(m) => m.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'mentorships' }}
+              columns={[
+                { key: 'mentor', header: 'Mentor', accessor: (m) => m.mentorName, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'mentee', header: 'Mentee', accessor: (m) => m.menteeName, sortable: true, cardMeta: true },
+                { key: 'focus', header: 'Focus', accessor: (m) => m.focusSkillName, sortable: true, cardMeta: true, className: 'text-silver', cell: (m) => m.focusSkillName ?? '—' },
+                { key: 'status', header: 'Status', accessor: (m) => m.status, sortable: true, cell: (m) => <StatusBadge status={m.status} /> },
+                { key: 'started', header: 'Started', accessor: (m) => m.startedAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs', cell: (m) => fmtDate(m.startedAt) },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (m) => (
+                    <>
                       {canManage && m.status === 'PROPOSED' && (
                         <>
                           <Button
@@ -283,19 +274,15 @@ export function MentorshipHome() {
                         </>
                       )}
                       {canManage && m.status === 'ACTIVE' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setCompleteTarget(m)}
-                        >
+                        <Button size="sm" variant="ghost" onClick={() => setCompleteTarget(m)}>
                           Complete
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

@@ -41,13 +41,8 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Input, Textarea } from '@/components/ui/Input';
 import { fmtDate } from '@/lib/format';
@@ -168,55 +163,53 @@ export function LearningPathsHome() {
               description="Adjust the search or status filter."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Steps</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Enrollments</TableHead>
-                  <TableHead className="hidden lg:table-cell">Required</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((p) => (
-                  <TableRow key={p.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      {p.title}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                        {p.stepCount} step{p.stepCount === 1 ? '' : 's'} · {p.enrollmentCount} enrolled
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={p.status} />
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {p.stepCount}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {p.enrollmentCount}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {p.isRequired ? <Badge variant="accent">Required</Badge> : '—'}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(p.id)}>
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="learning-paths"
+              caption="Learning paths"
+              rows={filtered}
+              rowKey={(lp) => lp.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'learning-paths' }}
+              onRowClick={(lp) => setEditing(lp.id)}
+              rowActionLabel={(lp) => `Open ${lp.title}`}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (lp) => lp.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'status', header: 'Status', accessor: (lp) => lp.status, sortable: true, cell: (lp) => <StatusBadge status={lp.status} /> },
+                { key: 'steps', header: 'Steps', accessor: (lp) => lp.stepCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                { key: 'enrollments', header: 'Enrollments', accessor: (lp) => lp.enrollmentCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                {
+                  key: 'required',
+                  header: 'Required',
+                  accessor: (lp) => (lp.isRequired ? 'Required' : ''),
+                  sortable: true,
+                  searchable: false,
+                  cell: (lp) => (lp.isRequired ? <Badge variant="accent">Required</Badge> : '—'),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (lp) => (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing(lp.id)}>
                         Edit
                       </Button>
                       {canManage && (
-                        <button
-                          onClick={() => setDeleteTarget(p)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                        >
+                        <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => setDeleteTarget(lp)}>
                           Delete
-                        </button>
+                        </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -668,72 +661,75 @@ function PathDetailDrawer({
                 </div>
               ) : (
                 <div className="max-h-64 overflow-y-auto border border-navy-secondary rounded">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Associate</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="hidden md:table-cell">Assigned</TableHead>
-                        {canManage && <TableHead className="text-right" />}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {enrollments.map((e) => (
-                        <TableRow key={e.id}>
-                          <TableCell>
-                            <div className="font-medium text-white">
-                              {e.associateName}
-                            </div>
-                            <div className="text-xs text-silver">
-                              {e.associateEmail}
-                            </div>
-                            <div className="md:hidden text-xs2 text-silver/70 truncate">
-                              Assigned {fmtDate(e.assignedAt)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <StatusBadge status={e.status} overrides={PATH_ENROLL_STATUS_TONES} />
-                          </TableCell>
-                          <TableCell className="text-xs text-silver hidden md:table-cell">
-                            {fmtDate(e.assignedAt)}
-                          </TableCell>
-                          {canManage && (
-                            <TableCell className="text-right">
-                              <button
-                                onClick={async () => {
-                                  if (
-                                    !(await confirm({
-                                      title: 'Withdraw enrollment?',
-                                      description: `Withdraw ${e.associateName} from this path? Their course enrollments are not affected.`,
-                                      confirmLabel: 'Withdraw',
-                                      destructive: true,
-                                    }))
-                                  )
-                                    return;
-                                  try {
-                                    await withdrawLearningPathEnrollment(e.id);
-                                    toast.success(`Withdrew ${e.associateName}.`);
-                                    refresh();
-                                  } catch (err) {
-                                    toast.error(
-                                      err instanceof ApiError
-                                        ? err.message
-                                        : 'Could not withdraw the enrollment.',
-                                    );
-                                  }
-                                }}
-                                className="text-silver hover:text-alert text-xs"
-                                title="Withdraw"
-                                aria-label={`Withdraw ${e.associateName}`}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DataGrid<(typeof enrollments)[number]>
+                    id="learning-path-enrollments"
+                    caption="Enrollments"
+                    rows={enrollments}
+                    rowKey={(e) => e.id}
+                    search={false}
+                    urlState={false}
+                    exportCsv={false}
+                    columnChooser={false}
+                    columns={[
+                      {
+                        key: 'associate',
+                        header: 'Associate',
+                        accessor: (e) => e.associateName,
+                        sortable: true,
+                        primary: true,
+                        cell: (e) => (
+                          <>
+                            <div className="font-medium text-white">{e.associateName}</div>
+                            <div className="text-xs text-silver">{e.associateEmail}</div>
+                          </>
+                        ),
+                      },
+                      { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cell: (e) => <StatusBadge status={e.status} overrides={PATH_ENROLL_STATUS_TONES} /> },
+                      { key: 'assigned', header: 'Assigned', accessor: (e) => e.assignedAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (e) => fmtDate(e.assignedAt) },
+                      ...(canManage
+                        ? [
+                            {
+                              key: 'withdraw',
+                              header: '',
+                              accessor: () => null,
+                              searchable: false,
+                              csv: () => '',
+                              align: 'right' as const,
+                              stopRowClick: true,
+                              cell: (e: (typeof enrollments)[number]) => (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-silver hover:text-alert"
+                                  title="Withdraw"
+                                  aria-label={`Withdraw ${e.associateName}`}
+                                  onClick={async () => {
+                                    if (
+                                      !(await confirm({
+                                        title: 'Withdraw enrollment?',
+                                        description: `Withdraw ${e.associateName} from this path? Their course enrollments are not affected.`,
+                                        confirmLabel: 'Withdraw',
+                                        destructive: true,
+                                      }))
+                                    )
+                                      return;
+                                    try {
+                                      await withdrawLearningPathEnrollment(e.id);
+                                      toast.success(`Withdrew ${e.associateName}.`);
+                                      refresh();
+                                    } catch (err) {
+                                      toast.error(err instanceof ApiError ? err.message : 'Could not withdraw the enrollment.');
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                 </div>
               )}
               {canManage && (

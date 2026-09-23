@@ -28,18 +28,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Input } from '@/components/ui/Input';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
@@ -142,39 +137,28 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="hidden md:table-cell">Key</TableHead>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Required</TableHead>
-                  <TableHead className="text-right">Values</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-mono text-xs hidden md:table-cell">{c.key}</TableCell>
-                    <TableCell className="font-medium text-white">
-                      {c.label}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-mono font-normal">
-                        {c.key}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {c.isRequired ? (
-                        <Badge variant="destructive">Required</Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {c.worktagCount}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof rows)[number]>
+              id="worktag-categories"
+              caption="Worktag categories"
+              rows={rows}
+              rowKey={(c) => c.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'worktag-categories' }}
+              columns={[
+                { key: 'label', header: 'Label', accessor: (c) => c.label, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'key', header: 'Key', accessor: (c) => c.key, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
+                {
+                  key: 'required',
+                  header: 'Required',
+                  accessor: (c) => (c.isRequired ? 'Required' : ''),
+                  sortable: true,
+                  searchable: false,
+                  cell: (c) => (c.isRequired ? <Badge variant="destructive">Required</Badge> : '—'),
+                },
+                { key: 'values', header: 'Values', accessor: (c) => c.worktagCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -462,35 +446,37 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(filtered ?? []).map((w) => (
-                  <TableRow key={w.id} className="group">
-                    <TableCell className="font-medium text-white">{w.value}</TableCell>
-                    <TableCell className="font-mono text-xs">{w.code ?? '—'}</TableCell>
-                    <TableCell className="text-right">
-                      {canManage && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void onDelete(w.id)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert"
-                        >
-                          Deactivate
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="worktag-values"
+              caption="Worktag values"
+              rows={filtered ?? []}
+              rowKey={(w) => w.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'worktag-values' }}
+              columns={[
+                { key: 'value', header: 'Value', accessor: (w) => w.value, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'code', header: 'Code', accessor: (w) => w.code, sortable: true, cardMeta: true, className: 'font-mono text-xs', cell: (w) => w.code ?? '—' },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        cell: (w: NonNullable<typeof filtered>[number]) => (
+                          <Button variant="ghost" size="sm" onClick={() => void onDelete(w.id)} className="text-silver hover:text-alert">
+                            Deactivate
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>

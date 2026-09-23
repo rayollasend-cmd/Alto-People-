@@ -51,14 +51,9 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 
@@ -361,51 +356,60 @@ export function KbHome() {
                   }
                 />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Title</TableHead>
-                      <TableHead className="hidden sm:table-cell">Category</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="hidden lg:table-cell text-right">Views</TableHead>
-                      <TableHead className="hidden md:table-cell text-right">Helpful</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAdmin.map((a) => (
-                      <TableRow key={a.id} className="group">
-                        <TableCell>
+                <DataGrid<(typeof filteredAdmin)[number]>
+                  id="kb-articles"
+                  caption="Knowledge base articles"
+                  rows={filteredAdmin}
+                  rowKey={(a) => a.id}
+                  search={false}
+                  urlState={false}
+                  exportCsv={{ filename: 'kb-articles' }}
+                  onRowClick={(a) => setEditing(a)}
+                  rowActionLabel={(a) => `Edit ${a.title}`}
+                  columns={[
+                    {
+                      key: 'title',
+                      header: 'Title',
+                      accessor: (a) => a.title,
+                      sortable: true,
+                      primary: true,
+                      cell: (a) => (
+                        <>
                           <div className="font-medium text-white">{a.title}</div>
-                          <div className="text-xs font-mono text-silver">
-                            /{a.slug}
-                          </div>
-                          <div className="md:hidden text-xs2 text-silver/70 truncate">
-                            <span className="sm:hidden">
-                              {a.category}
-                              {' · '}
-                            </span>
-                            <span className="tabular-nums">{a.helpful}</span> helpful
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-silver hidden sm:table-cell">
-                          {a.category}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusTone(a.status)}>
-                            {statusLabel(a.status)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
-                          {a.views}
-                        </TableCell>
-                        <TableCell className="text-sm text-success hidden md:table-cell text-right tabular-nums">
-                          {a.helpful}{' '}
-                          {a.notHelpful > 0 && (
-                            <span className="text-alert">/ {a.notHelpful}</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right space-x-2">
+                          <div className="text-xs font-mono text-silver">/{a.slug}</div>
+                        </>
+                      ),
+                    },
+                    { key: 'category', header: 'Category', accessor: (a) => a.category, sortable: true, cardMeta: true, className: 'text-sm text-silver' },
+                    { key: 'status', header: 'Status', accessor: (a) => statusLabel(a.status), sortable: true, cell: (a) => <Badge variant={statusTone(a.status)}>{statusLabel(a.status)}</Badge> },
+                    { key: 'views', header: 'Views', accessor: (a) => a.views, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums' },
+                    {
+                      key: 'helpful',
+                      header: 'Helpful',
+                      accessor: (a) => a.helpful,
+                      csv: (a) => (a.notHelpful > 0 ? `${a.helpful} / ${a.notHelpful}` : String(a.helpful)),
+                      sortable: true,
+                      searchable: false,
+                      align: 'right',
+                      cardMeta: true,
+                      className: 'text-sm text-success tabular-nums',
+                      cell: (a) => (
+                        <>
+                          {a.helpful} {a.notHelpful > 0 && <span className="text-alert">/ {a.notHelpful}</span>}
+                        </>
+                      ),
+                    },
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right',
+                      stopRowClick: true,
+                      className: 'space-x-2',
+                      cell: (a) => (
+                        <>
                           {a.status === 'DRAFT' && (
                             <Button
                               size="sm"
@@ -419,11 +423,7 @@ export function KbHome() {
                                     toast.success('Article published.');
                                     refresh();
                                   } catch (err) {
-                                    toast.error(
-                                      err instanceof ApiError
-                                        ? err.message
-                                        : 'Failed.',
-                                    );
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
                                   }
                                 })
                               }
@@ -431,18 +431,14 @@ export function KbHome() {
                               Publish
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setEditing(a)}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => setEditing(a)}>
                             Edit
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
                             aria-label={`Delete ${a.title}`}
-                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
+                            className="hover:text-alert"
                             loading={actionKey === `del-${a.id}`}
                             disabled={actionKey !== null}
                             onClick={async () => {
@@ -453,22 +449,18 @@ export function KbHome() {
                                   toast.success('Article deleted.');
                                   refresh();
                                 } catch (err) {
-                                  toast.error(
-                                    err instanceof ApiError
-                                      ? err.message
-                                      : 'Failed.',
-                                  );
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
                                 }
                               });
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                        </>
+                      ),
+                    },
+                  ]}
+                />
               )}
             </CardContent>
           </Card>

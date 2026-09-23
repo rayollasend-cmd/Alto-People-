@@ -53,14 +53,9 @@ import {
   type SegmentedControlOption,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
@@ -443,61 +438,63 @@ export function HrCasesHome() {
                 }
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Subject</TableHead>
-                    <TableHead className="hidden md:table-cell">Associate</TableHead>
-                    <TableHead className="hidden md:table-cell">Category</TableHead>
-                    <TableHead>Priority</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden lg:table-cell">Updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleQueue.map((c) => (
-                    <TableRow
-                      key={c.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenId(c.id)}
-                    >
-                      <TableCell>
+              <DataGrid<(typeof visibleQueue)[number]>
+                id="hr-cases"
+                caption="HR case queue"
+                rows={visibleQueue}
+                rowKey={(c) => c.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'hr-cases' }}
+                onRowClick={(c) => setOpenId(c.id)}
+                rowActionLabel={(c) => `Open case ${c.subject}`}
+                columns={[
+                  {
+                    key: 'subject',
+                    header: 'Subject',
+                    accessor: (c) => c.subject,
+                    sortable: true,
+                    primary: true,
+                    cell: (c) => (
+                      <>
                         <div className="font-medium text-white">{c.subject}</div>
-                        {c.commentCount > 0 && (
-                          <div className="text-xs text-silver">
-                            {c.commentCount} replies
-                          </div>
-                        )}
-                        <div className="text-xs2 text-silver/70 md:hidden">
-                          {c.associateName} · {CATEGORY_LABELS[c.category]}
+                        {c.commentCount > 0 && <div className="text-xs text-silver">{c.commentCount} replies</div>}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (c) => c.associateName,
+                    sortable: true,
+                    cardMeta: true,
+                    cell: (c) => (
+                      <>
+                        <div className="text-sm">
+                          <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
                         </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <div className="text-sm"><AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink></div>
-                        <div className="text-xs text-silver">
-                          {c.associateEmail}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-silver">
-                        {CATEGORY_LABELS[c.category]}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={PRIORITY_VARIANT[c.priority]}>
-                          {PRIORITY_LABELS[c.priority]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>
-                          {STATUS_LABELS[c.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell text-xs text-silver">
-                        {fmtDate(c.updatedAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        <div className="text-xs text-silver">{c.associateEmail}</div>
+                      </>
+                    ),
+                  },
+                  { key: 'category', header: 'Category', accessor: (c) => CATEGORY_LABELS[c.category], sortable: true, cardMeta: true, className: 'text-sm text-silver' },
+                  {
+                    key: 'priority',
+                    header: 'Priority',
+                    accessor: (c) => PRIORITY_LABELS[c.priority],
+                    sortable: true,
+                    cell: (c) => <Badge variant={PRIORITY_VARIANT[c.priority]}>{PRIORITY_LABELS[c.priority]}</Badge>,
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (c) => STATUS_LABELS[c.status],
+                    sortable: true,
+                    cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{STATUS_LABELS[c.status]}</Badge>,
+                  },
+                  { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
+                ]}
+              />
             )}
           </CardContent>
         </Card>

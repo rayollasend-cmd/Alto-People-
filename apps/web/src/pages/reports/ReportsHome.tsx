@@ -53,13 +53,8 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -281,91 +276,74 @@ export function ReportsHome() {
               No reports match the current search / filter.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Entity</TableHead>
-                  <TableHead>Visibility</TableHead>
-                  <TableHead className="hidden lg:table-cell">Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((r) => (
-                  <TableRow key={r.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <span className="inline-flex items-center gap-2">
-                        {r.name}
-                        {r.period && (
-                          <Badge variant="outline">{REPORT_PERIOD_LABELS[r.period]}</Badge>
-                        )}
-                      </span>
-                      <div className="text-xs2 text-silver/70 md:hidden font-normal">{ENTITY_LABELS[r.entity] ?? r.entity}</div>
-                      <div className="text-xs2 text-silver/70 lg:hidden font-normal">{fmtDate(r.createdAt)}</div>
-                    </TableCell>
-                    <TableCell className="text-xs hidden md:table-cell">{ENTITY_LABELS[r.entity] ?? r.entity}</TableCell>
-                    <TableCell>
-                      {r.isPublic ? (
-                        <Badge variant="success">Shared</Badge>
-                      ) : (
-                        <Badge variant="default">Private</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">{fmtDate(r.createdAt)}</TableCell>
-                    <TableCell className="text-right whitespace-nowrap space-x-1">
+            <DataGrid<(typeof filtered)[number]>
+              id="saved-reports"
+              caption="Saved reports"
+              rows={filtered}
+              rowKey={(r) => r.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'saved-reports' }}
+              onRowClick={(r) => onRun(r)}
+              rowActionLabel={(r) => `Run ${r.name}`}
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  accessor: (r) => r.name,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (r) => (
+                    <span className="inline-flex items-center gap-2">
+                      {r.name}
+                      {r.period && <Badge variant="outline">{REPORT_PERIOD_LABELS[r.period]}</Badge>}
+                    </span>
+                  ),
+                },
+                { key: 'entity', header: 'Entity', accessor: (r) => ENTITY_LABELS[r.entity] ?? r.entity, sortable: true, cardMeta: true, className: 'text-xs' },
+                {
+                  key: 'visibility',
+                  header: 'Visibility',
+                  accessor: (r) => (r.isPublic ? 'Shared' : 'Private'),
+                  sortable: true,
+                  cell: (r) => (r.isPublic ? <Badge variant="success">Shared</Badge> : <Badge variant="default">Private</Badge>),
+                },
+                { key: 'created', header: 'Created', accessor: (r) => r.createdAt, sortable: true, searchable: false, cardMeta: true, cell: (r) => fmtDate(r.createdAt) },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'whitespace-nowrap space-x-1',
+                  cell: (r) => (
+                    <>
                       <Button size="sm" onClick={() => onRun(r)}>
                         <Play className="mr-1 h-3 w-3" /> Run
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onCsv(r)}
-                        title="Run and download CSV"
-                        aria-label={`Download CSV for "${r.name}"`}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => onCsv(r)} title="Run and download CSV" aria-label={`Download CSV for "${r.name}"`}>
                         <Download className="mr-1 h-3 w-3" /> CSV
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => openSeeded(r, 'edit')}
-                        title="Edit"
-                        aria-label={`Edit "${r.name}"`}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'edit')} title="Edit" aria-label={`Edit "${r.name}"`}>
                         <Pencil className="h-3 w-3" />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => openSeeded(r, 'duplicate')}
-                        title="Duplicate"
-                        aria-label={`Duplicate "${r.name}"`}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'duplicate')} title="Duplicate" aria-label={`Duplicate "${r.name}"`}>
                         <Copy className="h-3 w-3" />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setSchedulesFor(r)}
-                        title="Schedules"
-                        aria-label={`Schedules for "${r.name}"`}
-                      >
+                      <Button size="sm" variant="ghost" onClick={() => setSchedulesFor(r)} title="Schedules" aria-label={`Schedules for "${r.name}"`}>
                         <CalendarClock className="h-3 w-3" />
                       </Button>
-                      <button
-                        onClick={() => onDelete(r.id)}
-                        className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
-                        title="Delete"
-                        aria-label={`Delete "${r.name}"`}
-                      >
-                        <Trash2 className="inline h-3 w-3" />
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(r.id)} title="Delete" aria-label={`Delete "${r.name}"`}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
