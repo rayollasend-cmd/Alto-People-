@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
@@ -6,7 +6,6 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -153,7 +152,6 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  SortableTableHead,
   Table,
   TableBody,
   TableCell,
@@ -165,9 +163,8 @@ import {
   TabsList,
   TabsTrigger,
   Textarea,
-  useTableSort,
-  type TableSortState,
 } from '@/components/ui';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { StatusBadge, statusLabel } from '@/lib/status';
@@ -254,33 +251,8 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
   (typeof v === 'string' &&
     (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
 
-// PERF: the desktop table and the phone card stack used to BOTH mount, with
-// CSS (`hidden md:block` / `md:hidden`) hiding the inactive one — React still
-// committed ~9,000 dead DOM nodes for the hidden list on large directories.
-// This matchMedia hook lets us mount only the list the viewport can
-// actually show, and re-render on breakpoint crossings (resize / rotation).
-//
-// Same cutover rule as scheduling and Time & Attendance: mouse-class
-// devices get the table at md; touch devices (iPad portrait) keep the
-// card list until lg instead of a desktop table in ~half a screen.
-const DESKTOP_TABLE_QUERY =
-  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
-function useIsDesktop(): boolean {
-  const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
-  );
-  useEffect(() => {
-    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
-    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-  return isDesktop;
-}
-
 export function PeopleDirectory() {
   const queryClient = useQueryClient();
-  const isDesktop = useIsDesktop();
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
@@ -854,23 +826,12 @@ export function PeopleDirectory() {
       )}
 
       {rows && rows.length > 0 && (
-        // Only the breakpoint-active list is mounted (useIsDesktop) — the
-        // other used to render hidden, doubling DOM size for nothing.
-        isDesktop ? (
-          /* md+ : columnar table. Columns reveal progressively as
-              viewport widens (md: Position, lg: Type + Pay, xl: Manager
-              + Start). For lists past VIRTUALIZE_THRESHOLD we swap in a
-              row virtualizer so DOM size stays bounded regardless of the
-              underlying list size. */
-          <DirectoryTable rows={rows} onSelect={setTarget} />
-        ) : (
-          /* Phone: card stack. Tap card → drawer (same as table click). */
-          <ul className="space-y-2">
-            {rows.map((r) => (
-              <DirectoryPhoneCard key={r.id} row={r} onSelect={setTarget} />
-            ))}
-          </ul>
-        )
+        /* One list for every viewport: the grid mounts the table on
+           desktops and the card stack on phones — never both. Columns
+           reveal as the viewport widens, and past VIRTUALIZE_THRESHOLD
+           rows it virtualizes so DOM size stays bounded regardless of
+           the list size. */
+        <DirectoryTable rows={rows} onSelect={setTarget} />
       )}
 
       {/* The list is capped per page. Without this control the directory
@@ -937,35 +898,148 @@ export function PeopleDirectory() {
   );
 }
 
-// Above this row count we swap from a plain DOM table to a virtualized
-// one. The threshold is empirical: with the current row design (avatar,
-// 4 cells, ~56px tall) Chrome handles up to ~200-300 rows smoothly, but
-// scroll-jank and search-input lag become visible past that as React
-// has to reconcile every row on each filter keystroke. With
-// keepPreviousData it's worse — both the old and new lists exist in
-// memory during a fetch. Virtualizing means the rendered DOM stays
-// bounded regardless of the result count.
+// Above this row count the grid virtualizes. The threshold is empirical:
+// with the current row design (avatar, ~56px tall) Chrome handles up to
+// ~200-300 plain rows smoothly, but scroll-jank and search-input lag show
+// past that as React reconciles every row on each filter keystroke — and
+// with keepPreviousData both the old and new lists exist during a fetch.
 const VIRTUALIZE_THRESHOLD = 100;
 const ROW_HEIGHT_PX = 56;
-// Pad the visible window so a smooth scroll doesn't immediately reveal
-// blank rows at the edges while the next batch is measured.
-const VIRTUAL_OVERSCAN = 8;
-// Cap the inner scroll container at this much of the viewport so the
-// table doesn't push the rest of the page out of view. Headers stay
-// sticky inside this container, so the user gets a familiar "scroll
-// inside the data grid" affordance.
-const VIRTUAL_CONTAINER_MAX_VH = 'max-h-[calc(100vh-360px)]';
 
-type DirectorySortKey =
-  | 'name'
-  | 'status'
-  | 'workplace'
-  | 'position'
-  | 'type'
-  | 'pay'
-  | 'manager'
-  | 'start';
+const EMPTY_CELL = (
+  <span className="text-silver/70" aria-hidden="true">
+    —
+  </span>
+);
 
+// Sort is over the page of rows the server returned (post-filter); the
+// third click on a header restores server order. Links inside a cell stop
+// the click so they do not also open the drawer.
+const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
+  {
+    key: 'name',
+    header: 'Associate',
+    accessor: (r) => `${r.firstName} ${r.lastName}`,
+    sortable: true,
+    primary: true,
+    cell: (r) => (
+      <div className="flex items-center gap-2.5">
+        <Avatar src={r.photoUrl} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
+        <div className="min-w-0">
+          <div className="font-medium text-white truncate">
+            {r.firstName} {r.lastName}
+          </div>
+          <div className="text-xs text-silver truncate">{r.email}</div>
+        </div>
+        {r.j1Status && (
+          <Badge variant="default" className="ml-1 text-2xs">
+            J-1
+          </Badge>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    accessor: (r) => statusLabel(r.status),
+    sortable: true,
+    cardMeta: true,
+    width: '7rem',
+    cell: (r) => (
+      <div className="flex items-center gap-2">
+        <StatusBadge status={r.status} />
+        {r.status === 'PENDING' && r.onboardingPercent !== null && (
+          <span className="text-2xs tabular-nums text-silver">{r.onboardingPercent}%</span>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: 'workplace',
+    header: 'Workplace',
+    accessor: (r) => r.workplaceClientName,
+    sortable: true,
+    cardMeta: true,
+    className: 'text-silver',
+    cell: (r) =>
+      r.workplaceClientId && r.workplaceClientName ? (
+        <Link
+          to={`/clients/${r.workplaceClientId}`}
+          onClick={(e) => e.stopPropagation()}
+          className="hover:text-white inline-flex items-center gap-1.5"
+        >
+          <Building2 className="h-3.5 w-3.5" />
+          <span className="truncate">{r.workplaceClientName}</span>
+        </Link>
+      ) : (
+        EMPTY_CELL
+      ),
+  },
+  {
+    key: 'position',
+    header: 'Position',
+    accessor: (r) => r.position,
+    sortable: true,
+    cardMeta: true,
+    className: 'text-silver',
+    cell: (r) => r.position ?? EMPTY_CELL,
+  },
+  {
+    key: 'type',
+    header: 'Type',
+    accessor: (r) => EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+    sortable: true,
+    width: '6rem',
+    className: 'text-xs text-silver',
+  },
+  {
+    key: 'pay',
+    header: 'Pay rate',
+    accessor: (r) => {
+      const n = r.payAmount === null ? NaN : Number(r.payAmount);
+      return Number.isFinite(n) ? n : null;
+    },
+    csv: (r) => fmtPay(r.payAmount, r.payType, r.payCurrency),
+    sortable: true,
+    searchable: false,
+    className: 'text-silver tabular-nums',
+    cell: (r) => fmtPay(r.payAmount, r.payType, r.payCurrency),
+  },
+  {
+    key: 'manager',
+    header: 'Manager',
+    accessor: (r) => r.managerName,
+    sortable: true,
+    className: 'text-silver',
+    cell: (r) =>
+      r.managerName ? (
+        r.managerId ? (
+          <Link to={`/people?associateId=${r.managerId}`} onClick={(e) => e.stopPropagation()} className="hover:text-white">
+            {r.managerName}
+          </Link>
+        ) : (
+          r.managerName
+        )
+      ) : (
+        EMPTY_CELL
+      ),
+  },
+  {
+    key: 'start',
+    header: 'Start',
+    accessor: (r) => r.startDate,
+    sortable: true,
+    searchable: false,
+    width: '6rem',
+    className: 'text-silver text-xs tabular-nums',
+    cell: (r) => (r.startDate ? fmtDate(parseYmd(r.startDate) ?? r.startDate) : EMPTY_CELL),
+  },
+];
+
+// The page owns search (server-side, across every page) and the full
+// export; the grid sorts, hides columns and stacks cards for the rows on
+// screen.
 function DirectoryTable({
   rows,
   onSelect,
@@ -973,295 +1047,25 @@ function DirectoryTable({
   rows: DirectoryEntry[];
   onSelect: (row: DirectoryEntry) => void;
 }) {
-  // Click-to-sort over the page of rows the server returned (post-filter).
-  // Third click on a header clears back to server order.
-  const { sorted, sortState, toggleSort } = useTableSort(rows, {
-    name: (r: DirectoryEntry) => `${r.firstName} ${r.lastName}`,
-    status: (r: DirectoryEntry) => r.status,
-    workplace: (r: DirectoryEntry) => r.workplaceClientName,
-    position: (r: DirectoryEntry) => r.position,
-    type: (r: DirectoryEntry) =>
-      EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-    pay: (r: DirectoryEntry) => {
-      const n = r.payAmount === null ? NaN : Number(r.payAmount);
-      return Number.isFinite(n) ? n : null;
-    },
-    manager: (r: DirectoryEntry) => r.managerName,
-    start: (r: DirectoryEntry) =>
-      r.startDate ? new Date(r.startDate).getTime() : null,
-  });
-  if (rows.length <= VIRTUALIZE_THRESHOLD) {
-    return (
-      <Card className="overflow-hidden">
-        <Table caption="Associate directory">
-          <TableHeader>
-            <DirectoryHeaderRow state={sortState} onSort={toggleSort} />
-          </TableHeader>
-          <TableBody>
-            {sorted.map((r) => (
-              <DirectoryRow key={r.id} row={r} onSelect={onSelect} />
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
-    );
-  }
   return (
-    <VirtualDirectoryTable
-      rows={sorted}
-      sortState={sortState}
-      onSort={toggleSort}
-      onSelect={onSelect}
-    />
-  );
-}
-
-function DirectoryHeaderRow({
-  state,
-  onSort,
-}: {
-  state: TableSortState<DirectorySortKey>;
-  onSort: (key: DirectorySortKey) => void;
-}) {
-  return (
-    <TableRow className="hover:bg-transparent">
-      <SortableTableHead sortKey="name" state={state} onSort={onSort}>
-        Associate
-      </SortableTableHead>
-      <SortableTableHead sortKey="status" state={state} onSort={onSort} className="w-28">
-        Status
-      </SortableTableHead>
-      <SortableTableHead sortKey="workplace" state={state} onSort={onSort}>
-        Workplace
-      </SortableTableHead>
-      <SortableTableHead sortKey="position" state={state} onSort={onSort} className="hidden md:table-cell">
-        Position
-      </SortableTableHead>
-      <SortableTableHead sortKey="type" state={state} onSort={onSort} className="hidden lg:table-cell w-24">
-        Type
-      </SortableTableHead>
-      <SortableTableHead sortKey="pay" state={state} onSort={onSort} className="hidden lg:table-cell">
-        Pay rate
-      </SortableTableHead>
-      <SortableTableHead sortKey="manager" state={state} onSort={onSort} className="hidden xl:table-cell">
-        Manager
-      </SortableTableHead>
-      <SortableTableHead sortKey="start" state={state} onSort={onSort} className="hidden xl:table-cell w-24">
-        Start
-      </SortableTableHead>
-    </TableRow>
-  );
-}
-
-function VirtualDirectoryTable({
-  rows,
-  sortState,
-  onSort,
-  onSelect,
-}: {
-  rows: DirectoryEntry[];
-  sortState: TableSortState<DirectorySortKey>;
-  onSort: (key: DirectorySortKey) => void;
-  onSelect: (row: DirectoryEntry) => void;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // useVirtualizer reports start/end indices of items that should be
-  // mounted given the current scroll position. We pad before/after the
-  // window with two empty <tr> "spacer rows" of the correct total height
-  // so the <tbody> retains its full scrollable size — the browser thinks
-  // every row exists, the DOM only ever holds ~30.
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT_PX,
-    overscan: VIRTUAL_OVERSCAN,
-  });
-
-  const items = virtualizer.getVirtualItems();
-  const totalSize = virtualizer.getTotalSize();
-  const paddingTop = items.length > 0 ? items[0].start : 0;
-  const paddingBottom =
-    items.length > 0 ? totalSize - items[items.length - 1].end : 0;
-
-  return (
-    <Card className="overflow-hidden">
-      <div ref={scrollRef} className={`overflow-y-auto ${VIRTUAL_CONTAINER_MAX_VH}`}>
-        <Table caption="Associate directory">
-          <TableHeader>
-            <DirectoryHeaderRow state={sortState} onSort={onSort} />
-          </TableHeader>
-          <TableBody>
-            {paddingTop > 0 && (
-              <tr aria-hidden style={{ height: `${paddingTop}px` }} />
-            )}
-            {items.map((virtualRow) => {
-              const r = rows[virtualRow.index];
-              return <DirectoryRow key={r.id} row={r} onSelect={onSelect} />;
-            })}
-            {paddingBottom > 0 && (
-              <tr aria-hidden style={{ height: `${paddingBottom}px` }} />
-            )}
-          </TableBody>
-        </Table>
-      </div>
+    <Card className="p-3">
+      <DataGrid<DirectoryEntry>
+        id="people-directory"
+        caption="Associate directory"
+        rows={rows}
+        rowKey={(r) => r.id}
+        search={false}
+        urlState={false}
+        exportCsv={false}
+        onRowClick={onSelect}
+        rowActionLabel={(r) => `Open ${r.firstName} ${r.lastName}`}
+        virtualizeAfter={VIRTUALIZE_THRESHOLD}
+        rowHeight={ROW_HEIGHT_PX}
+        columns={DIRECTORY_COLUMNS}
+      />
     </Card>
   );
 }
-
-// Memoised so unrelated state changes (drawer open, search keystroke,
-// filter dropdown click) don't re-render every row. Profiling showed
-// this saved ~40 ms / interaction at 200 rows.
-const DirectoryRow = memo(function DirectoryRow({
-  row: r,
-  onSelect,
-}: {
-  row: DirectoryEntry;
-  onSelect: (row: DirectoryEntry) => void;
-}) {
-  return (
-    <TableRow className="cursor-pointer" onClick={() => onSelect(r)}>
-      <TableCell>
-        <div className="flex items-center gap-2.5">
-          <Avatar
-            src={r.photoUrl}
-            name={`${r.firstName} ${r.lastName}`}
-            email={r.email}
-            size="sm"
-          />
-          <div className="min-w-0">
-            <div className="font-medium text-white truncate">
-              {r.firstName} {r.lastName}
-            </div>
-            <div className="text-xs text-silver truncate">{r.email}</div>
-          </div>
-          {r.j1Status && (
-            <Badge variant="default" className="ml-1 text-2xs">
-              J-1
-            </Badge>
-          )}
-        </div>
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-2">
-          <StatusBadge status={r.status} />
-          {r.status === 'PENDING' && r.onboardingPercent !== null && (
-            <span className="text-2xs tabular-nums text-silver">
-              {r.onboardingPercent}%
-            </span>
-          )}
-        </div>
-      </TableCell>
-      <TableCell className="text-silver">
-        {r.workplaceClientId && r.workplaceClientName ? (
-          <Link
-            to={`/clients/${r.workplaceClientId}`}
-            onClick={(e) => e.stopPropagation()}
-            className="hover:text-white inline-flex items-center gap-1.5"
-          >
-            <Building2 className="h-3.5 w-3.5" />
-            <span className="truncate">{r.workplaceClientName}</span>
-          </Link>
-        ) : (
-          <span className="text-silver/70" aria-hidden="true">—</span>
-        )}
-      </TableCell>
-      <TableCell className="hidden md:table-cell text-silver">
-        {r.position ?? <span className="text-silver/70" aria-hidden="true">—</span>}
-      </TableCell>
-      <TableCell className="hidden lg:table-cell text-xs text-silver">
-        {EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType}
-      </TableCell>
-      <TableCell className="hidden lg:table-cell text-silver tabular-nums">
-        {fmtPay(r.payAmount, r.payType, r.payCurrency)}
-      </TableCell>
-      <TableCell className="hidden xl:table-cell text-silver">
-        {r.managerName ? (
-          r.managerId ? (
-            <Link
-              to={`/people?associateId=${r.managerId}`}
-              onClick={(e) => e.stopPropagation()}
-              className="hover:text-white"
-            >
-              {r.managerName}
-            </Link>
-          ) : (
-            r.managerName
-          )
-        ) : (
-          <span className="text-silver/70" aria-hidden="true">—</span>
-        )}
-      </TableCell>
-      <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
-        {r.startDate ? (
-          fmtDate(parseYmd(r.startDate) ?? r.startDate)
-        ) : (
-          <span className="text-silver/70" aria-hidden="true">—</span>
-        )}
-      </TableCell>
-    </TableRow>
-  );
-});
-
-const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
-  row: r,
-  onSelect,
-}: {
-  row: DirectoryEntry;
-  onSelect: (row: DirectoryEntry) => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onSelect(r)}
-        className="w-full text-left rounded-md border border-navy-secondary bg-navy/40 p-3 hover:border-silver/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-      >
-        <div className="flex items-start gap-2.5">
-          <Avatar
-            src={r.photoUrl}
-            name={`${r.firstName} ${r.lastName}`}
-            email={r.email}
-            size="sm"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="font-medium text-white truncate">
-                {r.firstName} {r.lastName}
-              </div>
-              <StatusBadge status={r.status} className="shrink-0" />
-            </div>
-            <div className="text-xs text-silver truncate">{r.email}</div>
-            {(r.workplaceClientName || r.position) && (
-              <div className="mt-1 text-xs2 text-silver/80 truncate">
-                {r.workplaceClientName && (
-                  <span className="inline-flex items-center gap-1">
-                    <Building2 className="h-3 w-3" />
-                    {r.workplaceClientName}
-                  </span>
-                )}
-                {r.workplaceClientName && r.position && (
-                  <span className="mx-1.5 text-silver/70" aria-hidden="true">·</span>
-                )}
-                {r.position}
-              </div>
-            )}
-            {r.status === 'PENDING' && r.onboardingPercent !== null && (
-              <div className="mt-1 text-2xs tabular-nums text-silver">
-                Onboarding {r.onboardingPercent}%
-              </div>
-            )}
-            {r.j1Status && (
-              <Badge variant="default" className="mt-1.5 text-2xs">
-                J-1
-              </Badge>
-            )}
-          </div>
-        </div>
-      </button>
-    </li>
-  );
-});
 
 // The drawer's headshot — photo-first instead of a 40px chip. Click opens
 // the full-size photo (rescues existing off-center uploads the round crop

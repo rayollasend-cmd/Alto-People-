@@ -151,12 +151,30 @@ describe('DataGrid', () => {
   it('opens a row when asked, by keyboard as well as by mouse', async () => {
     const onRowClick = vi.fn();
     renderGrid({ onRowClick, rowActionLabel: (r) => `Open ${r.name}` });
-    // jsdom applies no CSS, so the phone card and the table row both exist;
-    // the table is the one under test here.
+    // The test stub answers min-width queries as matching, so this is the
+    // desktop table.
     const row = within(screen.getByRole('table', { name: 'Test rows' })).getByRole('button', { name: 'Open Dee Kpakpo' });
     row.focus();
     await userEvent.keyboard('{Enter}');
     expect(onRowClick).toHaveBeenCalledWith(ROWS[1]);
+  });
+
+  it('on a phone mounts the card stack and no table — never both', async () => {
+    // Hiding the inactive layout with CSS would still commit every row
+    // twice; the grid reads the breakpoint and renders one layout only.
+    const desktopStub = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...desktopStub(query), matches: false })) as typeof window.matchMedia;
+    try {
+      const onRowClick = vi.fn();
+      renderGrid({ onRowClick, rowActionLabel: (r) => `Open ${r.name}` });
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      const cards = screen.getByRole('list', { name: 'Test rows' });
+      expect(within(cards).getAllByRole('listitem')).toHaveLength(3);
+      await userEvent.click(within(cards).getByRole('button', { name: 'Open Dee Kpakpo' }));
+      expect(onRowClick).toHaveBeenCalledWith(ROWS[1]);
+    } finally {
+      window.matchMedia = desktopStub;
+    }
   });
 
   it('shows the loading, error and empty states rather than an empty table', () => {

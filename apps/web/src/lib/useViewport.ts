@@ -1,15 +1,14 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
- * Whether the window is at least `px` wide — Tailwind's `sm:` is 640.
+ * Whether a media query matches, live.
  *
  * For the few places a phone needs a different SHAPE, not just different
  * spacing, so CSS alone can't do it. jsdom has no real matchMedia; the
  * test setup stubs min-width queries as matching, so tests see desktop
  * unless they override it.
  */
-export function useMinWidth(px: number): boolean {
-  const query = `(min-width: ${px}px)`;
+export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
     (onChange) => {
       if (typeof window === 'undefined' || !window.matchMedia) return () => {};
@@ -20,6 +19,22 @@ export function useMinWidth(px: number): boolean {
     () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : true),
     () => true,
   );
+}
+
+/** Whether the window is at least `px` wide — Tailwind's `sm:` is 640. */
+export function useMinWidth(px: number): boolean {
+  return useMediaQuery(`(min-width: ${px}px)`);
+}
+
+/**
+ * The one rule for "table or cards". Mouse-class devices get the table
+ * at md; touch devices (an iPad in portrait) keep the card list until lg
+ * rather than a desktop table in half a screen.
+ */
+export const DESKTOP_TABLE_QUERY = '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
+
+export function useDesktopTable(): boolean {
+  return useMediaQuery(DESKTOP_TABLE_QUERY);
 }
 
 export interface VisibleViewport {

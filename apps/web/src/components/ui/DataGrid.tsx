@@ -4,6 +4,7 @@ import { Columns3, Download, Inbox, type LucideIcon } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
+import { useDesktopTable } from '@/lib/useViewport';
 import { AuthContext } from '@/lib/auth';
 import { Button } from './Button';
 import {
@@ -51,7 +52,8 @@ import {
  *   select       checkboxes and a bulk-action bar, when asked for
  *   url          ?sort= ?dir= ?q= so a filtered view is a link you can send
  *   phones       a card per row, built from the same column list, instead
- *                of a table that hides itself
+ *                of a table that hides itself — and only the layout the
+ *                viewport can show is mounted, never both
  *   virtualize   only the visible rows are in the DOM once a list is long
  *   states       skeleton, error, empty and "N of M" are not optional
  *
@@ -422,6 +424,12 @@ function GridCore<T>({
   /* ---- phones: cards ------------------------------------------------- */
   const primary = columns.find((c) => c.primary) ?? columns[0];
   const useCards = cards ?? Boolean(primary);
+  // Mount the table OR the cards, never both. Hiding the inactive one
+  // with CSS still commits every row twice — on a large directory that
+  // was ~9,000 dead DOM nodes — so the breakpoint is read in JS and the
+  // other layout is not rendered at all.
+  const desktop = useDesktopTable();
+  const showCards = useCards && !desktop;
 
   const countLine = (() => {
     const n = sorted.length;
@@ -542,8 +550,8 @@ function GridCore<T>({
       ) : (
         <>
           {/* Phones: a card per row, from the same column list. */}
-          {useCards && (
-            <ul className="space-y-2 md:hidden" aria-label={caption}>
+          {showCards && (
+            <ul className="space-y-2" aria-label={caption}>
               {sorted.map((row) => {
                 const key = rowKey(row);
                 const metaCols = visible.filter((c) => c.cardMeta && c !== primary);
@@ -628,135 +636,136 @@ function GridCore<T>({
           )}
 
           {/* The table. Scrolls inside its own box only when virtualized. */}
-          <div
-            ref={scrollRef}
-            className={cn(
-              useCards && 'hidden md:block',
-              virtualize && 'max-h-[70vh] overflow-y-auto rounded-md border border-navy-secondary',
-            )}
-          >
-            <Table caption={caption}>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  {selectable && (
-                    <TableHead className="w-8 pr-0">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-gold"
-                        checked={allSelected}
-                        onChange={toggleAll}
-                        disabled={selectableRows.length === 0}
-                        aria-label={allSelected ? 'Clear selection' : 'Select every row'}
-                      />
-                    </TableHead>
-                  )}
-                  {visible.map((c) =>
-                    c.sortable ? (
-                      <SortableTableHead
-                        key={c.key}
-                        sortKey={c.key}
-                        state={sortState}
-                        onSort={toggleSort}
-                        className={cn(alignClass(c.align), c.className)}
-                        style={c.width ? { width: c.width } : undefined}
-                      >
-                        {c.header}
-                      </SortableTableHead>
-                    ) : (
-                      <TableHead
-                        key={c.key}
-                        className={cn(alignClass(c.align), c.className)}
-                        style={c.width ? { width: c.width } : undefined}
-                      >
-                        {c.header}
+          {!showCards && (
+            <div
+              ref={scrollRef}
+              className={cn(
+                virtualize && 'max-h-[70vh] overflow-y-auto rounded-md border border-navy-secondary',
+              )}
+            >
+              <Table caption={caption}>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    {selectable && (
+                      <TableHead className="w-8 pr-0">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-gold"
+                          checked={allSelected}
+                          onChange={toggleAll}
+                          disabled={selectableRows.length === 0}
+                          aria-label={allSelected ? 'Clear selection' : 'Select every row'}
+                        />
                       </TableHead>
-                    ),
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody
-                style={
-                  virtualize
-                    ? { height: virtualizer.getTotalSize(), position: 'relative', display: 'block' }
-                    : undefined
-                }
-              >
-                {(virtualize
-                  ? virtualizer.getVirtualItems().map((v) => ({ row: sorted[v.index]!, v, group: null }))
-                  : groups
-                    ? groups.flatMap((g) => [
-                        { row: null, v: null, group: g },
-                        ...g.rows.map((row) => ({ row, v: null, group: null })),
-                      ])
-                    : sorted.map((row) => ({ row, v: null, group: null }))
-                ).map(({ row, v, group }) => {
-                  if (group) {
-                    // A heading row where the group changes — one table, so
-                    // a screen reader hears one grid with sections, not
-                    // fourteen grids with the same five columns.
-                    return (
-                      <TableRow key={`group:${group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
-                        <TableCell
-                          colSpan={visible.length + (selectable ? 1 : 0)}
-                          className="py-2 text-xs font-medium text-white"
+                    )}
+                    {visible.map((c) =>
+                      c.sortable ? (
+                        <SortableTableHead
+                          key={c.key}
+                          sortKey={c.key}
+                          state={sortState}
+                          onSort={toggleSort}
+                          className={cn(alignClass(c.align), c.className)}
+                          style={c.width ? { width: c.width } : undefined}
                         >
-                          {groupBy!.header(group.key, group.rows)}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  }
-                  if (!row) return null;
-                  const key = rowKey(row);
-                  const isSelected = selected.has(key);
-                  return (
-                    <TableRow
-                      key={key}
-                      data-state={isSelected ? 'selected' : undefined}
-                      onClick={onRowClick ? () => onRowClick(row) : undefined}
-                      aria-label={onRowClick ? rowActionLabel?.(row) : undefined}
-                      className={cn(onRowClick && 'cursor-pointer', rowClassName?.(row))}
-                      style={
-                        v
-                          ? {
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              display: 'table',
-                              tableLayout: 'fixed',
-                              transform: `translateY(${v.start}px)`,
-                            }
-                          : undefined
-                      }
-                    >
-                      {selectable && (
-                        <TableCell className="w-8 pr-0" onClick={(e) => e.stopPropagation()}>
-                          {!selectable.disabled?.(row) && (
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-gold"
-                              checked={isSelected}
-                              onChange={() => toggleOne(key)}
-                              aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
-                            />
-                          )}
-                        </TableCell>
-                      )}
-                      {visible.map((c) => (
-                        <TableCell
+                          {c.header}
+                        </SortableTableHead>
+                      ) : (
+                        <TableHead
                           key={c.key}
                           className={cn(alignClass(c.align), c.className)}
-                          onClick={c.stopRowClick ? (e) => e.stopPropagation() : undefined}
+                          style={c.width ? { width: c.width } : undefined}
                         >
-                          {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+                          {c.header}
+                        </TableHead>
+                      ),
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody
+                  style={
+                    virtualize
+                      ? { height: virtualizer.getTotalSize(), position: 'relative', display: 'block' }
+                      : undefined
+                  }
+                >
+                  {(virtualize
+                    ? virtualizer.getVirtualItems().map((v) => ({ row: sorted[v.index]!, v, group: null }))
+                    : groups
+                      ? groups.flatMap((g) => [
+                          { row: null, v: null, group: g },
+                          ...g.rows.map((row) => ({ row, v: null, group: null })),
+                        ])
+                      : sorted.map((row) => ({ row, v: null, group: null }))
+                  ).map(({ row, v, group }) => {
+                    if (group) {
+                      // A heading row where the group changes — one table, so
+                      // a screen reader hears one grid with sections, not
+                      // fourteen grids with the same five columns.
+                      return (
+                        <TableRow key={`group:${group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
+                          <TableCell
+                            colSpan={visible.length + (selectable ? 1 : 0)}
+                            className="py-2 text-xs font-medium text-white"
+                          >
+                            {groupBy!.header(group.key, group.rows)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                    if (!row) return null;
+                    const key = rowKey(row);
+                    const isSelected = selected.has(key);
+                    return (
+                      <TableRow
+                        key={key}
+                        data-state={isSelected ? 'selected' : undefined}
+                        onClick={onRowClick ? () => onRowClick(row) : undefined}
+                        aria-label={onRowClick ? rowActionLabel?.(row) : undefined}
+                        className={cn(onRowClick && 'cursor-pointer', rowClassName?.(row))}
+                        style={
+                          v
+                            ? {
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                display: 'table',
+                                tableLayout: 'fixed',
+                                transform: `translateY(${v.start}px)`,
+                              }
+                            : undefined
+                        }
+                      >
+                        {selectable && (
+                          <TableCell className="w-8 pr-0" onClick={(e) => e.stopPropagation()}>
+                            {!selectable.disabled?.(row) && (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-gold"
+                                checked={isSelected}
+                                onChange={() => toggleOne(key)}
+                                aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
+                              />
+                            )}
+                          </TableCell>
+                        )}
+                        {visible.map((c) => (
+                          <TableCell
+                            key={c.key}
+                            className={cn(alignClass(c.align), c.className)}
+                            onClick={c.stopRowClick ? (e) => e.stopPropagation() : undefined}
+                          >
+                            {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </>
       )}
     </div>
