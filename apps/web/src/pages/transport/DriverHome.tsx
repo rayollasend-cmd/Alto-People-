@@ -25,7 +25,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { onLiveEvent } from '@/lib/liveEvents';
-import { fmtDayHeaderTz, fmtMoney, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, parseYmd, zonedDayKey } from '@/lib/format';
+import { fmtDayHeaderTz, fmtMoney, fmtMonthShortYear, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, parseYmd, zonedDayKey } from '@/lib/format';
 import {
   NO_SHOW_WAIT_MS,
   acceptSeat,
@@ -700,7 +700,7 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
               <div className="min-w-0">
                 <div className="text-lg font-semibold text-white">{r.name}</div>
                 <div className="text-xs text-silver">
-                  {t('drive.riderSince', { date: new Date(r.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) })}
+                  {t('drive.riderSince', { date: fmtMonthShortYear(r.since) })}
                 </div>
               </div>
             </div>

@@ -30,7 +30,7 @@ import { listOpenShifts } from '@/lib/qualApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
-import { fmtDate, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
@@ -646,11 +646,7 @@ function MyNumbers({
                   : nextPayday
                     ? t('tile.nextPayday', {
                         date:
-                          parseYmd(nextPayday.payDate)?.toLocaleDateString(undefined, {
-                            weekday: 'short',
-                            month: 'short',
-                            day: 'numeric',
-                          }) ?? nextPayday.payDate,
+                          fmtDayShort(parseYmd(nextPayday.payDate), { anchored: true }) ?? nextPayday.payDate,
                       })
                     : t('tile.noPayYet')
           }

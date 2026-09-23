@@ -8,17 +8,7 @@ import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
-import {
-  fmtMoney,
-  fmtMoneyEst,
-  fmtRelativeDayTz,
-  fmtShiftRangeTz,
-  fmtTime,
-  fmtTimeTz,
-  mapsUrl,
-  parseYmd,
-  zonedDayKey,
-} from '@/lib/format';
+import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
 import { acknowledgeMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -386,7 +376,7 @@ export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) 
                 )}
               >
                 <span className={cn('text-2xs uppercase', i === 0 ? 'text-gold' : 'text-silver/70')}>
-                  {d.date.toLocaleDateString(undefined, { weekday: 'narrow' })}
+                  {fmtWeekday(d.date, 'narrow')}
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-white">{d.date.getDate()}</span>
                 <span

@@ -1,6 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import {
   browserTimeZone,
+  displayTimeZone,
+  displayZoneAbbrev,
+  displayZoneDiffersFromDevice,
+  fmtDate,
+  fmtDateTime,
+  fmtDayShort,
+  fmtMonthShortYear,
+  fmtTime,
+  fmtTimeTz,
+  setDisplayTimeZone,
   fmtDayHeaderTz,
   fmtMonthYearTz,
   fmtRelativeDayTz,
@@ -258,5 +268,67 @@ describe('fmtRelativeDayTz', () => {
     expect(
       fmtRelativeDayTz('2027-01-01T17:00:00.000Z', 'America/New_York', endOfYear),
     ).toBe('Tomorrow');
+  });
+});
+
+/**
+ * The Settings timezone preference, honoured.
+ *
+ * The card has said "used to display dates and times across the app" for
+ * as long as it has existed. Until now one file read it — the card. These
+ * pin the contract: an instant renders on the display zone; a date-only
+ * value and a calendar anchor render as the day they name, whatever the
+ * zone; a store-anchored *Tz call still wins with its explicit zone.
+ */
+describe('the display timezone', () => {
+  const NOON_UTC = '2026-06-13T16:00:00.000Z'; // 12:00 EDT · 11:00 CDT · 09:00 PDT
+
+  afterEach(() => setDisplayTimeZone(null));
+
+  it('falls back to the device zone when nothing is saved', () => {
+    setDisplayTimeZone(null);
+    expect(displayTimeZone()).toBe(browserTimeZone());
+    expect(displayZoneDiffersFromDevice()).toBe(false);
+  });
+
+  it('renders instants on the saved zone, everywhere the instant formatters are used', () => {
+    setDisplayTimeZone('America/Chicago');
+    expect(fmtTime(NOON_UTC)).toBe('11:00 AM');
+    expect(fmtDateTime(NOON_UTC)).toBe('Jun 13, 2026, 11:00 AM');
+    expect(fmtDayShort(NOON_UTC)).toBe('Sat, Jun 13');
+    expect(fmtMonthShortYear(NOON_UTC)).toBe('Jun 2026');
+
+    setDisplayTimeZone('America/Los_Angeles');
+    expect(fmtTime(NOON_UTC)).toBe('9:00 AM');
+    // A late-evening instant crosses midnight on the west coast: the DATE
+    // moves too, which is the whole reason a zone has to be applied.
+    expect(fmtDate('2026-06-14T03:30:00.000Z')).toBe('Jun 13, 2026');
+  });
+
+  it('never shifts a date-only value or a calendar anchor', () => {
+    setDisplayTimeZone('Pacific/Auckland');
+    // "2026-06-13" names a day; it is that day in every zone.
+    expect(fmtDate('2026-06-13')).toBe('Jun 13, 2026');
+    // A parseYmd anchor is local midnight of the day it names; anchored
+    // rendering keeps it that day rather than rolling it into tomorrow.
+    const anchor = new Date(2026, 5, 13, 0, 0, 0);
+    expect(fmtDayShort(anchor, { anchored: true })).toBe('Sat, Jun 13');
+    expect(fmtDayShort(anchor, { year: true, anchored: true })).toBe('Sat, Jun 13, 2026');
+  });
+
+  it('lets a store zone win over the preference', () => {
+    setDisplayTimeZone('America/Los_Angeles');
+    // The schedule grid passes the STORE's zone; the viewer's preference
+    // does not move a Florida shift.
+    expect(fmtTimeTz(NOON_UTC, 'America/New_York')).toBe('12:00 PM');
+  });
+
+  it('knows when to say which zone it is using', () => {
+    setDisplayTimeZone(browserTimeZone());
+    expect(displayZoneDiffersFromDevice()).toBe(false);
+    const other = browserTimeZone() === 'Asia/Tokyo' ? 'Europe/London' : 'Asia/Tokyo';
+    setDisplayTimeZone(other);
+    expect(displayZoneDiffersFromDevice()).toBe(true);
+    expect(displayZoneAbbrev(NOON_UTC).length).toBeGreaterThan(0);
   });
 });

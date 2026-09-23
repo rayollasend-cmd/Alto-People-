@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Globe, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { ROLE_LABELS } from '@/lib/roles';
 import { useHeroHidden, usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
 import { offlineSessionSavedAt } from '@/lib/offlineSession';
-import { fmtRelativeDate } from '@/lib/format';
+import { displayZoneAbbrev, displayZoneDiffersFromDevice, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -313,6 +313,27 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
 
       {user && (
         <>
+          {/* Only when the person has chosen a zone that is not the device's
+              own — the one case where a time on screen could be misread,
+              and the one case where saying which zone earns its pixels. */}
+          {displayZoneDiffersFromDevice() && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  to="/settings"
+                  className="hidden items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-2xs uppercase tracking-wider text-silver hover:text-white sm:inline-flex"
+                  aria-label={`Times are shown in ${displayZoneAbbrev()}. Change in settings.`}
+                >
+                  <Globe className="h-3 w-3 text-gold" aria-hidden="true" />
+                  {displayZoneAbbrev()}
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent>
+                Times across the app are shown in {displayZoneAbbrev()}, your saved preference —
+                not this device&rsquo;s clock.
+              </TooltipContent>
+            </Tooltip>
+          )}
           <InstallAppButton />
           <NotificationsBell />
 

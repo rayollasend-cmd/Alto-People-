@@ -37,6 +37,44 @@ export function displayLocale(): string {
     : EN_US;
 }
 
+/**
+ * The zone every INSTANT formatter renders in unless told otherwise.
+ *
+ * Settings has offered a timezone preference for a long time, and the
+ * card beneath it says "used to display dates and times across the app".
+ * It was not: exactly one file read it (the card itself), and fmtDateTime,
+ * fmtTime and the *Tz fallbacks all rendered in the browser's zone. A
+ * regional manager in Chicago read Florida punches in Central and had no
+ * way to know.
+ *
+ * Same non-React channel as displayLocale: AuthProvider sets it when the
+ * signed-in user changes, and every fmt* call site in the app honours it
+ * without threading a zone through hundreds of components. STORE-anchored
+ * surfaces (the schedule grid, a shift's clock) keep passing the store
+ * zone explicitly, which still wins — a shift belongs to its building,
+ * not to whoever is looking at it.
+ */
+let preferredTimeZone: string | null = null;
+
+export function setDisplayTimeZone(tz: string | null | undefined): void {
+  preferredTimeZone = tz && tz.trim() ? tz : null;
+}
+
+export function displayTimeZone(): string {
+  return preferredTimeZone ?? browserTimeZone();
+}
+
+/** "ET" / "CT" — the display zone, short, for captions like "times in ET". */
+export function displayZoneAbbrev(at: string | Date = new Date()): string {
+  return tzAbbrev(displayTimeZone(), at);
+}
+
+/** True when the person has chosen a zone that is not the device's own —
+ *  the one case where a time on screen deserves a label saying which. */
+export function displayZoneDiffersFromDevice(): boolean {
+  return preferredTimeZone !== null && preferredTimeZone !== browserTimeZone();
+}
+
 export function fmtMoney(
   value: number | string | null | undefined,
   opts: { currency?: string; precise?: boolean } = {},
@@ -236,15 +274,18 @@ export function fmtDate(value: string | Date | null | undefined): string {
   // isDateOnly is a STRICT full match: a genuine timestamp
   // ("2026-03-01T23:00:00Z") still goes through `new Date()` so it keeps
   // rendering in the viewer's zone, which for a real instant is correct.
-  const d =
-    typeof value === 'string' && isDateOnly(value)
-      ? (parseDateOnly(value) ?? new Date(value))
-      : new Date(value as string | number | Date);
+  const dateOnly = typeof value === 'string' && isDateOnly(value);
+  const d = dateOnly
+    ? (parseDateOnly(value) ?? new Date(value))
+    : new Date(value as string | number | Date);
   if (Number.isNaN(d.getTime())) return DASH;
   return d.toLocaleDateString(displayLocale(), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    // A date-only value is already the calendar day it names; a zone
+    // would only shift it. A real instant renders on the display zone.
+    ...(dateOnly ? {} : { timeZone: displayTimeZone() }),
   });
 }
 
@@ -261,6 +302,7 @@ export function fmtDateTime(
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: displayTimeZone(),
   });
 }
 
@@ -272,6 +314,43 @@ export function fmtTime(value: string | Date | null | undefined): string {
   return d.toLocaleTimeString(displayLocale(), {
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: displayTimeZone(),
+  });
+}
+
+/** "Fri" / "F" / "Friday" — a weekday on its own, on the display zone. */
+export function fmtWeekday(
+  value: string | Date | null | undefined,
+  width: 'narrow' | 'short' | 'long' = 'short',
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(displayLocale(), {
+    weekday: width,
+    timeZone: displayTimeZone(),
+  });
+}
+
+/**
+ * "Fri, Jun 13" (or "Fri, Jun 13, 2026") — the compact day-with-weekday
+ * that paydays and "next shift" lines use. A calendar-anchored Date (local
+ * midnight from parseYmd) is rendered as the day it names; a real instant
+ * renders on the display zone.
+ */
+export function fmtDayShort(
+  value: string | Date | null | undefined,
+  opts: { year?: boolean; anchored?: boolean } = {},
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(displayLocale(), {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    ...(opts.year ? { year: 'numeric' } : {}),
+    ...(opts.anchored ? {} : { timeZone: displayTimeZone() }),
   });
 }
 
@@ -368,6 +447,18 @@ export function fmtMonthYearTz(
     month: 'long',
     year: 'numeric',
     ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/** "Jun 2026" — "riding since", "member since": a month, not a moment. */
+export function fmtMonthShortYear(value: string | Date | null | undefined): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(displayLocale(), {
+    month: 'short',
+    year: 'numeric',
+    timeZone: displayTimeZone(),
   });
 }
 

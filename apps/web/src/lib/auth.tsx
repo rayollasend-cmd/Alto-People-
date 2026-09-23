@@ -25,6 +25,7 @@ import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
 import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
 import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
 import { clearPersistedQueries, startQueryPersistence } from './queryPersist';
+import { setDisplayTimeZone } from './format';
 
 /**
  * How long a network failure must go un-contradicted (no request getting
@@ -379,6 +380,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void clearPersistedQueries();
     setUser(null);
   }, []);
+
+  // The timezone preference from Settings reaches every fmt* call site
+  // through the format module's own channel — the same way the language
+  // does — rather than through props. Cleared on sign-out so the next
+  // person on a shared device is not shown the last person's clock.
+  useEffect(() => {
+    setDisplayTimeZone(user?.timezone ?? null);
+  }, [user?.timezone]);
 
   const switchRole = useCallback(async (role: Role) => {
     const res = await apiFetch<MeResponse>('/auth/me/active-role', {

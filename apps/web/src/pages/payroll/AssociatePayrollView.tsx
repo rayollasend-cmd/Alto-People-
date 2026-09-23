@@ -24,7 +24,7 @@ import {
 } from '@/lib/payrollApi';
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
 import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -216,7 +216,7 @@ export function AssociatePayrollView() {
 /** "Sep 7" — the year is noise on a date this close. */
 function shortDay(ymd: string): string {
   const d = parseYmd(ymd);
-  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ymd;
+  return d ? fmtDateTz(d) : ymd;
 }
 
 export function NextPaydayCard() {
@@ -252,7 +252,7 @@ export function NextPaydayCard() {
           {when && <span className="text-xs tabular-nums text-silver/80">{when}</span>}
         </div>
         <div className="mt-2 text-3xl font-bold tracking-tight text-white">
-          {pay ? pay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : p.payDate}
+          {pay ? fmtDayShort(pay, { anchored: true }) : p.payDate}
         </div>
         <p className="mt-1 text-sm text-silver">
           {t('pay.forWork', { from: shortDay(p.periodStart), to: shortDay(p.periodEnd) })}

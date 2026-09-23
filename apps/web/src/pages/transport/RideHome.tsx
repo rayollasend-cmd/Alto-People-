@@ -8,18 +8,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm } from '@/lib/haptics';
-import {
-  fmtDayHeaderTz,
-  fmtMoney,
-  fmtRelativeDayTz,
-  fmtTimeTz,
-  fmtWeekdayTz,
-  localInputToUtcIso,
-  mapsUrl,
-  parseYmd,
-  utcToZonedDatetimeInput,
-  zonedDayKey,
-} from '@/lib/format';
+import { fmtDayHeaderTz, fmtDayShort, fmtMoney, fmtMonthShortYear, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, localInputToUtcIso, mapsUrl, parseYmd, utcToZonedDatetimeInput, zonedDayKey } from '@/lib/format';
 import {
   addRidePlace,
   bookRide,
@@ -750,7 +739,7 @@ function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }
                 <div className="text-base font-semibold text-white">{crew.driver.name}</div>
                 <div className="text-xs text-silver">
                   {t('ride.crewSince', {
-                    date: new Date(crew.driver.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+                    date: fmtMonthShortYear(crew.driver.since),
                   })}
                 </div>
                 <div className="mt-0.5 text-xs text-silver">
@@ -1146,7 +1135,7 @@ function ChargesCard({ data }: { data: MyTransport }) {
                   <>
                     {' · '}
                     {t('ride.nextPayday', {
-                      date: payday.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+                      date: fmtDayShort(payday, { anchored: true }),
                     })}
                   </>
                 )}

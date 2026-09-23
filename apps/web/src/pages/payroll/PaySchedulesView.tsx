@@ -36,13 +36,13 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
-import { parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDayShort, fmtWeekday, parseYmd, ymdLocal } from '@/lib/format';
 import { workweekStart } from '@/lib/workweek';
 
 /** "Fri, Oct 2" — the weekday is the point of a pay date. */
 function fmtDay(ymd: string): string {
   const d = parseYmd(ymd);
-  return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : ymd;
+  return d ? fmtDayShort(d, { year: true, anchored: true }) : ymd;
 }
 
 function addDaysYmd(ymd: string, n: number): string {
@@ -89,7 +89,7 @@ function SchedulePreview({
       </ul>
       {notSaturday && (
         <p className="mt-2 text-warning">
-          Your workweek starts on Saturday — periods starting on a {start!.toLocaleDateString(undefined, { weekday: 'long' })} won&apos;t line up with it.
+          Your workweek starts on Saturday — periods starting on a {fmtWeekday(start!, 'long')} won&apos;t line up with it.
         </p>
       )}
     </div>

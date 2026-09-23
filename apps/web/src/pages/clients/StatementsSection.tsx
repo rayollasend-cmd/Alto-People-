@@ -6,7 +6,7 @@ import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMonthYearTz, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   clientServiceReportUrl,
@@ -46,11 +46,7 @@ function monthOptions(): Array<{ key: string; label: string; start: string; end:
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i + 1, 0));
     out.push({
       key: start.toISOString().slice(0, 7),
-      label: start.toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-        timeZone: 'UTC',
-      }),
+      label: fmtMonthYearTz(start, 'UTC'),
       start: start.toISOString().slice(0, 10),
       end: end.toISOString().slice(0, 10),
     });
