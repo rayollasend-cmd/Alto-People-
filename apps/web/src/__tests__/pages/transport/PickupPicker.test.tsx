@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '@/lib/i18n';
 import { PickupPicker, type Pickup } from '@/pages/transport/PickupPicker';
@@ -161,5 +161,75 @@ describe('picking a pickup', () => {
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Change' }));
     expect(onChange).toHaveBeenCalledWith(null);
+  });
+});
+
+describe('picking a pickup on a phone', () => {
+  // Inline, inside a booking sheet that already filled the phone, the
+  // suggestions opened below the fold and the keyboard then covered the
+  // field itself: associates typed into a box they could not see. On a
+  // phone the search is its own screen, the field at the top.
+  const desktop = window.matchMedia;
+  beforeEach(() => {
+    window.matchMedia = ((query: string) => ({
+      matches: false, // narrower than sm: a phone
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+  });
+  afterEach(() => {
+    window.matchMedia = desktop;
+  });
+
+  it('searches on a screen of its own, and choosing goes back to the form', async () => {
+    vi.mocked(searchRideAddresses).mockResolvedValue({
+      results: [
+        { label: '382 Flamingo Drive', address: '382 Flamingo Drive, Destin, Florida 32541', lat: 30.4012, lng: -86.5003, precision: 'exact' },
+      ],
+    });
+    const onChange = setup();
+    // No field to type into on the form itself — a button that opens one.
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Search an address/ }));
+
+    const search = await screen.findByRole('dialog', { name: 'Take me to work from' });
+    const box = within(search).getByRole('combobox');
+    // Straight into the field — they came here to type.
+    expect(box).toHaveFocus();
+    await userEvent.type(box, '382 Flamingo');
+    await userEvent.click(await within(search).findByRole('option', { name: /382 Flamingo Drive/ }));
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ kind: 'address', lat: 30.4012 }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('the arrow goes back to the form without choosing anything', async () => {
+    const onChange = setup();
+    await userEvent.click(screen.getByRole('button', { name: /Search an address/ }));
+    const search = await screen.findByRole('dialog');
+    await userEvent.click(within(search).getByRole('button', { name: 'Back to the ride' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('a picked address', () => {
+  it('shows the town under the street, not cut off after it', () => {
+    // One truncated line read "382 Flamingo Drive, Destin, Flori…" — and
+    // the town is the half a rider checks.
+    setup(vi.fn(), {
+      kind: 'address',
+      address: '382 Flamingo Drive, Destin, Florida 32541',
+      lat: 30.4012,
+      lng: -86.5003,
+      precision: 'exact',
+    });
+    expect(screen.getByText('382 Flamingo Drive')).toBeInTheDocument();
+    expect(screen.getByText('Destin, Florida 32541')).toBeInTheDocument();
   });
 });
