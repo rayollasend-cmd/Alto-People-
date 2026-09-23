@@ -228,6 +228,13 @@ export const DialogContent = React.forwardRef<
       }}
       className={cn(
         'fixed z-50 bg-navy elev-3 p-6 grid gap-4 focus:outline-none overflow-y-auto overscroll-contain',
+        // One column that is never wider than the dialog. A bare `grid`
+        // column grows to its widest unbreakable line, so one long
+        // truncate-styled value — a picked address, "382 Flamingo Drive,
+        // Destin, Florida 32541" — widened the whole sheet past a phone's
+        // edge, cutting off every button on the right. minmax(0,1fr) lets
+        // truncation do its job instead.
+        'grid-cols-[minmax(0,1fr)]',
         // PHONES: a bottom sheet, not a floating web modal. Anchored to
         // the bottom edge it survives the iOS keyboard (which pushes it
         // up instead of clipping a vertically-centered box), slides up
