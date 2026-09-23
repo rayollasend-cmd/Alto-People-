@@ -49,13 +49,8 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { SearchInput } from '@/components/ui/FilterBar';
 
@@ -502,96 +497,87 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
       )}
       {tests && visible.length > 0 && (
         <TableShell>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Associate</TableHead>
-              <TableHead className="hidden sm:table-cell">Provider</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="hidden sm:table-cell">Result</TableHead>
-              <TableHead className="hidden md:table-cell">Ordered</TableHead>
-              <TableHead className="hidden lg:table-cell">Completed</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {visible.map((t) => (
-              <TableRow
-                key={t.id}
-                className="group cursor-pointer"
-                onClick={(ev) => {
-                  const target = ev.target as HTMLElement;
-                  if (target.closest('button, a, input, [data-no-row-click]')) return;
-                  if (window.getSelection()?.toString()) return;
-                  openDrawer(t);
-                }}
-              >
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={t.associateName} size="sm" />
-                    <div className="min-w-0">
-                      <div className="truncate">{t.associateName}</div>
-                      {t.clientName && (
-                        <div className="hidden sm:block text-2xs text-silver/60 truncate">
-                          {t.clientName}
-                        </div>
-                      )}
-                      {/* Phone-only secondary line replacing the hidden cells. */}
-                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
-                        {t.clientName ? `${t.clientName} · ` : ''}
-                        {t.provider}
-                        {t.externalId ? ` · ${t.externalId}` : ''} · ordered{' '}
-                        {fmtDate(t.initiatedAt)}
-                        {!isTerminal(t.status) && (
-                          <span className={ageTone(ageInDays(t.initiatedAt))}>
-                            {' '}· {ageInDays(t.initiatedAt)}d
-                          </span>
-                        )}
-                      </div>
-                    </div>
+        <DataGrid<(typeof visible)[number]>
+          id="drug-tests"
+          caption="Drug tests"
+          rows={visible}
+          rowKey={(x) => x.id}
+          search={false}
+          urlState={false}
+          exportCsv={{ filename: 'drug-tests' }}
+          onRowClick={(x) => openDrawer(x)}
+          rowActionLabel={(x) => `Open ${x.associateName}`}
+          columns={[
+            {
+              key: 'associate',
+              header: 'Associate',
+              accessor: (x) => x.associateName,
+              sortable: true,
+              primary: true,
+              className: 'font-medium',
+              cell: (x) => (
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={x.associateName} size="sm" />
+                  <div className="min-w-0">
+                    <div className="truncate">{x.associateName}</div>
+                    {x.clientName && <div className="text-2xs text-silver/60 truncate">{x.clientName}</div>}
                   </div>
-                </TableCell>
-                <TableCell className="hidden sm:table-cell text-silver">
-                  <div>{t.provider}</div>
-                  {t.externalId && (
-                    <div className="text-2xs font-mono text-silver/70 truncate max-w-[160px]">
-                      {t.externalId}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={statusVariant(t.status)}>
-                    {STATUS_LABELS[t.status]}
-                  </Badge>
-                </TableCell>
-                <TableCell className="hidden sm:table-cell">
-                  {(t.reportCount ?? 0) > 0 ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-success">
-                      <FileCheck2 className="h-3.5 w-3.5" />
-                      {t.reportCount === 1 ? 'On file' : `${t.reportCount} on file`}
-                    </span>
-                  ) : isTerminal(t.status) ? (
-                    // Outcome recorded, evidence missing — the gap this
-                    // column exists to surface.
-                    <span className="text-xs text-warning">None</span>
-                  ) : (
-                    <span className="text-xs text-silver/40">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                  {fmtDate(t.initiatedAt)}
-                  {!isTerminal(t.status) && (
-                    <span className={cn('ml-1.5', ageTone(ageInDays(t.initiatedAt)))}>
-                      {ageInDays(t.initiatedAt)}d since ordered
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="hidden lg:table-cell text-silver tabular-nums">
-                  {fmtDate(t.completedAt)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </div>
+              ),
+            },
+            {
+              key: 'provider',
+              header: 'Provider',
+              accessor: (x) => x.provider,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-silver',
+              cell: (x) => (
+                <>
+                  <div>{x.provider}</div>
+                  {x.externalId && <div className="text-2xs font-mono text-silver/70 truncate max-w-[160px]">{x.externalId}</div>}
+                </>
+              ),
+            },
+            { key: 'status', header: 'Status', accessor: (x) => STATUS_LABELS[x.status], sortable: true, cardMeta: true, cell: (x) => <Badge variant={statusVariant(x.status)}>{STATUS_LABELS[x.status]}</Badge> },
+            {
+              key: 'report',
+              header: 'Result',
+              accessor: (x) => ((x.reportCount ?? 0) > 0 ? (x.reportCount === 1 ? 'On file' : `${x.reportCount} on file`) : isTerminal(x.status) ? 'None' : null),
+              sortable: true,
+              searchable: false,
+              cell: (x) =>
+                (x.reportCount ?? 0) > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-success">
+                    <FileCheck2 className="h-3.5 w-3.5" />
+                    {x.reportCount === 1 ? 'On file' : `${x.reportCount} on file`}
+                  </span>
+                ) : isTerminal(x.status) ? (
+                  // Outcome recorded, evidence missing — the gap this
+                  // column exists to surface.
+                  <span className="text-xs text-warning">None</span>
+                ) : (
+                  <span className="text-xs text-silver/40">—</span>
+                ),
+            },
+            {
+              key: 'initiated',
+              header: 'Ordered',
+              accessor: (x) => x.initiatedAt,
+              sortable: true,
+              searchable: false,
+              cardMeta: true,
+              className: 'text-silver tabular-nums',
+              cell: (x) => (
+                <>
+                  {fmtDate(x.initiatedAt)}
+                  {!isTerminal(x.status) && <span className={cn('ml-1.5', ageTone(ageInDays(x.initiatedAt)))}>{ageInDays(x.initiatedAt)}d since ordered</span>}
+                </>
+              ),
+            },
+            { key: 'completed', header: 'Completed', accessor: (x) => x.completedAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (x) => fmtDate(x.completedAt) },
+          ]}
+        />
         </TableShell>
       )}
 

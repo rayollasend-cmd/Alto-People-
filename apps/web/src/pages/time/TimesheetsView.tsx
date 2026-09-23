@@ -47,19 +47,12 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   Input,
   PageHeader,
   Select,
   Skeleton,
-  SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 /** Saturday 00:00 (local) that starts the Sat→Fri week containing `d`. */
 function startOfSaturdayWeek(d: Date): Date {
@@ -402,7 +395,7 @@ export function TimesheetsView() {
   // ST / OT / DT / NB stay zero under a flat "Others" SOW — shown only when
   // a week actually uses them (the export always carries every column).
   const showBuckets = allRows.some((r) => r.st > 0 || r.ot > 0 || r.dt > 0 || r.nb > 0);
-  const cols = showBuckets ? 13 : 9;
+  type TsRow = NonNullable<typeof data>['rows'][number];
   // Client-side name/site filter — the week's rows are already all loaded.
   // Token match ("aaliyah nelson" finds "Nelson, Aaliyah") since Fieldglass
   // names are Last, First. Copy/Export/filing stay on the FULL week: those
@@ -659,122 +652,92 @@ export function TimesheetsView() {
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              {/* Responsive column budget: a phone keeps Status / Associate /
-                  Site / Total (the "is this ready and how much" read); the
-                  ST/OT/DT breakdown returns at md and the Fieldglass
-                  bookkeeping columns (ID / Revision / week-End) at lg. */}
-              <TableRow>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden lg:table-cell">ID</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Revision</TableHead>
-                <TableHead>Associate</TableHead>
-                <TableHead>Fieldglass</TableHead>
-                <TableHead className="hidden sm:table-cell">Site</TableHead>
-                <TableHead className="hidden lg:table-cell">End</TableHead>
-                {showBuckets && (
+          {/* Column budget: a phone keeps Status / Associate / Fieldglass /
+              Total as the card; the ST/OT/DT breakdown and the Fieldglass
+              bookkeeping columns (ID / Revision / week-End) are there to
+              show or hide. */}
+          <DataGrid<TsRow>
+            id="timesheets-roster"
+            caption="Approved hours by associate"
+            rows={rows}
+            rowKey={(r) => `${r.associateId}-${r.site}`}
+            loading={loading}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'timesheets' }}
+            empty={
+              allRows.length > 0
+                ? { title: 'No associate matches', description: `Nobody in this week's timesheet matches "${search.trim()}". Clear the search to see all ${allRows.length} associates.` }
+                : { title: 'No approved hours this week', description: 'Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh.' }
+            }
+            columns={[
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (r) => (r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'),
+                sortable: true,
+                cardMeta: true,
+                cell: (r) => <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>{r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}</Badge>,
+              },
+              // ID + Revision are Fieldglass's — filled from the imported
+              // Fieldglass list, so the columns match it line for line.
+              { key: 'id', header: 'ID', accessor: (r) => r.fieldglass?.timesheetId, sortable: true, className: 'font-mono text-xs text-silver', cell: (r) => r.fieldglass?.timesheetId ?? <span className="text-silver/50">—</span> },
+              { key: 'revision', header: 'Revision', accessor: (r) => r.fieldglass?.revision ?? 0, sortable: true, searchable: false, defaultHidden: true, align: 'right', className: 'tabular-nums text-silver/60' },
+              {
+                key: 'associate',
+                header: 'Associate',
+                accessor: (r) => r.worker,
+                sortable: true,
+                primary: true,
+                className: 'font-medium',
+                cell: (r) => (
                   <>
-                    <TableHead className="hidden md:table-cell text-right">ST</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">OT</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">DT</TableHead>
+                    <span className="inline-flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void openDetail(r.associateId)}
+                        className="whitespace-nowrap text-left text-gold hover:underline focus:underline focus:outline-none"
+                        title="Open this associate's daily timesheet"
+                      >
+                        {r.worker}
+                      </button>
+                      <Link
+                        to={`/time-attendance/timesheets/history/${r.associateId}`}
+                        aria-label={`${r.worker} — every timesheet, across pay periods`}
+                        title="Every timesheet, across pay periods"
+                        className="rounded text-silver/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                      >
+                        <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Link>
+                    </span>
+                    {r.fieldglass?.workerId && <div className="font-mono text-xs2 font-normal text-silver/70">{r.fieldglass.workerId}</div>}
                   </>
-                )}
-                <TableHead className="hidden md:table-cell text-right">Others</TableHead>
-                {showBuckets && <TableHead className="hidden md:table-cell text-right">NB</TableHead>}
-                <TableHead className="text-right">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={cols} className="p-0">
-                    <SkeletonRows count={8} />
-                  </TableCell>
-                </TableRow>
-              ) : rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={cols}>
-                    {allRows.length > 0 ? (
-                      <EmptyState
-                        title="No associate matches"
-                        description={`Nobody in this week's timesheet matches "${search.trim()}". Clear the search to see all ${allRows.length} associates.`}
-                      />
-                    ) : (
-                      <EmptyState
-                        title="No approved hours this week"
-                        description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
-                      />
-                    )}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rows.map((r) => (
-                  <TableRow key={`${r.associateId}-${r.site}`}>
-                    <TableCell>
-                      <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>
-                        {r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
-                      </Badge>
-                    </TableCell>
-                    {/* ID + Revision are Fieldglass's — filled from the imported
-                        Fieldglass list, so the columns match it line for line. */}
-                    <TableCell className="hidden lg:table-cell font-mono text-xs text-silver">
-                      {r.fieldglass?.timesheetId ?? <span className="text-silver/50">—</span>}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-right tabular-nums text-silver/60">
-                      {r.fieldglass?.revision ?? 0}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <span className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => void openDetail(r.associateId)}
-                          className="whitespace-nowrap text-left text-gold hover:underline focus:underline focus:outline-none"
-                          title="Open this associate's daily timesheet"
-                        >
-                          {r.worker}
-                        </button>
-                        <Link
-                          to={`/time-attendance/timesheets/history/${r.associateId}`}
-                          aria-label={`${r.worker} — every timesheet, across pay periods`}
-                          title="Every timesheet, across pay periods"
-                          className="rounded text-silver/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                        >
-                          <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                        </Link>
-                      </span>
-                      {r.fieldglass?.workerId && (
-                        <div className="font-mono text-xs2 font-normal text-silver/70">{r.fieldglass.workerId}</div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <FieldglassStatusCell
-                        row={r}
-                        busy={ticking === `${r.associateId}|${r.clientId}`}
-                        onToggle={(entered) => void toggleEntered(r, entered)}
-                      />
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell max-w-[12rem] truncate text-silver" title={r.site}>
-                      {r.site}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell tabular-nums text-silver">{data?.weekEnding}</TableCell>
-                    {showBuckets && (
-                      <>
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
-                      </>
-                    )}
-                    <TableCell className="hidden md:table-cell text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
-                    {showBuckets && (
-                      <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
-                    )}
-                    <TableCell className="text-right tabular-nums font-semibold text-white">{hoursCell(r.total)}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ),
+              },
+              {
+                key: 'fieldglass',
+                header: 'Fieldglass',
+                accessor: (r) => (r.fieldglass?.enteredAt ? 'Entered' : 'Not entered'),
+                sortable: true,
+                stopRowClick: true,
+                cell: (r) => <FieldglassStatusCell row={r} busy={ticking === `${r.associateId}|${r.clientId}`} onToggle={(entered) => void toggleEntered(r, entered)} />,
+              },
+              { key: 'site', header: 'Site', accessor: (r) => r.site, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => <span className="block max-w-[12rem] truncate" title={r.site}>{r.site}</span> },
+              { key: 'end', header: 'End', accessor: () => data?.weekEnding ?? null, searchable: false, defaultHidden: true, className: 'tabular-nums text-silver' },
+              ...(showBuckets
+                ? [
+                    { key: 'st', header: 'ST', accessor: (r: TsRow) => r.st, csv: (r: TsRow) => hoursCell(r.st), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.st) },
+                    { key: 'ot', header: 'OT', accessor: (r: TsRow) => r.ot, csv: (r: TsRow) => hoursCell(r.ot), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.ot) },
+                    { key: 'dt', header: 'DT', accessor: (r: TsRow) => r.dt, csv: (r: TsRow) => hoursCell(r.dt), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.dt) },
+                  ]
+                : []),
+              { key: 'others', header: 'Others', accessor: (r) => r.others, csv: (r) => hoursCell(r.others), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-white', cell: (r) => hoursCell(r.others) },
+              ...(showBuckets
+                ? [{ key: 'nb', header: 'NB', accessor: (r: TsRow) => r.nb, csv: (r: TsRow) => hoursCell(r.nb), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.nb) }]
+                : []),
+              { key: 'total', header: 'Total', accessor: (r) => r.total, csv: (r) => hoursCell(r.total), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-semibold text-white', cell: (r) => hoursCell(r.total) },
+            ]}
+          />
         </CardContent>
       </Card>
 
@@ -789,61 +752,50 @@ export function TimesheetsView() {
               </span>
             </div>
             <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  {/* Responsive column budget: a phone keeps Associate / Δ /
-                      Flag — the "who deviated and how badly" read. The raw
-                      Scheduled and Actual figures the Δ is derived from
-                      return at md, and collapse into an inline summary
-                      under the name below md. */}
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">Scheduled</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">Actual</TableHead>
-                    <TableHead className="text-right">Δ</TableHead>
-                    <TableHead>Flag</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.scheduleComparison.map((s) => {
-                    const noShow = s.scheduledHours > 0 && s.actualHours === 0;
-                    const notable = Math.abs(s.delta) >= 2;
-                    return (
-                      <TableRow key={s.associateId}>
-                        <TableCell className="font-medium text-white">
-                          {s.worker}
-                          <div className="md:hidden text-xs2 font-normal tabular-nums text-silver/70">
-                            {s.scheduledHours.toFixed(2)} sched · {s.actualHours.toFixed(2)} actual
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">
-                          {s.scheduledHours.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">
-                          {s.actualHours.toFixed(2)}
-                        </TableCell>
-                        <TableCell
-                          className={`text-right tabular-nums ${notable ? 'font-semibold text-gold' : 'text-silver/70'}`}
-                        >
-                          {s.delta > 0 ? '+' : ''}
-                          {s.delta.toFixed(2)}
-                        </TableCell>
-                        <TableCell>
-                          {noShow ? (
-                            <Badge variant="destructive">No-show</Badge>
-                          ) : notable ? (
-                            <Badge variant="pending">
-                              {s.delta > 0 ? 'Over' : 'Under'}
-                            </Badge>
-                          ) : (
-                            <span className="text-silver/40">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <DataGrid<NonNullable<typeof data>['scheduleComparison'][number]>
+                id="timesheets-scheduled-vs-actual"
+                caption="Scheduled vs actual"
+                rows={data.scheduleComparison}
+                rowKey={(c) => c.associateId}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'scheduled-vs-actual' }}
+                columns={[
+                  { key: 'associate', header: 'Associate', accessor: (c) => c.worker, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'scheduled', header: 'Scheduled', accessor: (c) => c.scheduledHours, csv: (c) => c.scheduledHours.toFixed(2), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (c) => c.scheduledHours.toFixed(2) },
+                  { key: 'actual', header: 'Actual', accessor: (c) => c.actualHours, csv: (c) => c.actualHours.toFixed(2), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (c) => c.actualHours.toFixed(2) },
+                  {
+                    key: 'delta',
+                    header: 'Δ',
+                    accessor: (c) => c.delta,
+                    csv: (c) => `${c.delta > 0 ? '+' : ''}${c.delta.toFixed(2)}`,
+                    sortable: true,
+                    searchable: false,
+                    align: 'right',
+                    className: 'tabular-nums',
+                    cell: (c) => (
+                      <span className={Math.abs(c.delta) >= 2 ? 'font-semibold text-gold' : 'text-silver/70'}>
+                        {c.delta > 0 ? '+' : ''}
+                        {c.delta.toFixed(2)}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'flag',
+                    header: 'Flag',
+                    accessor: (c) => (c.scheduledHours > 0 && c.actualHours === 0 ? 'No-show' : Math.abs(c.delta) >= 2 ? (c.delta > 0 ? 'Over' : 'Under') : null),
+                    sortable: true,
+                    cell: (c) =>
+                      c.scheduledHours > 0 && c.actualHours === 0 ? (
+                        <Badge variant="destructive">No-show</Badge>
+                      ) : Math.abs(c.delta) >= 2 ? (
+                        <Badge variant="pending">{c.delta > 0 ? 'Over' : 'Under'}</Badge>
+                      ) : (
+                        <span className="text-silver/40">—</span>
+                      ),
+                  },
+                ]}
+              />
             </div>
           </CardContent>
         </Card>

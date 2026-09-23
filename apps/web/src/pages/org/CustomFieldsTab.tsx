@@ -27,13 +27,8 @@ import {
   Input,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 
 const ENTITY_TYPES: CustomFieldEntity[] = ['ASSOCIATE', 'POSITION', 'CLIENT'];
@@ -127,52 +122,25 @@ export function CustomFieldsTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Label</TableHead>
-              <TableHead className="hidden md:table-cell">Key</TableHead>
-              <TableHead>Entity</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead className="hidden md:table-cell">Required</TableHead>
-              <TableHead className="hidden md:table-cell">Scope</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((d) => (
-              <TableRow
-                key={d.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setDrawerTarget(d);
-                }}
-              >
-                <TableCell className="font-medium">
-                  <div className="min-w-0">
-                    <div className="truncate">{d.label}</div>
-                    <div className="md:hidden text-xs2 text-silver/70 truncate">
-                      <span className="font-mono">{d.key}</span>
-                      {` · ${d.clientId ? 'Per-client' : 'Global'}`}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-silver font-mono text-xs">{d.key}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{ENTITY_LABELS[d.entityType]}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="default">{TYPE_LABELS[d.type]}</Badge>
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-silver">{d.isRequired ? 'Yes' : '—'}</TableCell>
-                <TableCell className="hidden md:table-cell text-silver">
-                  {d.clientId ? 'Per-client' : 'Global'}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<NonNullable<typeof rows>[number]>
+          id="custom-fields"
+          caption="Custom fields"
+          rows={rows}
+          rowKey={(d) => d.id}
+          search={{ placeholder: 'Label, key…' }}
+          urlState={false}
+          exportCsv={{ filename: 'custom-fields' }}
+          onRowClick={(d) => setDrawerTarget(d)}
+          rowActionLabel={(d) => `Open ${d.label}`}
+          columns={[
+            { key: 'label', header: 'Label', accessor: (d) => d.label, sortable: true, primary: true, className: 'font-medium' },
+            { key: 'key', header: 'Key', accessor: (d) => d.key, sortable: true, cardMeta: true, className: 'text-silver font-mono text-xs' },
+            { key: 'entity', header: 'Entity', accessor: (d) => ENTITY_LABELS[d.entityType], sortable: true, cell: (d) => <Badge variant="outline">{ENTITY_LABELS[d.entityType]}</Badge> },
+            { key: 'type', header: 'Type', accessor: (d) => TYPE_LABELS[d.type], sortable: true, cell: (d) => <Badge variant="default">{TYPE_LABELS[d.type]}</Badge> },
+            { key: 'required', header: 'Required', accessor: (d) => (d.isRequired ? 'Yes' : ''), sortable: true, searchable: false, className: 'text-silver', cell: (d) => (d.isRequired ? 'Yes' : '—') },
+            { key: 'scope', header: 'Scope', accessor: (d) => (d.clientId ? 'Per-client' : 'Global'), sortable: true, cardMeta: true, className: 'text-silver' },
+          ]}
+        />
       )}
 
       <Drawer

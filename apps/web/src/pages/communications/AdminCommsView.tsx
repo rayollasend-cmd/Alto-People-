@@ -56,6 +56,7 @@ import {
   Textarea,
   type PickedAssociate,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 function statusVariant(
   s: Notification['status'],
@@ -512,46 +513,47 @@ function SuppressionListCard() {
           </p>
         )}
         {rows && rows.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead className="hidden md:table-cell">Since</TableHead>
-                <TableHead className="w-24" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="text-white break-all">{s.email}</TableCell>
-                  <TableCell>
-                    <Badge variant="destructive">
-                      {SUPPRESSION_REASON_LABELS[s.reason]}
-                    </Badge>
-                    {s.notes && (
-                      <div className="text-2xs mt-1 text-silver truncate max-w-xs">
-                        {s.notes}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver whitespace-nowrap">
-                    {fmtDateTime(s.createdAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={removingEmail === s.email}
-                      onClick={() => void remove(s.email)}
-                    >
-                      {removingEmail === s.email ? 'Removing…' : 'Remove'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<(typeof rows)[number]>
+            id="email-suppressions"
+            caption="Suppressed addresses"
+            rows={rows}
+            rowKey={(sup) => sup.id}
+            search={{ placeholder: 'Email…' }}
+            urlState={false}
+            exportCsv={{ filename: 'email-suppressions' }}
+            columns={[
+              { key: 'email', header: 'Email', accessor: (sup) => sup.email, sortable: true, primary: true, className: 'text-white break-all' },
+              {
+                key: 'reason',
+                header: 'Reason',
+                accessor: (sup) => SUPPRESSION_REASON_LABELS[sup.reason],
+                sortable: true,
+                cardMeta: true,
+                cell: (sup) => (
+                  <>
+                    <Badge variant="destructive">{SUPPRESSION_REASON_LABELS[sup.reason]}</Badge>
+                    {sup.notes && <div className="text-2xs mt-1 text-silver truncate max-w-xs">{sup.notes}</div>}
+                  </>
+                ),
+              },
+              { key: 'since', header: 'Since', accessor: (sup) => sup.createdAt, sortable: true, searchable: false, cardMeta: true, className: 'text-silver whitespace-nowrap', cell: (sup) => fmtDateTime(sup.createdAt) },
+              {
+                key: 'remove',
+                header: '',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                width: '6rem',
+                cell: (sup) => (
+                  <Button size="xs" variant="outline" disabled={removingEmail === sup.email} onClick={() => void remove(sup.email)}>
+                    {removingEmail === sup.email ? 'Removing…' : 'Remove'}
+                  </Button>
+                ),
+              },
+            ]}
+          />
         )}
       </CardContent>
     </Card>

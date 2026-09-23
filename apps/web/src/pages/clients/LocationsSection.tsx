@@ -37,14 +37,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 interface Props {
   clientId: string;
@@ -160,80 +153,61 @@ export function LocationsSection({ clientId }: Props) {
           </p>
         )}
         {items && items.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>City / state</TableHead>
-                <TableHead className="hidden md:table-cell">Time zone</TableHead>
-                <TableHead className="hidden lg:table-cell">Geofence</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell className="text-white">
-                    <div className="min-w-0">
-                      <div className="truncate">{l.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {TIMEZONE_LABELS[
-                          l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
-                        ] ?? l.timezone}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-silver">
-                    {[l.city, l.state].filter(Boolean).join(', ') || '—'}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver">
-                    {TIMEZONE_LABELS[
-                      l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
-                    ] ?? l.timezone}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver tabular-nums">
-                    {l.latitude !== null &&
-                    l.longitude !== null &&
-                    l.geofenceRadiusMeters !== null
-                      ? `${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${l.geofenceRadiusMeters}m`
-                      : '—'}
-                  </TableCell>
-                  <TableCell>
-                    {l.isActive ? (
-                      <Badge variant="success">Active</Badge>
-                    ) : (
-                      <Badge variant="destructive">Archived</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && (
-                      <div className="inline-flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditing(l)}
-                          aria-label="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {l.isActive && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setConfirmDelete(l)}
-                            aria-label="Archive"
-                          >
-                            <Trash2 className="h-4 w-4 text-alert" />
+          <DataGrid<NonNullable<typeof items>[number]>
+            id="client-locations"
+            caption="Locations"
+            rows={items}
+            rowKey={(l) => l.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'locations' }}
+            columns={[
+              { key: 'name', header: 'Name', accessor: (l) => l.name, sortable: true, primary: true, className: 'text-white' },
+              { key: 'city', header: 'City / state', accessor: (l) => [l.city, l.state].filter(Boolean).join(', ') || null, sortable: true, cardMeta: true, className: 'text-silver', cell: (l) => [l.city, l.state].filter(Boolean).join(', ') || '—' },
+              {
+                key: 'timezone',
+                header: 'Time zone',
+                accessor: (l) => TIMEZONE_LABELS[l.timezone as (typeof SUPPORTED_TIMEZONES)[number]] ?? l.timezone,
+                sortable: true,
+                cardMeta: true,
+                className: 'text-silver',
+              },
+              {
+                key: 'geofence',
+                header: 'Geofence',
+                accessor: (l) => (l.latitude !== null && l.longitude !== null && l.geofenceRadiusMeters !== null ? `${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${l.geofenceRadiusMeters}m` : null),
+                searchable: false,
+                className: 'text-silver tabular-nums',
+                cell: (l) => (l.latitude !== null && l.longitude !== null && l.geofenceRadiusMeters !== null ? `${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${l.geofenceRadiusMeters}m` : '—'),
+              },
+              { key: 'status', header: 'Status', accessor: (l) => (l.isActive ? 'Active' : 'Archived'), sortable: true, cell: (l) => (l.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Archived</Badge>) },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      cell: (l: NonNullable<typeof items>[number]) => (
+                        <div className="inline-flex gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => setEditing(l)} aria-label={`Edit ${l.name}`}>
+                            <Pencil className="h-4 w-4" />
                           </Button>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                          {l.isActive && (
+                            <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(l)} aria-label={`Archive ${l.name}`}>
+                              <Trash2 className="h-4 w-4 text-alert" />
+                            </Button>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </CardContent>
 

@@ -26,14 +26,7 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 /**
  * IS ANYONE ACTUALLY USING THIS?
@@ -330,28 +323,21 @@ export function ProductAnalytics() {
               ) : (routes.data?.busiest ?? []).length === 0 ? (
                 <EmptyState icon={Activity} title="Nothing recorded yet" description="" />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Endpoint</TableHead>
-                      <TableHead>Calls</TableHead>
-                      <TableHead>Avg</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(routes.data?.busiest ?? []).map((r) => (
-                      <TableRow key={`${r.method} ${r.route}`}>
-                        <TableCell className="font-mono text-xs">
-                          <span className="text-silver">{r.method}</span> {r.route}
-                        </TableCell>
-                        <TableCell className="tabular-nums">
-                          {r.requests.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="tabular-nums text-silver">{r.avgMs}ms</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<NonNullable<typeof routes.data>['busiest'][number]>
+                  id="analytics-busiest"
+                  caption="Most used endpoints"
+                  rows={routes.data?.busiest ?? []}
+                  rowKey={(r) => `${r.method} ${r.route}`}
+                  search={false}
+                  urlState={false}
+                  exportCsv={{ filename: 'busiest-endpoints' }}
+                  columnChooser={false}
+                  columns={[
+                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, className: 'font-mono text-xs', cell: (r) => (<><span className="text-silver">{r.method}</span> {r.route}</>) },
+                    { key: 'calls', header: 'Calls', accessor: (r) => r.requests, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => r.requests.toLocaleString() },
+                    { key: 'avg', header: 'Avg', accessor: (r) => r.avgMs, csv: (r) => `${r.avgMs}ms`, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (r) => `${r.avgMs}ms` },
+                  ]}
+                />
               )}
             </CardContent>
           </Card>
@@ -373,28 +359,21 @@ export function ProductAnalytics() {
                   description="Only endpoints with enough traffic for a rate to mean anything are listed."
                 />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Endpoint</TableHead>
-                      <TableHead>Errors</TableHead>
-                      <TableHead>Rate</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(routes.data?.failing ?? []).map((r) => (
-                      <TableRow key={`${r.method} ${r.route}`}>
-                        <TableCell className="font-mono text-xs">
-                          <span className="text-silver">{r.method}</span> {r.route}
-                        </TableCell>
-                        <TableCell className="tabular-nums">{r.serverError}</TableCell>
-                        <TableCell className="tabular-nums text-alert">
-                          {pct(r.errorRate)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<NonNullable<typeof routes.data>['failing'][number]>
+                  id="analytics-failing"
+                  caption="Failing endpoints"
+                  rows={routes.data?.failing ?? []}
+                  rowKey={(r) => `${r.method} ${r.route}`}
+                  search={false}
+                  urlState={false}
+                  exportCsv={{ filename: 'failing-endpoints' }}
+                  columnChooser={false}
+                  columns={[
+                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, className: 'font-mono text-xs', cell: (r) => (<><span className="text-silver">{r.method}</span> {r.route}</>) },
+                    { key: 'errors', header: 'Errors', accessor: (r) => r.serverError, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                    { key: 'rate', header: 'Rate', accessor: (r) => r.errorRate, csv: (r) => pct(r.errorRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-alert', cell: (r) => pct(r.errorRate) },
+                  ]}
+                />
               )}
             </CardContent>
           </Card>

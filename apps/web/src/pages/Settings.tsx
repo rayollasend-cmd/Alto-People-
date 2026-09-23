@@ -58,14 +58,7 @@ import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 /**
  * Phase 39 — self-service account settings. Cards: profile (display
@@ -1594,32 +1587,22 @@ function LoginHistoryCard() {
           <div className="text-sm text-silver">No activity recorded yet.</div>
         ) : (
           <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Event</TableHead>
-                  <TableHead>When</TableHead>
-                  <TableHead className="hidden sm:table-cell">Device</TableHead>
-                  <TableHead className="hidden sm:table-cell">IP</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(expanded ? events : events.slice(0, LOGIN_HISTORY_PREVIEW)).map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
-                    <TableCell className="text-silver">
-                      {fmtDateTime(e.at)}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell text-silver">
-                      {shortenAgent(e.userAgent)}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell text-silver font-mono text-xs">
-                      {e.ip ?? '—'}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof events)[number]>
+              id="login-history"
+              caption="Login history"
+              rows={expanded ? events : events.slice(0, LOGIN_HISTORY_PREVIEW)}
+              rowKey={(ev) => ev.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              columns={[
+                { key: 'event', header: 'Event', accessor: (ev) => ACTION_LABEL[ev.action], sortable: true, primary: true, className: 'text-white' },
+                { key: 'when', header: 'When', accessor: (ev) => ev.at, sortable: true, searchable: false, cardMeta: true, className: 'text-silver', cell: (ev) => fmtDateTime(ev.at) },
+                { key: 'device', header: 'Device', accessor: (ev) => shortenAgent(ev.userAgent), sortable: true, cardMeta: true, className: 'text-silver' },
+                { key: 'ip', header: 'IP', accessor: (ev) => ev.ip, sortable: true, className: 'text-silver font-mono text-xs', cell: (ev) => ev.ip ?? '—' },
+              ]}
+            />
             {events.length > LOGIN_HISTORY_PREVIEW && (
               <div className="mt-3 flex justify-center">
                 <button

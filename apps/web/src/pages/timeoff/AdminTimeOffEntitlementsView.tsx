@@ -38,14 +38,7 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { Select } from '@/components/ui/Select';
 import { BulkEntitlementDialog } from './BulkEntitlementDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 const CATEGORIES: TimeOffCategory[] = [
   'VACATION',
@@ -264,55 +257,54 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
           </p>
         )}
         {!error && visible && visible.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Associate</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead className="text-right">Annual</TableHead>
-                <TableHead className="text-right hidden md:table-cell">Carryover cap</TableHead>
-                <TableHead className="hidden lg:table-cell">Anchor</TableHead>
-                <TableHead className="hidden lg:table-cell">Last grant</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visible.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="text-white">{e.associateName}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-2xs">
-                      {CATEGORY_LABELS[e.category] ?? e.category}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-silver tabular-nums">
-                    {fmtHours(e.annualMinutes)}
-                  </TableCell>
-                  <TableCell className="text-right hidden md:table-cell text-silver tabular-nums">
-                    {fmtHours(e.carryoverMaxMinutes)}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver text-xs">
-                    {fmtAnchor(e.policyAnchorMonth, e.policyAnchorDay)}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver text-xs">
-                    {fmtDate(e.lastGrantedAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditing(e)}
-                        aria-label="Edit"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<NonNullable<typeof visible>[number]>
+            id="time-off-entitlements"
+            caption="Time-off entitlements"
+            rows={visible}
+            rowKey={(e) => e.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'time-off-entitlements' }}
+            onRowClick={canManage ? (e) => setEditing(e) : undefined}
+            rowActionLabel={(e) => `Edit entitlement for ${e.associateName}`}
+            columns={[
+              { key: 'associate', header: 'Associate', accessor: (e) => e.associateName, sortable: true, primary: true, className: 'text-white' },
+              {
+                key: 'category',
+                header: 'Category',
+                accessor: (e) => CATEGORY_LABELS[e.category] ?? e.category,
+                sortable: true,
+                cardMeta: true,
+                cell: (e) => (
+                  <Badge variant="outline" className="text-2xs">
+                    {CATEGORY_LABELS[e.category] ?? e.category}
+                  </Badge>
+                ),
+              },
+              { key: 'annual', header: 'Annual', accessor: (e) => e.annualMinutes, csv: (e) => fmtHours(e.annualMinutes), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-silver tabular-nums', cell: (e) => fmtHours(e.annualMinutes) },
+              { key: 'carryover', header: 'Carryover cap', accessor: (e) => e.carryoverMaxMinutes, csv: (e) => fmtHours(e.carryoverMaxMinutes), sortable: true, searchable: false, align: 'right', className: 'text-silver tabular-nums', cell: (e) => fmtHours(e.carryoverMaxMinutes) },
+              { key: 'anchor', header: 'Anchor', accessor: (e) => fmtAnchor(e.policyAnchorMonth, e.policyAnchorDay), sortable: true, searchable: false, className: 'text-silver text-xs' },
+              { key: 'lastGrant', header: 'Last grant', accessor: (e) => e.lastGrantedAt, sortable: true, searchable: false, className: 'text-silver text-xs', cell: (e) => fmtDate(e.lastGrantedAt) },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      cell: (e: NonNullable<typeof visible>[number]) => (
+                        <Button size="sm" variant="ghost" onClick={() => setEditing(e)} aria-label={`Edit entitlement for ${e.associateName}`}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </CardContent>
 

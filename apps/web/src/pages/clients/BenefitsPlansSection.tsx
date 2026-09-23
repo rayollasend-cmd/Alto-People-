@@ -32,14 +32,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 const KIND_LABEL: Record<BenefitsPlanKind, string> = {
   HEALTH_MEDICAL: 'Medical',
@@ -151,65 +144,40 @@ export function BenefitsPlansSection({ clientId }: Props) {
           </p>
         )}
         {plans && plans.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="hidden md:table-cell">Kind</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead className="text-right">Default elect</TableHead>
-                <TableHead className="text-right hidden md:table-cell">Employer match</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {plans.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="hidden md:table-cell">
-                    <Badge variant="outline" className="text-2xs">
-                      {KIND_LABEL[p.kind]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-white">
-                    <div className="min-w-0">
-                      <div className="truncate">{p.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {KIND_LABEL[p.kind]}
-                        <span className="tabular-nums">
-                          {` · ${fmtCents(p.employerContributionCentsPerPeriod)} match`}
-                        </span>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-silver">
-                    {fmtCents(p.employeeContributionDefaultCentsPerPeriod)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
-                    {fmtCents(p.employerContributionCentsPerPeriod)}
-                  </TableCell>
-                  <TableCell>
-                    {p.isActive ? (
-                      <Badge variant="success">Active</Badge>
-                    ) : (
-                      <Badge variant="destructive">Inactive</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditing(p)}
-                        aria-label="Edit"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<NonNullable<typeof plans>[number]>
+            id="client-benefits-plans"
+            caption="Benefits plans"
+            rows={plans}
+            rowKey={(pl) => pl.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'benefits-plans' }}
+            columns={[
+              { key: 'name', header: 'Name', accessor: (pl) => pl.name, sortable: true, primary: true, className: 'text-white' },
+              { key: 'kind', header: 'Kind', accessor: (pl) => KIND_LABEL[pl.kind], sortable: true, cardMeta: true, cell: (pl) => <Badge variant="outline" className="text-2xs">{KIND_LABEL[pl.kind]}</Badge> },
+              { key: 'elect', header: 'Default elect', accessor: (pl) => pl.employeeContributionDefaultCentsPerPeriod, csv: (pl) => fmtCents(pl.employeeContributionDefaultCentsPerPeriod), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (pl) => fmtCents(pl.employeeContributionDefaultCentsPerPeriod) },
+              { key: 'match', header: 'Employer match', accessor: (pl) => pl.employerContributionCentsPerPeriod, csv: (pl) => fmtCents(pl.employerContributionCentsPerPeriod), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (pl) => fmtCents(pl.employerContributionCentsPerPeriod) },
+              { key: 'status', header: 'Status', accessor: (pl) => (pl.isActive ? 'Active' : 'Inactive'), sortable: true, cell: (pl) => (pl.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Inactive</Badge>) },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      cell: (pl: NonNullable<typeof plans>[number]) => (
+                        <Button size="sm" variant="ghost" onClick={() => setEditing(pl)} aria-label={`Edit ${pl.name}`}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </CardContent>
 

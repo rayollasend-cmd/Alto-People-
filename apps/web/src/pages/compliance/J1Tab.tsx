@@ -6,7 +6,6 @@ import { sanitizeReturnPath } from './section2Verification';
 import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { fmtDate, parseYmd } from '@/lib/format';
 import {
   Avatar,
@@ -29,13 +28,8 @@ import {
   Field,
   Input,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 function expiryVariant(days: number): 'destructive' | 'pending' | 'default' {
   if (days < 0) return 'destructive';
@@ -207,62 +201,64 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
       )}
       {profiles && profiles.length > 0 && (
         <TableShell>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Associate</TableHead>
-              <TableHead className="hidden sm:table-cell">Country</TableHead>
-              <TableHead className="hidden lg:table-cell">DS-2019</TableHead>
-              <TableHead className="hidden lg:table-cell">Sponsor</TableHead>
-              <TableHead className="hidden md:table-cell">Program</TableHead>
-              <TableHead>Days left</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {profiles.map((p) => (
-              <TableRow
-                key={p.id}
-                className="group cursor-pointer"
-                onClick={(ev) => {
-                  const target = ev.target as HTMLElement;
-                  if (target.closest('button, a, input, [data-no-row-click]')) return;
-                  if (window.getSelection()?.toString()) return;
-                  setDrawerTarget(p);
-                }}
-              >
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={p.associateName} email={p.associateEmail} size="sm" />
-                    <div className="min-w-0">
-                      <div className="truncate">{p.associateName}</div>
-                      {/* Phone-only secondary line so the country / program
-                          dates aren't lost when their columns are hidden. */}
-                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
-                        {p.country}
-                      </div>
-                      <div className="md:hidden text-2xs text-silver/70 tabular-nums">
-                        {fmtDate(parseYmd(p.programStartDate))} →{' '}
-                        {fmtDate(parseYmd(p.programEndDate))}
-                      </div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="hidden sm:table-cell text-silver">{p.country}</TableCell>
-                <TableCell className="hidden lg:table-cell text-silver">{p.ds2019Number}</TableCell>
-                <TableCell className="hidden lg:table-cell text-silver">{p.sponsorAgency}</TableCell>
-                <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                  {fmtDate(parseYmd(p.programStartDate))} →{' '}
-                  {fmtDate(parseYmd(p.programEndDate))}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={expiryVariant(p.daysUntilEnd)}>
-                    <span className={cn('tabular-nums')}>{p.daysUntilEnd}d</span>
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<(typeof profiles)[number]>
+          id="j1-profiles"
+          caption="J-1 profiles"
+          rows={profiles}
+          rowKey={(pr) => pr.id}
+          search={{ placeholder: 'Associate, country, sponsor…' }}
+          urlState={false}
+          exportCsv={{ filename: 'j1-profiles' }}
+          onRowClick={(pr) => setDrawerTarget(pr)}
+          rowActionLabel={(pr) => `Open ${pr.associateName}`}
+          columns={[
+            {
+              key: 'associate',
+              header: 'Associate',
+              accessor: (pr) => pr.associateName,
+              sortable: true,
+              primary: true,
+              className: 'font-medium',
+              cell: (pr) => (
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={pr.associateName} email={pr.associateEmail} size="sm" />
+                  <div className="truncate">{pr.associateName}</div>
+                </div>
+              ),
+            },
+            { key: 'country', header: 'Country', accessor: (pr) => pr.country, sortable: true, cardMeta: true, className: 'text-silver' },
+            { key: 'ds2019', header: 'DS-2019', accessor: (pr) => pr.ds2019Number, sortable: true, className: 'text-silver' },
+            { key: 'sponsor', header: 'Sponsor', accessor: (pr) => pr.sponsorAgency, sortable: true, className: 'text-silver' },
+            {
+              key: 'program',
+              header: 'Program',
+              accessor: (pr) => pr.programStartDate,
+              csv: (pr) => `${pr.programStartDate} → ${pr.programEndDate}`,
+              sortable: true,
+              searchable: false,
+              cardMeta: true,
+              className: 'text-silver tabular-nums',
+              cell: (pr) => (
+                <>
+                  {fmtDate(parseYmd(pr.programStartDate))} → {fmtDate(parseYmd(pr.programEndDate))}
+                </>
+              ),
+            },
+            {
+              key: 'daysLeft',
+              header: 'Days left',
+              accessor: (pr) => pr.daysUntilEnd,
+              csv: (pr) => `${pr.daysUntilEnd}d`,
+              sortable: true,
+              searchable: false,
+              cell: (pr) => (
+                <Badge variant={expiryVariant(pr.daysUntilEnd)}>
+                  <span className="tabular-nums">{pr.daysUntilEnd}d</span>
+                </Badge>
+              ),
+            },
+          ]}
+        />
         </TableShell>
       )}
 

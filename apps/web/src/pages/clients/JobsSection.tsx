@@ -27,14 +27,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 interface Props {
   clientId: string;
@@ -146,68 +139,46 @@ export function JobsSection({ clientId }: Props) {
           </p>
         )}
         {items && items.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="text-right hidden md:table-cell">Bill rate</TableHead>
-                <TableHead className="text-right">Pay rate</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((j) => (
-                <TableRow key={j.id}>
-                  <TableCell className="text-white">
-                    <div className="min-w-0">
-                      <div className="truncate">{j.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
-                        Bill {fmtMoney(j.billRate)}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
-                    {fmtMoney(j.billRate)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-silver">
-                    {fmtMoney(j.payRate)}
-                  </TableCell>
-                  <TableCell>
-                    {j.isActive ? (
-                      <Badge variant="success">Active</Badge>
-                    ) : (
-                      <Badge variant="destructive">Archived</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && (
-                      <div className="inline-flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditing(j)}
-                          aria-label="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {j.isActive && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setConfirmDelete(j)}
-                            aria-label="Archive"
-                          >
-                            <Trash2 className="h-4 w-4 text-alert" />
+          <DataGrid<NonNullable<typeof items>[number]>
+            id="client-jobs"
+            caption="Jobs"
+            rows={items}
+            rowKey={(j) => j.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'jobs' }}
+            columns={[
+              { key: 'name', header: 'Name', accessor: (j) => j.name, sortable: true, primary: true, className: 'text-white' },
+              { key: 'bill', header: 'Bill rate', accessor: (j) => Number(j.billRate), csv: (j) => fmtMoney(j.billRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (j) => fmtMoney(j.billRate) },
+              { key: 'pay', header: 'Pay rate', accessor: (j) => Number(j.payRate), csv: (j) => fmtMoney(j.payRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (j) => fmtMoney(j.payRate) },
+              { key: 'status', header: 'Status', accessor: (j) => (j.isActive ? 'Active' : 'Archived'), sortable: true, cell: (j) => (j.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Archived</Badge>) },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      cell: (j: NonNullable<typeof items>[number]) => (
+                        <div className="inline-flex gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => setEditing(j)} aria-label={`Edit ${j.name}`}>
+                            <Pencil className="h-4 w-4" />
                           </Button>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                          {j.isActive && (
+                            <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(j)} aria-label={`Archive ${j.name}`}>
+                              <Trash2 className="h-4 w-4 text-alert" />
+                            </Button>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </CardContent>
 

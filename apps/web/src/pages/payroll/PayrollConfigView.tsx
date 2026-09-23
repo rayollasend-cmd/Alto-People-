@@ -13,14 +13,7 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 import { fmtDateTime, fmtMoney, fmtPercent } from '@/lib/format';
 
@@ -139,24 +132,21 @@ function BracketCard({ title, data }: { title: string; data: PayrollConfigBracke
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-1/4">Over</TableHead>
-              <TableHead className="w-1/4">Flat</TableHead>
-              <TableHead className="w-1/4">Marginal rate</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.map((row) => (
-              <TableRow key={row.over}>
-                <TableCell className="tabular-nums">{fmtMoney(row.over)}</TableCell>
-                <TableCell className="tabular-nums">{fmtMoney(row.flat)}</TableCell>
-                <TableCell className="tabular-nums">{fmtPct(row.rate)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<PayrollConfigBracket>
+          id={`tax-brackets-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+          caption={title}
+          rows={data}
+          rowKey={(row) => String(row.over)}
+          search={false}
+          urlState={false}
+          exportCsv={false}
+          columnChooser={false}
+          columns={[
+            { key: 'over', header: 'Over', accessor: (row) => row.over, csv: (row) => fmtMoney(row.over), sortable: true, searchable: false, primary: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.over) },
+            { key: 'flat', header: 'Flat', accessor: (row) => row.flat, csv: (row) => fmtMoney(row.flat), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.flat) },
+            { key: 'rate', header: 'Marginal rate', accessor: (row) => row.rate, csv: (row) => fmtPct(row.rate), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtPct(row.rate) },
+          ]}
+        />
       </CardContent>
     </Card>
   );
