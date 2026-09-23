@@ -218,3 +218,36 @@ describe('DataGrid — controlled selection', () => {
     unmount();
   });
 });
+
+describe('DataGrid — grouping', () => {
+  it('draws one table with a heading row where the group changes, and exports flat', async () => {
+    renderGrid({
+      groupBy: {
+        key: (r) => r.store,
+        header: (key, rows) => `${key} (${rows.length})`,
+      },
+    });
+    const table = screen.getByRole('table', { name: 'Test rows' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    // Group heading, its row, next heading, its row… in the rows' order.
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('Destin (1)'),
+      expect.stringContaining('Rosa Martinez'),
+      expect.stringContaining('Front Beach 218 (1)'),
+      expect.stringContaining('Dee Kpakpo'),
+      expect.stringContaining('Miramar (1)'),
+      expect.stringContaining('Alan Darison'),
+    ]);
+
+    // Sorting by a column keeps every row inside its group.
+    await userEvent.click(screen.getByRole('button', { name: 'Name' }));
+    const sortedRows = within(table).getAllByRole('row').slice(1);
+    expect(sortedRows[0]).toHaveTextContent('Miramar (1)');
+    expect(sortedRows[1]).toHaveTextContent('Alan Darison');
+
+    // The export has no heading rows in it.
+    await userEvent.click(screen.getByRole('button', { name: /Export Test rows/ }));
+    const [, csv] = vi.mocked(downloadCsv).mock.calls.at(-1)!;
+    expect(csv).toHaveLength(4);
+  });
+});

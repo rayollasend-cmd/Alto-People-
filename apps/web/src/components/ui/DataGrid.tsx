@@ -137,6 +137,17 @@ export interface DataGridProps<T> {
   cards?: boolean;
   /** Total the rows were drawn from, when the caller only has a page. */
   total?: number;
+  /**
+   * Row grouping — one table, with a heading row where the group changes
+   * (the audit log by day, a roster by store). Groups keep the sorted
+   * order of their first row; search filters across all of them; export
+   * flattens them. Virtualization is off while grouping is on.
+   */
+  groupBy?: {
+    key: (row: T) => string;
+    /** The heading for a group, given its key and the rows in it. */
+    header: (key: string, rows: T[]) => React.ReactNode;
+  };
   className?: string;
 }
 
@@ -251,6 +262,7 @@ function GridCore<T>({
   footnote,
   cards,
   total,
+  groupBy,
   className,
   q,
   setQ,
@@ -375,9 +387,28 @@ function GridCore<T>({
     downloadCsv(`${slug || 'export'}.csv`, [head, ...body]);
   };
 
+  /* ---- grouping ------------------------------------------------------ */
+  // Groups are contiguous runs in the SORTED order, so sorting by a
+  // grouped column keeps the groups whole and sorting by another column
+  // orders rows within the group they belong to.
+  const groups = React.useMemo(() => {
+    if (!groupBy) return null;
+    const order: string[] = [];
+    const byKey = new Map<string, T[]>();
+    for (const row of sorted) {
+      const k = groupBy.key(row);
+      if (!byKey.has(k)) {
+        byKey.set(k, []);
+        order.push(k);
+      }
+      byKey.get(k)!.push(row);
+    }
+    return order.map((k) => ({ key: k, rows: byKey.get(k)! }));
+  }, [groupBy, sorted]);
+
   /* ---- virtualization ----------------------------------------------- */
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const virtualize = sorted.length > virtualizeAfter;
+  const virtualize = !groupBy && sorted.length > virtualizeAfter;
   const virtualizer = useVirtualizer({
     count: virtualize ? sorted.length : 0,
     getScrollElement: () => scrollRef.current,
@@ -648,9 +679,30 @@ function GridCore<T>({
                 }
               >
                 {(virtualize
-                  ? virtualizer.getVirtualItems().map((v) => ({ row: sorted[v.index]!, v }))
-                  : sorted.map((row) => ({ row, v: null }))
-                ).map(({ row, v }) => {
+                  ? virtualizer.getVirtualItems().map((v) => ({ row: sorted[v.index]!, v, group: null }))
+                  : groups
+                    ? groups.flatMap((g) => [
+                        { row: null, v: null, group: g },
+                        ...g.rows.map((row) => ({ row, v: null, group: null })),
+                      ])
+                    : sorted.map((row) => ({ row, v: null, group: null }))
+                ).map(({ row, v, group }) => {
+                  if (group) {
+                    // A heading row where the group changes — one table, so
+                    // a screen reader hears one grid with sections, not
+                    // fourteen grids with the same five columns.
+                    return (
+                      <TableRow key={`group:${group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
+                        <TableCell
+                          colSpan={visible.length + (selectable ? 1 : 0)}
+                          className="py-2 text-xs font-medium text-white"
+                        >
+                          {groupBy!.header(group.key, group.rows)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }
+                  if (!row) return null;
                   const key = rowKey(row);
                   const isSelected = selected.has(key);
                   return (

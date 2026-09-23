@@ -40,14 +40,9 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
@@ -291,178 +286,177 @@ export function AgreementsHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {loadError ? (
-              <div className="p-6">
-                <ErrorBanner
-                  action={
-                    <Button size="sm" variant="secondary" onClick={refresh}>
-                      Retry
-                    </Button>
-                  }
-                >
-                  {loadError}
-                </ErrorBanner>
-              </div>
-            ) : rows === null ? (
-              <div className="p-6">
-                <SkeletonRows count={4} />
-              </div>
-            ) : rows.length === 0 ? (
-              <EmptyState
-                icon={FileSignature}
-                title="No agreements"
-                description="Nothing matches this filter."
+            <div className="p-3">
+              <DataGrid<AgreementRow>
+                id="agreements"
+                caption="Agreements"
+                rows={rows}
+                rowKey={(a) => a.id}
+                loading={rows === null && !loadError}
+                error={loadError}
+                onRetry={refresh}
+                search={{ placeholder: 'Associate, email, kind…' }}
+                urlState={false}
+                exportCsv={{ filename: 'agreements' }}
+                empty={{
+                  icon: FileSignature,
+                  title: 'No agreements',
+                  description: 'Nothing matches this filter.',
+                }}
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (a) => a.associateName,
+                    sortable: true,
+                    primary: true,
+                    className: 'font-medium text-white',
+                  },
+                  {
+                    key: 'email',
+                    header: 'Email',
+                    accessor: (a) => a.associateEmail,
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'text-xs text-silver',
+                  },
+                  {
+                    key: 'kind',
+                    header: 'Kind',
+                    accessor: (a) => (a.kind === 'OTHER' && a.customLabel ? a.customLabel : KIND_LABELS[a.kind]),
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'text-sm',
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (a) => STATUS_LABELS[a.status],
+                    sortable: true,
+                    cell: (a) => (
+                      <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
+                        {STATUS_LABELS[a.status]}
+                      </Badge>
+                    ),
+                  },
+                  {
+                    key: 'signed',
+                    header: 'Signed',
+                    accessor: (a) => a.signedAt,
+                    csv: (a) => (a.signedAt ? a.signedAt.slice(0, 10) : a.status === 'PENDING_SIGNATURE' ? `unsigned ${daysSince(a.createdAt)}d` : ''),
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-sm text-silver whitespace-nowrap',
+                    cell: (a) =>
+                      a.signedAt ? (
+                        fmtDate(a.signedAt)
+                      ) : a.status === 'PENDING_SIGNATURE' ? (
+                        // Seven days unsigned is the point at which someone
+                        // should walk over and ask.
+                        <span className={daysSince(a.createdAt) >= 7 ? 'text-alert' : 'text-silver'}>
+                          Unsigned · {daysSince(a.createdAt)}d
+                        </span>
+                      ) : (
+                        fmtDate(a.signedAt)
+                      ),
+                  },
+                  {
+                    key: 'expires',
+                    header: 'Expires',
+                    accessor: (a) => a.expiresOn,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-sm whitespace-nowrap',
+                    cell: (a) =>
+                      a.expiresOn ? (
+                        <span className={isPastYmd(a.expiresOn) ? 'text-alert' : 'text-silver'}>
+                          {fmtDate(parseYmd(a.expiresOn))}
+                        </span>
+                      ) : (
+                        <span className="text-silver">—</span>
+                      ),
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          className: 'whitespace-nowrap space-x-2',
+                          cell: (a: AgreementRow) => (
+                            <>
+                              {a.status !== 'EXPIRED' && a.status !== 'SUPERSEDED' && (
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  loading={pendingKey === `expire:${a.id}`}
+                                  onClick={async () => {
+                                    if (
+                                      !(await confirm({
+                                        title: 'Expire this agreement now?',
+                                        description:
+                                          'Agreements past their expiry date are expired automatically by a daily sweep — use this to expire one immediately.',
+                                        destructive: true,
+                                      }))
+                                    )
+                                      return;
+                                    setPendingKey(`expire:${a.id}`);
+                                    try {
+                                      await expireAgreement(a.id);
+                                      refresh();
+                                    } catch (err) {
+                                      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                    } finally {
+                                      setPendingKey(null);
+                                    }
+                                  }}
+                                  className="text-silver hover:text-warning"
+                                >
+                                  Expire
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                loading={pendingKey === `delete:${a.id}`}
+                                aria-label="Delete agreement"
+                                onClick={async () => {
+                                  if (
+                                    !(await confirm({
+                                      title: 'Delete this agreement record?',
+                                      description:
+                                        'The record is soft-deleted and the deletion is recorded in the audit trail.',
+                                      destructive: true,
+                                    }))
+                                  )
+                                    return;
+                                  setPendingKey(`delete:${a.id}`);
+                                  try {
+                                    await deleteAgreement(a.id);
+                                    toast.success('Agreement deleted.');
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  } finally {
+                                    setPendingKey(null);
+                                  }
+                                }}
+                                className="text-silver hover:text-alert"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
+                          ),
+                        } satisfies GridColumn<AgreementRow>,
+                      ]
+                    : []),
+                ]}
               />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Signed</TableHead>
-                    <TableHead className="hidden md:table-cell">Expires</TableHead>
-                    <TableHead className="text-right"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((a) => (
-                    <TableRow key={a.id} className="group">
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          {a.associateName}
-                        </div>
-                        <div className="text-xs text-silver">
-                          {a.associateEmail}
-                        </div>
-                        <div className="text-xs2 text-silver/70 md:hidden">
-                          {a.signedAt
-                            ? `Signed ${fmtDate(a.signedAt)}`
-                            : 'Not signed'}
-                          {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {a.kind === 'OTHER' && a.customLabel
-                          ? a.customLabel
-                          : KIND_LABELS[a.kind]}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
-                          {STATUS_LABELS[a.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-silver hidden md:table-cell">
-                        {a.signedAt ? (
-                          fmtDate(a.signedAt)
-                        ) : a.status === 'PENDING_SIGNATURE' ? (
-                          <span
-                            className={
-                              daysSince(a.createdAt) >= 7
-                                ? 'text-alert'
-                                : 'text-silver'
-                            }
-                          >
-                            Unsigned · {daysSince(a.createdAt)}d
-                          </span>
-                        ) : (
-                          fmtDate(a.signedAt)
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {a.expiresOn ? (
-                          <span
-                            className={
-                              isPastYmd(a.expiresOn)
-                                ? 'text-alert'
-                                : 'text-silver'
-                            }
-                          >
-                            {fmtDate(parseYmd(a.expiresOn))}
-                          </span>
-                        ) : (
-                          <span className="text-silver">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        {canManage &&
-                          a.status !== 'EXPIRED' &&
-                          a.status !== 'SUPERSEDED' && (
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              loading={pendingKey === `expire:${a.id}`}
-                              onClick={async () => {
-                                if (
-                                  !(await confirm({
-                                    title: 'Expire this agreement now?',
-                                    description:
-                                      'Agreements past their expiry date are expired automatically by a daily sweep — use this to expire one immediately.',
-                                    destructive: true,
-                                  }))
-                                )
-                                  return;
-                                setPendingKey(`expire:${a.id}`);
-                                try {
-                                  await expireAgreement(a.id);
-                                  refresh();
-                                } catch (err) {
-                                  toast.error(
-                                    err instanceof ApiError
-                                      ? err.message
-                                      : 'Failed.',
-                                  );
-                                } finally {
-                                  setPendingKey(null);
-                                }
-                              }}
-                              className="text-silver hover:text-warning can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
-                            >
-                              Expire
-                            </Button>
-                          )}
-                        {canManage && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            loading={pendingKey === `delete:${a.id}`}
-                            aria-label="Delete agreement"
-                            onClick={async () => {
-                              if (
-                                !(await confirm({
-                                  title: 'Delete this agreement record?',
-                                  description:
-                                    'The record is soft-deleted and the deletion is recorded in the audit trail.',
-                                  destructive: true,
-                                }))
-                              )
-                                return;
-                              setPendingKey(`delete:${a.id}`);
-                              try {
-                                await deleteAgreement(a.id);
-                                toast.success('Agreement deleted.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : 'Failed.',
-                                );
-                              } finally {
-                                setPendingKey(null);
-                              }
-                            }}
-                            className="text-silver hover:text-alert can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+            </div>
           </CardContent>
         </Card>
       )}

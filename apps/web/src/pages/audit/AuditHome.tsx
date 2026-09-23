@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
+import { Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
 import type { AuditSearchEntry } from '@alto-people/shared';
 import {
   auditCsvUrl,
@@ -32,17 +32,10 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDateTime } from '@/lib/format';
 
-import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
+import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 
 const PAGE_SIZE = 100;
 
@@ -403,82 +396,90 @@ export function AuditHome() {
             />
           )}
           {entries && entries.length > 0 && (
-            <div className="divide-y divide-navy-secondary">
-              {groupByDay(entries).map((group, idx) => (
-                <details
-                  key={group.key}
-                  open={idx === 0}
-                  className="[&[open]>summary>svg.chev]:rotate-90"
-                >
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm hover:bg-navy-secondary/40">
-                    <ChevronRight className="chev h-4 w-4 text-silver transition-transform" />
-                    <span className="font-medium text-white">
-                      {dayHeading(group.key)}
+            <div className="p-3">
+              {/* One grid, grouped by day, instead of one table per
+                  <details> — a screen reader hears one log with sections,
+                  and the page gains what the per-day tables never had: a
+                  search across the loaded page, sort within a day, a
+                  metadata column the chooser can hide, and an export. */}
+              <DataGrid<AuditSearchEntry>
+                id="audit-log"
+                caption="Audit log"
+                rows={entries}
+                rowKey={(e) => e.id}
+                search={{ placeholder: 'Action, actor, entity…' }}
+                urlState={false}
+                exportCsv={{ filename: 'audit-log' }}
+                onRowClick={(e) => setDetail(e)}
+                rowActionLabel={(e) => `Open ${e.action} on ${e.entityType}`}
+                groupBy={{
+                  key: (e) => dayKey(e.createdAt),
+                  header: (key, rows) => (
+                    <span className="flex items-center gap-2">
+                      <span>{dayHeading(key)}</span>
+                      <span className="text-xs font-normal text-silver/70">· {key}</span>
+                      <span className="ml-auto text-xs font-normal text-silver">
+                        {rows.length} event{rows.length === 1 ? '' : 's'}
+                      </span>
                     </span>
-                    <span className="text-xs text-silver/70">
-                      · {group.key}
-                    </span>
-                    <span className="ml-auto text-xs text-silver">
-                      {group.entries.length} event
-                      {group.entries.length === 1 ? '' : 's'}
-                    </span>
-                  </summary>
-                  <Table caption="Audit log">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="whitespace-nowrap w-24">
-                          Time
-                        </TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead className="hidden md:table-cell">Actor</TableHead>
-                        <TableHead>Entity</TableHead>
-                        <TableHead className="hidden lg:table-cell">Metadata</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {group.entries.map((e) => (
-                        <TableRow
-                          key={e.id}
-                          className="cursor-pointer"
-                          onClick={() => setDetail(e)}
-                        >
-                          <TableCell
-                            className="text-silver text-xs whitespace-nowrap tabular-nums"
-                            title={fmtDateTime(e.createdAt)}
-                          >
-                            {fmtTimeOnly(e.createdAt)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className="font-mono text-xs2"
-                            >
-                              {e.action}
-                            </Badge>
-                            <div className="text-xs2 text-silver/70 md:hidden truncate max-w-[20ch]">
-                              {e.actorEmail ?? 'system'}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-silver text-xs truncate max-w-[16ch] hidden md:table-cell">
-                            {e.actorEmail ?? (
-                              <span className="text-silver/70">system</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-silver text-xs">
-                            <div className="text-white">{e.entityType}</div>
-                            <div className="font-mono text-2xs text-silver/70 truncate max-w-[20ch]">
-                              {e.entityId}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-silver text-xs font-mono truncate max-w-[44ch] hidden lg:table-cell">
-                            {metaPreview(e.metadata)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </details>
-              ))}
+                  ),
+                }}
+                columns={[
+                  {
+                    key: 'time',
+                    header: 'Time',
+                    accessor: (e) => e.createdAt,
+                    csv: (e) => e.createdAt,
+                    sortable: true,
+                    searchable: false,
+                    className: 'text-silver text-xs whitespace-nowrap tabular-nums w-24',
+                    cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt)}</span>,
+                  },
+                  {
+                    key: 'action',
+                    header: 'Action',
+                    accessor: (e) => e.action,
+                    sortable: true,
+                    primary: true,
+                    cell: (e) => (
+                      <Badge variant="outline" className="font-mono text-xs2">
+                        {e.action}
+                      </Badge>
+                    ),
+                  },
+                  {
+                    key: 'actor',
+                    header: 'Actor',
+                    accessor: (e) => e.actorEmail ?? 'system',
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'text-silver text-xs truncate max-w-[16ch]',
+                    cell: (e) => e.actorEmail ?? <span className="text-silver/70">system</span>,
+                  },
+                  {
+                    key: 'entity',
+                    header: 'Entity',
+                    accessor: (e) => `${e.entityType} ${e.entityId}`,
+                    csv: (e) => `${e.entityType}:${e.entityId}`,
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'text-silver text-xs',
+                    cell: (e) => (
+                      <>
+                        <div className="text-white">{e.entityType}</div>
+                        <div className="font-mono text-2xs text-silver/70 truncate max-w-[20ch]">{e.entityId}</div>
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'metadata',
+                    header: 'Metadata',
+                    accessor: (e) => metaPreview(e.metadata),
+                    defaultHidden: true,
+                    className: 'text-silver text-xs font-mono truncate max-w-[44ch]',
+                  },
+                ]}
+              />
             </div>
           )}
         </CardContent>
