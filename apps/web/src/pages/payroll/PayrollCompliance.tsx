@@ -29,13 +29,8 @@ import {
   ErrorBanner,
   PageHeader,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 /**
@@ -138,13 +133,6 @@ function TaxDepositsTab() {
     }
   };
 
-  const toggleSelected = (id: string) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const selectedPending = (deposits ?? []).filter(
     (d) => d.status === 'PENDING' && selectedIds.has(d.id),
@@ -250,99 +238,130 @@ function TaxDepositsTab() {
           />
         )}
         {deposits && deposits.length > 0 && (
-          <div className="overflow-x-auto">
-            <Table caption="Federal tax deposits">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <span className="sr-only">Select</span>
-                  </TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead className="hidden md:table-cell">Liability</TableHead>
-                  <TableHead>Due</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Confirmation</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deposits.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>
-                      {d.status === 'PENDING' && (
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${money(d.amount)} deposit due ${fmtDate(parseYmd(d.dueDate))}`}
-                          checked={selectedIds.has(d.id)}
-                          onChange={() => toggleSelected(d.id)}
-                          disabled={bulkBusy}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium text-white">
-                        {d.kind === 'FED_941' ? 'Form 941' : 'FUTA'}
-                      </div>
+          <div className="p-3">
+            {/* The page keeps the selection — its bulk "Mark paid" reads it —
+                so the grid is told which deposits are chosen and draws no
+                bar of its own. Only a pending deposit can be chosen. */}
+            <DataGrid<TaxDeposit>
+              id="tax-deposits"
+              caption="Federal tax deposits"
+              rows={deposits}
+              rowKey={(d) => d.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'federal-tax-deposits' }}
+              selectable={{
+                disabled: (d) => d.status !== 'PENDING',
+                selection: { selected: selectedIds, onChange: setSelectedIds },
+              }}
+              columns={[
+                {
+                  key: 'kind',
+                  header: 'Kind',
+                  accessor: (d) => (d.kind === 'FED_941' ? 'Form 941' : 'FUTA'),
+                  sortable: true,
+                  primary: true,
+                  cell: (d) => (
+                    <>
+                      <div className="font-medium text-white">{d.kind === 'FED_941' ? 'Form 941' : 'FUTA'}</div>
                       <div className="text-xs text-silver">{d.periodLabel}</div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-silver">
-                      {fmtDate(parseYmd(d.liabilityDate))}
-                    </TableCell>
-                    <TableCell>
-                      <span className={d.overdue ? 'font-medium text-alert' : undefined}>
-                        {fmtDate(parseYmd(d.dueDate))}
-                      </span>
+                    </>
+                  ),
+                },
+                {
+                  key: 'liability',
+                  header: 'Liability',
+                  accessor: (d) => d.liabilityDate,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-silver whitespace-nowrap',
+                  cell: (d) => fmtDate(parseYmd(d.liabilityDate)),
+                },
+                {
+                  key: 'due',
+                  header: 'Due',
+                  accessor: (d) => d.dueDate,
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  className: 'whitespace-nowrap',
+                  cell: (d) => (
+                    <>
+                      <span className={d.overdue ? 'font-medium text-alert' : undefined}>{fmtDate(parseYmd(d.dueDate))}</span>
                       {d.overdue && (
                         <Badge variant="destructive" className="ml-2">
                           Overdue
                         </Badge>
                       )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-white">
-                      {money(d.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={d.status === 'PAID' ? 'success' : 'pending'}>
-                        {d.status === 'PAID' ? 'Paid' : 'Pending'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-silver">
-                      {d.confirmationNumber ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                    </>
+                  ),
+                },
+                {
+                  key: 'amount',
+                  header: 'Amount',
+                  accessor: (d) => Number(d.amount),
+                  csv: (d) => money(d.amount),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums text-white',
+                  cell: (d) => money(d.amount),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (d) => (d.status === 'PAID' ? 'Paid' : 'Pending'),
+                  sortable: true,
+                  cell: (d) => <Badge variant={d.status === 'PAID' ? 'success' : 'pending'}>{d.status === 'PAID' ? 'Paid' : 'Pending'}</Badge>,
+                },
+                {
+                  key: 'confirmation',
+                  header: 'Confirmation',
+                  accessor: (d) => d.confirmationNumber,
+                  sortable: true,
+                  className: 'text-xs text-silver',
+                  cell: (d) => d.confirmationNumber ?? '—',
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (d) => (
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          downloadTaxDepositWorksheet(d.id).catch((err) =>
+                            toast.error(err instanceof Error ? err.message : 'Download failed.'),
+                          )
+                        }
+                        title="EFTPS keying worksheet"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Worksheet
+                      </Button>
+                      {d.status === 'PENDING' && (
                         <Button
                           size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            downloadTaxDepositWorksheet(d.id).catch((err) =>
-                              toast.error(err instanceof Error ? err.message : 'Download failed.'),
-                            )
-                          }
-                          title="EFTPS keying worksheet"
+                          variant="secondary"
+                          loading={busyId === d.id}
+                          disabled={busyId === d.id || bulkBusy}
+                          onClick={() => onMarkPaid(d)}
                         >
-                          <FileText className="h-4 w-4" />
-                          Worksheet
+                          <CheckCircle2 className="h-4 w-4" />
+                          Mark paid
                         </Button>
-                        {d.status === 'PENDING' && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            loading={busyId === d.id}
-                            disabled={busyId === d.id || bulkBusy}
-                            onClick={() => onMarkPaid(d)}
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                            Mark paid
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
         )}
       </CardContent>
@@ -400,13 +419,6 @@ function RemittancesTab() {
     }
   };
 
-  const toggleSelected = (id: string) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const selectedPending = (remittances ?? []).filter(
     (r) => r.status === 'PENDING' && selectedIds.has(r.id),
@@ -500,85 +512,105 @@ function RemittancesTab() {
           />
         )}
         {remittances && visible.length > 0 && (
-          <div className="overflow-x-auto">
-            <Table caption="Garnishment remittances">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <span className="sr-only">Select</span>
-                  </TableHead>
-                  <TableHead>Payee</TableHead>
-                  <TableHead className="hidden md:table-cell">Pay period</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      {r.status === 'PENDING' && (
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${money(r.amount)} remittance to ${r.payeeName}`}
-                          checked={selectedIds.has(r.id)}
-                          onChange={() => toggleSelected(r.id)}
-                          disabled={bulkBusy}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell>
+          <div className="p-3">
+            <DataGrid<GarnishmentRemittance>
+              id="garnishment-remittances"
+              caption="Garnishment remittances"
+              rows={visible}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Payee, reference…' }}
+              urlState={false}
+              exportCsv={{ filename: 'garnishment-remittances' }}
+              selectable={{
+                disabled: (r) => r.status !== 'PENDING',
+                selection: { selected: selectedIds, onChange: setSelectedIds },
+              }}
+              columns={[
+                {
+                  key: 'payee',
+                  header: 'Payee',
+                  accessor: (r) => r.payeeName,
+                  sortable: true,
+                  primary: true,
+                  cell: (r) => (
+                    <>
                       <div className="font-medium text-white">{r.payeeName}</div>
                       <div className="text-xs text-silver">
                         {r.deductionCount} deduction{r.deductionCount === 1 ? '' : 's'}
                         {r.reference ? ` · ref ${r.reference}` : ''}
                       </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-silver">
-                      {fmtDate(parseYmd(r.period.start))} – {fmtDate(parseYmd(r.period.end))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-white">
-                      {money(r.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={r.status === 'SENT' ? 'success' : 'pending'}>
-                        {r.status === 'SENT' ? 'Sent' : 'Pending'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                    </>
+                  ),
+                },
+                {
+                  key: 'period',
+                  header: 'Pay period',
+                  accessor: (r) => r.period.start,
+                  csv: (r) => `${r.period.start} – ${r.period.end}`,
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  className: 'text-silver whitespace-nowrap',
+                  cell: (r) => `${fmtDate(parseYmd(r.period.start))} – ${fmtDate(parseYmd(r.period.end))}`,
+                },
+                {
+                  key: 'amount',
+                  header: 'Amount',
+                  accessor: (r) => Number(r.amount),
+                  csv: (r) => money(r.amount),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums text-white',
+                  cell: (r) => money(r.amount),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (r) => (r.status === 'SENT' ? 'Sent' : 'Pending'),
+                  sortable: true,
+                  cell: (r) => <Badge variant={r.status === 'SENT' ? 'success' : 'pending'}>{r.status === 'SENT' ? 'Sent' : 'Pending'}</Badge>,
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (r) => (
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          downloadRemittanceAdvice(r.id).catch((err) =>
+                            toast.error(err instanceof Error ? err.message : 'Download failed.'),
+                          )
+                        }
+                        title="Advice sheet listing each employee and case number"
+                      >
+                        <Download className="h-4 w-4" />
+                        Advice
+                      </Button>
+                      {r.status === 'PENDING' && (
                         <Button
                           size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            downloadRemittanceAdvice(r.id).catch((err) =>
-                              toast.error(err instanceof Error ? err.message : 'Download failed.'),
-                            )
-                          }
-                          title="Advice sheet listing each employee and case number"
+                          variant="secondary"
+                          loading={busyId === r.id}
+                          disabled={busyId === r.id || bulkBusy}
+                          onClick={() => onMarkSent(r)}
                         >
-                          <Download className="h-4 w-4" />
-                          Advice
+                          <CheckCircle2 className="h-4 w-4" />
+                          Mark sent
                         </Button>
-                        {r.status === 'PENDING' && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            loading={busyId === r.id}
-                            disabled={busyId === r.id || bulkBusy}
-                            onClick={() => onMarkSent(r)}
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                            Mark sent
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
         )}
       </CardContent>
@@ -693,44 +725,47 @@ function NewHireTab() {
           />
         )}
         {rows && rows.length > 0 && (
-          <div className="overflow-x-auto">
-            <Table caption="Unreported new hires">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead>Hire date</TableHead>
-                  <TableHead className="hidden md:table-cell">State</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.associateId}>
-                    <TableCell className="font-medium text-white">{r.name}</TableCell>
-                    <TableCell className="text-silver">
-                      {r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-silver">
-                      {r.state ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {r.overdue && <Badge variant="destructive">Overdue</Badge>}
-                        {!r.reportable && (
-                          <Badge
-                            variant="pending"
-                            title="Needs SSN, address, and state on file before the state can match the report"
-                          >
-                            Missing data
-                          </Badge>
-                        )}
-                        {r.reportable && !r.overdue && <Badge variant="default">Ready</Badge>}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="p-3">
+            <DataGrid<NewHireRow>
+              id="new-hire-reporting"
+              caption="Unreported new hires"
+              rows={rows}
+              rowKey={(r) => r.associateId}
+              search={{ placeholder: 'Name, state…' }}
+              urlState={false}
+              exportCsv={{ filename: 'unreported-new-hires' }}
+              columns={[
+                { key: 'name', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'hireDate',
+                  header: 'Hire date',
+                  accessor: (r) => r.hireDate,
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  className: 'text-silver whitespace-nowrap',
+                  cell: (r) => (r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—'),
+                },
+                { key: 'state', header: 'State', accessor: (r) => r.state, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => r.state ?? '—' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (r) => (r.overdue ? 'overdue' : !r.reportable ? 'missing data' : 'ready'),
+                  sortable: true,
+                  cell: (r) => (
+                    <div className="flex flex-wrap gap-1">
+                      {r.overdue && <Badge variant="destructive">Overdue</Badge>}
+                      {!r.reportable && (
+                        <Badge variant="pending" title="Needs SSN, address, and state on file before the state can match the report">
+                          Missing data
+                        </Badge>
+                      )}
+                      {r.reportable && !r.overdue && <Badge variant="default">Ready</Badge>}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
         )}
       </CardContent>
