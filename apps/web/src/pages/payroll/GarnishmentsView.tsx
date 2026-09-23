@@ -35,14 +35,7 @@ import { FormHint, Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { StatusBadge } from '@/lib/status';
 import { toast } from '@/components/ui/Toaster';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -178,32 +171,160 @@ export function GarnishmentsView({ canProcess }: Props) {
             <CardTitle className="text-base">{rows.length} garnishment{rows.length === 1 ? '' : 's'}</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead className="hidden md:table-cell">Per period</TableHead>
-                  <TableHead className="text-right">Withheld</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">Cap</TableHead>
-                  <TableHead className="text-center hidden lg:table-cell">Priority</TableHead>
-                  <TableHead>Status</TableHead>
-                  {canProcess && <TableHead />}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((g) => (
-                  <GarnishmentRow
-                    key={g.id}
-                    g={g}
-                    canProcess={canProcess}
-                    onSuspend={() => setStatusChange({ row: g, nextStatus: 'SUSPENDED' })}
-                    onResume={() => setStatusChange({ row: g, nextStatus: 'ACTIVE' })}
-                    onTerminate={() => setStatusChange({ row: g, nextStatus: 'TERMINATED' })}
-                  />
-                ))}
-              </TableBody>
-            </Table>
+            <div className="p-3">
+              <DataGrid<Garnishment>
+                id="garnishments"
+                caption="Garnishments"
+                rows={rows}
+                rowKey={(g) => g.id}
+                search={{ placeholder: 'Associate, case, agency…' }}
+                urlState={false}
+                exportCsv={{ filename: 'garnishments' }}
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (g) => g.associateName,
+                    sortable: true,
+                    primary: true,
+                    cell: (g) => (
+                      <>
+                        <div className="text-silver">{g.associateName}</div>
+                        {g.caseNumber && <div className="text-xs text-silver/70">Case #{g.caseNumber}</div>}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'kind',
+                    header: 'Kind',
+                    accessor: (g) => KIND_LABEL[g.kind],
+                    sortable: true,
+                    cardMeta: true,
+                    cell: (g) => (
+                      <>
+                        <div className="text-silver">{KIND_LABEL[g.kind]}</div>
+                        {g.agencyName && <div className="text-xs text-silver/70">{g.agencyName}</div>}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'perPeriod',
+                    header: 'Per period',
+                    accessor: (g) => perPeriodOf(g),
+                    sortable: true,
+                    searchable: false,
+                    cardMeta: true,
+                    className: 'text-silver',
+                  },
+                  {
+                    key: 'withheld',
+                    header: 'Withheld',
+                    accessor: (g) => Number(g.amountWithheld),
+                    csv: (g) => fmtMoney(Number(g.amountWithheld)),
+                    sortable: true,
+                    searchable: false,
+                    align: 'right',
+                    className: 'tabular-nums text-white',
+                    cell: (g) => (
+                      <>
+                        {fmtMoney(Number(g.amountWithheld))}
+                        <div className="text-2xs text-silver/70">
+                          {g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}
+                        </div>
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'cap',
+                    header: 'Cap',
+                    accessor: (g) => (g.totalCap !== null ? Number(g.totalCap) : null),
+                    csv: (g) => (g.totalCap !== null ? fmtMoney(Number(g.totalCap)) : ''),
+                    sortable: true,
+                    searchable: false,
+                    align: 'right',
+                    className: 'tabular-nums text-silver',
+                    cell: (g) => {
+                      const cap = g.totalCap !== null ? Number(g.totalCap) : null;
+                      const withheld = Number(g.amountWithheld);
+                      return cap !== null ? (
+                        <>
+                          {fmtMoney(cap)}
+                          <div className="text-2xs text-silver/70">
+                            {Math.min(100, Math.round((withheld / cap) * 100))}% complete
+                          </div>
+                        </>
+                      ) : (
+                        '—'
+                      );
+                    },
+                  },
+                  { key: 'priority', header: 'Priority', accessor: (g) => g.priority, sortable: true, searchable: false, align: 'center', className: 'text-silver' },
+                  { key: 'status', header: 'Status', accessor: (g) => g.status, sortable: true, cell: (g) => <StatusBadge status={g.status} /> },
+                  ...(canProcess
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          cell: (g: Garnishment) => (
+                            <div className="flex items-center justify-end gap-1">
+                              {g.status === 'ACTIVE' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      onClick={() => setStatusChange({ row: g, nextStatus: 'SUSPENDED' })}
+                                      aria-label="Suspend garnishment"
+                                    >
+                                      <Pause className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Suspend</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {g.status === 'SUSPENDED' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      onClick={() => setStatusChange({ row: g, nextStatus: 'ACTIVE' })}
+                                      aria-label="Resume garnishment"
+                                    >
+                                      <Play className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Resume</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {(g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      onClick={() => setStatusChange({ row: g, nextStatus: 'TERMINATED' })}
+                                      aria-label="Terminate garnishment"
+                                    >
+                                      <Square className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Terminate</TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -257,101 +378,13 @@ function statusChangeConfirmLabel(s: GarnishmentStatus | undefined): string {
   return 'Confirm';
 }
 
-function GarnishmentRow({
-  g,
-  canProcess,
-  onSuspend,
-  onResume,
-  onTerminate,
-}: {
-  g: Garnishment;
-  canProcess: boolean;
-  onSuspend: () => void;
-  onResume: () => void;
-  onTerminate: () => void;
-}) {
-  const perPeriod =
-    g.amountPerRun !== null
-      ? fmtMoney(Number(g.amountPerRun))
-      : g.percentOfDisp !== null
+/** "$120.00" · "10.0% of disposable" · "—" — one reading of a garnishment's rate. */
+function perPeriodOf(g: Garnishment): string {
+  return g.amountPerRun !== null
+    ? fmtMoney(Number(g.amountPerRun))
+    : g.percentOfDisp !== null
       ? `${(Number(g.percentOfDisp) * 100).toFixed(1)}% of disposable`
       : '—';
-  const withheld = Number(g.amountWithheld);
-  const cap = g.totalCap !== null ? Number(g.totalCap) : null;
-
-  return (
-    <TableRow>
-      <TableCell>
-        <div className="text-silver">{g.associateName}</div>
-        {g.caseNumber && (
-          <div className="text-xs text-silver/70">Case #{g.caseNumber}</div>
-        )}
-        <div className="md:hidden text-xs2 text-silver/70 truncate">
-          {KIND_LABEL[g.kind]}
-          {perPeriod !== '—' ? ` · ${perPeriod}` : ''}
-        </div>
-      </TableCell>
-      <TableCell className="hidden md:table-cell">
-        <div className="text-silver">{KIND_LABEL[g.kind]}</div>
-        {g.agencyName && (
-          <div className="text-xs text-silver/70">{g.agencyName}</div>
-        )}
-      </TableCell>
-      <TableCell className="text-silver hidden md:table-cell">{perPeriod}</TableCell>
-      <TableCell className="text-right tabular-nums text-white">
-        {fmtMoney(withheld)}
-        <div className="text-2xs text-silver/70">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-silver hidden lg:table-cell">
-        {cap !== null ? fmtMoney(cap) : '—'}
-        {cap !== null && (
-          <div className="text-2xs text-silver/70">
-            {Math.min(100, Math.round((withheld / cap) * 100))}% complete
-          </div>
-        )}
-      </TableCell>
-      <TableCell className="text-center text-silver hidden lg:table-cell">{g.priority}</TableCell>
-      <TableCell>
-        <StatusBadge status={g.status} />
-      </TableCell>
-      {canProcess && (
-        <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
-            {g.status === 'ACTIVE' && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={onSuspend} aria-label="Suspend garnishment">
-                    <Pause className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Suspend</TooltipContent>
-              </Tooltip>
-            )}
-            {g.status === 'SUSPENDED' && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={onResume} aria-label="Resume garnishment">
-                    <Play className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Resume</TooltipContent>
-              </Tooltip>
-            )}
-            {(g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={onTerminate} aria-label="Terminate garnishment">
-                    <Square className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Terminate</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        </TableCell>
-      )}
-    </TableRow>
-  );
 }
 
 function CreateGarnishmentDialog({
