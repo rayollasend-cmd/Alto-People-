@@ -41,18 +41,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -251,47 +246,25 @@ function OshaTab({ clientId }: { clientId: string }) {
               description="Workplace injuries get logged here for the OSHA 300 / 300A annual filings."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Occurred</TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead className="hidden md:table-cell">Body part</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Days away</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((i) => (
-                  // cursor-pointer + onClick: TableRow promotes this to a
-                  // keyboard-accessible row (tabIndex, role, Enter/Space).
-                  <TableRow key={i.id} className="cursor-pointer" onClick={() => setEditing(i)}>
-                    <TableCell>{fmtDate(i.occurredAt)}</TableCell>
-                    <TableCell>
-                      {i.associateName ?? '—'}
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {i.bodyPart ?? '—'}{i.daysAway ? ` · ${i.daysAway}d away` : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={SEVERITY_COLOR[i.severity]}>
-                        {SEVERITY_LABELS[i.severity]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{i.bodyPart ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {i.daysAway}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusTone(i.status, { overrides: OSHA_STATUS_TONES })}>
-                        {OSHA_STATUS_LABELS[i.status]}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="osha-incidents"
+              caption="OSHA incidents"
+              rows={rows}
+              rowKey={(i) => i.id}
+              search={{ placeholder: 'Associate, body part…' }}
+              urlState={false}
+              exportCsv={{ filename: 'osha-incidents' }}
+              onRowClick={(i) => setEditing(i)}
+              rowActionLabel={(i) => `Open incident for ${i.associateName ?? 'associate'} on ${fmtDate(i.occurredAt)}`}
+              columns={[
+                { key: 'occurred', header: 'Occurred', accessor: (i) => i.occurredAt, sortable: true, searchable: false, cardMeta: true, cell: (i) => fmtDate(i.occurredAt) },
+                { key: 'associate', header: 'Associate', accessor: (i) => i.associateName, sortable: true, primary: true, cell: (i) => i.associateName ?? '—' },
+                { key: 'severity', header: 'Severity', accessor: (i) => SEVERITY_LABELS[i.severity], sortable: true, cardMeta: true, cell: (i) => <Badge variant={SEVERITY_COLOR[i.severity]}>{SEVERITY_LABELS[i.severity]}</Badge> },
+                { key: 'bodyPart', header: 'Body part', accessor: (i) => i.bodyPart, sortable: true, cell: (i) => i.bodyPart ?? '—' },
+                { key: 'daysAway', header: 'Days away', accessor: (i) => i.daysAway, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'status', header: 'Status', accessor: (i) => OSHA_STATUS_LABELS[i.status], sortable: true, cell: (i) => <Badge variant={statusTone(i.status, { overrides: OSHA_STATUS_TONES })}>{OSHA_STATUS_LABELS[i.status]}</Badge> },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -696,42 +669,30 @@ function WcTab() {
               description="Add NCCI / state-specific class codes and rates per $100 of payroll."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>State</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Rate / $100</TableHead>
-                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>{c.stateCode ?? 'FED'}</TableCell>
-                    <TableCell className="font-mono">
-                      {c.code}
-                      <div className="text-xs2 text-silver/70 md:hidden tabular-nums">
-                        {fmtMoney(c.ratePer100, { precise: true })} / $100
-                      </div>
-                      <div className="text-xs2 text-silver/70 lg:hidden">
-                        {fmtDate(parseYmd(c.effectiveFrom))}
-                        {c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell>{c.description}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {fmtMoney(c.ratePer100, { precise: true })}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {fmtDate(parseYmd(c.effectiveFrom))}
-                      {c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="wc-class-codes"
+              caption="Workers' compensation class codes"
+              rows={rows}
+              rowKey={(c) => c.id}
+              search={{ placeholder: 'Code, description…' }}
+              urlState={false}
+              exportCsv={{ filename: 'wc-class-codes' }}
+              columns={[
+                { key: 'state', header: 'State', accessor: (c) => c.stateCode ?? 'FED', sortable: true, cardMeta: true },
+                { key: 'code', header: 'Code', accessor: (c) => c.code, sortable: true, primary: true, className: 'font-mono' },
+                { key: 'description', header: 'Description', accessor: (c) => c.description, sortable: true, cardMeta: true },
+                { key: 'rate', header: 'Rate / $100', accessor: (c) => Number(c.ratePer100), csv: (c) => fmtMoney(c.ratePer100, { precise: true }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (c) => fmtMoney(c.ratePer100, { precise: true }) },
+                {
+                  key: 'effective',
+                  header: 'Effective',
+                  accessor: (c) => c.effectiveFrom,
+                  csv: (c) => `${fmtDate(parseYmd(c.effectiveFrom))}${c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}`,
+                  sortable: true,
+                  searchable: false,
+                  cell: (c) => `${fmtDate(parseYmd(c.effectiveFrom))}${c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}`,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -959,33 +920,22 @@ function EeoTab({ clientId }: { clientId: string }) {
               description="Record self-identification per associate with the panel above; counts roll up here by category × race × gender."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="hidden md:table-cell">Race</TableHead>
-                  <TableHead>Gender</TableHead>
-                  <TableHead className="text-right">Count</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.buckets.map((b, i) => (
-                  <TableRow key={i}>
-                    <TableCell>
-                      {EEO_CATEGORY_LABELS[b.category] ?? b.category}
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {EEO_RACE_LABELS[b.race] ?? b.race}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {EEO_RACE_LABELS[b.race] ?? b.race}
-                    </TableCell>
-                    <TableCell>{EEO_GENDER_LABELS[b.gender] ?? b.gender}</TableCell>
-                    <TableCell className="text-right tabular-nums">{b.count}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof data.buckets)[number]>
+              id="eeo-buckets"
+              caption="EEO-1 counts"
+              rows={data.buckets}
+              rowKey={(b) => `${b.category}|${b.race}|${b.gender}`}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'eeo-counts' }}
+              columnChooser={false}
+              columns={[
+                { key: 'category', header: 'Category', accessor: (b) => EEO_CATEGORY_LABELS[b.category] ?? b.category, sortable: true, primary: true },
+                { key: 'race', header: 'Race', accessor: (b) => EEO_RACE_LABELS[b.race] ?? b.race, sortable: true, cardMeta: true },
+                { key: 'gender', header: 'Gender', accessor: (b) => EEO_GENDER_LABELS[b.gender] ?? b.gender, sortable: true, cardMeta: true },
+                { key: 'count', header: 'Count', accessor: (b) => b.count, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

@@ -50,17 +50,12 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -335,66 +330,42 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Job profile</TableHead>
-                  <TableHead className="hidden md:table-cell">Level</TableHead>
-                  <TableHead className="hidden lg:table-cell">Type</TableHead>
-                  <TableHead>Range</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((b) => (
-                  <TableRow
-                    key={b.id}
-                    className="group cursor-pointer"
-                    onClick={() => {
-                      if (!canManage) return;
-                      setDraft({
-                        id: b.id,
-                        name: b.name,
-                        level: b.level ?? '',
-                        payType: b.payType,
-                        minAmount: b.minAmount,
-                        midAmount: b.midAmount,
-                        maxAmount: b.maxAmount,
-                      });
-                    }}
-                  >
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{b.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {b.jobProfileTitle ?? '—'}{b.level ? ` · ${b.level}` : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{b.jobProfileTitle ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">{b.level ?? '—'}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{PAY_TYPE_LABELS[b.payType]}</TableCell>
-                    <TableCell className="tabular-nums">
-                      {fmtMoney(b.minAmount)} · {fmtMoney(b.midAmount)} · {fmtMoney(b.maxAmount)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canManage && (
-                        <button
-                          data-no-row-click
-                          aria-label="Delete pay band"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(b.id);
-                          }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition"
-                        >
-                          <Trash2 className="h-4 w-4 inline" />
-                        </button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="pay-bands"
+              caption="Pay bands"
+              rows={filtered}
+              rowKey={(b) => b.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'pay-bands' }}
+              onRowClick={canManage ? (b) => setDraft({ id: b.id, name: b.name, level: b.level ?? '', payType: b.payType, minAmount: b.minAmount, midAmount: b.midAmount, maxAmount: b.maxAmount }) : undefined}
+              rowActionLabel={(b) => `Edit ${b.name}`}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (b) => b.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'jobProfile', header: 'Job profile', accessor: (b) => b.jobProfileTitle, sortable: true, cardMeta: true, cell: (b) => b.jobProfileTitle ?? '—' },
+                { key: 'level', header: 'Level', accessor: (b) => b.level, sortable: true, cardMeta: true, cell: (b) => b.level ?? '—' },
+                { key: 'type', header: 'Type', accessor: (b) => PAY_TYPE_LABELS[b.payType], sortable: true },
+                { key: 'range', header: 'Range', accessor: (b) => Number(b.minAmount), csv: (b) => `${fmtMoney(b.minAmount)} · ${fmtMoney(b.midAmount)} · ${fmtMoney(b.maxAmount)}`, sortable: true, searchable: false, className: 'tabular-nums', cell: (b) => `${fmtMoney(b.minAmount)} · ${fmtMoney(b.midAmount)} · ${fmtMoney(b.maxAmount)}` },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        cell: (b: NonNullable<typeof filtered>[number]) => (
+                          <Button size="sm" variant="ghost" className="text-silver hover:text-alert" aria-label={`Delete pay band ${b.name}`} onClick={() => onDelete(b.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -625,51 +596,31 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
               description="Create a merit cycle to plan and apply pay changes for an entire population at once."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Period</TableHead>
-                  <TableHead>Effective</TableHead>
-                  <TableHead className="hidden md:table-cell">Budget</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {cycles.map((c) => (
-                  <TableRow
-                    key={c.id}
-                    className="cursor-pointer"
-                    onClick={() => setActive(c)}
-                  >
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{c.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {fmtYmd(c.reviewPeriodStart)} – {fmtYmd(c.reviewPeriodEnd)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          c.status === 'APPLIED' || c.status === 'CLOSED'
-                            ? 'success'
-                            : c.status === 'OPEN'
-                              ? 'pending'
-                              : 'default'
-                        }
-                      >
-                        {CYCLE_STATUS_LABELS[c.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap hidden md:table-cell">
-                      {fmtYmd(c.reviewPeriodStart)} – {fmtYmd(c.reviewPeriodEnd)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{fmtYmd(c.effectiveDate)}</TableCell>
-                    <TableCell className="tabular-nums hidden md:table-cell">{fmtMoney(c.budget)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof cycles>[number]>
+              id="merit-cycles"
+              caption="Merit cycles"
+              rows={cycles}
+              rowKey={(c) => c.id}
+              search={{ placeholder: 'Cycle name…' }}
+              urlState={false}
+              exportCsv={{ filename: 'merit-cycles' }}
+              onRowClick={(c) => setActive(c)}
+              rowActionLabel={(c) => `Open ${c.name}`}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (c) => CYCLE_STATUS_LABELS[c.status],
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (c) => <Badge variant={c.status === 'APPLIED' || c.status === 'CLOSED' ? 'success' : c.status === 'OPEN' ? 'pending' : 'default'}>{CYCLE_STATUS_LABELS[c.status]}</Badge>,
+                },
+                { key: 'period', header: 'Period', accessor: (c) => c.reviewPeriodStart, csv: (c) => `${fmtYmd(c.reviewPeriodStart)} – ${fmtYmd(c.reviewPeriodEnd)}`, sortable: true, searchable: false, cardMeta: true, className: 'whitespace-nowrap', cell: (c) => `${fmtYmd(c.reviewPeriodStart)} – ${fmtYmd(c.reviewPeriodEnd)}` },
+                { key: 'effective', header: 'Effective', accessor: (c) => c.effectiveDate, sortable: true, searchable: false, className: 'whitespace-nowrap', cell: (c) => fmtYmd(c.effectiveDate) },
+                { key: 'budget', header: 'Budget', accessor: (c) => Number(c.budget), csv: (c) => fmtMoney(c.budget), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (c) => fmtMoney(c.budget) },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -953,15 +904,6 @@ function CycleDetailDrawer({
     refresh();
   };
 
-  const toggleSelected = (id: string, checked: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
   const onEditProposed = async (p: MeritProposal, value: string) => {
     const n = Number(value);
     if (value.trim() === '' || !Number.isFinite(n) || n <= 0) {
@@ -1112,136 +1054,110 @@ function CycleDetailDrawer({
             }
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {canManage && cycle.status === 'OPEN' && (
-                  <TableHead className="w-8" aria-label="Select" />
-                )}
-                <TableHead>Associate</TableHead>
-                <TableHead className="hidden md:table-cell">Current</TableHead>
-                <TableHead>Proposed</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right w-44">Decide</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((p) => {
-                const editValue = edits[p.id] ?? p.proposedAmount;
-                const editError = editErrors[p.id];
-                const cur = Number(p.currentAmount);
-                const proposedNum = Number(editValue);
-                const delta =
-                  Number.isFinite(proposedNum) && Number.isFinite(cur)
-                    ? proposedNum - cur
-                    : null;
-                const deltaPct =
-                  delta !== null && cur > 0 ? (delta / cur) * 100 : null;
-                return (
-                  <TableRow key={p.id}>
-                    {canManage && cycle.status === 'OPEN' && (
-                      <TableCell className="w-8">
-                        {decidable(p) && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${p.associateName}`}
-                            checked={selected.has(p.id)}
-                            onChange={(e) => toggleSelected(p.id, e.target.checked)}
-                          />
-                        )}
-                      </TableCell>
-                    )}
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">
-                        <AssociateLink associateId={p.associateId}>{p.associateName}</AssociateLink>
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
-                        {fmtPayRate(p.currentAmount, p.currentPayType)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">
-                      {fmtPayRate(p.currentAmount, p.currentPayType)}
-                    </TableCell>
-                    <TableCell>
-                      {decidable(p) ? (
-                        <div className="space-y-1">
-                          <Input
-                            className="w-28"
-                            type="number"
-                            value={editValue}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setEdits((prev) => ({ ...prev, [p.id]: v }));
-                              setEditErrors((prev) => {
-                                if (!(p.id in prev)) return prev;
-                                const rest = { ...prev };
-                                delete rest[p.id];
-                                return rest;
-                              });
-                            }}
-                            onBlur={(e) => onEditProposed(p, e.target.value)}
-                            invalid={Boolean(editError)}
-                          />
-                          {editError ? (
-                            <p className="text-xs2 text-alert">{editError}</p>
-                          ) : (
-                            delta !== null &&
-                            delta !== 0 && (
-                              <p
-                                className={`text-xs2 tabular-nums ${delta > 0 ? 'text-success' : 'text-alert'}`}
-                              >
-                                {delta > 0 ? '+' : '−'}
-                                {deltaPct !== null
-                                  ? `${fmtPercent(Math.abs(deltaPct))} · `
-                                  : ''}
-                                {delta > 0 ? '+' : '−'}
-                                {fmtMoney(Math.abs(delta))}
-                              </p>
-                            )
-                          )}
-                        </div>
+          <DataGrid<NonNullable<typeof filtered>[number]>
+            id="merit-proposals"
+            caption="Merit proposals"
+            rows={filtered}
+            rowKey={(pr) => pr.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'merit-proposals' }}
+            selectable={canManage && cycle.status === 'OPEN' ? { disabled: (pr) => !decidable(pr), selection: { selected, onChange: setSelected } } : undefined}
+            columns={[
+              {
+                key: 'associate',
+                header: 'Associate',
+                accessor: (pr) => pr.associateName,
+                sortable: true,
+                primary: true,
+                className: 'font-medium text-white',
+                cell: (pr) => <AssociateLink associateId={pr.associateId}>{pr.associateName}</AssociateLink>,
+              },
+              { key: 'current', header: 'Current', accessor: (pr) => Number(pr.currentAmount), csv: (pr) => fmtPayRate(pr.currentAmount, pr.currentPayType), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (pr) => fmtPayRate(pr.currentAmount, pr.currentPayType) },
+              {
+                key: 'proposed',
+                header: 'Proposed',
+                accessor: (pr) => Number(edits[pr.id] ?? pr.proposedAmount),
+                csv: (pr) => fmtMoney(edits[pr.id] ?? pr.proposedAmount),
+                sortable: true,
+                searchable: false,
+                cardMeta: true,
+                stopRowClick: true,
+                cell: (pr) => {
+                  const editValue = edits[pr.id] ?? pr.proposedAmount;
+                  const editError = editErrors[pr.id];
+                  const cur = Number(pr.currentAmount);
+                  const proposedNum = Number(editValue);
+                  const delta = Number.isFinite(proposedNum) && Number.isFinite(cur) ? proposedNum - cur : null;
+                  const deltaPct = delta !== null && cur > 0 ? (delta / cur) * 100 : null;
+                  return decidable(pr) ? (
+                    <div className="space-y-1">
+                      <Input
+                        className="w-28"
+                        type="number"
+                        value={editValue}
+                        aria-label={`Proposed pay for ${pr.associateName}`}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setEdits((prev) => ({ ...prev, [pr.id]: v }));
+                          setEditErrors((prev) => {
+                            if (!(pr.id in prev)) return prev;
+                            const rest = { ...prev };
+                            delete rest[pr.id];
+                            return rest;
+                          });
+                        }}
+                        onBlur={(e) => onEditProposed(pr, e.target.value)}
+                        invalid={Boolean(editError)}
+                      />
+                      {editError ? (
+                        <p className="text-xs2 text-alert">{editError}</p>
                       ) : (
-                        <span className="tabular-nums">{fmtMoney(p.proposedAmount)}</span>
+                        delta !== null &&
+                        delta !== 0 && (
+                          <p className={`text-xs2 tabular-nums ${delta > 0 ? 'text-success' : 'text-alert'}`}>
+                            {delta > 0 ? '+' : '−'}
+                            {deltaPct !== null ? `${fmtPercent(Math.abs(deltaPct))} · ` : ''}
+                            {delta > 0 ? '+' : '−'}
+                            {fmtMoney(Math.abs(delta))}
+                          </p>
+                        )
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          p.status === 'APPROVED' || p.status === 'APPLIED'
-                            ? 'success'
-                            : p.status === 'REJECTED'
-                              ? 'destructive'
-                              : 'pending'
-                        }
-                      >
-                        {PROPOSAL_STATUS_LABELS[p.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {decidable(p) && (
-                        <div className="inline-flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => onDecide(p, 'APPROVED')}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDecide(p, 'REJECTED')}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                    </div>
+                  ) : (
+                    <span className="tabular-nums">{fmtMoney(pr.proposedAmount)}</span>
+                  );
+                },
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (pr) => PROPOSAL_STATUS_LABELS[pr.status],
+                sortable: true,
+                cell: (pr) => <Badge variant={pr.status === 'APPROVED' || pr.status === 'APPLIED' ? 'success' : pr.status === 'REJECTED' ? 'destructive' : 'pending'}>{PROPOSAL_STATUS_LABELS[pr.status]}</Badge>,
+              },
+              {
+                key: 'decide',
+                header: 'Decide',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                cell: (pr) =>
+                  decidable(pr) ? (
+                    <div className="inline-flex gap-1">
+                      <Button size="sm" variant="secondary" onClick={() => onDecide(pr, 'APPROVED')}>
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => onDecide(pr, 'REJECTED')}>
+                        Reject
+                      </Button>
+                    </div>
+                  ) : null,
+              },
+            ]}
+          />
         )}
       </DrawerBody>
       <DrawerFooter>

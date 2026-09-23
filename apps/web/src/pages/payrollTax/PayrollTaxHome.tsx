@@ -76,18 +76,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { toast } from 'sonner';
@@ -219,97 +214,75 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
               description="Court-ordered withholdings (child support, tax levies, etc) appear here."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right">Withhold</TableHead>
-                  <TableHead className="hidden lg:table-cell text-right">Cap / progress</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((g) => (
-                  <TableRow key={g.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">{g.associateName}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {GARN_KIND_LABEL[g.kind]}
-                          <span className="sm:hidden">
-                            {g.amountPerRun
-                              ? ` · ${fmtMoney(g.amountPerRun)}/run`
-                              : g.percentOfDisp
-                                ? ` · ${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
-                                : ''}
-                          </span>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{GARN_KIND_LABEL[g.kind]}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
-                      {g.amountPerRun
-                        ? `${fmtMoney(g.amountPerRun)}/run`
-                        : g.percentOfDisp
-                          ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
-                          : '—'}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
-                      {g.totalCap
-                        ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}`
-                        : fmtMoney(g.amountWithheld)}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={g.status} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          asChild
-                          size="sm"
-                          variant="ghost"
-                          title="Download employer acknowledgment letter PDF"
-                        >
-                          <a href={garnishmentLetterUrl(g.id)} target="_blank" rel="noreferrer">
-                            <Download className="mr-1 h-3 w-3" />
-                            Letter
-                          </a>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="garnishments"
+              caption="Garnishments"
+              rows={rows}
+              rowKey={(g) => g.id}
+              search={{ placeholder: 'Associate, kind…' }}
+              urlState={false}
+              exportCsv={{ filename: 'garnishments' }}
+              columns={[
+                { key: 'associate', header: 'Associate', accessor: (g) => g.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'kind', header: 'Kind', accessor: (g) => GARN_KIND_LABEL[g.kind], sortable: true, cardMeta: true },
+                {
+                  key: 'withhold',
+                  header: 'Withhold',
+                  accessor: (g) => (g.amountPerRun ? `${fmtMoney(g.amountPerRun)}/run` : g.percentOfDisp ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.` : null),
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  className: 'tabular-nums',
+                  cell: (g) => (g.amountPerRun ? `${fmtMoney(g.amountPerRun)}/run` : g.percentOfDisp ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.` : '—'),
+                },
+                {
+                  key: 'cap',
+                  header: 'Cap / progress',
+                  accessor: (g) => Number(g.amountWithheld),
+                  csv: (g) => (g.totalCap ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}` : fmtMoney(g.amountWithheld)),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums',
+                  cell: (g) => (g.totalCap ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}` : fmtMoney(g.amountWithheld)),
+                },
+                { key: 'status', header: 'Status', accessor: (g) => g.status, sortable: true, cell: (g) => <StatusBadge status={g.status} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (g) => (
+                    <div className="flex items-center justify-end gap-2">
+                      <Button asChild size="sm" variant="ghost" title="Download employer acknowledgment letter PDF">
+                        <a href={garnishmentLetterUrl(g.id)} target="_blank" rel="noreferrer">
+                          <Download className="mr-1 h-3 w-3" />
+                          Letter
+                        </a>
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setHistoryTarget(g)}>
+                        History
+                      </Button>
+                      {canManage && g.status === 'ACTIVE' && (
+                        <Button size="sm" variant="ghost" onClick={() => setDeductTarget(g)}>
+                          Manual deduct
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setHistoryTarget(g)}
-                        >
-                          History
-                        </Button>
-                        {canManage && g.status === 'ACTIVE' && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setDeductTarget(g)}
-                          >
-                            Manual deduct
-                          </Button>
-                        )}
-                        {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-                          <Select
-                            size="sm"
-                            value={g.status}
-                            onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}
-                          >
-                            <option value="ACTIVE">{statusLabel('ACTIVE')}</option>
-                            <option value="SUSPENDED">{statusLabel('SUSPENDED')}</option>
-                            <option value="TERMINATED">{statusLabel('TERMINATED')}</option>
-                          </Select>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      )}
+                      {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
+                        <Select size="sm" value={g.status} aria-label={`Status of ${g.associateName}'s garnishment`} onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}>
+                          <option value="ACTIVE">{statusLabel('ACTIVE')}</option>
+                          <option value="SUSPENDED">{statusLabel('SUSPENDED')}</option>
+                          <option value="TERMINATED">{statusLabel('TERMINATED')}</option>
+                        </Select>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -573,28 +546,21 @@ function GarnishmentHistoryDrawer({
             />
           )}
           {rows && rows.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Run</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>{fmtDateTime(d.deductedOn)}</TableCell>
-                    <TableCell className="text-xs text-silver/70">
-                      {d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(d.amount)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="garnishment-deductions"
+              caption="Deductions"
+              rows={rows}
+              rowKey={(d) => d.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              columns={[
+                { key: 'date', header: 'Date', accessor: (d) => d.deductedOn, sortable: true, searchable: false, primary: true, cell: (d) => fmtDateTime(d.deductedOn) },
+                { key: 'run', header: 'Run', accessor: (d) => (d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'), sortable: true, cardMeta: true, className: 'text-xs text-silver/70' },
+                { key: 'amount', header: 'Amount', accessor: (d) => Number(d.amount), csv: (d) => fmtMoney(d.amount), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (d) => fmtMoney(d.amount) },
+              ]}
+            />
           )}
         </div>
       </DrawerBody>
@@ -812,24 +778,6 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       )
     : null;
 
-  const toggleRow = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const allVisibleSelected =
-    !!filtered && filtered.length > 0 && filtered.every((f) => selected.has(f.id));
-  const toggleAllVisible = () => {
-    if (!filtered) return;
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected) filtered.forEach((f) => next.delete(f.id));
-      else filtered.forEach((f) => next.add(f.id));
-      return next;
-    });
-  };
 
   /** "· 20 skipped (already filed)" — deduped reasons from the bulk endpoints. */
   const skippedSummary = (skipped: { id: string; reason: string }[]) =>
@@ -1090,70 +1038,38 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
               No forms match the current filters.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {canManage && (
-                    <TableHead className="w-8">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 align-middle"
-                        aria-label="Select all visible forms"
-                        checked={allVisibleSelected}
-                        onChange={toggleAllVisible}
-                      />
-                    </TableHead>
-                  )}
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Year / Q</TableHead>
-                  <TableHead className="hidden md:table-cell">Recipient</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Filed</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((f) => (
-                  <TableRow key={f.id}>
-                    {canManage && (
-                      <TableCell className="w-8">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 align-middle"
-                          aria-label={`Select ${FORM_KIND_LABEL[f.kind]} ${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''} — ${f.associateName ?? 'Aggregate'}`}
-                          checked={selected.has(f.id)}
-                          onChange={() => toggleRow(f.id)}
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">{FORM_KIND_LABEL[f.kind]}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {f.associateName ?? 'Aggregate'}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {f.taxYear}
-                      {f.quarter ? ` Q${f.quarter}` : ''}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{f.associateName ?? 'Aggregate'}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={f.status} overrides={FORM_TONES} />
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {fmtDate(f.filedAt)}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="tax-forms"
+              caption="Tax forms"
+              rows={filtered}
+              rowKey={(f) => f.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'tax-forms' }}
+              selectable={canManage ? { selection: { selected, onChange: setSelected } } : undefined}
+              columns={[
+                { key: 'kind', header: 'Kind', accessor: (f) => FORM_KIND_LABEL[f.kind], sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'year', header: 'Year / Q', accessor: (f) => `${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''}`, sortable: true, cardMeta: true },
+                { key: 'recipient', header: 'Recipient', accessor: (f) => f.associateName ?? 'Aggregate', sortable: true, cardMeta: true },
+                { key: 'status', header: 'Status', accessor: (f) => f.status, sortable: true, cell: (f) => <StatusBadge status={f.status} overrides={FORM_TONES} /> },
+                { key: 'filed', header: 'Filed', accessor: (f) => f.filedAt, sortable: true, searchable: false, cell: (f) => fmtDate(f.filedAt) },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (f) => (
+                    <>
                       {/* A W-2 or 1099 PDF prints the recipient's full SSN,
                           so the server requires export:payroll-pii for
                           someone else's. Filing, voiding and sending each
                           recipient their own copy stay available to
                           everyone who runs payroll. */}
-                      {(f.kind === 'W2' || f.kind === 'W2C') &&
-                        f.status !== 'VOIDED' &&
-                        canExportPii && (
+                      {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && canExportPii && (
                         <span className="inline-flex">
                           <Button size="sm" variant="ghost" asChild className="rounded-r-none">
                             <a href={taxFormPdfUrl(f.id)} download>
@@ -1163,12 +1079,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           {f.kind === 'W2' && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="rounded-l-none border-l border-navy-secondary px-2"
-                                  aria-label="More PDF formats"
-                                >
+                                <Button size="sm" variant="ghost" className="rounded-l-none border-l border-navy-secondary px-2" aria-label="More PDF formats">
                                   <ChevronDown className="h-3 w-3" />
                                 </Button>
                               </DropdownMenuTrigger>
@@ -1206,51 +1117,36 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           )}
                         </span>
                       )}
-                      {canManage &&
-                        f.kind === 'W2' &&
-                        (f.status === 'FILED' || f.status === 'AMENDED') && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onCorrect(f.id)}
-                          >
-                            Correct (W-2c)
-                          </Button>
-                        )}
+                      {canManage && f.kind === 'W2' && (f.status === 'FILED' || f.status === 'AMENDED') && (
+                        <Button size="sm" variant="ghost" onClick={() => onCorrect(f.id)}>
+                          Correct (W-2c)
+                        </Button>
+                      )}
                       {canManage && f.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onFile(f.id)}>
                           File
                         </Button>
                       )}
-                      {canManage &&
-                        f.status !== 'VOIDED' &&
-                        (f.kind === 'W2' ||
-                          f.kind === 'W2C' ||
-                          f.kind === 'F1099_NEC' ||
-                          f.kind === 'F1099_MISC') && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onSendCopy(f.id)}
-                            title={
-                              f.recipientCopySentAt
-                                ? `Recipient copy sent ${fmtDate(f.recipientCopySentAt)}`
-                                : 'Email the associate their copy'
-                            }
-                          >
-                            {f.recipientCopySentAt ? '✓ Copy sent' : 'Send copy'}
-                          </Button>
-                        )}
+                      {canManage && f.status !== 'VOIDED' && (f.kind === 'W2' || f.kind === 'W2C' || f.kind === 'F1099_NEC' || f.kind === 'F1099_MISC') && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onSendCopy(f.id)}
+                          title={f.recipientCopySentAt ? `Recipient copy sent ${fmtDate(f.recipientCopySentAt)}` : 'Email the associate their copy'}
+                        >
+                          {f.recipientCopySentAt ? '✓ Copy sent' : 'Send copy'}
+                        </Button>
+                      )}
                       {canManage && f.status === 'FILED' && f.kind !== 'W2' && (
                         <Button size="sm" variant="ghost" onClick={() => onVoid(f.id)}>
                           Void
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

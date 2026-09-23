@@ -77,7 +77,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import {
   Dialog,
@@ -1605,7 +1605,6 @@ function RidesTab({ manage }: { manage: boolean }) {
   // What the server will actually accept onto a run: still waiting, no van.
   const eligible = all.filter((r) => r.status === 'REQUESTED' && !r.run);
   const pickedRides = eligible.filter((r) => picked.has(r.id));
-  const allPicked = eligible.length > 0 && pickedRides.length === eligible.length;
 
   // A run is one van going one way on one day — the server refuses anything
   // else with ride_mismatch, so say so here rather than letting them build a
@@ -1625,12 +1624,6 @@ function RidesTab({ manage }: { manage: boolean }) {
     enabled: dispatching && !!dispatchDate,
   });
 
-  const toggle = (ids: string[], on: boolean) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) (on ? next.add(id) : next.delete(id));
-      return next;
-    });
 
   return (
     <div className="space-y-3">
@@ -1695,83 +1688,76 @@ function RidesTab({ manage }: { manage: boolean }) {
         // itself never goes pannable, which is what would make the header
         // and the tab strip drift off-screen mid-dispatch.
         <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {manage && (
-                  /* The pick column is sized to its control, so it widens
-                     with it on touch rather than squeezing "When". */
-                  <TableHead className="w-8 coarse:w-14">
-                    <PickBox
-                      label={`Select all ${eligible.length} waiting for a van`}
-                      checked={allPicked}
-                      disabled={eligible.length === 0}
-                      onChange={(on) => toggle(eligible.map((r) => r.id), on)}
-                    />
-                  </TableHead>
-                )}
-                <TableHead>When</TableHead>
-                <TableHead>Rider</TableHead>
-                <TableHead>Way</TableHead>
-                <TableHead>Pickup / drop</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Van</TableHead>
-                <TableHead className="text-right">Owed</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rides.data!.rides.map((r) => (
-                <TableRow key={r.id}>
-                  {manage && (
-                    <TableCell>
-                      {r.status === 'REQUESTED' && !r.run ? (
-                        <PickBox label={`Select ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
-                      ) : null}
-                    </TableCell>
-                  )}
-                  <TableCell className="whitespace-nowrap tabular-nums">
-                    {fmtRelativeDayTz(r.targetAt, r.store.timezone)} {fmtTimeTz(r.targetAt, r.store.timezone)}
-                  </TableCell>
-                  <TableCell>{r.rider.name}</TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {r.direction === 'TO_WORK' ? 'To' : 'From'} {r.store.name}
-                  </TableCell>
-                  <TableCell className="max-w-56 truncate">{homeEnd(r)}</TableCell>
-                  <TableCell>
-                    <Badge size="sm" variant={statusVariant(r.status)}>
-                      {STATUS_LABEL[r.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{r.run?.van.name ?? '—'}</TableCell>
-                  <TableCell className="text-right tabular-nums">
+          <DataGrid<NonNullable<typeof rides.data>['rides'][number]>
+            id="transport-rides"
+            caption="Rides"
+            rows={rides.data!.rides}
+            rowKey={(r) => r.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'rides' }}
+            selectable={
+              manage
+                ? {
+                    // What the server will actually accept onto a run: still waiting, no van.
+                    disabled: (r) => !(r.status === 'REQUESTED' && !r.run),
+                    selectAllLabel: `Select all ${eligible.length} waiting for a van`,
+                    selection: { selected: picked, onChange: setPicked },
+                  }
+                : undefined
+            }
+            columns={[
+              { key: 'when', header: 'When', accessor: (r) => r.targetAt, csv: (r) => `${fmtRelativeDayTz(r.targetAt, r.store.timezone)} ${fmtTimeTz(r.targetAt, r.store.timezone)}`, sortable: true, searchable: false, cardMeta: true, className: 'whitespace-nowrap tabular-nums', cell: (r) => `${fmtRelativeDayTz(r.targetAt, r.store.timezone)} ${fmtTimeTz(r.targetAt, r.store.timezone)}` },
+              { key: 'rider', header: 'Rider', accessor: (r) => r.rider.name, sortable: true, primary: true },
+              { key: 'way', header: 'Way', accessor: (r) => `${r.direction === 'TO_WORK' ? 'To' : 'From'} ${r.store.name}`, sortable: true, cardMeta: true, className: 'whitespace-nowrap' },
+              { key: 'end', header: 'Pickup / drop', accessor: (r) => homeEnd(r), className: 'max-w-56 truncate' },
+              { key: 'status', header: 'Status', accessor: (r) => STATUS_LABEL[r.status], sortable: true, cardMeta: true, cell: (r) => <Badge size="sm" variant={statusVariant(r.status)}>{STATUS_LABEL[r.status]}</Badge> },
+              { key: 'van', header: 'Van', accessor: (r) => r.run?.van.name, sortable: true, cell: (r) => r.run?.van.name ?? '—' },
+              {
+                key: 'owed',
+                header: 'Owed',
+                accessor: (r) => (r.waived ? 0 : r.owedCents),
+                csv: (r) => (r.waived ? 'waived' : r.owedCents > 0 ? cents(r.owedCents) : ''),
+                sortable: true,
+                searchable: false,
+                align: 'right',
+                className: 'tabular-nums',
+                cell: (r) => (
+                  <>
                     {r.waived ? <span className="text-success">waived</span> : r.owedCents > 0 ? cents(r.owedCents) : '—'}
                     {r.charged && <div className="text-2xs text-silver">from pay</div>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
-                    {/* These two were siblings with nothing between them —
-                        JSX eats the newline, so Cancel and Waive rendered
-                        edge to edge. Two ghost buttons sharing a border is
-                        a coin toss under a finger, and one of them tells a
-                        rider their ride is off. Separated always, wider on
-                        touch where both are 44px tall. */}
-                    <div className="flex items-center justify-end gap-1 coarse:gap-3">
-                      {manage && (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.run?.status !== 'ACTIVE' && (
-                        <Button size="xs" variant="ghost" onClick={() => void actions.cancel(r)}>
-                          Cancel
-                        </Button>
-                      )}
-                      {manage && r.owedCents > 0 && !r.charged && (
-                        <Button size="xs" variant="ghost" onClick={() => void actions.waive(r)}>
-                          Waive
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </>
+                ),
+              },
+              {
+                key: 'actions',
+                header: '',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                className: 'whitespace-nowrap',
+                cell: (r) => (
+                  // Cancel and Waive stay apart — two ghost buttons sharing a
+                  // border is a coin toss under a finger, and one of them
+                  // tells a rider their ride is off.
+                  <div className="flex items-center justify-end gap-1 coarse:gap-3">
+                    {manage && (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.run?.status !== 'ACTIVE' && (
+                      <Button size="xs" variant="ghost" onClick={() => void actions.cancel(r)}>
+                        Cancel
+                      </Button>
+                    )}
+                    {manage && r.owedCents > 0 && !r.charged && (
+                      <Button size="xs" variant="ghost" onClick={() => void actions.waive(r)}>
+                        Waive
+                      </Button>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
       )}
 
@@ -2401,30 +2387,23 @@ function ChargesTab() {
         <EmptyState icon={Bus} title="No charges in these dates" />
       ) : (
         <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Associate</TableHead>
-                <TableHead className="text-right">Rides</TableHead>
-                <TableHead className="text-right">No-shows</TableHead>
-                <TableHead className="text-right">Still owed</TableHead>
-                <TableHead className="text-right">Taken from pay</TableHead>
-                <TableHead className="text-right">Waived</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.associateId}>
-                  <TableCell>{r.name}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.rides}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.noShows}</TableCell>
-                  <TableCell className="text-right tabular-nums">{cents(r.owedCents)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{cents(r.takenCents)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{cents(r.waivedCents)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<(typeof rows)[number]>
+            id="ride-charges"
+            caption="Ride charges by associate"
+            rows={rows}
+            rowKey={(r) => r.associateId}
+            search={{ placeholder: 'Associate…' }}
+            urlState={false}
+            exportCsv={{ filename: 'ride-charges' }}
+            columns={[
+              { key: 'associate', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true },
+              { key: 'rides', header: 'Rides', accessor: (r) => r.rides, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+              { key: 'noShows', header: 'No-shows', accessor: (r) => r.noShows, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+              { key: 'owed', header: 'Still owed', accessor: (r) => r.owedCents, csv: (r) => cents(r.owedCents), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => cents(r.owedCents) },
+              { key: 'taken', header: 'Taken from pay', accessor: (r) => r.takenCents, csv: (r) => cents(r.takenCents), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.takenCents) },
+              { key: 'waived', header: 'Waived', accessor: (r) => r.waivedCents, csv: (r) => cents(r.waivedCents), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.waivedCents) },
+            ]}
+          />
         </div>
       )}
     </div>

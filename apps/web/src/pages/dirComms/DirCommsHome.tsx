@@ -62,18 +62,13 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -254,69 +249,55 @@ function DirectoryTab() {
           ) : people.length === 0 ? (
             <EmptyState icon={Users} title="No matches" description="Try a different name or email." />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden sm:table-cell">Email</TableHead>
-                  <TableHead className="hidden md:table-cell">Phone</TableHead>
-                  <TableHead className="hidden lg:table-cell">Department</TableHead>
-                  <TableHead>Title</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {people.slice(0, DIRECTORY_RENDER_CAP).map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{p.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="sm:hidden">
-                          <a href={`mailto:${p.email}`} className="hover:underline">
-                            {p.email}
-                          </a>
-                          {' · '}
-                        </span>
-                        {p.phone ? (
-                          <a href={`tel:${p.phone}`} className="hover:underline">
-                            {p.phone}
-                          </a>
-                        ) : (
-                          '—'
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
+            <DataGrid<NonNullable<typeof people>[number]>
+              id="dir-comms-directory"
+              caption="People directory"
+              rows={people.slice(0, DIRECTORY_RENDER_CAP)}
+              rowKey={(pe) => pe.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (pe) => pe.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'email',
+                  header: 'Email',
+                  accessor: (pe) => pe.email,
+                  sortable: true,
+                  cardMeta: true,
+                  stopRowClick: true,
+                  cell: (pe) => (
+                    <span className="inline-flex items-center gap-1.5">
+                      <a href={`mailto:${pe.email}`} className="text-gold hover:text-gold-bright hover:underline">
+                        {pe.email}
+                      </a>
+                      <CopyButton text={pe.email} label={`Copy ${pe.email}`} />
+                    </span>
+                  ),
+                },
+                {
+                  key: 'phone',
+                  header: 'Phone',
+                  accessor: (pe) => pe.phone,
+                  sortable: true,
+                  cardMeta: true,
+                  stopRowClick: true,
+                  cell: (pe) =>
+                    pe.phone ? (
                       <span className="inline-flex items-center gap-1.5">
-                        <a
-                          href={`mailto:${p.email}`}
-                          className="text-gold hover:text-gold-bright hover:underline"
-                        >
-                          {p.email}
+                        <a href={`tel:${pe.phone}`} className="text-gold hover:text-gold-bright hover:underline">
+                          {pe.phone}
                         </a>
-                        <CopyButton text={p.email} label={`Copy ${p.email}`} />
+                        <CopyButton text={pe.phone} label={`Copy ${pe.phone}`} />
                       </span>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {p.phone ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <a
-                            href={`tel:${p.phone}`}
-                            className="text-gold hover:text-gold-bright hover:underline"
-                          >
-                            {p.phone}
-                          </a>
-                          <CopyButton text={p.phone} label={`Copy ${p.phone}`} />
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">{p.department ?? '—'}</TableCell>
-                    <TableCell>{p.jobTitle ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    ) : (
+                      '—'
+                    ),
+                },
+                { key: 'department', header: 'Department', accessor: (pe) => pe.department, sortable: true, cell: (pe) => pe.department ?? '—' },
+                { key: 'title', header: 'Title', accessor: (pe) => pe.jobTitle, sortable: true, cell: (pe) => pe.jobTitle ?? '—' },
+              ]}
+            />
           )}
           {people !== null && people.length > DIRECTORY_RENDER_CAP && (
             <div className="border-t border-navy-secondary px-4 py-2.5 text-xs text-silver">
@@ -384,54 +365,45 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
               description="Send announcements to everyone, a department, or a single client."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Channels</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Recipients</TableHead>
-                  <TableHead className="hidden sm:table-cell">Sent</TableHead>
-                  <TableHead className="w-40 text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((b) => (
-                  <TableRow key={b.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{b.title}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="sm:hidden">
-                          {b.sentAt ? fmtDateTime(b.sentAt) : 'Not sent'}
-                          {' · '}
-                        </span>
-                        <span className="tabular-nums">{b.receiptCount}</span> recipients
-                      </div>
-                    </TableCell>
-                    <TableCell>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="broadcasts"
+              caption="Broadcasts"
+              rows={rows}
+              rowKey={(b) => b.id}
+              search={{ placeholder: 'Title…' }}
+              urlState={false}
+              exportCsv={{ filename: 'broadcasts' }}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (b) => b.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (b) => b.status,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (b) => (
+                    <>
                       <StatusBadge status={b.status} />
-                      {b.status === 'SCHEDULED' && b.scheduledFor && (
-                        <div className="text-2xs text-silver/70 mt-0.5">
-                          {fmtDateTime(b.scheduledFor)}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {b.channels.map((c) => CHANNEL_LABELS[c]).join(', ')}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {b.receiptCount}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {b.sentAt ? fmtDateTime(b.sentAt) : '—'}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+                      {b.status === 'SCHEDULED' && b.scheduledFor && <div className="text-2xs text-silver/70 mt-0.5">{fmtDateTime(b.scheduledFor)}</div>}
+                    </>
+                  ),
+                },
+                { key: 'channels', header: 'Channels', accessor: (b) => b.channels.map((c) => CHANNEL_LABELS[c]).join(', '), sortable: true },
+                { key: 'recipients', header: 'Recipients', accessor: (b) => b.receiptCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                { key: 'sent', header: 'Sent', accessor: (b) => b.sentAt, sortable: true, searchable: false, cardMeta: true, cell: (b) => (b.sentAt ? fmtDateTime(b.sentAt) : '—') },
+                {
+                  key: 'actions',
+                  header: 'Action',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (b) => (
+                    <>
                       {canManage && b.status === 'DRAFT' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditing(b)}
-                        >
+                        <Button size="sm" variant="ghost" onClick={() => setEditing(b)}>
                           <Pencil className="mr-1 h-3 w-3" /> Edit
                         </Button>
                       )}
@@ -440,11 +412,11 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                           Send
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -770,81 +742,56 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
               description="Run pulse, eNPS, or open-ended polls. Anonymous mode hides respondent IDs."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Anonymous</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right">Questions</TableHead>
-                  <TableHead className="text-right">Responses</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{s.title}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="sm:hidden tabular-nums">
-                          {s.questionCount} questions
-                          {' · '}
-                        </span>
-                        {s.isAnonymous ? 'Anonymous' : 'Named'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={s.status} />
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{s.isAnonymous ? 'Yes' : 'No'}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
-                      {s.questionCount}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{s.responseCount}</TableCell>
-                    <TableCell className="text-right space-x-1 whitespace-nowrap">
-                      {canManage && s.status === 'DRAFT' && (
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="dir-surveys"
+              caption="Surveys"
+              rows={rows}
+              rowKey={(sv) => sv.id}
+              search={{ placeholder: 'Title…' }}
+              urlState={false}
+              exportCsv={{ filename: 'surveys' }}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (sv) => sv.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'status', header: 'Status', accessor: (sv) => sv.status, sortable: true, cardMeta: true, cell: (sv) => <StatusBadge status={sv.status} /> },
+                { key: 'anonymous', header: 'Anonymous', accessor: (sv) => (sv.isAnonymous ? 'Yes' : 'No'), sortable: true, searchable: false, cardMeta: true },
+                { key: 'questions', header: 'Questions', accessor: (sv) => sv.questionCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'responses', header: 'Responses', accessor: (sv) => sv.responseCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-1 whitespace-nowrap',
+                  cell: (sv) => (
+                    <>
+                      {canManage && sv.status === 'DRAFT' && (
                         <>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setQuestionsFor(s)}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => setQuestionsFor(sv)}>
                             <ListPlus className="mr-1 h-3 w-3" /> Questions
                           </Button>
-                          <Button
-                            size="sm"
-                            disabled={busyId === s.id}
-                            onClick={() => void onOpen(s)}
-                          >
+                          <Button size="sm" disabled={busyId === sv.id} onClick={() => void onOpen(sv)}>
                             Open
                           </Button>
                         </>
                       )}
-                      {canManage && s.status === 'OPEN' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busyId === s.id}
-                          onClick={() => void onCloseSurvey(s)}
-                        >
+                      {canManage && sv.status === 'OPEN' && (
+                        <Button size="sm" variant="ghost" disabled={busyId === sv.id} onClick={() => void onCloseSurvey(sv)}>
                           Close
                         </Button>
                       )}
-                      {s.status !== 'DRAFT' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setResultsFor(s)}
-                        >
+                      {sv.status !== 'DRAFT' && (
+                        <Button size="sm" variant="ghost" onClick={() => setResultsFor(sv)}>
                           <BarChart3 className="mr-1 h-3 w-3" /> Results
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

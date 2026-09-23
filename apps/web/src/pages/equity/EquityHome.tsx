@@ -45,13 +45,8 @@ import {
   Select,
   SkeletonRows,
   Textarea,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import {
   AssociatePicker,
@@ -324,52 +319,25 @@ export function EquityHome() {
                 description="Once HR issues you a grant, you'll see it here."
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-right">Vested</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">Unvested</TableHead>
-                    <TableHead className="hidden lg:table-cell text-right">Strike</TableHead>
-                    <TableHead className="hidden md:table-cell">Grant date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mine.map((g) => (
-                    <TableRow
-                      key={g.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenMine(g)}
-                    >
-                      <TableCell className="font-medium text-white">
-                        <div className="truncate">{GRANT_TYPE_LABELS[g.grantType]}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {fmtYmd(g.grantDate)}
-                          {g.strikePrice
-                            ? ` · ${fmtStrike(g.strikePrice, g.currency)}`
-                            : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-right tabular-nums">
-                        {g.totalShares.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm text-success text-right tabular-nums">
-                        {g.vestedShares.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm text-silver hidden md:table-cell text-right tabular-nums">
-                        {g.unvestedShares.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
-                        {fmtStrike(g.strikePrice, g.currency)}
-                      </TableCell>
-                      <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {fmtYmd(g.grantDate)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<NonNullable<typeof mine>[number]>
+                id="equity-mine"
+                caption="My equity grants"
+                rows={mine}
+                rowKey={(g) => g.id}
+                search={false}
+                urlState={false}
+                exportCsv={false}
+                onRowClick={(g) => setOpenMine(g)}
+                rowActionLabel={(g) => `Open ${GRANT_TYPE_LABELS[g.grantType]} grant from ${fmtYmd(g.grantDate)}`}
+                columns={[
+                  { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'total', header: 'Total', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
+                  { key: 'vested', header: 'Vested', accessor: (g) => g.vestedShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm text-success tabular-nums', cell: (g) => g.vestedShares.toLocaleString() },
+                  { key: 'unvested', header: 'Unvested', accessor: (g) => g.unvestedShares, sortable: true, searchable: false, align: 'right', className: 'text-sm text-silver tabular-nums', cell: (g) => g.unvestedShares.toLocaleString() },
+                  { key: 'strike', header: 'Strike', accessor: (g) => g.strikePrice, csv: (g) => fmtStrike(g.strikePrice, g.currency), sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => fmtStrike(g.strikePrice, g.currency) },
+                  { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
+                ]}
+              />
             )}
           </CardContent>
         </Card>
@@ -410,52 +378,36 @@ export function EquityHome() {
                 }
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="hidden md:table-cell">Type</TableHead>
-                    <TableHead className="text-right">Shares</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Grant date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAdmin.map((g) => (
-                    <TableRow
-                      key={g.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenAdminId(g.id)}
-                    >
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          {g.associateName ?? '—'}
-                        </div>
-                        <div className="text-xs text-silver">
-                          {g.associateEmail ?? ''}
-                        </div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {GRANT_TYPE_LABELS[g.grantType]} · {fmtYmd(g.grantDate)}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">
-                        {GRANT_TYPE_LABELS[g.grantType]}
-                      </TableCell>
-                      <TableCell className="text-sm text-right tabular-nums">
-                        {g.totalShares.toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusTone(g.status, { overrides: EQUITY_STATUS_TONES })}>
-                          {STATUS_LABELS[g.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {fmtYmd(g.grantDate)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<(typeof filteredAdmin)[number]>
+                id="equity-grants"
+                caption="Equity grants"
+                rows={filteredAdmin}
+                rowKey={(g) => g.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'equity-grants' }}
+                onRowClick={(g) => setOpenAdminId(g.id)}
+                rowActionLabel={(g) => `Open grant for ${g.associateName ?? 'associate'}`}
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (g) => g.associateName,
+                    sortable: true,
+                    primary: true,
+                    cell: (g) => (
+                      <>
+                        <div className="font-medium text-white">{g.associateName ?? '—'}</div>
+                        <div className="text-xs text-silver">{g.associateEmail ?? ''}</div>
+                      </>
+                    ),
+                  },
+                  { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, cardMeta: true, className: 'text-sm' },
+                  { key: 'shares', header: 'Shares', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
+                  { key: 'status', header: 'Status', accessor: (g) => STATUS_LABELS[g.status], sortable: true, cell: (g) => <Badge variant={statusTone(g.status, { overrides: EQUITY_STATUS_TONES })}>{STATUS_LABELS[g.status]}</Badge> },
+                  { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
+                ]}
+              />
             )}
           </CardContent>
         </Card>
@@ -968,41 +920,22 @@ function AdminDetailDrawer({
             <div>
               <div className="text-sm font-medium mb-2">Vesting schedule</div>
               <div className="max-h-64 overflow-y-auto border border-navy-secondary rounded">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Shares</TableHead>
-                      <TableHead className="hidden md:table-cell">Type</TableHead>
-                      <TableHead>Vested</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {grant.events.map((e) => (
-                      <TableRow key={e.id}>
-                        <TableCell className="text-xs">
-                          <div className="truncate">{fmtYmd(e.vestDate)}</div>
-                          <div className="md:hidden text-xs2 text-silver/70 truncate">
-                            {e.isCliff ? 'Cliff' : 'Monthly'}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {e.shares.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-xs text-silver hidden md:table-cell">
-                          {e.isCliff ? 'Cliff' : 'Monthly'}
-                        </TableCell>
-                        <TableCell>
-                          {e.vested ? (
-                            <Badge variant="success">Vested</Badge>
-                          ) : (
-                            <span className="text-silver text-xs">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<(typeof grant.events)[number]>
+                  id="vesting-schedule"
+                  caption="Vesting schedule"
+                  rows={grant.events}
+                  rowKey={(e) => e.id}
+                  search={false}
+                  urlState={false}
+                  exportCsv={false}
+                  columnChooser={false}
+                  columns={[
+                    { key: 'date', header: 'Date', accessor: (e) => e.vestDate, sortable: true, searchable: false, primary: true, className: 'text-xs', cell: (e) => fmtYmd(e.vestDate) },
+                    { key: 'shares', header: 'Shares', accessor: (e) => e.shares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (e) => e.shares.toLocaleString() },
+                    { key: 'type', header: 'Type', accessor: (e) => (e.isCliff ? 'Cliff' : 'Monthly'), sortable: true, cardMeta: true, className: 'text-xs text-silver' },
+                    { key: 'vested', header: 'Vested', accessor: (e) => (e.vested ? 'Vested' : ''), sortable: true, searchable: false, cell: (e) => (e.vested ? <Badge variant="success">Vested</Badge> : <span className="text-silver text-xs">—</span>) },
+                  ]}
+                />
               </div>
             </div>
           </>

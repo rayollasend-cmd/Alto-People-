@@ -123,6 +123,10 @@ export interface DataGridProps<T> {
      * selected requests). Uncontrolled otherwise.
      */
     selection?: { selected: ReadonlySet<string>; onChange: (next: Set<string>) => void };
+    /** The header checkbox's name while nothing is selected — say what
+     *  "all" means when only some rows qualify ("Select all 4 waiting for
+     *  a van"). Default "Select every row". */
+    selectAllLabel?: string;
   };
   onRowClick?: (row: T) => void;
   /** Label for the row's click affordance, for screen readers. */
@@ -665,7 +669,7 @@ function GridCore<T>({
                           checked={allSelected}
                           onChange={toggleAll}
                           disabled={selectableRows.length === 0}
-                          aria-label={allSelected ? 'Clear selection' : 'Select every row'}
+                          aria-label={allSelected ? 'Clear selection' : (selectable.selectAllLabel ?? 'Select every row')}
                         />
                       </TableHead>
                     )}
