@@ -35,17 +35,12 @@ import {
   SearchInput,
   SegmentedControl,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
 import { usePrompt } from '@/lib/confirm';
@@ -350,94 +345,97 @@ function InboxTab() {
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="hidden md:table-cell">Type</TableHead>
-          <TableHead>Associate</TableHead>
-          <TableHead className="hidden md:table-cell">Details</TableHead>
-          <TableHead className="tabular-nums">Age</TableHead>
-          <TableHead className="text-right">Action</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {q.data.items.map((item) => {
-          const meta = KIND_META[item.kind];
-          const Icon = meta.icon;
-          const stale = item.ageDays >= 3;
-          return (
-            <TableRow key={`${item.kind}-${item.id}`}>
-              <TableCell className="hidden md:table-cell">
-                <div className="flex items-center gap-1.5 text-xs">
-                  <Icon className={`h-3.5 w-3.5 ${meta.tone}`} />
-                  <span className="text-silver">{meta.label}</span>
-                </div>
-              </TableCell>
-              <TableCell className="font-medium">
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={item.associateName} size="sm" />
-                  <div className="min-w-0">
-                    <div className="truncate">{item.associateName}</div>
-                    <div className="md:hidden text-xs2 text-silver/70 truncate">
-                      {meta.label}{item.summary ? ` · ${item.summary}` : ''}
-                    </div>
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell className="hidden md:table-cell text-silver">{item.summary}</TableCell>
-              <TableCell className={`tabular-nums ${stale ? 'text-alert' : 'text-silver'}`}>
-                {item.ageDays === 0 ? 'today' : `${item.ageDays}d`}
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" asChild>
-                    <Link to={item.link}>Open</Link>
+    <DataGrid<NonNullable<typeof q.data>['items'][number]>
+      id="team-inbox"
+      caption="Waiting on you"
+      rows={q.data.items}
+      rowKey={(item) => `${item.kind}-${item.id}`}
+      search={{ placeholder: 'Associate, type…' }}
+      urlState={false}
+      exportCsv={false}
+      columns={[
+        {
+          key: 'type',
+          header: 'Type',
+          accessor: (item) => KIND_META[item.kind].label,
+          sortable: true,
+          cardMeta: true,
+          cell: (item) => {
+            const meta = KIND_META[item.kind];
+            const Icon = meta.icon;
+            return (
+              <div className="flex items-center gap-1.5 text-xs">
+                <Icon className={`h-3.5 w-3.5 ${meta.tone}`} />
+                <span className="text-silver">{meta.label}</span>
+              </div>
+            );
+          },
+        },
+        {
+          key: 'associate',
+          header: 'Associate',
+          accessor: (item) => item.associateName,
+          sortable: true,
+          primary: true,
+          className: 'font-medium',
+          cell: (item) => (
+            <div className="flex items-center gap-2.5">
+              <Avatar name={item.associateName} size="sm" />
+              <div className="truncate">{item.associateName}</div>
+            </div>
+          ),
+        },
+        { key: 'details', header: 'Details', accessor: (item) => item.summary, cardMeta: true, className: 'text-silver' },
+        {
+          key: 'age',
+          header: 'Age',
+          accessor: (item) => item.ageDays,
+          csv: (item) => (item.ageDays === 0 ? 'today' : `${item.ageDays}d`),
+          sortable: true,
+          searchable: false,
+          className: 'tabular-nums',
+          cell: (item) => (
+            <span className={item.ageDays >= 3 ? 'text-alert' : 'text-silver'}>{item.ageDays === 0 ? 'today' : `${item.ageDays}d`}</span>
+          ),
+        },
+        {
+          key: 'action',
+          header: 'Action',
+          accessor: () => null,
+          searchable: false,
+          csv: () => '',
+          align: 'right',
+          stopRowClick: true,
+          cell: (item) => (
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={item.link}>Open</Link>
+              </Button>
+              {item.kind === 'TIMESHEET' && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => rejectTs(item.id)} disabled={pendingId === item.id}>
+                    Reject
                   </Button>
-                  {item.kind === 'TIMESHEET' && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => rejectTs(item.id)}
-                        disabled={pendingId === item.id}
-                      >
-                        Reject
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => approveTsM.mutate(item.id)}
-                        loading={pendingId === item.id}
-                      >
-                        Approve
-                      </Button>
-                    </>
-                  )}
-                  {item.kind === 'TIME_OFF' && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => denyPto(item.id)}
-                        disabled={pendingId === item.id}
-                      >
-                        Deny
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => approvePtoM.mutate(item.id)}
-                        loading={pendingId === item.id}
-                      >
-                        Approve
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+                  <Button size="sm" onClick={() => approveTsM.mutate(item.id)} loading={pendingId === item.id}>
+                    Approve
+                  </Button>
+                </>
+              )}
+              {item.kind === 'TIME_OFF' && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => denyPto(item.id)} disabled={pendingId === item.id}>
+                    Deny
+                  </Button>
+                  <Button size="sm" onClick={() => approvePtoM.mutate(item.id)} loading={pendingId === item.id}>
+                    Approve
+                  </Button>
+                </>
+              )}
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -485,45 +483,39 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
           No reports match “{search.trim()}”.
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Associate</TableHead>
-              <TableHead className="hidden md:table-cell">Email</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead className="hidden md:table-cell">Department</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">
-                  <Link
-                    to={`/people?associateId=${r.id}`}
-                    className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
-                  >
-                    <Avatar
-                      name={`${r.firstName} ${r.lastName}`}
-                      email={r.email}
-                      size="sm"
-                    />
-                    <div className="min-w-0">
-                      <div className="truncate group-hover:text-gold-bright transition-colors">
-                        {r.firstName} {r.lastName}
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {r.email}{r.departmentName ? ` · ${r.departmentName}` : ''}
-                      </div>
-                    </div>
-                  </Link>
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-silver">{r.email}</TableCell>
-                <TableCell className="text-silver">{r.jobTitle ?? '—'}</TableCell>
-                <TableCell className="hidden md:table-cell text-silver">{r.departmentName ?? '—'}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<(typeof filtered)[number]>
+          id="team-reports"
+          caption="Direct reports"
+          rows={filtered}
+          rowKey={(r) => r.id}
+          search={false}
+          urlState={false}
+          exportCsv={{ filename: 'direct-reports' }}
+          columns={[
+            {
+              key: 'associate',
+              header: 'Associate',
+              accessor: (r) => `${r.firstName} ${r.lastName}`,
+              sortable: true,
+              primary: true,
+              className: 'font-medium',
+              cell: (r) => (
+                <Link
+                  to={`/people?associateId=${r.id}`}
+                  className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
+                >
+                  <Avatar name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
+                  <div className="truncate group-hover:text-gold-bright transition-colors">
+                    {r.firstName} {r.lastName}
+                  </div>
+                </Link>
+              ),
+            },
+            { key: 'email', header: 'Email', accessor: (r) => r.email, sortable: true, cardMeta: true, className: 'text-silver' },
+            { key: 'title', header: 'Title', accessor: (r) => r.jobTitle, sortable: true, className: 'text-silver', cell: (r) => r.jobTitle ?? '—' },
+            { key: 'department', header: 'Department', accessor: (r) => r.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => r.departmentName ?? '—' },
+          ]}
+        />
       )}
     </div>
   );
@@ -627,13 +619,6 @@ function TimesheetsTab() {
       setSelected(new Set());
     },
   });
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const reject = async (id: string) => {
     const reason = (
@@ -713,9 +698,6 @@ function TimesheetsTab() {
     0,
   );
 
-  const allIds = (entries ?? []).map((e) => e.id);
-  const allSelected =
-    allIds.length > 0 && allIds.every((id) => selected.has(id));
 
   const toolbar = (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -820,133 +802,104 @@ function TimesheetsTab() {
           </div>
         </div>
       )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {isQueue && (
-              <TableHead className="w-8">
-                <input
-                  type="checkbox"
-                  className="accent-gold"
-                  checked={allSelected}
-                  aria-label="Select all"
-                  onChange={(ev) =>
-                    setSelected(ev.target.checked ? new Set(allIds) : new Set())
-                  }
-                />
-              </TableHead>
-            )}
-            <TableHead>Associate</TableHead>
-            <TableHead className="hidden lg:table-cell">Client</TableHead>
-            <TableHead className="hidden md:table-cell">Clock in</TableHead>
-            <TableHead>Clock out</TableHead>
-            <TableHead className="text-right tabular-nums">Hours</TableHead>
-            <TableHead className="hidden lg:table-cell text-right tabular-nums">
-              Est. cost
-            </TableHead>
-            <TableHead className="hidden xl:table-cell">Notes</TableHead>
-            <TableHead className="text-right">
-              {isQueue ? 'Actions' : 'Status'}
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {entries.map((e) => {
-            const hours = entryHours(e);
-            return (
-              <TableRow
-                key={e.id}
-                data-state={selected.has(e.id) ? 'selected' : undefined}
-              >
-                {isQueue && (
-                  <TableCell>
-                    <input
-                      type="checkbox"
-                      className="accent-gold"
-                      checked={selected.has(e.id)}
-                      aria-label={`Select ${e.associateName}`}
-                      onChange={() => toggle(e.id)}
-                    />
-                  </TableCell>
-                )}
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={e.associateName} size="sm" />
-                    <div className="min-w-0">
-                      <div className="truncate">{e.associateName}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        <span className="tabular-nums">
-                          In {fmtDateTime(e.clockInAt)}
-                        </span>
-                        {e.clientName ? ` · ${e.clientName}` : ''}
-                      </div>
-                    </div>
+      <DataGrid<(typeof entries)[number]>
+        id="team-timesheets"
+        caption={isQueue ? 'Time entries to review' : `${status.toLowerCase()} time entries`}
+        rows={entries}
+        rowKey={(e) => e.id}
+        search={{ placeholder: 'Associate, client…' }}
+        urlState={false}
+        exportCsv={false}
+        selectable={isQueue ? { selection: { selected, onChange: setSelected } } : undefined}
+        columns={[
+          {
+            key: 'associate',
+            header: 'Associate',
+            accessor: (e) => e.associateName,
+            sortable: true,
+            primary: true,
+            className: 'font-medium',
+            cell: (e) => (
+              <div className="flex items-center gap-2.5">
+                <Avatar name={e.associateName} size="sm" />
+                <div className="truncate">{e.associateName}</div>
+              </div>
+            ),
+          },
+          { key: 'client', header: 'Client', accessor: (e) => e.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (e) => e.clientName ?? '—' },
+          { key: 'in', header: 'Clock in', accessor: (e) => e.clockInAt, sortable: true, searchable: false, cardMeta: true, className: 'text-silver tabular-nums', cell: (e) => fmtDateTime(e.clockInAt) },
+          { key: 'out', header: 'Clock out', accessor: (e) => e.clockOutAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (e) => (e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—') },
+          {
+            key: 'hours',
+            header: 'Hours',
+            accessor: (e) => (e.clockOutAt ? entryHours(e) : null),
+            csv: (e) => (e.clockOutAt ? entryHours(e).toFixed(2) : ''),
+            sortable: true,
+            searchable: false,
+            align: 'right',
+            className: 'tabular-nums',
+            cell: (e) => (e.clockOutAt ? entryHours(e).toFixed(2) : '—'),
+          },
+          {
+            key: 'cost',
+            header: 'Est. cost',
+            accessor: (e) => (e.payRate && e.clockOutAt ? entryHours(e) * Number(e.payRate) : null),
+            csv: (e) => (e.payRate && e.clockOutAt ? fmtMoney(entryHours(e) * Number(e.payRate)) : ''),
+            sortable: true,
+            searchable: false,
+            align: 'right',
+            className: 'text-silver tabular-nums',
+            cell: (e) => (e.payRate && e.clockOutAt ? fmtMoney(entryHours(e) * Number(e.payRate)) : '—'),
+          },
+          {
+            key: 'notes',
+            header: 'Notes',
+            accessor: (e) => e.notes ?? (e.status === 'REJECTED' && e.rejectionReason ? `Rejected: ${e.rejectionReason}` : null),
+            defaultHidden: true,
+            className: 'text-silver',
+            cell: (e) =>
+              e.notes ? (
+                <span className="block max-w-[16rem] truncate" title={e.notes}>
+                  {e.notes}
+                </span>
+              ) : e.status === 'REJECTED' && e.rejectionReason ? (
+                <span className="block max-w-[16rem] truncate text-alert/80" title={`Rejected: ${e.rejectionReason}`}>
+                  Rejected: {e.rejectionReason}
+                </span>
+              ) : (
+                '—'
+              ),
+          },
+          isQueue
+            ? {
+                key: 'actions',
+                header: 'Actions',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                cell: (e) => (
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={() => reject(e.id)} disabled={pendingId === e.id}>
+                      Reject
+                    </Button>
+                    <Button size="sm" onClick={() => approveM.mutate(e.id)} loading={pendingId === e.id}>
+                      Approve
+                    </Button>
                   </div>
-                </TableCell>
-                <TableCell className="hidden lg:table-cell text-silver">{e.clientName ?? '—'}</TableCell>
-                <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                  {fmtDateTime(e.clockInAt)}
-                </TableCell>
-                <TableCell className="text-silver tabular-nums">
-                  {e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—'}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {e.clockOutAt ? hours.toFixed(2) : '—'}
-                </TableCell>
-                <TableCell className="hidden lg:table-cell text-right text-silver tabular-nums">
-                  {e.payRate && e.clockOutAt
-                    ? fmtMoney(hours * Number(e.payRate))
-                    : '—'}
-                </TableCell>
-                <TableCell className="hidden xl:table-cell text-silver">
-                  {e.notes ? (
-                    <span
-                      className="block max-w-[16rem] truncate"
-                      title={e.notes}
-                    >
-                      {e.notes}
-                    </span>
-                  ) : e.status === 'REJECTED' && e.rejectionReason ? (
-                    <span
-                      className="block max-w-[16rem] truncate text-alert/80"
-                      title={`Rejected: ${e.rejectionReason}`}
-                    >
-                      Rejected: {e.rejectionReason}
-                    </span>
-                  ) : (
-                    '—'
-                  )}
-                </TableCell>
-                <TableCell className="text-right">
-                  {isQueue ? (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => reject(e.id)}
-                        disabled={pendingId === e.id}
-                      >
-                        Reject
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => approveM.mutate(e.id)}
-                        loading={pendingId === e.id}
-                      >
-                        Approve
-                      </Button>
-                    </div>
-                  ) : (
-                    <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>
-                      {TS_STATUS_LABELS[e.status] ?? e.status}
-                    </Badge>
-                  )}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+                ),
+              }
+            : {
+                key: 'status',
+                header: 'Status',
+                accessor: (e) => TS_STATUS_LABELS[e.status] ?? e.status,
+                sortable: true,
+                align: 'right',
+                cell: (e) => <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>{TS_STATUS_LABELS[e.status] ?? e.status}</Badge>,
+              },
+        ]}
+      />
     </div>
   );
 }
@@ -1040,13 +993,6 @@ function TimeOffTab() {
     if (!note) return;
     bulkDenyM.mutate({ ids, note });
   };
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const pendingId =
     approveM.isPending && typeof approveM.variables === 'string'
@@ -1078,9 +1024,6 @@ function TimeOffTab() {
       />
     );
   }
-
-  const allIds = q.data.map((r) => r.id);
-  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
 
   return (
     <div className="space-y-3">
@@ -1119,87 +1062,77 @@ function TimeOffTab() {
           </div>
         </div>
       )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-8">
-              <input
-                type="checkbox"
-                className="accent-gold"
-                checked={allSelected}
-                aria-label="Select all"
-                onChange={(ev) =>
-                  setSelected(ev.target.checked ? new Set(allIds) : new Set())
-                }
-              />
-            </TableHead>
-            <TableHead>Associate</TableHead>
-            <TableHead className="hidden md:table-cell">Category</TableHead>
-            <TableHead>Dates</TableHead>
-            <TableHead className="hidden sm:table-cell">Hours</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {q.data.map((r) => (
-            <TableRow
-              key={r.id}
-              data-state={selected.has(r.id) ? 'selected' : undefined}
-            >
-              <TableCell>
-                <input
-                  type="checkbox"
-                  className="accent-gold"
-                  checked={selected.has(r.id)}
-                  aria-label={`Select ${r.associateName}`}
-                  onChange={() => toggle(r.id)}
-                />
-              </TableCell>
-              <TableCell className="font-medium">
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={r.associateName} size="sm" />
-                  <div className="min-w-0">
-                    <div className="truncate">{r.associateName}</div>
-                    <div className="md:hidden text-xs2 text-silver/70 truncate">
-                      {r.category}
-                      <span className="sm:hidden tabular-nums">
-                        {' · '}
-                        {(r.requestedMinutes / 60).toFixed(1)}h
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell className="hidden md:table-cell text-silver">{r.category}</TableCell>
-              <TableCell className="text-silver tabular-nums">
+      <DataGrid<(typeof q.data)[number]>
+        id="team-time-off"
+        caption="Time-off requests to review"
+        rows={q.data}
+        rowKey={(r) => r.id}
+        search={{ placeholder: 'Associate, category…' }}
+        urlState={false}
+        exportCsv={false}
+        selectable={{ selection: { selected, onChange: setSelected } }}
+        columns={[
+          {
+            key: 'associate',
+            header: 'Associate',
+            accessor: (r) => r.associateName,
+            sortable: true,
+            primary: true,
+            className: 'font-medium',
+            cell: (r) => (
+              <div className="flex items-center gap-2.5">
+                <Avatar name={r.associateName} size="sm" />
+                <div className="truncate">{r.associateName}</div>
+              </div>
+            ),
+          },
+          { key: 'category', header: 'Category', accessor: (r) => r.category, sortable: true, cardMeta: true, className: 'text-silver' },
+          {
+            key: 'dates',
+            header: 'Dates',
+            accessor: (r) => r.startDate,
+            csv: (r) => `${r.startDate} → ${r.endDate}`,
+            sortable: true,
+            searchable: false,
+            className: 'text-silver tabular-nums',
+            cell: (r) => (
+              <>
                 {fmtDate(parseYmd(r.startDate))} → {fmtDate(parseYmd(r.endDate))}
-              </TableCell>
-              <TableCell className="hidden sm:table-cell tabular-nums">
-                {(r.requestedMinutes / 60).toFixed(1)}h
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => deny(r.id)}
-                    disabled={pendingId === r.id}
-                  >
-                    Deny
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => approveM.mutate(r.id)}
-                    loading={pendingId === r.id}
-                  >
-                    Approve
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+              </>
+            ),
+          },
+          {
+            key: 'hours',
+            header: 'Hours',
+            accessor: (r) => r.requestedMinutes / 60,
+            csv: (r) => (r.requestedMinutes / 60).toFixed(1),
+            sortable: true,
+            searchable: false,
+            cardMeta: true,
+            className: 'tabular-nums',
+            cell: (r) => `${(r.requestedMinutes / 60).toFixed(1)}h`,
+          },
+          {
+            key: 'actions',
+            header: 'Actions',
+            accessor: () => null,
+            searchable: false,
+            csv: () => '',
+            align: 'right',
+            stopRowClick: true,
+            cell: (r) => (
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => deny(r.id)} disabled={pendingId === r.id}>
+                  Deny
+                </Button>
+                <Button size="sm" onClick={() => approveM.mutate(r.id)} loading={pendingId === r.id}>
+                  Approve
+                </Button>
+              </div>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

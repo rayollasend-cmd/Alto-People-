@@ -55,13 +55,8 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { ViewToggle } from '@/components/ui/ViewToggle';
 
@@ -706,171 +701,96 @@ export function RecruitingHome() {
             />
           )}
           {view === 'list' && visibleCandidates && visibleCandidates.length > 0 && (
-            <>
-              {/* Desktop: dense 6-col table. Hidden below lg because the
-                  combined width (Name + Email + Position + Source + Stage
-                  + Actions) becomes illegible at iPad-portrait widths. */}
-              <div className="hidden lg:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {canManage && (
-                        <TableHead className="w-8">
-                          <input
-                            type="checkbox"
-                            aria-label="Select all open candidates"
-                            checked={sel.allSelected}
-                            ref={(el) => {
-                              if (el) el.indeterminate = sel.someSelected;
-                            }}
-                            onChange={sel.toggleAll}
-                            disabled={selectableIds.length === 0}
-                          />
-                        </TableHead>
-                      )}
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Position</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead>Applied</TableHead>
-                      <TableHead>Stage</TableHead>
-                      {canManage && (
-                        <TableHead className="text-right">Actions</TableHead>
-                      )}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleCandidates.map((c) => (
-                      <TableRow key={c.id} className="group">
-                        {canManage && (
-                          <TableCell className="w-8">
-                            {isOpenStage(c) && (
-                              <input
-                                type="checkbox"
-                                aria-label={`Select ${c.firstName} ${c.lastName}`}
-                                checked={sel.isSelected(c.id)}
-                                onChange={() => sel.toggle(c.id)}
-                              />
-                            )}
-                          </TableCell>
-                        )}
-                        <TableCell className="font-medium">
-                          <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
-                        </TableCell>
-                        <TableCell className="text-silver">{c.email}</TableCell>
-                        <TableCell className="text-silver">
-                          {c.position ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-silver">
-                          {c.source ? (SOURCE_LABEL[c.source] ?? c.source) : '—'}
-                        </TableCell>
-                        <TableCell className="text-silver whitespace-nowrap">
-                          {fmtDate(c.createdAt)}
-                          <span title="Days in stage (since applied)">
-                            <Badge variant="outline" className="ml-2 tabular-nums">
-                              {daysSince(c.createdAt)}d
-                            </Badge>
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={STAGE_VARIANT[c.stage]}>
-                            {STAGE_LABEL[c.stage]}
-                          </Badge>
-                          {c.rejectedReason && (
-                            <div className="text-2xs mt-1 text-alert">
-                              {c.rejectedReason}
-                            </div>
-                          )}
-                          {c.withdrawnReason && (
-                            <div className="text-2xs mt-1 text-silver">
-                              {c.withdrawnReason}
-                            </div>
-                          )}
-                        </TableCell>
-                        {canManage && (
-                          <TableCell className="text-right whitespace-nowrap">
-                            <CandidateActions
-                              c={c}
-                              pendingId={pendingId}
-                              onAdvance={advance}
-                              onRequest={(kind) =>
-                                setDialog({ kind, candidate: c })
-                              }
-                            />
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Mobile / iPad portrait: card stack. Same data, vertical
-                  layout, action buttons always visible (no hover gating). */}
-              <ul className="lg:hidden space-y-2">
-                {visibleCandidates.map((c) => (
-                  <li
-                    key={c.id}
-                    className="rounded-md border border-navy-secondary bg-navy/40 p-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        {canManage && isOpenStage(c) && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${c.firstName} ${c.lastName}`}
-                            checked={sel.isSelected(c.id)}
-                            onChange={() => sel.toggle(c.id)}
-                          />
-                        )}
-                        <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
-                      </div>
-                      <Badge
-                        variant={STAGE_VARIANT[c.stage]}
-                        className="shrink-0"
-                      >
-                        {STAGE_LABEL[c.stage]}
-                      </Badge>
-                    </div>
-                    <div className="mt-1.5 ml-[2.4rem] text-xs text-silver/80 truncate">
-                      {c.email}
-                    </div>
-                    {(c.position || c.source) && (
-                      <div className="mt-0.5 ml-[2.4rem] text-xs2 text-silver/70 truncate">
-                        {c.position ?? '—'}
-                        <span className="mx-1.5 text-silver/70">·</span>
-                        {SOURCE_LABEL[c.source ?? 'manual'] ?? c.source}
-                      </div>
-                    )}
-                    <div className="mt-0.5 ml-[2.4rem] text-xs2 text-silver/70">
-                      Applied {fmtDate(c.createdAt)} · {daysSince(c.createdAt)}d in stage
-                    </div>
-                    {c.rejectedReason && (
-                      <div className="mt-2 ml-[2.4rem] text-xs2 text-alert/90">
-                        {c.rejectedReason}
-                      </div>
-                    )}
-                    {c.withdrawnReason && (
-                      <div className="mt-2 ml-[2.4rem] text-xs2 text-silver/70">
-                        {c.withdrawnReason}
-                      </div>
-                    )}
-                    {canManage && (
-                      <div className="mt-3 flex flex-wrap gap-2 ml-[2.4rem]">
-                        <CandidateActions
-                          c={c}
-                          pendingId={pendingId}
-                          onAdvance={advance}
-                          onRequest={(kind) =>
-                            setDialog({ kind, candidate: c })
-                          }
-                        />
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
+            // The page owns search, the stage filter and the sticky bulk bar;
+            // the grid draws the checkboxes (open stages only) and hands the
+            // choice back. Phones get the same list as cards.
+            <DataGrid<NonNullable<typeof visibleCandidates>[number]>
+              id="candidates"
+              caption="Candidates"
+              rows={visibleCandidates}
+              rowKey={(c) => c.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'candidates' }}
+              onRowClick={(c) => setDetailId(c.id)}
+              rowActionLabel={(c) => `Open ${c.firstName} ${c.lastName}`}
+              selectable={
+                canManage
+                  ? { disabled: (c) => !isOpenStage(c), selection: { selected: sel.selected, onChange: sel.replace } }
+                  : undefined
+              }
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  accessor: (c) => `${c.firstName} ${c.lastName}`,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium',
+                  cell: (c) => <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />,
+                },
+                { key: 'email', header: 'Email', accessor: (c) => c.email, sortable: true, cardMeta: true, className: 'text-silver' },
+                { key: 'position', header: 'Position', accessor: (c) => c.position, sortable: true, cardMeta: true, className: 'text-silver', cell: (c) => c.position ?? '—' },
+                {
+                  key: 'source',
+                  header: 'Source',
+                  accessor: (c) => (c.source ? (SOURCE_LABEL[c.source] ?? c.source) : null),
+                  sortable: true,
+                  className: 'text-silver',
+                  cell: (c) => (c.source ? (SOURCE_LABEL[c.source] ?? c.source) : '—'),
+                },
+                {
+                  key: 'applied',
+                  header: 'Applied',
+                  accessor: (c) => c.createdAt,
+                  csv: (c) => `${fmtDate(c.createdAt)} (${daysSince(c.createdAt)}d)`,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-silver whitespace-nowrap',
+                  cell: (c) => (
+                    <>
+                      {fmtDate(c.createdAt)}
+                      <span title="Days in stage (since applied)">
+                        <Badge variant="outline" className="ml-2 tabular-nums">
+                          {daysSince(c.createdAt)}d
+                        </Badge>
+                      </span>
+                    </>
+                  ),
+                },
+                {
+                  key: 'stage',
+                  header: 'Stage',
+                  accessor: (c) => STAGE_LABEL[c.stage],
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (c) => (
+                    <>
+                      <Badge variant={STAGE_VARIANT[c.stage]}>{STAGE_LABEL[c.stage]}</Badge>
+                      {c.rejectedReason && <div className="text-2xs mt-1 text-alert">{c.rejectedReason}</div>}
+                      {c.withdrawnReason && <div className="text-2xs mt-1 text-silver">{c.withdrawnReason}</div>}
+                    </>
+                  ),
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'whitespace-nowrap',
+                        cell: (c: NonNullable<typeof visibleCandidates>[number]) => (
+                          <CandidateActions c={c} pendingId={pendingId} onAdvance={advance} onRequest={(kind) => setDialog({ kind, candidate: c })} />
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
