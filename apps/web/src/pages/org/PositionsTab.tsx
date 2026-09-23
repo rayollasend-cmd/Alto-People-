@@ -44,13 +44,8 @@ import {
   MetricCard,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 import { statusTone } from '@/lib/status';
 
@@ -160,52 +155,46 @@ export function PositionsTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead className="hidden md:table-cell">Department</TableHead>
-              <TableHead>Filled by</TableHead>
-              <TableHead className="hidden lg:table-cell text-right">FTE</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((p) => (
-              <TableRow
-                key={p.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setDrawerTarget(p);
-                }}
-              >
-                <TableCell className="font-medium tabular-nums">{p.code}</TableCell>
-                <TableCell>
-                  {p.title}
-                  <div className="text-xs2 text-silver/70 md:hidden">{p.departmentName ?? '—'}</div>
-                </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{p.departmentName ?? '—'}</TableCell>
-                <TableCell className="text-silver">
-                  {p.filledByName ? (
-                    <div className="flex items-center gap-2">
-                      <Avatar name={p.filledByName} size="xs" />
-                      <span>{p.filledByName}</span>
-                    </div>
-                  ) : (
-                    '—'
-                  )}
-                </TableCell>
-                <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.fteAuthorized}</TableCell>
-                <TableCell>
-                  <Badge variant={statusTone(p.status, { overrides: POSITION_STATUS_TONES })}>{STATUS_LABELS[p.status]}</Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<(typeof rows)[number]>
+          id="positions"
+          caption="Positions"
+          rows={rows}
+          rowKey={(p) => p.id}
+          search={{ placeholder: 'Code, title, department, name…' }}
+          urlState={false}
+          exportCsv={{ filename: 'positions' }}
+          onRowClick={(p) => setDrawerTarget(p)}
+          rowActionLabel={(p) => `Open position ${p.code} — ${p.title}`}
+          columns={[
+            { key: 'code', header: 'Code', accessor: (p) => p.code, sortable: true, className: 'font-medium tabular-nums whitespace-nowrap' },
+            { key: 'title', header: 'Title', accessor: (p) => p.title, sortable: true, primary: true },
+            { key: 'department', header: 'Department', accessor: (p) => p.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (p) => p.departmentName ?? '—' },
+            {
+              key: 'filledBy',
+              header: 'Filled by',
+              accessor: (p) => p.filledByName,
+              sortable: true,
+              className: 'text-silver',
+              cell: (p) =>
+                p.filledByName ? (
+                  <div className="flex items-center gap-2">
+                    <Avatar name={p.filledByName} size="xs" />
+                    <span>{p.filledByName}</span>
+                  </div>
+                ) : (
+                  '—'
+                ),
+            },
+            { key: 'fte', header: 'FTE', accessor: (p) => p.fteAuthorized, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+            {
+              key: 'status',
+              header: 'Status',
+              accessor: (p) => STATUS_LABELS[p.status],
+              sortable: true,
+              cell: (p) => <Badge variant={statusTone(p.status, { overrides: POSITION_STATUS_TONES })}>{STATUS_LABELS[p.status]}</Badge>,
+            },
+          ]}
+        />
       )}
 
       <Drawer

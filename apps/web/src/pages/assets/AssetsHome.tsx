@@ -35,14 +35,9 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
@@ -228,110 +223,124 @@ export function AssetsHome() {
               No assets match the current filters.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Label</TableHead>
-                  <TableHead className="hidden md:table-cell">Serial</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Assigned to</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((a) => {
-                  const Icon = KIND_ICONS[a.kind] ?? Box;
-                  return (
-                    <TableRow key={a.id} className="group">
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-sm">
-                          <Icon className="h-4 w-4 text-silver" />
-                          {a.kind}
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-medium text-white">{a.label}</TableCell>
-                      <TableCell className="hidden md:table-cell font-mono text-xs">{a.serial ?? '—'}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            a.status === 'AVAILABLE'
-                              ? 'success'
-                              : a.status === 'ASSIGNED'
-                                ? 'accent'
-                                : a.status === 'IN_REPAIR'
-                                  ? 'pending'
-                                  : 'destructive'
-                          }
-                        >
-                          {a.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {a.currentAssignment ? (
-                          <AssociateLink associateId={a.currentAssignment.associateId}>
-                            {a.currentAssignment.associateName}
-                          </AssociateLink>
-                        ) : (
-                          '—'
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        {canManage && a.status === 'AVAILABLE' && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setAssignTarget(a)}
-                          >
-                            Assign
-                          </Button>
-                        )}
-                        {canManage && a.currentAssignment && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setReturnTarget(a)}
-                          >
-                            Return
-                          </Button>
-                        )}
-                        {canManage && (
-                          <button
-                            onClick={() => setEditTarget(a)}
-                            aria-label={`Edit ${a.label}`}
-                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs coarse:py-2 coarse:px-1.5"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Edit
-                          </button>
-                        )}
-                        {canManage && (
-                          <button
-                            disabled={actionKey !== null}
-                            onClick={async () => {
-                              if (!(await confirm({ title: 'Delete this asset? Assignment history will be removed.', destructive: true })))
-                                return;
-                              await act(`del-${a.id}`, async () => {
-                                try {
-                                  await deleteAsset(a.id);
-                                  toast.success('Asset deleted.');
-                                  refresh();
-                                } catch (err) {
-                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                                }
-                              });
-                            }}
-                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs coarse:py-2 coarse:px-1.5 disabled:opacity-40"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof visible)[number]>
+              id="assets"
+              caption="Assets"
+              rows={visible}
+              rowKey={(a) => a.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'assets' }}
+              columns={[
+                {
+                  key: 'kind',
+                  header: 'Kind',
+                  accessor: (a) => a.kind,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (a) => {
+                    const Icon = KIND_ICONS[a.kind] ?? Box;
+                    return (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Icon className="h-4 w-4 text-silver" />
+                        {a.kind}
+                      </div>
+                    );
+                  },
+                },
+                { key: 'label', header: 'Label', accessor: (a) => a.label, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'serial', header: 'Serial', accessor: (a) => a.serial, sortable: true, className: 'font-mono text-xs', cell: (a) => a.serial ?? '—' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (a) => a.status,
+                  sortable: true,
+                  cell: (a) => (
+                    <Badge
+                      variant={
+                        a.status === 'AVAILABLE'
+                          ? 'success'
+                          : a.status === 'ASSIGNED'
+                            ? 'accent'
+                            : a.status === 'IN_REPAIR'
+                              ? 'pending'
+                              : 'destructive'
+                      }
+                    >
+                      {a.status}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: 'assignedTo',
+                  header: 'Assigned to',
+                  accessor: (a) => a.currentAssignment?.associateName ?? null,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (a) =>
+                    a.currentAssignment ? (
+                      <AssociateLink associateId={a.currentAssignment.associateId}>
+                        {a.currentAssignment.associateName}
+                      </AssociateLink>
+                    ) : (
+                      '—'
+                    ),
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'whitespace-nowrap space-x-1',
+                        cell: (a: (typeof visible)[number]) => (
+                          <>
+                            {a.status === 'AVAILABLE' && (
+                              <Button size="sm" variant="ghost" onClick={() => setAssignTarget(a)}>
+                                Assign
+                              </Button>
+                            )}
+                            {a.currentAssignment && (
+                              <Button size="sm" variant="ghost" onClick={() => setReturnTarget(a)}>
+                                Return
+                              </Button>
+                            )}
+                            <Button size="xs" variant="ghost" onClick={() => setEditTarget(a)} aria-label={`Edit ${a.label}`}>
+                              <Pencil className="mr-1 h-3 w-3" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              disabled={actionKey !== null}
+                              className="text-silver hover:text-alert"
+                              onClick={async () => {
+                                if (!(await confirm({ title: 'Delete this asset? Assignment history will be removed.', destructive: true })))
+                                  return;
+                                await act(`del-${a.id}`, async () => {
+                                  try {
+                                    await deleteAsset(a.id);
+                                    toast.success('Asset deleted.');
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  }
+                                });
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
