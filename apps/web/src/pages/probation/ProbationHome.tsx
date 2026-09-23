@@ -35,14 +35,9 @@ import {
   SegmentedControl,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { StatusBadge } from '@/lib/status';
 
@@ -195,78 +190,96 @@ export function ProbationHome() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Decision</TableHead>
-                  {canManage && <TableHead className="text-right">Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((p) => {
-                  const overdue =
-                    p.status === 'ACTIVE' && new Date(p.endDate) < new Date();
-                  return (
-                    <TableRow key={p.id} className="group">
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          <AssociateLink associateId={p.associateId}>
-                            {p.associateName}
-                          </AssociateLink>
-                        </div>
-                        <div className="text-xs text-silver">
-                          {p.currentTitle ?? p.associateEmail}
-                        </div>
-                        <div className="text-xs2 text-silver/70 md:hidden">
-                          {fmtDate(parseLocalDate(p.startDate))} →{' '}
-                          {fmtDate(parseLocalDate(p.endDate))}
-                          {overdue && ' · Overdue'}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-silver">
-                        {fmtDate(parseLocalDate(p.startDate))} →{' '}
-                        {fmtDate(parseLocalDate(p.endDate))}
+            <DataGrid<(typeof rows)[number]>
+              id="probation"
+              caption="Probations"
+              rows={rows}
+              rowKey={(p) => p.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'probations' }}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (p) => p.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (p) => <AssociateLink associateId={p.associateId}>{p.associateName}</AssociateLink>,
+                },
+                {
+                  key: 'title',
+                  header: 'Title',
+                  accessor: (p) => p.currentTitle ?? p.associateEmail,
+                  sortable: true,
+                  cardMeta: true,
+                  className: 'text-xs text-silver',
+                },
+                {
+                  key: 'period',
+                  header: 'Period',
+                  accessor: (p) => p.endDate,
+                  csv: (p) => `${p.startDate} → ${p.endDate}`,
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  className: 'text-sm text-silver whitespace-nowrap',
+                  cell: (p) => {
+                    const overdue = p.status === 'ACTIVE' && new Date(p.endDate) < new Date();
+                    return (
+                      <>
+                        {fmtDate(parseLocalDate(p.startDate))} → {fmtDate(parseLocalDate(p.endDate))}
                         {overdue && (
                           <Badge variant="destructive" className="ml-2">
                             Overdue
                           </Badge>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={p.status} overrides={PROBATION_STATUS_TONES} />
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell text-xs text-silver max-w-xs truncate">
-                        {p.decision ?? '—'}
-                      </TableCell>
-                      {canManage && (
-                        <TableCell className="text-right space-x-2">
-                          {p.status === 'ACTIVE' && (
+                      </>
+                    );
+                  },
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (p) => p.status,
+                  sortable: true,
+                  cell: (p) => <StatusBadge status={p.status} overrides={PROBATION_STATUS_TONES} />,
+                },
+                {
+                  key: 'decision',
+                  header: 'Decision',
+                  accessor: (p) => p.decision,
+                  className: 'text-xs text-silver max-w-xs truncate',
+                  cell: (p) => p.decision ?? '—',
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'whitespace-nowrap space-x-2',
+                        cell: (p: (typeof rows)[number]) =>
+                          p.status === 'ACTIVE' ? (
                             <>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setExtendRow(p)}
-                              >
+                              <Button size="sm" variant="ghost" onClick={() => setExtendRow(p)}>
                                 Extend
                               </Button>
-                              <Button
-                                size="sm"
-                                onClick={() => setDecideRow(p)}
-                              >
+                              <Button size="sm" onClick={() => setDecideRow(p)}>
                                 Decide
                               </Button>
                             </>
-                          )}
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                          ) : null,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
 import type { AuditSearchEntry } from '@alto-people/shared';
 import {
@@ -93,11 +94,6 @@ function metaPreview(m: Record<string, unknown> | null): string {
 export function AuditHome() {
   const [filters, setFilters] = useState<AuditFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] = useState<AuditFilters>(defaultFilters);
-  const [entries, setEntries] = useState<AuditSearchEntry[] | null>(null);
-  const [nextBefore, setNextBefore] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // "Other…" free-text mode for the entity-type filter.
   const [entityOther, setEntityOther] = useState(false);
   // Associate helper next to the raw actor-ID input (see the Field hint).
@@ -105,36 +101,29 @@ export function AuditHome() {
   // Row detail drawer.
   const [detail, setDetail] = useState<AuditSearchEntry | null>(null);
 
-  const load = useCallback(async (f: AuditFilters) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await searchAuditLogs(f);
-      setEntries(res.entries);
-      setNextBefore(res.nextBefore);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load(appliedFilters);
-  }, [load, appliedFilters]);
-
-  const loadMore = async () => {
-    if (!nextBefore || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const res = await searchAuditLogs({ ...appliedFilters, before: nextBefore });
-      setEntries((prev) => [...(prev ?? []), ...res.entries]);
-      setNextBefore(res.nextBefore);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load more.');
-    } finally {
-      setLoadingMore(false);
-    }
+  // A cursor-paged list is what useInfiniteQuery is for. The pages are
+  // one cache entry keyed by the applied filters, so Back restores the
+  // whole scrolled-through log instantly, "Load more" appends a page
+  // rather than re-implementing append, and a failed page retries. This
+  // is the shape every other "Load more" list in the app should copy.
+  const auditQuery = useInfiniteQuery({
+    queryKey: ['audit', 'logs', appliedFilters],
+    queryFn: ({ pageParam }) =>
+      searchAuditLogs(pageParam ? { ...appliedFilters, before: pageParam } : appliedFilters),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextBefore ?? undefined,
+  });
+  const entries = auditQuery.data ? auditQuery.data.pages.flatMap((pg) => pg.entries) : null;
+  const nextBefore = auditQuery.hasNextPage;
+  const loading = auditQuery.isPending;
+  const loadingMore = auditQuery.isFetchingNextPage;
+  const error = auditQuery.error
+    ? auditQuery.error instanceof ApiError
+      ? auditQuery.error.message
+      : 'Could not load.'
+    : null;
+  const loadMore = () => {
+    if (auditQuery.hasNextPage && !auditQuery.isFetchingNextPage) void auditQuery.fetchNextPage();
   };
 
   const apply = (e: React.FormEvent) => {

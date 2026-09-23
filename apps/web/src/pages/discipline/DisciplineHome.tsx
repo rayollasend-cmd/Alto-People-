@@ -39,14 +39,9 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 
 const KIND_VARIANT: Record<
@@ -238,66 +233,87 @@ export function DisciplineHome() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead className="hidden md:table-cell">Incident</TableHead>
-                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRows.map((a) => (
-                  <TableRow
-                    key={a.id}
-                    className="cursor-pointer"
-                    onClick={() => setOpenRow(a)}
-                  >
-                    <TableCell>
-                      <div className="font-medium text-white">
-                        {a.associateName}
-                      </div>
-                      <div className="text-xs text-silver">{a.associateEmail}</div>
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {fmtDate(parseYmd(a.incidentDate))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={KIND_VARIANT[a.kind]}>
-                        {KIND_LABELS[a.kind]}
-                        {a.kind === 'SUSPENSION' && a.suspensionDays
-                          ? ` (${a.suspensionDays}d)`
-                          : ''}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-silver">
-                      {fmtDate(parseYmd(a.incidentDate))}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-sm text-silver">
-                      {fmtDate(parseYmd(a.effectiveDate))}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={a.status} overrides={DISCIPLINE_STATUS_TONES} />
-                    </TableCell>
-                    <TableCell
-                      className="text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setOpenRow(a)}
-                      >
-                        View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof visibleRows)[number]>
+              id="discipline"
+              caption="Disciplinary actions"
+              rows={visibleRows}
+              rowKey={(a) => a.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'disciplinary-actions' }}
+              onRowClick={(a) => setOpenRow(a)}
+              rowActionLabel={(a) => `Open the ${KIND_LABELS[a.kind]} for ${a.associateName}`}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (a) => a.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                },
+                {
+                  key: 'email',
+                  header: 'Email',
+                  accessor: (a) => a.associateEmail,
+                  sortable: true,
+                  cardMeta: true,
+                  className: 'text-xs text-silver',
+                },
+                {
+                  key: 'kind',
+                  header: 'Kind',
+                  accessor: (a) => KIND_LABELS[a.kind],
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (a) => (
+                    <Badge variant={KIND_VARIANT[a.kind]}>
+                      {KIND_LABELS[a.kind]}
+                      {a.kind === 'SUSPENSION' && a.suspensionDays ? ` (${a.suspensionDays}d)` : ''}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: 'incident',
+                  header: 'Incident',
+                  accessor: (a) => a.incidentDate,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-sm text-silver whitespace-nowrap',
+                  cell: (a) => fmtDate(parseYmd(a.incidentDate)),
+                },
+                {
+                  key: 'effective',
+                  header: 'Effective',
+                  accessor: (a) => a.effectiveDate,
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-sm text-silver whitespace-nowrap',
+                  cell: (a) => fmtDate(parseYmd(a.effectiveDate)),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (a) => a.status,
+                  sortable: true,
+                  cell: (a) => <StatusBadge status={a.status} overrides={DISCIPLINE_STATUS_TONES} />,
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (a) => (
+                    <Button size="sm" variant="ghost" onClick={() => setOpenRow(a)}>
+                      View
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
