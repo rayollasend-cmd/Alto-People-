@@ -49,14 +49,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 const TABS: { key: TimeOffRequestStatus | 'ALL'; label: string }[] = [
   { key: 'PENDING', label: 'Pending' },
@@ -146,29 +139,6 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     );
   }, [items, search]);
 
-  const pendingVisible = useMemo(
-    () => (visible ?? []).filter((r) => r.status === 'PENDING'),
-    [visible],
-  );
-  const allPendingSelected =
-    pendingVisible.length > 0 && pendingVisible.every((r) => selected.has(r.id));
-
-  const toggleRow = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set<string>(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllPending = () => {
-    setSelected(
-      allPendingSelected
-        ? new Set<string>()
-        : new Set<string>(pendingVisible.map((r) => r.id)),
-    );
-  };
 
   const reportBulk = (res: BulkDecideResponse, verb: string) => {
     if (res.decided > 0) {
@@ -417,181 +387,151 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                   </Button>
                 </div>
               )}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {canManage && (
-                      <TableHead className="w-8">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all pending requests"
-                          checked={allPendingSelected}
-                          disabled={pendingVisible.length === 0}
-                          onChange={toggleAllPending}
-                        />
-                      </TableHead>
-                    )}
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="hidden md:table-cell">Category</TableHead>
-                    <TableHead className="hidden md:table-cell">Dates</TableHead>
-                    <TableHead className="text-right hidden sm:table-cell">Hours</TableHead>
-                    <TableHead className="hidden lg:table-cell">Reason</TableHead>
-                    {/* Phone: the tab already names the status — its column
-                        gives the approve/deny buttons room to stay on screen. */}
-                    <TableHead className="hidden sm:table-cell">Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visible.map((r) => {
-                    const insufficient = isInsufficient(r);
-                    return (
-                      <TableRow
-                        key={r.id}
-                        className="group cursor-pointer"
-                        onClick={() => setDetail(r)}
-                      >
-                        {canManage && (
-                          <TableCell
-                            className="w-8"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {r.status === 'PENDING' && (
-                              <input
-                                type="checkbox"
-                                aria-label={`Select request from ${r.associateName ?? 'associate'}`}
-                                checked={selected.has(r.id)}
-                                onChange={() => toggleRow(r.id)}
-                              />
-                            )}
-                          </TableCell>
+              {/* The page keeps the selection (the deny dialog reads it
+                  later), so the grid is told which rows are chosen and
+                  draws no bulk bar of its own — the one above stays. */}
+              <DataGrid<TimeOffRequest>
+                id="time-off-admin"
+                caption="Time-off requests"
+                rows={visible}
+                rowKey={(r) => r.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'time-off-requests' }}
+                total={total ?? undefined}
+                onRowClick={(r) => setDetail(r)}
+                rowActionLabel={(r) => `Open the request from ${r.associateName ?? 'associate'}`}
+                selectable={
+                  canManage
+                    ? {
+                        disabled: (r) => r.status !== 'PENDING',
+                        selection: { selected, onChange: setSelected },
+                      }
+                    : undefined
+                }
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (r) => r.associateName ?? '—',
+                    sortable: true,
+                    primary: true,
+                    className: 'text-white',
+                    cell: (r) => (
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={r.associateName ?? '—'} size="sm" />
+                        <div className="min-w-0 truncate">
+                          <AssociateLink associateId={r.associateId}>{r.associateName ?? '—'}</AssociateLink>
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'category',
+                    header: 'Category',
+                    accessor: (r) => CATEGORY_LABELS[r.category] ?? r.category,
+                    sortable: true,
+                    cardMeta: true,
+                  },
+                  {
+                    key: 'dates',
+                    header: 'Dates',
+                    accessor: (r) => r.startDate,
+                    csv: (r) => (r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`),
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'tabular-nums',
+                    cell: (r) => (
+                      <>
+                        {fmtYmd(r.startDate)}
+                        {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
+                        {/* The coverage hole this approval would punch — shown
+                            BEFORE the click, not discovered at the pre-shift check. */}
+                        {r.status === 'PENDING' && (r.assignedShiftOverlaps ?? 0) > 0 && (
+                          <span className="ml-2 inline-flex rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium text-warning">
+                            releases {r.assignedShiftOverlaps} {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
+                          </span>
                         )}
-                        <TableCell className="text-white">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={r.associateName ?? '—'} size="sm" />
-                            <div className="min-w-0">
-                              <div className="truncate">
-                                <AssociateLink associateId={r.associateId}>
-                                  {r.associateName ?? '—'}
-                                </AssociateLink>
-                              </div>
-                              {/* Phone-only inline category + hours since their
-                                  dedicated columns are hidden. */}
-                              <div className="md:hidden text-xs2 text-silver/70 truncate">
-                                {CATEGORY_LABELS[r.category] ?? r.category}
-                                <span className="sm:hidden tabular-nums">
-                                  {' · '}
-                                  {fmtHours(r.requestedMinutes)}
-                                </span>
-                              </div>
-                              {/* Phone: the dates ride under the name — their
-                                  own column squeezed to one word per line. */}
-                              <div className="md:hidden text-xs2 text-silver tabular-nums">
-                                {fmtYmd(r.startDate)}
-                                {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
-                                {r.status === 'PENDING' && (r.assignedShiftOverlaps ?? 0) > 0 && (
-                                  <span className="ml-1.5 text-warning">
-                                    · releases {r.assignedShiftOverlaps}{' '}
-                                    {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          {CATEGORY_LABELS[r.category] ?? r.category}
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell tabular-nums">
-                          {fmtYmd(r.startDate)}
-                          {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
-                          {/* The coverage hole this approval would punch —
-                              shown BEFORE the click, not discovered at the
-                              pre-shift check. */}
-                          {r.status === 'PENDING' &&
-                            (r.assignedShiftOverlaps ?? 0) > 0 && (
-                              <span className="ml-2 inline-flex rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium text-warning">
-                                releases {r.assignedShiftOverlaps}{' '}
-                                {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
-                              </span>
-                            )}
-                        </TableCell>
-                        <TableCell
-                          className={`text-right tabular-nums hidden sm:table-cell ${
-                            insufficient ? 'text-alert' : ''
-                          }`}
-                        >
-                          {fmtHours(r.requestedMinutes)} requested
-                          {r.balanceMinutes !== null &&
-                            r.balanceMinutes !== undefined &&
-                            ` · ${fmtHours(r.balanceMinutes)} available`}
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell text-xs text-silver max-w-[18ch] truncate">
-                          {r.reason || '—'}
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          <RowStatus status={r.status} />
-                        </TableCell>
-                        <TableCell
-                          className="text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {r.status === 'PENDING' && canManage ? (
-                            <div className="inline-flex gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => quickApprove(r)}
-                                disabled={insufficient || quickApproveId !== null}
-                                loading={quickApproveId === r.id}
-                                title={
-                                  insufficient
-                                    ? 'Balance is below the requested hours'
-                                    : 'Approve'
-                                }
-                                aria-label="Approve"
-                              >
-                                <Check className="h-4 w-4 text-success" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setApproveTarget(r)}
-                                disabled={insufficient || quickApproveId !== null}
-                                title={
-                                  insufficient
-                                    ? 'Balance is below the requested hours'
-                                    : 'Approve with note…'
-                                }
-                                aria-label="Approve with note"
-                              >
-                                <MessageSquarePlus className="h-4 w-4 text-success/80" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setDenyTarget(r)}
-                                aria-label="Deny"
-                              >
-                                <X className="h-4 w-4 text-alert" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-silver/80 text-xs">
-                              {r.reviewerEmail ?? '—'}
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-              {items && total !== null && total > items.length && (
-                <p className="px-4 py-2 text-xs text-silver/70 border-t border-navy-secondary">
-                  Showing {items.length} of {total} requests
-                </p>
-              )}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'hours',
+                    header: 'Hours',
+                    accessor: (r) => r.requestedMinutes / 60,
+                    csv: (r) => fmtHours(r.requestedMinutes),
+                    sortable: true,
+                    searchable: false,
+                    align: 'right',
+                    className: 'tabular-nums',
+                    cell: (r) => (
+                      <span className={isInsufficient(r) ? 'text-alert' : undefined}>
+                        {fmtHours(r.requestedMinutes)} requested
+                        {r.balanceMinutes !== null &&
+                          r.balanceMinutes !== undefined &&
+                          ` · ${fmtHours(r.balanceMinutes)} available`}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'reason',
+                    header: 'Reason',
+                    accessor: (r) => r.reason,
+                    defaultHidden: true,
+                    className: 'text-xs text-silver max-w-[18ch] truncate',
+                    cell: (r) => r.reason || '—',
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (r) => r.status,
+                    sortable: true,
+                    cell: (r) => <RowStatus status={r.status} />,
+                  },
+                  {
+                    key: 'actions',
+                    header: 'Actions',
+                    accessor: (r) => (r.status === 'PENDING' ? null : r.reviewerEmail),
+                    csv: (r) => r.reviewerEmail ?? '',
+                    searchable: false,
+                    align: 'right',
+                    stopRowClick: true,
+                    cell: (r) => {
+                      const insufficient = isInsufficient(r);
+                      return r.status === 'PENDING' && canManage ? (
+                        <div className="inline-flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => quickApprove(r)}
+                            disabled={insufficient || quickApproveId !== null}
+                            loading={quickApproveId === r.id}
+                            title={insufficient ? 'Balance is below the requested hours' : 'Approve'}
+                            aria-label="Approve"
+                          >
+                            <Check className="h-4 w-4 text-success" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setApproveTarget(r)}
+                            disabled={insufficient || quickApproveId !== null}
+                            title={insufficient ? 'Balance is below the requested hours' : 'Approve with note…'}
+                            aria-label="Approve with note"
+                          >
+                            <MessageSquarePlus className="h-4 w-4 text-success/80" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setDenyTarget(r)} aria-label="Deny">
+                            <X className="h-4 w-4 text-alert" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-silver/80 text-xs">{r.reviewerEmail ?? '—'}</span>
+                      );
+                    },
+                  },
+                ]}
+              />
             </>
           )}
         </CardContent>

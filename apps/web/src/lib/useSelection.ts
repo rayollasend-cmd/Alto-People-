@@ -26,6 +26,9 @@ export interface Selection {
   /** Replace the selection with exactly these ids. */
   selectAll: (ids: readonly string[]) => void;
   clear: () => void;
+  /** Replace the whole selection — what a grid hands back when it owns
+   *  the checkboxes but the page owns the choice. */
+  replace: (next: ReadonlySet<string>) => void;
   /** Every selectable id is selected (false when none are selectable). */
   allSelected: boolean;
   /** Something is selected, but not everything — drive `indeterminate`. */
@@ -84,6 +87,7 @@ export function useSelection(selectableIds: readonly string[] = []): Selection {
     setMany,
     selectAll,
     clear,
+    replace: setSelected,
     allSelected,
     someSelected,
     toggleAll,

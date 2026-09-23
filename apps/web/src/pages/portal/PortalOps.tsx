@@ -44,6 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { AsOf } from '@/components/ui/AsOf';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE, HANDOVER_KIND_ICON, HANDOVER_KIND_LABEL, PERIOD_LABEL } from '../ops/opsVisuals';
@@ -204,6 +205,9 @@ export function StoreOps() {
         onLastNight={goLastNight}
         onClear={clearFilters}
         lastNightOn={lastNightOn}
+        updatedAt={query.dataUpdatedAt}
+        refreshing={query.isFetching}
+        onRefresh={() => void query.refetch()}
       />
       {query.error ? (
         <ErrorBanner>{query.error instanceof Error ? query.error.message : 'Could not load store operations.'}</ErrorBanner>
@@ -415,6 +419,9 @@ function DateBar({
   onLastNight,
   onClear,
   lastNightOn,
+  updatedAt,
+  refreshing,
+  onRefresh,
 }: {
   date: string;
   onDate: (d: string | null) => void;
@@ -425,6 +432,9 @@ function DateBar({
   onLastNight: () => void;
   onClear: () => void;
   lastNightOn: boolean;
+  updatedAt?: number;
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }) {
   const today = ymdLocal();
   const yesterday = shiftDays(today, -1);
@@ -504,6 +514,10 @@ function DateBar({
           {' · '}
           {fmtDate(parseYmd(date))}
         </span>
+        {/* A page that polls every minute owes its reader the minute. */}
+        {date === today && (
+          <AsOf at={updatedAt} refreshing={refreshing} onRefresh={onRefresh} className="print:hidden" />
+        )}
       </div>
       <Button
         size="sm"

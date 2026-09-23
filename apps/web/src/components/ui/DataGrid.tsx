@@ -85,6 +85,8 @@ export interface GridColumn<T> {
   cardMeta?: boolean;
   /** Extra classes on header and cells (e.g. tabular-nums). */
   className?: string;
+  /** A cell of buttons: clicks inside it must not also open the row. */
+  stopRowClick?: boolean;
 }
 
 export interface DataGridProps<T> {
@@ -110,7 +112,15 @@ export interface DataGridProps<T> {
   selectable?: {
     /** Rows that cannot be picked (e.g. the signed-in user). */
     disabled?: (row: T) => boolean;
-    actions: (selected: string[], clear: () => void) => React.ReactNode;
+    /** The bulk bar. Omit when the page draws its own from `selection`. */
+    actions?: (selected: string[], clear: () => void) => React.ReactNode;
+    /**
+     * Controlled selection — when a page keeps the chosen ids itself,
+     * because one choice spans several grids (renew across every
+     * expiry bucket) or feeds a dialog that opens later (deny the
+     * selected requests). Uncontrolled otherwise.
+     */
+    selection?: { selected: ReadonlySet<string>; onChange: (next: Set<string>) => void };
   };
   onRowClick?: (row: T) => void;
   /** Label for the row's click affordance, for screen readers. */
@@ -316,7 +326,14 @@ function GridCore<T>({
   const visible = columns.filter((c) => c.primary || !hidden.has(c.key));
 
   /* ---- selection ---------------------------------------------------- */
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [ownSelected, setOwnSelected] = React.useState<Set<string>>(new Set());
+  const controlled = selectable?.selection;
+  const selected: ReadonlySet<string> = controlled ? controlled.selected : ownSelected;
+  const setSelected = (next: Set<string> | ((prev: ReadonlySet<string>) => Set<string>)) => {
+    const resolved = typeof next === 'function' ? next(selected) : next;
+    if (controlled) controlled.onChange(resolved);
+    else setOwnSelected(resolved);
+  };
   const selectableRows = selectable ? sorted.filter((r) => !selectable.disabled?.(r)) : [];
   const allSelected = selectableRows.length > 0 && selectableRows.every((r) => selected.has(rowKey(r)));
   const toggleAll = () =>
@@ -330,11 +347,13 @@ function GridCore<T>({
     });
   const clearSelection = () => setSelected(new Set());
   // A row that left the list (filtered away, deleted) leaves the selection.
+  // Only for a selection this grid owns: a controlled one may span other
+  // grids whose rows this one cannot see.
   React.useEffect(() => {
-    if (selected.size === 0) return;
+    if (controlled || selected.size === 0) return;
     const present = new Set(sorted.map(rowKey));
     if ([...selected].every((k) => present.has(k))) return;
-    setSelected(new Set([...selected].filter((k) => present.has(k))));
+    setOwnSelected(new Set([...selected].filter((k) => present.has(k))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sorted]);
 
@@ -430,7 +449,7 @@ function GridCore<T>({
         </FilterBar>
       )}
 
-      {selectable && selected.size > 0 && (
+      {selectable?.actions && selected.size > 0 && (
         <div
           className="flex flex-wrap items-center gap-2 rounded-md border border-gold/40 bg-gold/5 px-3 py-2"
           role="region"
@@ -660,7 +679,11 @@ function GridCore<T>({
                         </TableCell>
                       )}
                       {visible.map((c) => (
-                        <TableCell key={c.key} className={cn(alignClass(c.align), c.className)}>
+                        <TableCell
+                          key={c.key}
+                          className={cn(alignClass(c.align), c.className)}
+                          onClick={c.stopRowClick ? (e) => e.stopPropagation() : undefined}
+                        >
                           {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
                         </TableCell>
                       ))}

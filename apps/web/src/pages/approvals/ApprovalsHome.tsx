@@ -44,6 +44,7 @@ import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { AsOf } from '@/components/ui/AsOf';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
@@ -196,12 +197,25 @@ export function ApprovalsHome() {
         title="Approvals"
         subtitle={subtitle}
         secondaryActions={
-          <Button size="sm" variant="outline" asChild>
-            <Link to="/time-attendance?tab=queue">
-              <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Timesheets
-            </Link>
-          </Button>
+          <>
+            {/* Four queues polling every minute owe the reader the minute. */}
+            <AsOf
+              at={timeOffQ.dataUpdatedAt}
+              refreshing={clockIns.isFetching || timeOffQ.isFetching || swaps.isFetching || pickups.isFetching}
+              onRefresh={() => {
+                void clockIns.refetch();
+                void timeOffQ.refetch();
+                void swaps.refetch();
+                void pickups.refetch();
+              }}
+            />
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/time-attendance?tab=queue">
+                <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Timesheets
+              </Link>
+            </Button>
+          </>
         }
       />
 

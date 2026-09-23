@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ExternalLink, Map, Plus, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,25 +43,21 @@ export function RegionsAdmin() {
   const confirm = useConfirm();
   const canManage = can('manage:org');
   const canPreview = can('view:executive') || can('manage:org');
-  const [regions, setRegions] = useState<RegionRow[] | null>(null);
-  const [unassigned, setUnassigned] = useState<RegionStore[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<RegionRow | 'new' | null>(null);
   const [inviting, setInviting] = useState<RegionRow | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const r = await listRegions();
-      setRegions(r.regions);
-      setUnassigned(r.unassigned);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load regions.');
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // The query layer, not a hand-rolled loader: cached across visits,
+  // shared with any other surface that reads regions, retried on a
+  // failed read, and refetched — not re-implemented — after every edit.
+  const regionsQuery = useQuery({ queryKey: ['regions', 'admin'], queryFn: listRegions });
+  const regions = regionsQuery.data?.regions ?? null;
+  const unassigned = regionsQuery.data?.unassigned ?? [];
+  const error = regionsQuery.error
+    ? regionsQuery.error instanceof ApiError
+      ? regionsQuery.error.message
+      : 'Could not load regions.'
+    : null;
+  const load = () => regionsQuery.refetch();
 
   const remove = async (r: RegionRow) => {
     if (

@@ -175,3 +175,24 @@ describe('DataGrid', () => {
     expect(screen.getByText('Could not load.')).toBeInTheDocument();
   });
 });
+
+describe('DataGrid — controlled selection', () => {
+  it('lets a page own the chosen ids, and draws no bulk bar of its own', async () => {
+    const onChange = vi.fn();
+    renderGrid({
+      selectable: { selection: { selected: new Set(['a']), onChange } },
+    });
+    // The page's choice is what the boxes show.
+    const table = screen.getByRole('table', { name: 'Test rows' });
+    expect(within(table).getByRole('checkbox', { name: 'Select Rosa Martinez' })).toBeChecked();
+    expect(within(table).getByRole('checkbox', { name: 'Select Dee Kpakpo' })).not.toBeChecked();
+    // No `actions` means the page draws its own bar.
+    expect(screen.queryByRole('region', { name: 'Bulk actions' })).not.toBeInTheDocument();
+
+    await userEvent.click(within(table).getByRole('checkbox', { name: 'Select Dee Kpakpo' }));
+    expect(onChange).toHaveBeenLastCalledWith(new Set(['a', 'b']));
+
+    await userEvent.click(within(table).getByRole('checkbox', { name: 'Select every row' }));
+    expect(onChange).toHaveBeenLastCalledWith(new Set(['a', 'b', 'c']));
+  });
+});
