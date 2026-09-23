@@ -114,7 +114,11 @@ describe('the Store Ops record', () => {
 
   it('opens the full record for the shift asked about', async () => {
     const onOpen = renderHistory();
-    await userEvent.click(await screen.findByRole('button', { name: /Overnight.*Destin/ }));
+    // jsdom applies no CSS, so the grid's phone card and its table row
+    // both exist; the table is the one being asked about.
+    await userEvent.click(
+      within(await screen.findByRole('table')).getByRole('button', { name: /Overnight.*Destin/ }),
+    );
     expect(onOpen).toHaveBeenCalledWith('s1');
   });
 
@@ -122,7 +126,7 @@ describe('the Store Ops record', () => {
     renderHistory();
     await screen.findByRole('table');
 
-    await userEvent.type(screen.getByLabelText('Search these shifts'), 'destin');
+    await userEvent.type(screen.getByRole('searchbox', { name: /Search Store Ops shifts/ }), 'destin');
 
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
     expect(screen.queryByText('Front Beach 218')).not.toBeInTheDocument();

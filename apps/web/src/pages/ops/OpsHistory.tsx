@@ -1,14 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, History as HistoryIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { SearchInput } from '@/components/ui/FilterBar';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import {
   getOpsHistory,
   opsPacketUrl,
@@ -26,8 +22,11 @@ import { fmtClock, fmtDayKey, fmtDuration, fmtFull, OPS_TZ } from './opsTime';
  * question actually asked at a Monday review: the overnight at Destin
  * last Tuesday, or every morning shift at Front Beach this month.
  *
- * Rows are a table on purpose. Tiles are for a handful of live shifts;
- * two hundred past ones need columns you can scan down and sort.
+ * Rows are a grid on purpose. Tiles are for a handful of live shifts; two
+ * hundred past ones need columns you can sort, search, hide and export.
+ * The server's own ordering (?sort=recent|worst|store) is what the rows
+ * arrive in; the grid's column sort is a further cut on top of it and is
+ * kept out of the URL so the two never fight over the same parameter.
  */
 
 const PERIOD_LABEL: Record<string, string> = {
@@ -37,13 +36,17 @@ const PERIOD_LABEL: Record<string, string> = {
   OVERNIGHT: 'Overnight',
 };
 
-
 function pctTone(pct: number | null | undefined): string {
   if (pct === null || pct === undefined) return 'text-silver/60';
   if (pct >= 90) return 'text-success';
   if (pct >= 70) return 'text-gold';
   return 'text-alert';
 }
+
+const pctOf = (s: OpsShiftRow) =>
+  s.completionPct ?? (s.taskTotal > 0 ? Math.round((s.taskDone / s.taskTotal) * 100) : null);
+
+const storeOf = (s: OpsShiftRow) => s.locationName ?? s.clientName;
 
 export function OpsHistory({
   query,
@@ -56,7 +59,6 @@ export function OpsHistory({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadAt, setReloadAt] = useState(0);
-  const [search, setSearch] = useState('');
 
   const key = JSON.stringify(query);
   useEffect(() => {
@@ -83,173 +85,139 @@ export function OpsHistory({
     };
   }, [key, reloadAt]);
 
-  const rows = useMemo(() => {
-    const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return data?.shifts ?? [];
-    return (data?.shifts ?? []).filter((s) => {
-      const hay = [
-        s.locationName,
-        s.clientName,
-        s.department,
-        s.position,
-        s.openedByEmail,
-        s.closingSummary,
-        PERIOD_LABEL[s.period],
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return tokens.every((t) => hay.includes(t));
-    });
-  }, [data, search]);
-
-  if (error) {
-    return (
-      <ErrorBanner
-        action={
-          <Button size="sm" variant="outline" onClick={() => setReloadAt(Date.now())}>
-            Try again
-          </Button>
-        }
-      >
-        {error}
-      </ErrorBanner>
-    );
-  }
-
-  if (loading && !data) return <Skeleton className="h-64 w-full rounded-lg" />;
-  if (!data) return null;
-
-  return (
-    <Card>
-      <CardContent className="p-0">
-        <div className="flex flex-wrap items-center gap-2 border-b border-navy-secondary p-3">
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Store, department, supervisor, closing note…"
-            aria-label="Search these shifts"
-            wrapperClassName="min-w-[13rem] flex-1"
-          />
-          <p className="text-xs text-silver/70 tabular-nums">
-            {rows.length === (data.shifts.length ?? 0)
-              ? `${rows.length} shift${rows.length === 1 ? '' : 's'}`
-              : `${rows.length} of ${data.shifts.length}`}
-            {data.truncated && ' · capped at 500, narrow the dates'}
-          </p>
-        </div>
-
-        {rows.length === 0 ? (
-          <div className="p-6">
-            <EmptyState
-              icon={HistoryIcon}
-              title="No shifts match"
-              description="Widen the dates, or clear the store and period filters above."
-            />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[60rem] text-sm">
-              <caption className="sr-only">
-                Store Ops shifts from {fmtDayKey(data.range.from)} to{' '}
-                {fmtDayKey(data.range.to)}, times in {OPS_TZ}
-              </caption>
-              <thead>
-                <tr className="text-left text-2xs uppercase tracking-wider text-silver/70">
-                  <th scope="col" className="px-3 py-2 font-semibold">Day</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Store</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Shift</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Opened</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Closed</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Ran</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Checklist</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Submitted by</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">Flags</th>
-                  <th scope="col" className="px-3 py-2 font-semibold">
-                    <span className="sr-only">Packet</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((s) => (
-                  <HistoryRow key={s.id} shift={s} onOpen={() => onOpenRecord(s.id)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function HistoryRow({ shift: s, onOpen }: { shift: OpsShiftRow; onOpen: () => void }) {
-  const pct = s.completionPct ?? (s.taskTotal > 0 ? Math.round((s.taskDone / s.taskTotal) * 100) : null);
-  return (
-    <tr className="border-t border-navy-secondary/60 hover:bg-navy-secondary/20">
-      <td className="whitespace-nowrap px-3 py-2 text-silver">{fmtDayKey(s.dateKey)}</td>
-      <td className="px-3 py-2">
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label={`Open the ${PERIOD_LABEL[s.period] ?? s.period} ${s.department} shift at ${
-            s.locationName ?? s.clientName
-          } on ${fmtDayKey(s.dateKey)}`}
-          className="text-left font-medium text-white hover:text-gold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-        >
-          {s.locationName ?? s.clientName}
-        </button>
-        {s.locationName && (
-          <div className="text-2xs text-silver/60">{s.clientName}</div>
-        )}
-      </td>
-      <td className="px-3 py-2 text-silver">
-        <span className="text-gold">{PERIOD_LABEL[s.period] ?? s.period}</span>{' '}
-        {s.department}
-        {s.departments && s.departments.length > 1 && (
-          <span className="text-2xs text-silver/60"> +{s.departments.length - 1}</span>
-        )}
-      </td>
-      <td
-        className="whitespace-nowrap px-3 py-2 tabular-nums text-silver"
-        title={fmtFull(s.openedAt)}
-      >
-        {fmtClock(s.openedAt)}
-      </td>
-      <td
-        className="whitespace-nowrap px-3 py-2 tabular-nums text-silver"
-        title={s.closedAt ? fmtFull(s.closedAt) : 'Still running'}
-      >
-        {s.closedAt ? fmtClock(s.closedAt) : <span className="text-success">live</span>}
-      </td>
-      <td className="whitespace-nowrap px-3 py-2 tabular-nums text-silver/80">
-        {fmtDuration(s.openedAt, s.closedAt) || '—'}
-      </td>
-      <td className="whitespace-nowrap px-3 py-2 tabular-nums">
-        <span className={cn('font-medium', pctTone(pct))}>
-          {pct === null ? '—' : `${pct}%`}
-        </span>
-        <span className="ml-1.5 text-2xs text-silver/70">
-          {s.taskDone}/{s.taskTotal}
-        </span>
-      </td>
-      <td className="px-3 py-2">
-        {/* The supervisor account that submitted the shift. A record with
-            no signature on it cannot settle a question about the shift. */}
-        <div className="max-w-[12rem] truncate text-silver" title={s.submittedByAccount ?? undefined}>
-          {s.submittedByAccount ?? (
-            <span className="text-silver/50">
-              {s.status === 'ACTIVE' ? 'not yet submitted' : 'unknown account'}
-            </span>
+  const columns: GridColumn<OpsShiftRow>[] = [
+    {
+      key: 'day',
+      header: 'Day',
+      accessor: (s) => s.dateKey,
+      csv: (s) => s.dateKey,
+      sortable: true,
+      className: 'whitespace-nowrap text-silver',
+      cell: (s) => fmtDayKey(s.dateKey),
+      cardMeta: true,
+    },
+    {
+      key: 'store',
+      header: 'Store',
+      accessor: (s) => storeOf(s),
+      sortable: true,
+      primary: true,
+      cell: (s) => (
+        <>
+          <span className="font-medium text-white">{storeOf(s)}</span>
+          {s.locationName && <div className="text-2xs text-silver/60">{s.clientName}</div>}
+        </>
+      ),
+    },
+    {
+      key: 'shift',
+      header: 'Shift',
+      accessor: (s) => `${PERIOD_LABEL[s.period] ?? s.period} ${s.department}`,
+      sortable: true,
+      cardMeta: true,
+      className: 'text-silver',
+      cell: (s) => (
+        <>
+          <span className="text-gold">{PERIOD_LABEL[s.period] ?? s.period}</span> {s.department}
+          {s.departments && s.departments.length > 1 && (
+            <span className="text-2xs text-silver/60"> +{s.departments.length - 1}</span>
           )}
-        </div>
-        {s.openedByAccount && s.openedByAccount !== s.submittedByAccount && (
-          <div className="max-w-[12rem] truncate text-2xs text-gold" title={s.openedByAccount}>
-            opened by {s.openedByAccount}
+        </>
+      ),
+    },
+    {
+      key: 'opened',
+      header: 'Opened',
+      accessor: (s) => new Date(s.openedAt).getTime(),
+      csv: (s) => fmtFull(s.openedAt),
+      searchable: false,
+      sortable: true,
+      className: 'whitespace-nowrap tabular-nums text-silver',
+      cell: (s) => <span title={fmtFull(s.openedAt)}>{fmtClock(s.openedAt)}</span>,
+    },
+    {
+      key: 'closed',
+      header: 'Closed',
+      accessor: (s) => (s.closedAt ? new Date(s.closedAt).getTime() : null),
+      csv: (s) => (s.closedAt ? fmtFull(s.closedAt) : 'still running'),
+      searchable: false,
+      sortable: true,
+      className: 'whitespace-nowrap tabular-nums text-silver',
+      cell: (s) =>
+        s.closedAt ? (
+          <span title={fmtFull(s.closedAt)}>{fmtClock(s.closedAt)}</span>
+        ) : (
+          <span className="text-success">live</span>
+        ),
+    },
+    {
+      key: 'ran',
+      header: 'Ran',
+      accessor: (s) =>
+        s.closedAt ? new Date(s.closedAt).getTime() - new Date(s.openedAt).getTime() : null,
+      csv: (s) => fmtDuration(s.openedAt, s.closedAt) || '',
+      searchable: false,
+      sortable: true,
+      className: 'whitespace-nowrap tabular-nums text-silver/80',
+      cell: (s) => fmtDuration(s.openedAt, s.closedAt) || '—',
+    },
+    {
+      key: 'checklist',
+      header: 'Checklist',
+      accessor: (s) => pctOf(s),
+      csv: (s) => `${pctOf(s) ?? ''}`,
+      searchable: false,
+      sortable: true,
+      className: 'whitespace-nowrap tabular-nums',
+      cell: (s) => {
+        const pct = pctOf(s);
+        return (
+          <>
+            <span className={cn('font-medium', pctTone(pct))}>{pct === null ? '—' : `${pct}%`}</span>
+            <span className="ml-1.5 text-2xs text-silver/70">
+              {s.taskDone}/{s.taskTotal}
+            </span>
+          </>
+        );
+      },
+    },
+    {
+      key: 'submittedBy',
+      header: 'Submitted by',
+      accessor: (s) => s.submittedByAccount ?? s.openedByAccount ?? null,
+      sortable: true,
+      // The supervisor account that submitted the shift. A record with no
+      // signature on it cannot settle a question about the shift.
+      cell: (s) => (
+        <>
+          <div className="max-w-[12rem] truncate text-silver" title={s.submittedByAccount ?? undefined}>
+            {s.submittedByAccount ?? (
+              <span className="text-silver/50">
+                {s.status === 'ACTIVE' ? 'not yet submitted' : 'unknown account'}
+              </span>
+            )}
           </div>
-        )}
-      </td>
-      <td className="px-3 py-2">
+          {s.openedByAccount && s.openedByAccount !== s.submittedByAccount && (
+            <div className="max-w-[12rem] truncate text-2xs text-gold" title={s.openedByAccount}>
+              opened by {s.openedByAccount}
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'flags',
+      header: 'Flags',
+      accessor: (s) =>
+        [
+          s.tempAlerts > 0 ? `${s.tempAlerts} temp` : null,
+          s.closedIncomplete ? 'incomplete' : null,
+          s.status === 'ACTIVE' ? 'running' : null,
+        ]
+          .filter(Boolean)
+          .join(' ') || 'clean',
+      sortable: true,
+      cell: (s) => (
         <div className="flex flex-wrap items-center gap-1">
           {s.tempAlerts > 0 && <Badge variant="destructive" size="sm">{s.tempAlerts} temp</Badge>}
           {s.closedIncomplete && <Badge variant="destructive" size="sm">incomplete</Badge>}
@@ -258,21 +226,74 @@ function HistoryRow({ shift: s, onOpen }: { shift: OpsShiftRow; onOpen: () => vo
             <span className="text-2xs text-silver/60">clean</span>
           )}
         </div>
-      </td>
-      <td className="whitespace-nowrap px-3 py-2 text-right">
+      ),
+    },
+    {
+      key: 'notes',
+      header: 'Closing note',
+      accessor: (s) => s.closingSummary,
+      defaultHidden: true,
+      className: 'max-w-[20rem] truncate text-xs text-silver/80',
+    },
+    {
+      key: 'packet',
+      header: 'Packet',
+      accessor: () => null,
+      searchable: false,
+      csv: () => '',
+      align: 'right',
+      className: 'whitespace-nowrap',
+      cell: (s) => (
         <a
           href={opsPacketUrl('shift', { shiftId: s.id })}
           target="_blank"
           rel="noreferrer"
           download
+          onClick={(e) => e.stopPropagation()}
           aria-label={`Download the SOP packet for the ${
             PERIOD_LABEL[s.period] ?? s.period
-          } shift at ${s.locationName ?? s.clientName} on ${fmtDayKey(s.dateKey)}`}
+          } shift at ${storeOf(s)} on ${fmtDayKey(s.dateKey)}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded text-silver/60 transition-colors hover:bg-navy-secondary/40 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <Download className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
-      </td>
-    </tr>
+      ),
+    },
+  ];
+
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <DataGrid<OpsShiftRow>
+          id="ops-history"
+          caption={
+            data
+              ? `Store Ops shifts from ${fmtDayKey(data.range.from)} to ${fmtDayKey(data.range.to)}, times in ${OPS_TZ}`
+              : 'Store Ops shifts'
+          }
+          rows={data?.shifts ?? null}
+          columns={columns}
+          rowKey={(s) => s.id}
+          loading={loading}
+          error={error}
+          onRetry={() => setReloadAt(Date.now())}
+          search={{ placeholder: 'Store, department, supervisor, closing note…' }}
+          urlState={false}
+          exportCsv={{ filename: 'store-ops-shifts' }}
+          footnote={data?.truncated ? 'capped at 500, narrow the dates' : undefined}
+          onRowClick={(s) => onOpenRecord(s.id)}
+          rowActionLabel={(s) =>
+            `Open the ${PERIOD_LABEL[s.period] ?? s.period} ${s.department} shift at ${storeOf(s)} on ${fmtDayKey(
+              s.dateKey,
+            )}`
+          }
+          empty={{
+            icon: HistoryIcon,
+            title: 'No shifts match',
+            description: 'Widen the dates, or clear the store and period filters above.',
+          }}
+        />
+      </CardContent>
+    </Card>
   );
 }

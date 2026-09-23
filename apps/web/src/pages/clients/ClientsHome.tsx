@@ -29,17 +29,10 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
 import { PipelineSection } from './PipelineSection';
@@ -353,88 +346,134 @@ export function ClientsHome() {
       )}
 
       {items && items.length > 0 && view === 'table' && (
-        <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Name</TableHead>
-                <TableHead className="hidden md:table-cell">Industry</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead className="text-right hidden sm:table-cell">Open apps</TableHead>
-                <TableHead className="text-right hidden md:table-cell">Active</TableHead>
-                <TableHead className="text-right hidden lg:table-cell">Last payroll</TableHead>
-                {canReport && <TableHead className="text-right">Report</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={c.name} size="sm" />
-                      <Link
-                        to={`/clients/${c.id}`}
-                        className="text-white hover:text-gold-bright font-medium underline-offset-4 hover:underline"
-                      >
-                        {c.name}
-                      </Link>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver">
-                    {c.industry ?? '—'}
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={c.status} />
-                  </TableCell>
-                  <TableCell>
-                    {c.state ? (
-                      <span className="inline-flex items-center gap-1 text-silver">
-                        <MapPin className="h-3 w-3" aria-hidden="true" />
-                        {c.state}
-                      </span>
-                    ) : (
-                      <span className="text-silver/80 italic text-xs">federal default</span>
-                    )}
-                  </TableCell>
-                  <TableCell
-                    className={cn(
-                      'text-right hidden sm:table-cell tabular-nums',
-                      c.openApplications > 0 ? 'text-silver' : 'text-silver/70'
-                    )}
-                  >
+        <Card className="p-3">
+          {/* The list's own filter bar above does the server-side status
+              and search; the grid takes the loaded page and adds what the
+              hand-built table never had — sort on every column, a column
+              chooser, an export of what is on screen, and a real card
+              layout on phones instead of columns that hide themselves. */}
+          <DataGrid<ClientListItem>
+            id="clients"
+            caption="Clients"
+            rows={items}
+            rowKey={(c) => c.id}
+            search={false}
+            urlState={false}
+            defaultSort={{ key: 'name', direction: 'asc' }}
+            footnote={nextCursor ? 'more on the server — load more below' : undefined}
+            columns={[
+              {
+                key: 'name',
+                header: 'Name',
+                accessor: (c) => c.name,
+                sortable: true,
+                primary: true,
+                cell: (c) => (
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={c.name} size="sm" />
+                    <Link
+                      to={`/clients/${c.id}`}
+                      className="text-white hover:text-gold-bright font-medium underline-offset-4 hover:underline"
+                    >
+                      {c.name}
+                    </Link>
+                  </div>
+                ),
+              },
+              {
+                key: 'industry',
+                header: 'Industry',
+                accessor: (c) => c.industry,
+                sortable: true,
+                cardMeta: true,
+                className: 'text-silver',
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (c) => c.status,
+                sortable: true,
+                cell: (c) => <StatusBadge status={c.status} />,
+              },
+              {
+                key: 'state',
+                header: 'State',
+                accessor: (c) => c.state ?? 'federal default',
+                sortable: true,
+                cell: (c) =>
+                  c.state ? (
+                    <span className="inline-flex items-center gap-1 text-silver">
+                      <MapPin className="h-3 w-3" aria-hidden="true" />
+                      {c.state}
+                    </span>
+                  ) : (
+                    <span className="text-silver/80 italic text-xs">federal default</span>
+                  ),
+              },
+              {
+                key: 'openApplications',
+                header: 'Open apps',
+                accessor: (c) => c.openApplications,
+                sortable: true,
+                align: 'right',
+                className: 'tabular-nums',
+                cell: (c) => (
+                  <span className={c.openApplications > 0 ? 'text-silver' : 'text-silver/70'}>
                     {c.openApplications}
-                  </TableCell>
-                  <TableCell
-                    className={cn(
-                      'text-right hidden md:table-cell tabular-nums',
-                      c.activeAssociateCount > 0 ? 'text-success' : 'text-silver/70'
-                    )}
-                  >
+                  </span>
+                ),
+              },
+              {
+                key: 'active',
+                header: 'Active',
+                accessor: (c) => c.activeAssociateCount,
+                sortable: true,
+                align: 'right',
+                className: 'tabular-nums',
+                cell: (c) => (
+                  <span className={c.activeAssociateCount > 0 ? 'text-success' : 'text-silver/70'}>
                     {c.activeAssociateCount}
-                  </TableCell>
-                  <TableCell className="text-right hidden lg:table-cell text-silver text-xs">
-                    {fmtRelative(c.lastPayrollDisbursedAt)}
-                  </TableCell>
-                  {canReport && (
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void downloadReport(c.id, c.name)}
-                        loading={reportBusyIds.has(c.id)}
-                        title={`Download ${c.name}'s weekly service report for the selected week — the client-facing PDF.`}
-                        aria-label={`Download service report for ${c.name}`}
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                        PDF
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </span>
+                ),
+              },
+              {
+                key: 'lastPayroll',
+                header: 'Last payroll',
+                accessor: (c) =>
+                  c.lastPayrollDisbursedAt ? new Date(c.lastPayrollDisbursedAt).getTime() : null,
+                csv: (c) => c.lastPayrollDisbursedAt ?? '',
+                sortable: true,
+                align: 'right',
+                className: 'text-silver text-xs',
+                cell: (c) => fmtRelative(c.lastPayrollDisbursedAt),
+              },
+              ...(canReport
+                ? [
+                    {
+                      key: 'report',
+                      header: 'Report',
+                      accessor: () => null,
+                      searchable: false,
+                      align: 'right' as const,
+                      csv: () => '',
+                      cell: (c: ClientListItem) => (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void downloadReport(c.id, c.name)}
+                          loading={reportBusyIds.has(c.id)}
+                          title={`Download ${c.name}'s weekly service report for the selected week — the client-facing PDF.`}
+                          aria-label={`Download service report for ${c.name}`}
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          PDF
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         </Card>
       )}
 
