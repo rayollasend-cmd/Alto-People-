@@ -92,6 +92,15 @@ const nominatim: Lookup = (address) =>
     return hit ? { lat: Number(hit.lat), lng: Number(hit.lon) } : null;
   });
 
+/** "382 Flamingo Drive, Destin, Florida 32541" — the line a driver reads,
+ *  rather than Nominatim's "382, Flamingo Drive, …, Okaloosa County, …". */
+function streetLine(a: Record<string, string>): string | null {
+  const street = [a.house_number, a.road].filter(Boolean).join(' ');
+  const city = a.city ?? a.town ?? a.village ?? a.hamlet ?? '';
+  const parts = [street, city, [a.state, a.postcode].filter(Boolean).join(' ')].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
 const nominatimReverse: ReverseLookup = (p) =>
   nominatimPaced(async () => {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=${p.lat}&lon=${p.lng}`;
@@ -99,12 +108,7 @@ const nominatimReverse: ReverseLookup = (p) =>
       address?: Record<string, string>;
       display_name?: string;
     };
-    const a = row.address;
-    if (!a) return row.display_name ?? null;
-    const street = [a.house_number, a.road].filter(Boolean).join(' ');
-    const city = a.city ?? a.town ?? a.village ?? a.hamlet ?? '';
-    const parts = [street, city, [a.state, a.postcode].filter(Boolean).join(' ')].filter(Boolean);
-    return parts.length ? parts.join(', ') : (row.display_name ?? null);
+    return (row.address && streetLine(row.address)) ?? row.display_name ?? null;
   });
 
 const mapbox: Lookup = async (address) => {
@@ -209,9 +213,11 @@ const nominatimSearch: SearchLookup = (q, near) =>
     return rows.flatMap((r) => {
       const lat = Number(r.lat);
       const lng = Number(r.lon);
-      const address = r.display_name;
-      if (!address || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
       const a = r.address ?? {};
+      // A place on a road reads as a street address; a town or a park,
+      // which has none, keeps the provider's own name for itself.
+      const address = (a.road ? streetLine(a) : null) ?? r.display_name;
+      if (!address || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
       const street = [a.house_number, a.road].filter(Boolean).join(' ');
       return [{
         label: street || r.name || address.split(',')[0]!,
@@ -273,37 +279,81 @@ const SEARCH_TTL_MS = 5 * 60_000;
 const SEARCH_CACHE_MAX = 300;
 const searchCache = new Map<string, { at: number; results: AddressSuggestion[] }>();
 
+/**
+ * "Apt 2", "#2", "Unit B" — taken off before the lookup, put back after.
+ *
+ * No geocoder knows which door in a building is whose, and Nominatim
+ * misreads the attempt outright: "382 Flamingo Dr Unit B" finds nothing,
+ * "…Apt 2" drops to the bare street, and "…#2" comes back as 2 Flamingo
+ * Drive — a different house, graded exact, so not even the pin step
+ * catches it. Riders in apartments type their unit because the driver
+ * needs it. So the search gets the building and the address keeps the
+ * unit.
+ *
+ * The unit itself must hold a digit or be a single letter, so a street
+ * that merely contains one of these words ("Lot Rd", "Suite Dr") stays a
+ * street.
+ */
+const UNIT =
+  /(?:^|[\s,]+)((?:apt|apartment|apto|unit|ste|suite|lot|bldg|building|rm|room|trlr|spc)(?:\.?\s*#\s*|\.\s*|\s+)(?:[a-z]?-?\d[a-z0-9-]*|[a-z])|#\s*[a-z0-9][a-z0-9-]*)(?=$|[\s,])/gi;
+
+export function splitUnit(query: string): { street: string; unit: string | null } {
+  const units: string[] = [];
+  const street = query
+    .replace(UNIT, (_m, u: string) => {
+      units.push(u.replace(/\s+/g, ' '));
+      return ' ';
+    })
+    .replace(/\s+,/g, ',')
+    .replace(/,+/g, ',')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s,]+|[\s,]+$/g, '');
+  return { street, unit: units.length ? units.join(' ') : null };
+}
+
+/** The unit back on the street line, where a driver reads for it. */
+function withUnit(s: AddressSuggestion, unit: string): AddressSuggestion {
+  const label = `${s.label} ${unit}`;
+  return {
+    ...s,
+    label,
+    address: s.address.startsWith(s.label) ? label + s.address.slice(s.label.length) : `${unit}, ${s.address}`,
+  };
+}
+
 export async function searchAddresses(
   query: string,
   near?: GeoPoint | null,
 ): Promise<AddressSuggestion[]> {
-  const q = query.trim();
+  const { street: q, unit } = splitUnit(query.trim());
   // Below four characters everything matches and nothing is useful — and
   // on Nominatim it would burn the one-per-second budget on noise.
   if (q.length < 4) return [];
   const key = `${normalizeAddress(q)}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ''}`;
   const hit = searchCache.get(key);
-  if (hit && Date.now() - hit.at < SEARCH_TTL_MS) return hit.results;
-
-  const p = provider();
-  if (!p.search) return [];
   let results: AddressSuggestion[];
-  try {
-    results = await p.search(q, near ?? null);
-  } catch (err) {
-    // An outage means "no suggestions right now", not "no such address" —
-    // so it isn't cached, and the caller falls back to letting them drop
-    // a pin instead.
-    console.warn('[alto-people/api] address search failed:', (err as Error).message);
-    return [];
+  if (hit && Date.now() - hit.at < SEARCH_TTL_MS) {
+    results = hit.results;
+  } else {
+    const p = provider();
+    if (!p.search) return [];
+    try {
+      results = await p.search(q, near ?? null);
+    } catch (err) {
+      // An outage means "no suggestions right now", not "no such address" —
+      // so it isn't cached, and the caller falls back to letting them drop
+      // a pin instead.
+      console.warn('[alto-people/api] address search failed:', (err as Error).message);
+      return [];
+    }
+    if (searchCache.size >= SEARCH_CACHE_MAX) {
+      // Oldest insertion first — Map preserves it, and this runs rarely.
+      const oldest = searchCache.keys().next().value;
+      if (oldest !== undefined) searchCache.delete(oldest);
+    }
+    searchCache.set(key, { at: Date.now(), results });
   }
-  if (searchCache.size >= SEARCH_CACHE_MAX) {
-    // Oldest insertion first — Map preserves it, and this runs rarely.
-    const oldest = searchCache.keys().next().value;
-    if (oldest !== undefined) searchCache.delete(oldest);
-  }
-  searchCache.set(key, { at: Date.now(), results });
-  return results;
+  return unit ? results.map((r) => withUnit(r, unit)) : results;
 }
 
 /** Coordinates for an address — cached; null when unknown or lookups are off. */

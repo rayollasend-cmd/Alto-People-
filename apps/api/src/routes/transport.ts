@@ -283,6 +283,25 @@ async function pointFor(address: string, lat?: number, lng?: number) {
   return lat !== undefined && lng !== undefined ? { lat, lng } : await geocode(address);
 }
 
+/** Where a store is, by id — null when it can't be placed. */
+async function storePointById(locationId: string): Promise<GeoPoint | null> {
+  const loc = await prisma.location.findUnique({
+    where: { id: locationId },
+    select: {
+      addressLine1: true, city: true, state: true, zip: true,
+      latitude: true, longitude: true,
+    },
+  });
+  return loc ? storePoint(loc) : null;
+}
+
+/**
+ * Close enough to the store to be the store. A supercenter's building and
+ * lot run a couple of hundred metres across, and a phone indoors is off by
+ * tens more — and nobody who lives this close is waiting on a van.
+ */
+const AT_STORE_M = 250;
+
 transportRouter.post('/me/places', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const input = PlaceInput.parse(req.body);
@@ -316,24 +335,34 @@ transportRouter.get('/me/ride-addresses', RIDE, async (req, res) => {
     })
     .parse(req.query);
 
-  let near: GeoPoint | null = null;
-  if (q.locationId) {
-    const loc = await prisma.location.findUnique({
-      where: { id: q.locationId },
-      select: {
-        addressLine1: true, city: true, state: true, zip: true,
-        latitude: true, longitude: true,
-      },
-    });
-    if (loc) near = await storePoint(loc);
-  }
+  const near = q.locationId ? await storePointById(q.locationId) : null;
   res.json({ results: await searchAddresses(q.q, near) });
 });
 
-/** "Use where I am now": the street address of the phone's position. */
+/**
+ * "Use where I am now": the street address of the phone's position.
+ *
+ * Riders book from work — on a break, or because a supervisor said to —
+ * so "where I am" is very often the store they are booking a ride TO. It
+ * used to be taken as the pickup without a word, and the rider saw the
+ * store's own address come back as their home. With the store in hand it
+ * says so instead, and skips the lookup it would only have to discard.
+ */
 transportRouter.get('/me/where', RIDE, async (req, res) => {
-  const q = z.object({ lat: z.coerce.number().min(-90).max(90), lng: z.coerce.number().min(-180).max(180) }).parse(req.query);
-  res.json({ address: await reverseGeocode({ lat: q.lat, lng: q.lng }) });
+  const q = z
+    .object({
+      lat: z.coerce.number().min(-90).max(90),
+      lng: z.coerce.number().min(-180).max(180),
+      locationId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+  const here = { lat: q.lat, lng: q.lng };
+  const store = q.locationId ? await storePointById(q.locationId) : null;
+  if (store && haversineM(here, store) < AT_STORE_M) {
+    res.json({ address: null, atStore: true });
+    return;
+  }
+  res.json({ address: await reverseGeocode(here), atStore: false });
 });
 
 transportRouter.delete('/me/places/:id', RIDE, async (req, res) => {
@@ -402,12 +431,14 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   }
   // The home end: a housing complex / stop, a saved address, or a one-off.
   let stopId: string | null = null;
+  let stopAt: GeoPoint | null = null;
   let address: string | null = null;
   let at: { lat: number; lng: number } | null = null;
   if (input.stopId) {
     const stop = await prisma.transportStop.findFirst({ where: { id: input.stopId, isActive: true } });
     if (!stop) throw new HttpError(400, 'stop_not_found', 'That pickup stop is not available.');
     stopId = stop.id;
+    stopAt = stop.lat !== null && stop.lng !== null ? { lat: Number(stop.lat), lng: Number(stop.lng) } : null;
   } else if (input.placeId) {
     const place = await prisma.ridePlace.findFirst({ where: { id: input.placeId, associateId } });
     if (!place) throw new HttpError(400, 'place_not_found', 'That saved address is gone.');
@@ -430,6 +461,29 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
       422,
       'pickup_not_located',
       'We could not place that address on the map. Pick one of the suggestions, use your current location, or drop a pin so the driver knows where to stop.',
+    );
+  }
+  // A ride from the store to the same store is never what anyone meant.
+  // It is what "use where I am now" produced when tapped at work — and a
+  // "Home" saved that way carries the store's point into every booking
+  // after it. Caught here too, whichever way it arrived.
+  //
+  // Judged only against the store's own coordinates (its clock-in
+  // geofence). A looked-up store address can land mid-road, and a refusal
+  // built on that would leave someone who lives nearby no way to book.
+  const home = at ?? stopAt;
+  const fence = home
+    ? await prisma.location.findUnique({ where: { id: store.id }, select: { latitude: true, longitude: true } })
+    : null;
+  const storeAt =
+    fence?.latitude != null && fence.longitude != null
+      ? { lat: Number(fence.latitude), lng: Number(fence.longitude) }
+      : null;
+  if (home && storeAt && haversineM(home, storeAt) < AT_STORE_M) {
+    throw new HttpError(
+      422,
+      'pickup_at_store',
+      `That pickup is ${store.name} itself. Search the address where you live, so the van comes to you.`,
     );
   }
   const clash = await prisma.ride.findFirst({

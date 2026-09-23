@@ -279,7 +279,14 @@ export function PickupPicker({
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         try {
-          const { address } = await whereAmI({ lat, lng });
+          const { address, atStore } = await whereAmI({ lat, lng }, locationId);
+          // They're at work, which is where most people book from. Taking
+          // this would book a van from the store to the store — and it is
+          // what riders reported as "it keeps giving me Walmart's address".
+          if (atStore) {
+            setNote(t('ride.locateAtStore'));
+            return;
+          }
           // Always 'exact': this point came from the phone's GPS, which is
           // a better fix than any geocoder will give us, so there is
           // nothing for the pin step to improve. A missing street name

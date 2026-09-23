@@ -113,7 +113,7 @@ describe('picking a pickup', () => {
   });
 
   it('keeps the phone’s own fix even when the address lookup comes back empty', async () => {
-    vi.mocked(whereAmI).mockResolvedValue({ address: null });
+    vi.mocked(whereAmI).mockResolvedValue({ address: null, atStore: false });
     // Spreading `navigator` drops its prototype methods, so define the one
     // property instead of replacing the whole object.
     Object.defineProperty(window.navigator, 'geolocation', {
@@ -131,6 +131,28 @@ describe('picking a pickup', () => {
         expect.objectContaining({ kind: 'address', lat: 30.1, lng: -85.8 }),
       ),
     );
+  });
+
+  it('will not take the store as home when they tap it at work', async () => {
+    // Riders book from work, and "where I am" was the store — the van
+    // would have been sent from the store to the store. Reported as "it's
+    // giving me Walmart's address".
+    vi.mocked(whereAmI).mockResolvedValue({ address: null, atStore: true });
+    Object.defineProperty(window.navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (ok: PositionCallback) =>
+          ok({ coords: { latitude: 30.39, longitude: -86.41 } } as GeolocationPosition),
+      },
+    });
+    const onChange = setup();
+    await userEvent.click(screen.getByRole('button', { name: /Use where I am now/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at the store right now/);
+    // Asked about the store being booked, so the server can tell.
+    expect(whereAmI).toHaveBeenCalledWith({ lat: 30.39, lng: -86.41 }, 'l1');
+    expect(onChange).not.toHaveBeenCalled();
+    // And they can still search instead.
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
   });
 
   it('shows what was chosen, and lets them change it', async () => {

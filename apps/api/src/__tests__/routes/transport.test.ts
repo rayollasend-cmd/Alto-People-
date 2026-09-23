@@ -141,6 +141,92 @@ describe('picking a pickup, not typing one', () => {
     // one-per-second budget on noise.
     expect((await kimAgent.get('/transport/me/ride-addresses?q=720')).body.results).toEqual([]);
   });
+
+  it('looks up the building, not the apartment, and keeps the apartment on the address', async () => {
+    const { kimAgent, store } = await seed();
+    const seen: string[] = [];
+    setGeocoderForTests(null, null, async (q) => {
+      seen.push(q);
+      return [
+        { label: '382 Flamingo Drive', address: '382 Flamingo Drive, Destin, Florida 32541', lat: 30.4012, lng: -86.5003, precision: 'exact' as const },
+      ];
+    });
+
+    const res = await kimAgent.get(
+      `/transport/me/ride-addresses?q=${encodeURIComponent('382 Flamingo Dr #2')}&locationId=${store.id}`,
+    );
+    // Nominatim reads "#2" as house number 2 — a different house.
+    expect(seen).toEqual(['382 Flamingo Dr']);
+    // The driver still needs to know which door.
+    expect(res.body.results[0]).toMatchObject({
+      label: '382 Flamingo Drive #2',
+      address: '382 Flamingo Drive #2, Destin, Florida 32541',
+    });
+  });
+
+  // Riders book from work. "Use where I am now" there is the store they
+  // are booking a ride TO, and it was taken as home without a word —
+  // reported as "it keeps giving me Walmart's address".
+  it('says when "where I am" is the store itself, rather than calling it home', async () => {
+    const { kimAgent, store } = await seed();
+    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    let reversed = 0;
+    setGeocoderForTests(null, async () => {
+      reversed += 1;
+      return '382 Flamingo Drive, Destin, Florida 32541';
+    });
+
+    const atWork = await kimAgent.get(`/transport/me/where?lat=30.3928&lng=-86.4131&locationId=${store.id}`);
+    expect(atWork.body).toEqual({ address: null, atStore: true });
+    expect(reversed).toBe(0);
+
+    const atHome = await kimAgent.get(`/transport/me/where?lat=30.4012&lng=-86.5003&locationId=${store.id}`);
+    expect(atHome.body).toEqual({ address: '382 Flamingo Drive, Destin, Florida 32541', atStore: false });
+  });
+
+  it('refuses a pickup at the store being booked to, whichever way it arrived', async () => {
+    const { kimAgent, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    const ride = { direction: 'TO_WORK', locationId: store.id, targetAt: inHours(20).toISOString() };
+
+    const fromGps = await book(kimAgent, { ...ride, address: '15017 Emerald Coast Pkwy, Destin, FL', lat: 30.3926, lng: -86.4127 });
+    expect(fromGps.status).toBe(422);
+    expect(fromGps.body.error.code).toBe('pickup_at_store');
+    expect(fromGps.body.error.message).toMatch(/where you live/);
+
+    // A "Home" saved from the phone's fix at work would carry the store's
+    // point into every booking after it.
+    const saved = await kimAgent
+      .post('/transport/me/places')
+      .send({ label: 'Home', address: '15017 Emerald Coast Pkwy, Destin, FL', lat: 30.3927, lng: -86.413 });
+    expect((await book(kimAgent, { ...ride, placeId: saved.body.place.id })).body.error.code).toBe('pickup_at_store');
+    expect(await prisma.ride.count()).toBe(0);
+
+    // Home, eight kilometres off, books as it always did.
+    const home = await book(kimAgent, { ...ride, address: '382 Flamingo Drive, Destin, FL', lat: 30.4012, lng: -86.5003 });
+    expect(home.status).toBe(201);
+  });
+
+  it('never refuses on a store point that was only looked up — it can land mid-road', async () => {
+    const { kimAgent, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    // An address and no geofence: the store's point is the geocoder's
+    // guess, which this test's geocoder puts right on the rider's door.
+    await prisma.location.update({
+      where: { id: store.id },
+      data: { addressLine1: '15017 Emerald Coast Pkwy', city: 'Destin', state: 'FL', zip: '32541' },
+    });
+    const res = await book(kimAgent, {
+      direction: 'TO_WORK',
+      locationId: store.id,
+      address: '14 Calhoun Ave, Destin, FL',
+      lat: 30.39,
+      lng: -86.49,
+      targetAt: inHours(20).toISOString(),
+    });
+    expect(res.status).toBe(201);
+  });
 });
 
 describe('the Ride tab — booking a seat', () => {

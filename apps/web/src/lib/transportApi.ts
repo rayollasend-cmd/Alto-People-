@@ -245,9 +245,12 @@ export const searchRideAddresses = (q: string, locationId?: string | null) =>
     `/transport/me/ride-addresses?q=${encodeURIComponent(q)}${locationId ? `&locationId=${locationId}` : ''}`,
   );
 
-/** The street address of the phone's position ("Use where I am now"). */
-export const whereAmI = (p: GeoPoint) =>
-  apiFetch<{ address: string | null }>(`/transport/me/where?lat=${p.lat}&lng=${p.lng}`);
+/** The street address of the phone's position ("Use where I am now") —
+ *  or `atStore` when the phone is standing at the store being booked to. */
+export const whereAmI = (p: GeoPoint, locationId?: string | null) =>
+  apiFetch<{ address: string | null; atStore: boolean }>(
+    `/transport/me/where?lat=${p.lat}&lng=${p.lng}${locationId ? `&locationId=${locationId}` : ''}`,
+  );
 
 /* ----- The vans live -------------------------------------------------------- */
 
