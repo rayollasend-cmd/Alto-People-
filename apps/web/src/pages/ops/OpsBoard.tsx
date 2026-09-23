@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { AsOf } from '@/components/ui/AsOf';
 import {
   Activity,
   AlertTriangle,
@@ -43,7 +45,6 @@ import {
   getOpsScorecard,
   getOpsStores,
   metricLabel,
-  type OpsShiftHeader,
 } from '@/lib/opsApi';
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
 import { OpsHistory } from './OpsHistory';
@@ -98,8 +99,6 @@ const PERIOD_LABEL: Record<string, string> = {
   CLOSING: 'Closing',
   OVERNIGHT: 'Overnight',
 };
-
-type BoardShift = OpsShiftHeader & { clientName: string; openedByEmail: string };
 
 /** SVG completion ring — the tile's heartbeat. */
 function ProgressRing({ pct, alert }: { pct: number; alert: boolean }) {
@@ -285,24 +284,6 @@ function OpsFilterBar({
 }
 
 export function OpsBoard() {
-  const [board, setBoard] = useState<{
-    dateKey: string;
-    generatedAt: string;
-    active: BoardShift[];
-    closedToday: BoardShift[];
-  } | null>(null);
-  const [feed, setFeed] = useState<Awaited<ReturnType<typeof getOpsFeed>> | null>(null);
-  const [insights, setInsights] = useState<Awaited<
-    ReturnType<typeof getOpsInsights>
-  > | null>(null);
-  const [scorecard, setScorecard] = useState<Awaited<
-    ReturnType<typeof getOpsScorecard>
-  > | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [stores, setStores] = useState<Awaited<ReturnType<typeof getOpsStores>> | null>(null);
-  // A feed that failed and a floor that is quiet used to render the same
-  // sentence. They are different facts.
-  const [feedFailed, setFeedFailed] = useState(false);
   // The record drill-in: which shift's full evidence is open.
   const [recordId, setRecordId] = useState<string | null>(null);
 
@@ -365,66 +346,64 @@ export function OpsBoard() {
     setSearchParams(params, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      getOpsBoard({ locationId: storeId, period, department })
-        .then((b) => {
-          if (cancelled) return;
-          setBoard(b);
-          // A banner that never clears is how this board used to behave:
-          // one failed poll and it stayed up while the next nine
-          // succeeded behind it.
-          setError(null);
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setError(err instanceof ApiError ? err.message : 'Could not load the board.');
-          }
-        });
-      getOpsFeed({ locationId: storeId, period, department })
-        .then((f) => {
-          if (cancelled) return;
-          setFeed(f);
-          setFeedFailed(false);
-        })
-        .catch(() => {
-          if (!cancelled) setFeedFailed(true);
-        });
-      // The charts used to read every store regardless of the filter —
-      // so picking Destin left them showing the whole estate.
-      getOpsInsights({ locationId: storeId, period, department })
-        .then((ins) => {
-          if (!cancelled) setInsights(ins);
-        })
-        .catch(() => {});
-    };
-    if (historyMode) return () => undefined;
-    load();
-    const timer = setInterval(load, 30_000);
-    getOpsScorecard(4, 'worst', { locationId: storeId, period, department })
-      .then((s) => {
-        if (!cancelled) setScorecard(s);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [storeId, period, department, historyMode]);
+  // Five reads, one query layer. What the hand-rolled effect cluster used
+  // to do by hand — a 30-second poll, a cancelled flag per request, a
+  // banner that had to remember to clear itself, the previous answer kept
+  // on screen while a filter change loaded — the query layer does by
+  // default, and adds what it never did: the same answer shared with any
+  // other surface asking, a retry on a failed poll, and the time the
+  // numbers were last true.
+  const scope = { locationId: storeId, period, department };
+  const live = !historyMode;
+  const boardQuery = useQuery({
+    queryKey: ['ops', 'board', scope],
+    queryFn: () => getOpsBoard(scope),
+    enabled: live,
+    refetchInterval: live ? 30_000 : false,
+    placeholderData: (prev) => prev,
+  });
+  const feedQuery = useQuery({
+    queryKey: ['ops', 'feed', scope],
+    queryFn: () => getOpsFeed(scope),
+    enabled: live,
+    refetchInterval: live ? 30_000 : false,
+    placeholderData: (prev) => prev,
+  });
+  // The charts used to read every store regardless of the filter — so
+  // picking Destin left them showing the whole estate.
+  const insightsQuery = useQuery({
+    queryKey: ['ops', 'insights', scope],
+    queryFn: () => getOpsInsights(scope),
+    enabled: live,
+    refetchInterval: live ? 30_000 : false,
+    placeholderData: (prev) => prev,
+  });
+  const scorecardQuery = useQuery({
+    queryKey: ['ops', 'scorecard', 4, 'worst', scope],
+    queryFn: () => getOpsScorecard(4, 'worst', scope),
+    enabled: live,
+    placeholderData: (prev) => prev,
+  });
+  // The store list is stable; one read serves the picker for the session.
+  const storesQuery = useQuery({
+    queryKey: ['ops', 'stores'],
+    queryFn: getOpsStores,
+    staleTime: 10 * 60_000,
+  });
 
-  // The store list is stable; fetch it once for the picker.
-  useEffect(() => {
-    let cancelled = false;
-    getOpsStores()
-      .then((r) => {
-        if (!cancelled) setStores(r);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const board = boardQuery.data ?? null;
+  const feed = feedQuery.data ?? null;
+  const insights = insightsQuery.data ?? null;
+  const scorecard = scorecardQuery.data ?? null;
+  const stores = storesQuery.data ?? null;
+  const error = boardQuery.error
+    ? boardQuery.error instanceof ApiError
+      ? boardQuery.error.message
+      : 'Could not load the board.'
+    : null;
+  // A feed that failed and a floor that is quiet used to render the same
+  // sentence. They are different facts.
+  const feedFailed = feedQuery.isError;
 
   const headline = useMemo(() => {
     if (!board) return null;
@@ -528,7 +507,7 @@ export function OpsBoard() {
         {filterBar}
         <ErrorBanner
           action={
-            <Button size="sm" variant="outline" onClick={() => setError(null)}>
+            <Button size="sm" variant="outline" onClick={() => void boardQuery.refetch()}>
               Try again
             </Button>
           }
@@ -569,6 +548,18 @@ export function OpsBoard() {
               <span className="text-2xs uppercase tracking-[0.2em] text-gold">
                 Floor command · {board.dateKey}
               </span>
+              {/* When these numbers were last true, and a way to ask again
+                  without waiting for the next poll. */}
+              <AsOf
+                at={boardQuery.dataUpdatedAt}
+                refreshing={boardQuery.isFetching}
+                onRefresh={() => {
+                  void boardQuery.refetch();
+                  void feedQuery.refetch();
+                  void insightsQuery.refetch();
+                }}
+                className="ml-2"
+              />
             </div>
             <div className="mt-1 text-xl font-medium text-white">
               {headline.live > 0

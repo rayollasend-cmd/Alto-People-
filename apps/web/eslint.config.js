@@ -61,6 +61,17 @@ export default [
             'Use fmtDate()/fmtDateTime() from @/lib/format so dates render identically across the app.',
         },
         {
+          // A loader called from inside useEffect is a hand-rolled fetch:
+          // no cache, no dedupe, no background refresh, no retry, no
+          // offline persistence, and a blank screen on every Back. 103
+          // pages did this when the rule was added; the number only goes
+          // down from here.
+          selector:
+            "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load)[A-Z]/]",
+          message:
+            'Fetch with useQuery (@tanstack/react-query) rather than a loader inside useEffect — the query layer gives caching, dedupe, background refresh, retry and offline persistence for free.',
+        },
+        {
           selector:
             "CallExpression[callee.property.name='toLocaleTimeString']",
           message: 'Use fmtTime() from @/lib/format.',

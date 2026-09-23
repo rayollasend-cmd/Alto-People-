@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Download, History as HistoryIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -55,35 +55,26 @@ export function OpsHistory({
   query: OpsHistoryQuery;
   onOpenRecord: (shiftId: string) => void;
 }) {
-  const [data, setData] = useState<Awaited<ReturnType<typeof getOpsHistory>> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [reloadAt, setReloadAt] = useState(0);
-
-  const key = JSON.stringify(query);
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getOpsHistory(JSON.parse(key) as OpsHistoryQuery)
-      .then((d) => {
-        if (cancelled) return;
-        setData(d);
-        // Clearing on success matters: a stuck banner over a working
-        // board is how the old one behaved, and only a reload cleared it.
-        setError(null);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Could not load the record.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [key, reloadAt]);
+  // The query layer, not a hand-rolled effect: the same range asked for
+  // twice is fetched once, Back restores the answer instantly, a failed
+  // poll retries, and the banner clears itself on the next success —
+  // which the old effect had to remember to do by hand.
+  const {
+    data,
+    error: queryError,
+    isPending,
+    refetch,
+  } = useQuery({
+    queryKey: ['ops', 'history', query],
+    queryFn: () => getOpsHistory(query),
+    placeholderData: (prev) => prev,
+  });
+  const loading = isPending;
+  const error = queryError
+    ? queryError instanceof ApiError
+      ? queryError.message
+      : 'Could not load the record.'
+    : null;
 
   const columns: GridColumn<OpsShiftRow>[] = [
     {
@@ -276,7 +267,7 @@ export function OpsHistory({
           rowKey={(s) => s.id}
           loading={loading}
           error={error}
-          onRetry={() => setReloadAt(Date.now())}
+          onRetry={() => void refetch()}
           search={{ placeholder: 'Store, department, supervisor, closing note…' }}
           urlState={false}
           exportCsv={{ filename: 'store-ops-shifts' }}

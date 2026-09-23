@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@/lib/api', async (orig) => ({
@@ -87,7 +88,11 @@ function renderHistory() {
     throw new Error(`unexpected ${path}`);
   });
   const onOpen = vi.fn();
-  render(<OpsHistory query={{ from: '2026-09-14', to: '2026-09-20' }} onOpenRecord={onOpen} />);
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <OpsHistory query={{ from: '2026-09-14', to: '2026-09-20' }} onOpenRecord={onOpen} />
+    </QueryClientProvider>,
+  );
   return onOpen;
 }
 
