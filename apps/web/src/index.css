@@ -269,6 +269,12 @@
  * ------------------------------------------------------------------------- */
 :root[data-theme='light'] .text-white { color: rgb(var(--color-fg)); }
 :root[data-theme='light'] .hover\:text-white:hover { color: rgb(var(--color-fg)); }
+/* Every menu row's highlight is focus:text-white — and on a phone a tapped
+   row is a focused one. Unmapped, a highlighted row went literal white on
+   the light-gray highlight: "Switch role" all but vanished the moment it
+   was tapped. active: is the same miss for pressed text links. */
+:root[data-theme='light'] .focus\:text-white:focus { color: rgb(var(--color-fg)); }
+:root[data-theme='light'] .active\:text-white:active { color: rgb(var(--color-fg)); }
 :root[data-theme='light'] .placeholder\:text-white::placeholder { color: rgb(var(--color-fg)); }
 :root[data-theme='light'] .bg-white { background-color: rgb(var(--color-navy)); }
 :root[data-theme='light'] .border-white { border-color: rgb(var(--color-navy-secondary)); }
