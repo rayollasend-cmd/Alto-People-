@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { FileText, Lock, ReceiptText } from 'lucide-react';
 import { toast } from 'sonner';
@@ -69,52 +70,43 @@ export function ClientStatementsRollup() {
   const { can } = useAuth();
   const canFinalize = can('process:payroll');
 
-  const [rows, setRows] = useState<RollupRow[] | null>(null);
-  const [loadFailures, setLoadFailures] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('ALL');
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [payTarget, setPayTarget] = useState<RollupRow | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
+  // One query does the fan-out. No cross-client statements endpoint
+  // exists, so the per-client lists are fetched and settled together; a
+  // broken client is reported by name rather than blanking the close.
+  const rollupQuery = useQuery({
+    queryKey: ['clients', 'statements', 'rollup'],
+    queryFn: async () => {
       const clients = (await listClients()).clients;
-      // No cross-client statements endpoint exists — fan out the per-client
-      // list and settle; one broken client must not blank the whole close.
-      const settled = await Promise.allSettled(
-        clients.map((c) => listClientStatements(c.id)),
-      );
+      const settled = await Promise.allSettled(clients.map((c) => listClientStatements(c.id)));
       const collected: RollupRow[] = [];
       const failures: string[] = [];
       settled.forEach((r, i) => {
         if (r.status === 'fulfilled') {
           const recent = [...r.value.statements]
-            .sort((a, b) => b.periodStart.localeCompare(a.periodStart))
+            .sort((x, y) => y.periodStart.localeCompare(x.periodStart))
             .slice(0, PERIODS_PER_CLIENT);
-          for (const s of recent) {
-            collected.push({ ...s, clientName: clients[i].name });
-          }
+          for (const st of recent) collected.push({ ...st, clientName: clients[i].name });
         } else {
           failures.push(clients[i].name);
         }
       });
-      collected.sort(
-        (a, b) =>
-          b.periodStart.localeCompare(a.periodStart) ||
-          a.clientName.localeCompare(b.clientName),
-      );
-      setRows(collected);
-      setLoadFailures(failures);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load statements.');
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      collected.sort((x, y) => y.periodStart.localeCompare(x.periodStart) || x.clientName.localeCompare(y.clientName));
+      return { rows: collected, failures };
+    },
+  });
+  const rows = rollupQuery.data?.rows ?? null;
+  const loadFailures = rollupQuery.data?.failures ?? [];
+  const error = rollupQuery.error
+    ? rollupQuery.error instanceof ApiError
+      ? rollupQuery.error.message
+      : 'Could not load statements.'
+    : null;
+  const load = () => rollupQuery.refetch();
 
   const visible = useMemo(() => {
     if (!rows) return null;

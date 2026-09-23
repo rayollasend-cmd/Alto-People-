@@ -31,14 +31,9 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { fmtDateTime } from '@/lib/format';
@@ -150,56 +145,45 @@ export function TemplatesHome() {
               description="Define offer letters, policies, NDAs, and warnings with mail-merge tokens."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead>Current version</TableHead>
-                  <TableHead className="hidden lg:table-cell">Versions</TableHead>
-                  <TableHead className="hidden lg:table-cell">Renders</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((t) => (
-                  <TableRow
-                    key={t.id}
-                    className="group cursor-pointer"
-                    onClick={() => setActive(t)}
-                  >
-                    <TableCell className="font-medium text-white">
-                      {t.name}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                        {KIND_LABEL[t.kind]} · {t.versionCount} version{t.versionCount === 1 ? '' : 's'}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{KIND_LABEL[t.kind]}</TableCell>
-                    <TableCell>
-                      {t.currentVersion ? (
-                        <Badge variant="success">v{t.currentVersion}</Badge>
-                      ) : (
-                        <Badge variant="default">Draft only</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">{t.versionCount}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{t.renderCount}</TableCell>
-                    <TableCell className="text-right">
-                      <button
-                        data-no-row-click
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(t.id);
-                        }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                      >
-                        Delete
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof rows)[number]>
+              id="templates"
+              caption="Document templates"
+              rows={rows}
+              rowKey={(t) => t.id}
+              search={{ placeholder: 'Name, kind…' }}
+              urlState={false}
+              exportCsv={{ filename: 'templates' }}
+              onRowClick={(t) => setActive(t)}
+              rowActionLabel={(t) => `Open template ${t.name}`}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (t) => t.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'kind', header: 'Kind', accessor: (t) => KIND_LABEL[t.kind], sortable: true, cardMeta: true },
+                {
+                  key: 'current',
+                  header: 'Current version',
+                  accessor: (t) => t.currentVersion,
+                  sortable: true,
+                  searchable: false,
+                  cell: (t) => (t.currentVersion ? <Badge variant="success">v{t.currentVersion}</Badge> : <Badge variant="default">Draft only</Badge>),
+                },
+                { key: 'versions', header: 'Versions', accessor: (t) => t.versionCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'renders', header: 'Renders', accessor: (t) => t.renderCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (t) => (
+                    <Button size="xs" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(t.id)}>
+                      Delete
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -532,45 +516,50 @@ function TemplateDrawer({
                 No versions yet. Save the body above to create v1.
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Published</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {versions.map((v) => (
-                    <TableRow key={v.id}>
-                      <TableCell>
-                        v{v.version}
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {fmtDateTime(v.publishedAt)}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {v.publishedAt ? (
-                          <Badge variant="success">Published</Badge>
-                        ) : (
-                          <Badge variant="default">Draft</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {fmtDateTime(v.publishedAt)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!v.publishedAt && (
-                          <Button size="sm" onClick={() => onPublish(v)}>
-                            Publish
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<(typeof versions)[number]>
+                id="template-versions"
+                caption="Template versions"
+                rows={versions}
+                rowKey={(v) => v.id}
+                search={false}
+                urlState={false}
+                exportCsv={false}
+                columnChooser={false}
+                columns={[
+                  { key: 'version', header: 'Version', accessor: (v) => v.version, sortable: true, primary: true, cell: (v) => `v${v.version}` },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (v) => (v.publishedAt ? 'Published' : 'Draft'),
+                    sortable: true,
+                    cell: (v) => (v.publishedAt ? <Badge variant="success">Published</Badge> : <Badge variant="default">Draft</Badge>),
+                  },
+                  {
+                    key: 'published',
+                    header: 'Published',
+                    accessor: (v) => v.publishedAt,
+                    sortable: true,
+                    searchable: false,
+                    cardMeta: true,
+                    cell: (v) => fmtDateTime(v.publishedAt),
+                  },
+                  {
+                    key: 'action',
+                    header: 'Action',
+                    accessor: () => null,
+                    searchable: false,
+                    csv: () => '',
+                    align: 'right',
+                    stopRowClick: true,
+                    cell: (v) =>
+                      !v.publishedAt ? (
+                        <Button size="sm" onClick={() => onPublish(v)}>
+                          Publish
+                        </Button>
+                      ) : null,
+                  },
+                ]}
+              />
             )}
           </CardContent>
         </Card>

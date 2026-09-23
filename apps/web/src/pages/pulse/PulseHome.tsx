@@ -43,18 +43,13 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 
 /**
@@ -385,77 +380,56 @@ function AdminPulseTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Question</TableHead>
-                  <TableHead className="hidden lg:table-cell">Scale</TableHead>
-                  <TableHead className="hidden md:table-cell">Audience</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Closes</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right">Responses</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((s) => (
-                  <TableRow key={s.id} className="group">
-                    <TableCell className="font-medium text-white max-w-md">
-                      <div className="truncate">{s.question}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {s.audienceLabel ?? '—'}
-                        <span className="sm:hidden tabular-nums">
-                          {' · '}
-                          {s.responseCount} responses
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">{s.scale === 'SCORE_1_5' ? '1-5' : 'Yes/No'}</TableCell>
-                    <TableCell className="text-xs hidden md:table-cell">{s.audienceLabel ?? '—'}</TableCell>
-                    <TableCell>
-                      <Badge variant={s.isOpen ? 'success' : 'default'}>
-                        {s.isOpen ? 'Open' : 'Closed'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-silver">
-                      {fmtDateTime(s.openUntil)}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
-                      {s.responseCount}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setResultsFor(s)}
-                      >
+            <DataGrid<(typeof filtered)[number]>
+              id="pulse"
+              caption="Pulse surveys"
+              rows={filtered}
+              rowKey={(s) => s.id}
+              search={{ placeholder: 'Question, audience…' }}
+              urlState={false}
+              exportCsv={{ filename: 'pulse-surveys' }}
+              columns={[
+                { key: 'question', header: 'Question', accessor: (s) => s.question, sortable: true, primary: true, className: 'font-medium text-white max-w-md', cell: (s) => <div className="truncate">{s.question}</div> },
+                { key: 'scale', header: 'Scale', accessor: (s) => (s.scale === 'SCORE_1_5' ? '1-5' : 'Yes/No'), sortable: true, searchable: false, defaultHidden: true },
+                { key: 'audience', header: 'Audience', accessor: (s) => s.audienceLabel, sortable: true, cardMeta: true, className: 'text-xs', cell: (s) => s.audienceLabel ?? '—' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (s) => (s.isOpen ? 'Open' : 'Closed'),
+                  sortable: true,
+                  cell: (s) => <Badge variant={s.isOpen ? 'success' : 'default'}>{s.isOpen ? 'Open' : 'Closed'}</Badge>,
+                },
+                { key: 'closes', header: 'Closes', accessor: (s) => s.openUntil, sortable: true, searchable: false, className: 'text-xs text-silver whitespace-nowrap', cell: (s) => fmtDateTime(s.openUntil) },
+                { key: 'responses', header: 'Responses', accessor: (s) => s.responseCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'whitespace-nowrap space-x-2',
+                  cell: (s) => (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={() => setResultsFor(s)}>
                         <BarChart3 className="mr-1 h-3 w-3" /> Results
                       </Button>
                       {canManage && s.isOpen && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={closingId === s.id}
-                          onClick={() => void closeNow(s)}
-                        >
+                        <Button size="sm" variant="ghost" disabled={closingId === s.id} onClick={() => void closeNow(s)}>
                           Close now
                         </Button>
                       )}
                       {canManage && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDeleteTarget(s)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 hover:text-alert"
-                        >
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(s)} className="hover:text-alert">
                           Delete
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

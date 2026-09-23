@@ -39,14 +39,9 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { ymdLocal } from '@/lib/format';
@@ -332,67 +327,70 @@ export function SuccessionHome() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Position</TableHead>
-                  <TableHead className="hidden md:table-cell">Department</TableHead>
-                  <TableHead className="hidden md:table-cell">Incumbent</TableHead>
-                  <TableHead>Successors</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((p) => (
-                  <TableRow
-                    key={p.id}
-                    className="group cursor-pointer"
-                    onClick={() => setOpenId(p.id)}
-                  >
-                    <TableCell>
+            <DataGrid<(typeof filtered)[number]>
+              id="succession"
+              caption="Succession plans"
+              rows={filtered}
+              rowKey={(p) => p.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'succession' }}
+              onRowClick={(p) => setOpenId(p.id)}
+              rowActionLabel={(p) => `Manage successors for ${p.title}`}
+              columns={[
+                {
+                  key: 'position',
+                  header: 'Position',
+                  accessor: (p) => p.title,
+                  sortable: true,
+                  primary: true,
+                  cell: (p) => (
+                    <>
                       <div className="font-medium text-white">{p.title}</div>
                       <div className="text-xs text-silver font-mono">{p.code}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {p.departmentName ?? '—'} · {p.incumbent ? p.incumbent.name : 'Vacant'}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-silver hidden md:table-cell">
-                      {p.departmentName ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-sm hidden md:table-cell">
-                      {p.incumbent ? (
-                        <AssociateLink associateId={p.incumbent.id}>
-                          {p.incumbent.name}
-                        </AssociateLink>
-                      ) : (
-                        <span className="text-silver">Vacant</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {p.successorCount === 0 ? (
-                        <Badge variant="outline">None</Badge>
-                      ) : (
-                        <Badge variant="success">
-                          {p.successorCount} named
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenId(p.id);
-                        }}
-                      >
-                        Manage
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+                { key: 'department', header: 'Department', accessor: (p) => p.departmentName, sortable: true, cardMeta: true, className: 'text-sm text-silver', cell: (p) => p.departmentName ?? '—' },
+                {
+                  key: 'incumbent',
+                  header: 'Incumbent',
+                  accessor: (p) => p.incumbent?.name ?? 'Vacant',
+                  sortable: true,
+                  cardMeta: true,
+                  className: 'text-sm',
+                  cell: (p) =>
+                    p.incumbent ? (
+                      <AssociateLink associateId={p.incumbent.id}>{p.incumbent.name}</AssociateLink>
+                    ) : (
+                      <span className="text-silver">Vacant</span>
+                    ),
+                },
+                {
+                  key: 'successors',
+                  header: 'Successors',
+                  accessor: (p) => p.successorCount,
+                  sortable: true,
+                  searchable: false,
+                  cell: (p) =>
+                    p.successorCount === 0 ? <Badge variant="outline">None</Badge> : <Badge variant="success">{p.successorCount} named</Badge>,
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (p) => (
+                    <Button size="sm" variant="ghost" onClick={() => setOpenId(p.id)}>
+                      Manage
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

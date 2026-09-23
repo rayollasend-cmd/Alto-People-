@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Lock, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -132,8 +133,6 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   // week — the endpoint's own default.
   const reportWeeks = useMemo(serviceReportWeekOptions, []);
   const [reportWeek, setReportWeek] = useState(reportWeeks[0].value);
-  const [rows, setRows] = useState<ClientStatement[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<ClientStatement | null>(null);
@@ -143,20 +142,20 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const canFinalize = can('process:payroll');
   const canBill = canFinalize || can('view:executive');
 
-  const load = async () => {
-    setError(null);
-    try {
-      setRows((await listClientStatements(clientId)).statements);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load statements.');
-    }
-  };
-  useEffect(() => {
-    if (!canBill) return;
-    setRows(null);
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, canBill]);
+  // Keyed by client, so switching clients is a different cache entry (the
+  // old effect reset rows by hand) and Back to a client is instant.
+  const statementsQuery = useQuery({
+    queryKey: ['clients', clientId, 'statements'],
+    queryFn: () => listClientStatements(clientId),
+    enabled: canBill,
+  });
+  const rows = statementsQuery.data?.statements ?? null;
+  const error = statementsQuery.error
+    ? statementsQuery.error instanceof ApiError
+      ? statementsQuery.error.message
+      : 'Could not load statements.'
+    : null;
+  const load = () => statementsQuery.refetch();
 
   if (!canBill) return null;
 
