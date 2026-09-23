@@ -105,8 +105,10 @@ describe('every page route, hard-loaded by a browser', () => {
     // If this ever drops to a handful, the regex stopped matching and
     // every assertion below became vacuous.
     expect(routes.length).toBeGreaterThan(80);
+    // Two pages that share their path with an API router — the shape of
+    // the bug. (/jobs is API-only; its page lives at /internal-jobs.)
     expect(routes).toContain('/clients');
-    expect(routes).toContain('/jobs');
+    expect(routes).toContain('/scheduling');
   });
 
   for (const browser of BROWSERS) {
