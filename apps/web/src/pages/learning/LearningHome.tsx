@@ -47,18 +47,13 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
@@ -339,43 +334,32 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
               description="Adjust the search or status filter."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="hidden md:table-cell">Required</TableHead>
-                  <TableHead className="hidden lg:table-cell">Validity</TableHead>
-                  <TableHead className="hidden lg:table-cell text-right">Modules</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Enrolled</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((c) => (
-                  <TableRow key={c.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      {c.title}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                        {c.isRequired ? 'Required · ' : ''}{c.enrollmentCount} enrolled
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {c.isRequired ? <Badge variant="destructive">Required</Badge> : '—'}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {c.validityDays ? `${c.validityDays}d` : 'Never expires'}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
-                      {c.moduleCount}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {c.enrollmentCount}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={c.status} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="courses"
+              caption="Courses"
+              rows={filtered}
+              rowKey={(c) => c.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'courses' }}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (c) => c.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'required', header: 'Required', accessor: (c) => (c.isRequired ? 'Required' : ''), sortable: true, searchable: false, cardMeta: true, cell: (c) => (c.isRequired ? <Badge variant="destructive">Required</Badge> : '—') },
+                { key: 'validity', header: 'Validity', accessor: (c) => c.validityDays, csv: (c) => (c.validityDays ? `${c.validityDays}d` : 'Never expires'), sortable: true, searchable: false, cell: (c) => (c.validityDays ? `${c.validityDays}d` : 'Never expires') },
+                { key: 'modules', header: 'Modules', accessor: (c) => c.moduleCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'enrolled', header: 'Enrolled', accessor: (c) => c.enrollmentCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                { key: 'status', header: 'Status', accessor: (c) => c.status, sortable: true, cell: (c) => <StatusBadge status={c.status} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (c) => (
+                    <>
                       {canManage && c.status === 'DRAFT' && (
                         <Button
                           size="sm"
@@ -388,9 +372,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                                 toast.success(`Published "${c.title}".`);
                                 refresh();
                               } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError ? err.message : 'Failed to publish.',
-                                );
+                                toast.error(err instanceof ApiError ? err.message : 'Failed to publish.');
                               }
                             })
                           }
@@ -424,9 +406,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                                   toast.success(`Archived "${c.title}".`);
                                   refresh();
                                 } catch (err) {
-                                  toast.error(
-                                    err instanceof ApiError ? err.message : 'Failed to archive.',
-                                  );
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed to archive.');
                                 }
                               });
                             }}
@@ -436,7 +416,10 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                         </>
                       )}
                       {canManage && (
-                        <button
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-silver hover:text-alert"
                           disabled={actionKey !== null}
                           onClick={async () => {
                             if (!(await confirm({ title: 'Delete this course?', destructive: true }))) return;
@@ -446,24 +429,19 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                                 toast.success(`Deleted "${c.title}".`);
                                 refresh();
                               } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : 'Could not delete the course.',
-                                );
+                                toast.error(err instanceof ApiError ? err.message : 'Could not delete the course.');
                               }
                             });
                           }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs disabled:opacity-40"
                         >
                           Delete
-                        </button>
+                        </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -789,53 +767,47 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             description="Adjust the search or status filter."
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Course</TableHead>
-                <TableHead>Associate</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden lg:table-cell">Completed</TableHead>
-                <TableHead className="hidden md:table-cell">Expires</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Score</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="font-medium text-white">
-                    {e.courseTitle}
-                    <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                      Expires {fmtDate(e.expiresAt)}
-                    </div>
-                  </TableCell>
-                  <TableCell>{e.associateName}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} />
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">{fmtDate(e.completedAt)}</TableCell>
-                  <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
-                  <TableCell className="hidden lg:table-cell text-right tabular-nums">
-                    {e.score ?? '—'}
-                  </TableCell>
-                  <TableCell className="text-right space-x-2">
+          <DataGrid<NonNullable<typeof filtered>[number]>
+            id="course-enrollments"
+            caption="Enrollments"
+            rows={filtered}
+            rowKey={(e) => e.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'enrollments' }}
+            columns={[
+              { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
+              { key: 'associate', header: 'Associate', accessor: (e) => e.associateName, sortable: true, cardMeta: true },
+              { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cardMeta: true, cell: (e) => <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} /> },
+              { key: 'completed', header: 'Completed', accessor: (e) => e.completedAt, sortable: true, searchable: false, cell: (e) => fmtDate(e.completedAt) },
+              { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
+              { key: 'score', header: 'Score', accessor: (e) => e.score, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (e) => e.score ?? '—' },
+              {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                className: 'space-x-2',
+                cell: (e) => (
+                  <>
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" onClick={() => onComplete(e.id)}>
                         Complete
                       </Button>
                     )}
-                    {canManage &&
-                      (e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
-                        <Button size="sm" variant="ghost" onClick={() => onWaive(e.id)}>
-                          Waive
-                        </Button>
-                      )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    {canManage && (e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
+                      <Button size="sm" variant="ghost" onClick={() => onWaive(e.id)}>
+                        Waive
+                      </Button>
+                    )}
+                  </>
+                ),
+              },
+            ]}
+          />
         )}
       </CardContent>
       <ConfirmDialog
@@ -973,39 +945,22 @@ function ExpiringTab() {
               description="Certs with validity periods auto-expire — they'll show here as their deadlines approach."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Course</TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Required</TableHead>
-                  <TableHead className="hidden md:table-cell">Expires</TableHead>
-                  <TableHead>Days left</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell className="font-medium text-white">
-                      {e.courseTitle}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                        Expires {fmtDate(e.expiresAt)}{e.isRequired ? ' · Required' : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell>{e.associateName}</TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {e.isRequired ? <Badge variant="destructive">Required</Badge> : '—'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
-                    <TableCell>
-                      <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>
-                        {e.daysLeft}d
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="course-expirations"
+              caption="Expiring certifications"
+              rows={rows}
+              rowKey={(e) => e.id}
+              search={{ placeholder: 'Course, associate…' }}
+              urlState={false}
+              exportCsv={{ filename: 'expiring-certifications' }}
+              columns={[
+                { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'associate', header: 'Associate', accessor: (e) => e.associateName, sortable: true, cardMeta: true },
+                { key: 'required', header: 'Required', accessor: (e) => (e.isRequired ? 'Required' : ''), sortable: true, searchable: false, cell: (e) => (e.isRequired ? <Badge variant="destructive">Required</Badge> : '—') },
+                { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
+                { key: 'daysLeft', header: 'Days left', accessor: (e) => e.daysLeft, csv: (e) => `${e.daysLeft}d`, sortable: true, searchable: false, cardMeta: true, cell: (e) => <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>{e.daysLeft}d</Badge> },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

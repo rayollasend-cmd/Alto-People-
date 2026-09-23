@@ -52,18 +52,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
@@ -388,48 +383,46 @@ function KitsTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Questions</TableHead>
-                  <TableHead className="hidden md:table-cell">Updated</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {kits.map((k) => (
-                  <TableRow key={k.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{k.name}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {fmtDate(k.updatedAt)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{k.questions.length}</TableCell>
-                    <TableCell className="hidden md:table-cell">{fmtDate(k.updatedAt)}</TableCell>
-                    <TableCell className="text-right space-x-3">
-                      {canManage && (
-                        <button
-                          onClick={() => setEditTarget(k)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition text-xs"
-                        >
-                          Edit
-                        </button>
-                      )}
-                      {canManage && (
-                        <button
-                          onClick={() => onDelete(k.id)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof kits>[number]>
+              id="interview-kits"
+              caption="Interview kits"
+              rows={kits}
+              rowKey={(k) => k.id}
+              search={{ placeholder: 'Kit name…' }}
+              urlState={false}
+              exportCsv={{ filename: 'interview-kits' }}
+              onRowClick={canManage ? (k) => setEditTarget(k) : undefined}
+              rowActionLabel={(k) => `Edit ${k.name}`}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (k) => k.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'questions', header: 'Questions', accessor: (k) => k.questions.length, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums' },
+                { key: 'updated', header: 'Updated', accessor: (k) => k.updatedAt, sortable: true, searchable: false, cardMeta: true, cell: (k) => fmtDate(k.updatedAt) },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (k: NonNullable<typeof kits>[number]) => (
+                          <>
+                            <Button size="sm" variant="ghost" onClick={() => setEditTarget(k)}>
+                              Edit
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(k.id)}>
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -765,41 +758,39 @@ function OffersTab({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Candidate</TableHead>
-                  <TableHead className="hidden md:table-cell">Job title</TableHead>
-                  <TableHead className="hidden lg:table-cell">Start</TableHead>
-                  <TableHead className="text-right">Pay</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{o.candidateName}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {o.jobTitle} · {fmtDate(parseYmd(o.startDate))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{o.jobTitle}</TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {fmtDate(parseYmd(o.startDate))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap">
-                      {o.salary
-                        ? `${fmtMoney(o.salary, { currency: o.currency })}/yr`
-                        : o.hourlyRate
-                          ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr`
-                          : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="offers"
+              caption="Offers"
+              rows={filtered}
+              rowKey={(o) => o.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'offers' }}
+              columns={[
+                { key: 'candidate', header: 'Candidate', accessor: (o) => o.candidateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'job', header: 'Job title', accessor: (o) => o.jobTitle, sortable: true, cardMeta: true },
+                { key: 'start', header: 'Start', accessor: (o) => o.startDate, sortable: true, searchable: false, cardMeta: true, cell: (o) => fmtDate(parseYmd(o.startDate)) },
+                {
+                  key: 'pay',
+                  header: 'Pay',
+                  accessor: (o) => (o.salary ? `${fmtMoney(o.salary, { currency: o.currency })}/yr` : o.hourlyRate ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr` : null),
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (o) => (o.salary ? `${fmtMoney(o.salary, { currency: o.currency })}/yr` : o.hourlyRate ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr` : '—'),
+                },
+                { key: 'status', header: 'Status', accessor: (o) => o.status, sortable: true, cell: (o) => <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (o) => (
+                    <>
                       {canManage && o.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onSend(o.id)}>
                           Send
@@ -810,20 +801,16 @@ function OffersTab({
                           <Button size="sm" onClick={() => onDecide(o.id, 'ACCEPTED')}>
                             Accept
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDecide(o.id, 'DECLINED')}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => onDecide(o.id, 'DECLINED')}>
                             Decline
                           </Button>
                         </>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1124,83 +1111,81 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Candidate</TableHead>
-                  <TableHead className="hidden md:table-cell">Position</TableHead>
-                  <TableHead className="hidden lg:table-cell">Referrer</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">
-                    Bonus
-                  </TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {referrals.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium text-white">
-                      <div>{r.candidateName}</div>
+            <DataGrid<NonNullable<typeof referrals>[number]>
+              id="referrals"
+              caption="Referrals"
+              rows={referrals}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Candidate, position, referrer…' }}
+              urlState={false}
+              exportCsv={{ filename: 'referrals' }}
+              columns={[
+                {
+                  key: 'candidate',
+                  header: 'Candidate',
+                  accessor: (r) => r.candidateName,
+                  sortable: true,
+                  primary: true,
+                  cell: (r) => (
+                    <>
+                      <div className="font-medium text-white">{r.candidateName}</div>
                       <div className="text-xs text-silver">{r.candidateEmail}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {r.position ?? '—'}
-                        {r.bonusAmount
-                          ? ` · ${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}`
-                          : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{r.position ?? '—'}</TableCell>
-                    <TableCell className="text-xs hidden lg:table-cell">{r.referrerEmail}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={r.status} />
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
-                      {r.bonusAmount
-                        ? `${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}`
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+                    </>
+                  ),
+                },
+                { key: 'position', header: 'Position', accessor: (r) => r.position, sortable: true, cardMeta: true, cell: (r) => r.position ?? '—' },
+                { key: 'referrer', header: 'Referrer', accessor: (r) => r.referrerEmail, sortable: true, className: 'text-xs' },
+                { key: 'status', header: 'Status', accessor: (r) => r.status, sortable: true, cell: (r) => <StatusBadge status={r.status} /> },
+                {
+                  key: 'bonus',
+                  header: 'Bonus',
+                  accessor: (r) => (r.bonusAmount ? Number(r.bonusAmount) : null),
+                  csv: (r) => (r.bonusAmount ? `${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}` : ''),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (r) => (r.bonusAmount ? `${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}` : '—'),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (r) => (
+                    <>
                       {canManage && r.status !== 'HIRED' && r.status !== 'REJECTED' && (
                         <div className="inline-block">
-                          <Select
-                            size="sm"
-                            aria-label={`Referral status for ${r.candidateName}`}
-                            value={r.status}
-                            onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}
-                          >
-                            {REF_STATUSES.map((s) => (
-                              <option key={s} value={s}>
-                                {statusLabel(s)}
+                          <Select size="sm" aria-label={`Referral status for ${r.candidateName}`} value={r.status} onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}>
+                            {REF_STATUSES.map((st) => (
+                              <option key={st} value={st}>
+                                {statusLabel(st)}
                               </option>
                             ))}
                           </Select>
                         </div>
                       )}
                       {canManage && r.status === 'HIRED' && !r.candidateId && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onConvert(r.id)}
-                          disabled={convertingId === r.id}
-                        >
+                        <Button size="sm" variant="secondary" onClick={() => onConvert(r.id)} disabled={convertingId === r.id}>
                           <UserPlus className="mr-1 h-3.5 w-3.5" />
                           {convertingId === r.id ? 'Converting…' : 'Convert to candidate'}
                         </Button>
                       )}
-                      {canManage &&
-                        r.status === 'HIRED' &&
-                        r.bonusAmount &&
-                        !r.bonusPaidAt && (
-                          <Button size="sm" onClick={() => onMarkPaid(r.id)}>
-                            Mark bonus paid
-                          </Button>
-                        )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      {canManage && r.status === 'HIRED' && r.bonusAmount && !r.bonusPaidAt && (
+                        <Button size="sm" onClick={() => onMarkPaid(r.id)}>
+                          Mark bonus paid
+                        </Button>
+                      )}
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1415,65 +1400,62 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="hidden lg:table-cell">Slug</TableHead>
-                  <TableHead className="hidden md:table-cell">Location</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">
-                    Pay range
-                  </TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {postings.map((p) => (
-                  <TableRow key={p.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{p.title}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {p.location ?? '—'}
-                        {p.minSalary && p.maxSalary
-                          ? ` · ${fmtMoney(p.minSalary, { currency: p.currency })}–${fmtMoney(p.maxSalary, { currency: p.currency })}`
-                          : ''}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs hidden lg:table-cell">/careers/{p.slug}</TableCell>
-                    <TableCell className="hidden md:table-cell">{p.location ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
-                      {p.minSalary && p.maxSalary
-                        ? `${fmtMoney(p.minSalary, { currency: p.currency })}–${fmtMoney(p.maxSalary, { currency: p.currency })}`
-                        : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={p.status} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && p.status === 'DRAFT' && (
-                        <Button size="sm" onClick={() => onOpen(p.id)}>
-                          Open
-                        </Button>
-                      )}
-                      {canManage && p.status === 'OPEN' && (
-                        <Button size="sm" variant="ghost" onClick={() => onClose(p.id)}>
-                          Close
-                        </Button>
-                      )}
-                      {canManage && (
-                        <button
-                          onClick={() => onDelete(p.id)}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof postings>[number]>
+              id="job-postings"
+              caption="Job postings"
+              rows={postings}
+              rowKey={(po) => po.id}
+              search={{ placeholder: 'Title, location…' }}
+              urlState={false}
+              exportCsv={{ filename: 'job-postings' }}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (po) => po.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'slug', header: 'Slug', accessor: (po) => `/careers/${po.slug}`, sortable: true, className: 'font-mono text-xs' },
+                { key: 'location', header: 'Location', accessor: (po) => po.location, sortable: true, cardMeta: true, cell: (po) => po.location ?? '—' },
+                {
+                  key: 'pay',
+                  header: 'Pay range',
+                  accessor: (po) => (po.minSalary && po.maxSalary ? `${fmtMoney(po.minSalary, { currency: po.currency })}–${fmtMoney(po.maxSalary, { currency: po.currency })}` : null),
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (po) => (po.minSalary && po.maxSalary ? `${fmtMoney(po.minSalary, { currency: po.currency })}–${fmtMoney(po.maxSalary, { currency: po.currency })}` : '—'),
+                },
+                { key: 'status', header: 'Status', accessor: (po) => po.status, sortable: true, cell: (po) => <StatusBadge status={po.status} /> },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (po: NonNullable<typeof postings>[number]) => (
+                          <>
+                            {po.status === 'DRAFT' && (
+                              <Button size="sm" onClick={() => onOpen(po.id)}>
+                                Open
+                              </Button>
+                            )}
+                            {po.status === 'OPEN' && (
+                              <Button size="sm" variant="ghost" onClick={() => onClose(po.id)}>
+                                Close
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(po.id)}>
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>

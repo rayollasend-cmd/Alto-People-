@@ -50,18 +50,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { toast } from 'sonner';
@@ -203,39 +198,31 @@ function OeTab({ canManage }: { canManage: boolean }) {
               description="Open a window so associates can elect benefits for the next plan year."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Window</TableHead>
-                  <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead className="hidden sm:table-cell">Period</TableHead>
-                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((w) => (
-                  <TableRow key={w.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{w.name}</div>
-                      {/* Phone-only secondary line replacing the hidden cells. */}
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {w.clientName}
-                      </div>
-                      <div className="sm:hidden text-2xs text-silver/80 tabular-nums">
-                        {fmtYmd(w.startsOn)} → {fmtYmd(w.endsOn)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{w.clientName}</TableCell>
-                    <TableCell className="hidden sm:table-cell tabular-nums">
-                      {fmtYmd(w.startsOn)} → {fmtYmd(w.endsOn)}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(w.effectiveOn)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={w.status} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="oe-windows"
+              caption="Open enrollment windows"
+              rows={rows}
+              rowKey={(w) => w.id}
+              search={{ placeholder: 'Window, client…' }}
+              urlState={false}
+              exportCsv={{ filename: 'open-enrollment-windows' }}
+              columns={[
+                { key: 'window', header: 'Window', accessor: (w) => w.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'client', header: 'Client', accessor: (w) => w.clientName, sortable: true, cardMeta: true },
+                { key: 'period', header: 'Period', accessor: (w) => w.startsOn, csv: (w) => `${fmtYmd(w.startsOn)} → ${fmtYmd(w.endsOn)}`, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (w) => `${fmtYmd(w.startsOn)} → ${fmtYmd(w.endsOn)}` },
+                { key: 'effective', header: 'Effective', accessor: (w) => w.effectiveOn, sortable: true, searchable: false, className: 'tabular-nums', cell: (w) => fmtYmd(w.effectiveOn) },
+                { key: 'status', header: 'Status', accessor: (w) => w.status, sortable: true, cell: (w) => <StatusBadge status={w.status} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (w) => (
+                    <>
                       {canManage && w.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onOpen(w)}>
                           Open
@@ -246,11 +233,11 @@ function OeTab({ canManage }: { canManage: boolean }) {
                           Close
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -498,55 +485,51 @@ function QleTab({ canManage }: { canManage: boolean }) {
               description="Major life events like marriage, birth, or loss of coverage trigger a 30-day change window."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden sm:table-cell">Kind</TableHead>
-                  <TableHead className="hidden md:table-cell">Event</TableHead>
-                  <TableHead className="hidden md:table-cell">Window ends</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((q) => (
-                  <TableRow key={q.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate"><AssociateLink associateId={q.associateId}>{q.associateName}</AssociateLink></div>
-                      {/* Phone-only stack collapsing the hidden cells.
-                          Kind first (the why), then a single date line
-                          (event → window-close). Mirrors the OE-windows
-                          table pattern above. */}
-                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
-                        {QLE_KIND_LABEL[q.kind]}
-                      </div>
-                      <div className="md:hidden text-2xs text-silver/80 tabular-nums">
-                        {fmtYmd(q.eventDate)} → {fmtYmd(q.allowedUntil)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">{QLE_KIND_LABEL[q.kind]}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.eventDate)}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.allowedUntil)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={q.status} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && q.status === 'PENDING' && (
-                        <>
-                          <Button size="sm" onClick={() => onApprove(q)}>
-                            Approve
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => onDeny(q)}>
-                            Deny
-                          </Button>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="qualifying-life-events"
+              caption="Qualifying life events"
+              rows={rows}
+              rowKey={(q) => q.id}
+              search={{ placeholder: 'Associate, kind…' }}
+              urlState={false}
+              exportCsv={{ filename: 'qualifying-life-events' }}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (q) => q.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (q) => <AssociateLink associateId={q.associateId}>{q.associateName}</AssociateLink>,
+                },
+                { key: 'kind', header: 'Kind', accessor: (q) => QLE_KIND_LABEL[q.kind], sortable: true, cardMeta: true },
+                { key: 'event', header: 'Event', accessor: (q) => q.eventDate, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (q) => fmtYmd(q.eventDate) },
+                { key: 'windowEnds', header: 'Window ends', accessor: (q) => q.allowedUntil, sortable: true, searchable: false, className: 'tabular-nums', cell: (q) => fmtYmd(q.allowedUntil) },
+                { key: 'status', header: 'Status', accessor: (q) => q.status, sortable: true, cell: (q) => <StatusBadge status={q.status} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (q) =>
+                    canManage && q.status === 'PENDING' ? (
+                      <>
+                        <Button size="sm" onClick={() => onApprove(q)}>
+                          Approve
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => onDeny(q)}>
+                          Deny
+                        </Button>
+                      </>
+                    ) : null,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -763,60 +746,52 @@ function CobraTab({ canManage }: { canManage: boolean }) {
               description="On termination or hours reduction, generate a continuation-coverage offer."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden sm:table-cell">QE</TableHead>
-                  <TableHead className="hidden md:table-cell">QE date</TableHead>
-                  <TableHead className="hidden lg:table-cell">Election by</TableHead>
-                  <TableHead className="hidden md:table-cell">Premium/mo</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate"><AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink></div>
-                      {/* Phone-only stack: QE description first, then the
-                          two most-load-bearing numbers (premium + when
-                          they have to decide by). The QE-date itself
-                          drops off mobile — admins use this view to act,
-                          not audit. */}
-                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
-                        {c.qualifyingEvent}
-                      </div>
-                      <div className="md:hidden text-2xs text-silver/80 tabular-nums">
-                        {c.premiumPerMonth ? `${fmtMoney(c.premiumPerMonth)}/mo` : '—'}
-                        {' · elect by '}
-                        {fmtYmd(c.electionDeadline)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">{c.qualifyingEvent}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(c.qeDate)}</TableCell>
-                    <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(c.electionDeadline)}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{fmtMoney(c.premiumPerMonth)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={c.status} overrides={COBRA_STATUS_TONES} />
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && c.status === 'NOTIFIED' && (
-                        <>
-                          <Button size="sm" onClick={() => onElect(c)}>
-                            Elect
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => onWaive(c)}>
-                            Waive
-                          </Button>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="cobra-offers"
+              caption="COBRA offers"
+              rows={rows}
+              rowKey={(c) => c.id}
+              search={{ placeholder: 'Associate, event…' }}
+              urlState={false}
+              exportCsv={{ filename: 'cobra-offers' }}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (c) => c.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (c) => <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>,
+                },
+                { key: 'qe', header: 'QE', accessor: (c) => c.qualifyingEvent, sortable: true, cardMeta: true },
+                { key: 'qeDate', header: 'QE date', accessor: (c) => c.qeDate, sortable: true, searchable: false, className: 'tabular-nums', cell: (c) => fmtYmd(c.qeDate) },
+                { key: 'electBy', header: 'Election by', accessor: (c) => c.electionDeadline, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (c) => fmtYmd(c.electionDeadline) },
+                { key: 'premium', header: 'Premium/mo', accessor: (c) => (c.premiumPerMonth ? Number(c.premiumPerMonth) : null), csv: (c) => fmtMoney(c.premiumPerMonth), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (c) => fmtMoney(c.premiumPerMonth) },
+                { key: 'status', header: 'Status', accessor: (c) => c.status, sortable: true, cell: (c) => <StatusBadge status={c.status} overrides={COBRA_STATUS_TONES} /> },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'space-x-2',
+                  cell: (c) =>
+                    canManage && c.status === 'NOTIFIED' ? (
+                      <>
+                        <Button size="sm" onClick={() => onElect(c)}>
+                          Elect
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => onWaive(c)}>
+                          Waive
+                        </Button>
+                      </>
+                    ) : null,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>

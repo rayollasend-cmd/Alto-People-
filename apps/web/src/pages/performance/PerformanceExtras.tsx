@@ -63,18 +63,13 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -405,118 +400,116 @@ function GoalsTab() {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead className="hidden md:table-cell">Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Progress</TableHead>
-                  <TableHead className="w-44 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((g) => (
-                  <TableRow key={g.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{g.title}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'} · {fmtYmd(g.periodStart)} –{' '}
-                        {fmtYmd(g.periodEnd)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{g.associateName ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">{g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'}</TableCell>
-                    <TableCell className="hidden md:table-cell whitespace-nowrap">
-                      {fmtYmd(g.periodStart)} – {fmtYmd(g.periodEnd)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="inline-block">
-                        <Select
-                          size="sm"
-                          value={g.status}
-                          onChange={(e) => onStatus(g, e.target.value as GoalStatus)}
-                        >
-                          {(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
-                            (s) => (
-                              <option key={s} value={s}>
-                                {GOAL_STATUS_LABELS[s]}
-                              </option>
-                            ),
-                          )}
-                        </Select>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {g.keyResults.length > 0 ? (
-                        <span
-                          className="tabular-nums"
-                          title={`Derived from ${g.keyResults.length} key result${g.keyResults.length === 1 ? '' : 's'}`}
-                        >
-                          {goalProgress(g)}%
-                          <span className="ml-1 text-xs2 text-silver/70">
-                            ({g.keyResults.length} KR{g.keyResults.length === 1 ? '' : 's'})
-                          </span>
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="goals"
+              caption="Goals and OKRs"
+              rows={filtered}
+              rowKey={(g) => g.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'goals' }}
+              columns={[
+                { key: 'title', header: 'Title', accessor: (g) => g.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'associate', header: 'Associate', accessor: (g) => g.associateName, sortable: true, cardMeta: true, cell: (g) => g.associateName ?? '—' },
+                { key: 'kind', header: 'Kind', accessor: (g) => (g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'), sortable: true, cardMeta: true },
+                { key: 'period', header: 'Period', accessor: (g) => g.periodStart, csv: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}`, sortable: true, searchable: false, className: 'whitespace-nowrap', cell: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}` },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (g) => GOAL_STATUS_LABELS[g.status],
+                  sortable: true,
+                  stopRowClick: true,
+                  cell: (g) => (
+                    <div className="inline-block">
+                      <Select size="sm" value={g.status} onChange={(e) => onStatus(g, e.target.value as GoalStatus)} aria-label={`Status of ${g.title}`}>
+                        {(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map((st) => (
+                          <option key={st} value={st}>
+                            {GOAL_STATUS_LABELS[st]}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'progress',
+                  header: 'Progress',
+                  accessor: (g) => (g.keyResults.length > 0 ? goalProgress(g) : g.progressPct),
+                  csv: (g) => `${g.keyResults.length > 0 ? goalProgress(g) : g.progressPct}%`,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  stopRowClick: true,
+                  cell: (g) =>
+                    g.keyResults.length > 0 ? (
+                      <span className="tabular-nums" title={`Derived from ${g.keyResults.length} key result${g.keyResults.length === 1 ? '' : 's'}`}>
+                        {goalProgress(g)}%
+                        <span className="ml-1 text-xs2 text-silver/70">
+                          ({g.keyResults.length} KR{g.keyResults.length === 1 ? '' : 's'})
                         </span>
-                      ) : (
-                        <>
-                          <Input
-                            className="h-8 w-20 text-right tabular-nums"
-                            type="number"
-                            min={0}
-                            max={100}
-                            defaultValue={g.progressPct}
-                            onBlur={(e) => onProgress(g, Number(e.target.value))}
-                          />
-                          %
-                        </>
+                      </span>
+                    ) : (
+                      <>
+                        <Input
+                          className="h-8 w-20 text-right tabular-nums"
+                          type="number"
+                          min={0}
+                          max={100}
+                          defaultValue={g.progressPct}
+                          aria-label={`Progress of ${g.title}`}
+                          onBlur={(e) => onProgress(g, Number(e.target.value))}
+                        />
+                        %
+                      </>
+                    ),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (g) => (
+                    <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="outline" onClick={() => setKrGoalId(g.id)}>
+                        Key results
+                      </Button>
+                      {g.status === 'AT_RISK' && canManage && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              const pre = await prefillPipFromGoal(g.id);
+                              setPipDraft({
+                                associateId: pre.associateId,
+                                sourceGoalId: pre.sourceGoalId,
+                                startDate: pre.startDate,
+                                endDate: pre.endDate,
+                                reason: pre.reason,
+                                expectations: pre.expectations,
+                                supportPlan: pre.supportPlan ?? '',
+                              });
+                            } catch (err) {
+                              toast.error(err instanceof ApiError ? err.message : 'Could not prefill a PIP from this goal.');
+                            }
+                          }}
+                        >
+                          <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                          Start PIP
+                        </Button>
                       )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="outline" onClick={() => setKrGoalId(g.id)}>
-                          Key results
-                        </Button>
-                        {g.status === 'AT_RISK' && canManage && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              try {
-                                const pre = await prefillPipFromGoal(g.id);
-                                setPipDraft({
-                                  associateId: pre.associateId,
-                                  sourceGoalId: pre.sourceGoalId,
-                                  startDate: pre.startDate,
-                                  endDate: pre.endDate,
-                                  reason: pre.reason,
-                                  expectations: pre.expectations,
-                                  supportPlan: pre.supportPlan ?? '',
-                                });
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : 'Could not prefill a PIP from this goal.',
-                                );
-                              }
-                            }}
-                          >
-                            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
-                            Start PIP
-                          </Button>
-                        )}
-                        <Button size="sm" variant="ghost" onClick={() => onDelete(g.id)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      <Button size="sm" variant="ghost" onClick={() => onDelete(g.id)}>
+                        Delete
+                      </Button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1197,70 +1190,48 @@ function OneOnOnesTab() {
               action={scheduleButton}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden md:table-cell">Manager</TableHead>
-                  <TableHead>Scheduled</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Agenda</TableHead>
-                  <TableHead className="w-40 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((m) => (
-                  <TableRow key={m.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">{m.associateName ?? '—'}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {m.managerEmail ?? '—'}
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="one-on-ones"
+              caption="1:1 meetings"
+              rows={rows}
+              rowKey={(m) => m.id}
+              search={{ placeholder: 'Associate, manager…' }}
+              urlState={false}
+              exportCsv={{ filename: 'one-on-ones' }}
+              columns={[
+                { key: 'associate', header: 'Associate', accessor: (m) => m.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (m) => m.associateName ?? '—' },
+                { key: 'manager', header: 'Manager', accessor: (m) => m.managerEmail, sortable: true, cardMeta: true, cell: (m) => m.managerEmail ?? '—' },
+                { key: 'scheduled', header: 'Scheduled', accessor: (m) => m.scheduledFor, sortable: true, searchable: false, cardMeta: true, cell: (m) => fmtDateTime(m.scheduledFor) },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (m) => ONE_ON_ONE_STATUS_LABELS[m.status],
+                  sortable: true,
+                  cell: (m) => <Badge variant={m.status === 'COMPLETED' ? 'success' : m.status === 'CANCELLED' ? 'destructive' : 'info'}>{ONE_ON_ONE_STATUS_LABELS[m.status]}</Badge>,
+                },
+                { key: 'agenda', header: 'Agenda', accessor: (m) => m.agenda, className: 'max-w-md truncate', cell: (m) => m.agenda ?? '—' },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (m) =>
+                    canManage && m.status === 'SCHEDULED' ? (
+                      <div className="inline-flex gap-1">
+                        <Button size="sm" variant="secondary" onClick={() => onSetStatus(m, 'COMPLETED')}>
+                          Complete
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => onSetStatus(m, 'CANCELLED')}>
+                          Cancel
+                        </Button>
                       </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {m.managerEmail ?? '—'}
-                    </TableCell>
-                    <TableCell>{fmtDateTime(m.scheduledFor)}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          m.status === 'COMPLETED'
-                            ? 'success'
-                            : m.status === 'CANCELLED'
-                              ? 'destructive'
-                              : 'info'
-                        }
-                      >
-                        {ONE_ON_ONE_STATUS_LABELS[m.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="max-w-md truncate hidden md:table-cell">
-                      {m.agenda ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canManage && m.status === 'SCHEDULED' && (
-                        <div className="inline-flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => onSetStatus(m, 'COMPLETED')}
-                          >
-                            Complete
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onSetStatus(m, 'CANCELLED')}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    ) : null,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1463,72 +1434,55 @@ function PipsTab({ canManage }: { canManage: boolean }) {
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead className="hidden md:table-cell">Reason</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right w-52">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium text-white">
-                      {p.associateName ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="truncate">
-                        {fmtYmd(p.startDate)} – {fmtYmd(p.endDate)}
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate max-w-[24ch]">
-                        {p.reason}
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-md truncate hidden md:table-cell">{p.reason}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          p.status === 'PASSED'
-                            ? 'success'
-                            : p.status === 'FAILED'
-                              ? 'destructive'
-                              : p.status === 'ACTIVE'
-                                ? 'accent'
-                                : 'default'
-                        }
-                      >
-                        {PIP_STATUS_LABELS[p.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canManage && p.status === 'ACTIVE' && (
+            <DataGrid<NonNullable<typeof filtered>[number]>
+              id="pips"
+              caption="Performance improvement plans"
+              rows={filtered}
+              rowKey={(pip) => pip.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'pips' }}
+              columns={[
+                { key: 'associate', header: 'Associate', accessor: (pip) => pip.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (pip) => pip.associateName ?? '—' },
+                { key: 'period', header: 'Period', accessor: (pip) => pip.startDate, csv: (pip) => `${fmtYmd(pip.startDate)} – ${fmtYmd(pip.endDate)}`, sortable: true, searchable: false, cardMeta: true, cell: (pip) => `${fmtYmd(pip.startDate)} – ${fmtYmd(pip.endDate)}` },
+                { key: 'reason', header: 'Reason', accessor: (pip) => pip.reason, cardMeta: true, className: 'max-w-md truncate' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (pip) => PIP_STATUS_LABELS[pip.status],
+                  sortable: true,
+                  cell: (pip) => <Badge variant={pip.status === 'PASSED' ? 'success' : pip.status === 'FAILED' ? 'destructive' : pip.status === 'ACTIVE' ? 'accent' : 'default'}>{PIP_STATUS_LABELS[pip.status]}</Badge>,
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (pip) => (
+                    <>
+                      {canManage && pip.status === 'ACTIVE' && (
                         <div className="inline-flex gap-1">
-                          <Button size="sm" variant="secondary" onClick={() => onDecide(p, 'PASSED')}>
+                          <Button size="sm" variant="secondary" onClick={() => onDecide(pip, 'PASSED')}>
                             Pass
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => onDecide(p, 'FAILED')}>
+                          <Button size="sm" variant="ghost" onClick={() => onDecide(pip, 'FAILED')}>
                             Fail
                           </Button>
                         </div>
                       )}
-                      {canManage && (p.status === 'PASSED' || p.status === 'FAILED') && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onWriteReview(p)}
-                          disabled={reviewBusyId === p.id}
-                        >
-                          {reviewBusyId === p.id ? 'Creating…' : 'Write review'}
+                      {canManage && (pip.status === 'PASSED' || pip.status === 'FAILED') && (
+                        <Button size="sm" variant="outline" onClick={() => onWriteReview(pip)} disabled={reviewBusyId === pip.id}>
+                          {reviewBusyId === pip.id ? 'Creating…' : 'Write review'}
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1685,71 +1639,53 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
               description="Collect anonymous feedback from peers, reports, and skip-levels for a holistic view."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Subject</TableHead>
-                  <TableHead className="hidden md:table-cell">Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Feedback</TableHead>
-                  <TableHead className="w-64 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="truncate">
-                        {r.subjectAssociateName ?? r.subjectAssociateId}
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {fmtYmd(r.periodStart)} – {fmtYmd(r.periodEnd)} · {r.feedbackCount} feedback
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {fmtYmd(r.periodStart)} – {fmtYmd(r.periodEnd)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          r.status === 'COMPLETED'
-                            ? 'success'
-                            : r.status === 'CANCELLED'
-                              ? 'destructive'
-                              : 'accent'
-                        }
-                      >
-                        {REVIEW360_STATUS_LABELS[r.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {r.feedbackCount}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="inline-flex gap-1">
-                        {r.status === 'COLLECTING' && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => setFeedbackFor(r)}
-                          >
-                            Give feedback
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => setResultsFor(r)}>
-                          Results
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="reviews-360"
+              caption="360 reviews"
+              rows={rows}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Subject…' }}
+              urlState={false}
+              exportCsv={{ filename: '360-reviews' }}
+              columns={[
+                { key: 'subject', header: 'Subject', accessor: (r) => r.subjectAssociateName ?? r.subjectAssociateId, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'period', header: 'Period', accessor: (r) => r.periodStart, csv: (r) => `${fmtYmd(r.periodStart)} – ${fmtYmd(r.periodEnd)}`, sortable: true, searchable: false, cardMeta: true, cell: (r) => `${fmtYmd(r.periodStart)} – ${fmtYmd(r.periodEnd)}` },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (r) => REVIEW360_STATUS_LABELS[r.status],
+                  sortable: true,
+                  cell: (r) => <Badge variant={r.status === 'COMPLETED' ? 'success' : r.status === 'CANCELLED' ? 'destructive' : 'accent'}>{REVIEW360_STATUS_LABELS[r.status]}</Badge>,
+                },
+                { key: 'feedback', header: 'Feedback', accessor: (r) => r.feedbackCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (r) => (
+                    <div className="inline-flex gap-1">
+                      {r.status === 'COLLECTING' && (
+                        <Button size="sm" variant="secondary" onClick={() => setFeedbackFor(r)}>
+                          Give feedback
                         </Button>
-                        {canManage && r.status === 'COLLECTING' && (
-                          <Button size="sm" variant="ghost" onClick={() => onClose(r.id)}>
-                            Close
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => setResultsFor(r)}>
+                        Results
+                      </Button>
+                      {canManage && r.status === 'COLLECTING' && (
+                        <Button size="sm" variant="ghost" onClick={() => onClose(r.id)}>
+                          Close
+                        </Button>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
