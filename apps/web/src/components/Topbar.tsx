@@ -23,7 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
 import { InstallAppButton } from './InstallAppButton';
-import { RoleSwitcher } from './RoleSwitcher';
+import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
 import { isSectionRoot } from './Layout';
 
@@ -143,6 +143,7 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
   // wordmark fallback must never fade.
   const hasHero = !!pageTitle || !!(breadcrumbs && breadcrumbs.length > 0);
   const [signingOut, setSigningOut] = useState(false);
+  const [switchingRole, setSwitchingRole] = useState(false);
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -365,8 +366,10 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
                 <User className="h-4 w-4" />
                 Account settings
               </DropdownMenuItem>
-              {/* Only for the few accounts that do two jobs. */}
-              <RoleSwitcher />
+              {/* Only for the few accounts that do two jobs. On a phone the
+                  choice opens as a sheet — a submenu beside this menu has no
+                  room to open into. */}
+              <RoleSwitchItem onOpen={() => setSwitchingRole(true)} />
               <DropdownMenuItem
                 destructive
                 onSelect={(e) => {
@@ -380,6 +383,8 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* Outside the menu, which unmounts as it closes. */}
+          <RoleSwitchSheet open={switchingRole} onOpenChange={setSwitchingRole} />
         </>
       )}
     </header>

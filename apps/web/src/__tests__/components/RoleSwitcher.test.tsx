@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -9,7 +10,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
-import { RoleSwitcher } from '@/components/RoleSwitcher';
+import { RoleSwitchItem, RoleSwitchSheet, RoleSwitcher } from '@/components/RoleSwitcher';
 
 /**
  * The account switcher: for the shift supervisor who also drives the van.
@@ -40,6 +41,7 @@ function renderMenu(
     availableRoles: Role[] | undefined;
     switchRole: (r: Role) => Promise<void>;
   }> = {},
+  phone = false,
 ) {
   const role = overrides.role ?? 'SHIFT_SUPERVISOR';
   const switchRole = overrides.switchRole ?? vi.fn(async () => {});
@@ -65,16 +67,37 @@ function renderMenu(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     <AuthContext.Provider value={value as any}>
       <MemoryRouter>
-        <DropdownMenu defaultOpen>
-          <DropdownMenuTrigger>Account</DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <RoleSwitcher />
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {phone ? (
+          <PhoneAccountMenu />
+        ) : (
+          <DropdownMenu defaultOpen>
+            <DropdownMenuTrigger>Account</DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <RoleSwitcher />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </MemoryRouter>
     </AuthContext.Provider>,
   );
   return { switchRole };
+}
+
+/** The phone's account menu, wired the way Topbar wires it: the row in the
+ *  menu, the sheet outside it. */
+function PhoneAccountMenu() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <DropdownMenu defaultOpen>
+        <DropdownMenuTrigger>Account</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <RoleSwitchItem onOpen={() => setOpen(true)} />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <RoleSwitchSheet open={open} onOpenChange={setOpen} />
+    </>
+  );
 }
 
 describe('the role switcher', () => {
@@ -149,5 +172,37 @@ describe('the role switcher', () => {
 
     await userEvent.click(screen.getByRole('menuitem', { name: /Drives an Alto van/i }));
     expect(switchRole).not.toHaveBeenCalled();
+  });
+});
+
+describe('the role switcher on a phone', () => {
+  // A phone has no room beside the account menu for a submenu: it opened
+  // squeezed into a 155px column on top of the menu, with the role names
+  // cut off. So the menu offers one row, and the choice is a sheet.
+  it('is not there at all for an account with one job', () => {
+    renderMenu({ availableRoles: ['SHIFT_SUPERVISOR'] }, true);
+    expect(screen.queryByText(/Switch role/i)).not.toBeInTheDocument();
+  });
+
+  it('opens the choice as a sheet, and switching closes it', async () => {
+    const switchRole = vi.fn(async () => {});
+    renderMenu({ switchRole }, true);
+
+    // One plain row in the menu — not a submenu trigger.
+    const row = screen.getByRole('menuitem', { name: /Switch role/i });
+    expect(row).not.toHaveAttribute('aria-haspopup');
+    await userEvent.click(row);
+
+    const sheet = await screen.findByRole('dialog', { name: 'Switch role' });
+    const hats = within(sheet).getAllByRole('radio');
+    expect(hats).toHaveLength(2);
+    // Named and described, and the one being worn says so.
+    expect(within(sheet).getByRole('radio', { name: /Shift Supervisor/ })).toHaveAttribute('aria-checked', 'true');
+    const driver = within(sheet).getByRole('radio', { name: /Drives an Alto van/i });
+    expect(driver).toHaveAttribute('aria-checked', 'false');
+
+    await userEvent.click(driver);
+    expect(switchRole).toHaveBeenCalledWith('DRIVER');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
