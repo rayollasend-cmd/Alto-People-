@@ -141,7 +141,7 @@ function stripApiPrefix(
   next: express.NextFunction
 ) {
   if (req.url.startsWith('/api/') || req.url === '/api') {
-    if (env.NODE_ENV === 'production' && isBrowserNavigation(req)) {
+    if (isBrowserNavigation(req)) {
       const target = req.url.slice(4) || '/';
       return res.redirect(302, target);
     }
@@ -210,9 +210,15 @@ export function createApp() {
   // <a href> navigation on purpose (document downloads, packet/paystub
   // PDFs, CSV exports, calendar feeds). /api/*-tagged calls are exempt so
   // API clients always get JSON.
+  // Not gated on NODE_ENV. "A page load is never answered with JSON" is
+  // an invariant of the routing table, not a production nicety — gating it
+  // meant the one environment that could TEST it was the one environment
+  // where it was switched off, and every integration test that seemed to
+  // prove it was really only seeing a 401 turned into HTML by the error
+  // handler. Where there is no web build (dev, CI), a navigation gets the
+  // "refresh in a moment" page instead of the app — still HTML, never JSON.
   app.use((req: Request & { isApiCall?: boolean }, res, next) => {
     if (
-      env.NODE_ENV === 'production' &&
       !req.isApiCall &&
       isBrowserNavigation(req) &&
       !NAVIGABLE_FILE_PATTERN.test(req.path)

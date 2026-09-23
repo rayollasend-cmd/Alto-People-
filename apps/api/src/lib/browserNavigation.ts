@@ -11,28 +11,77 @@ export interface NavigationProbe {
   headers: Record<string, string | string[] | undefined>;
 }
 
+/** Destinations that paint a document. JSON in any of these is visible
+ *  garbage on someone's screen. */
+const DOCUMENT_DESTS = new Set(['document', 'iframe', 'frame', 'embed', 'object']);
+
+/** Destinations that are unambiguously a subresource fetch, never a page. */
+const SUBRESOURCE_DESTS = new Set([
+  'empty',
+  'script',
+  'style',
+  'image',
+  'font',
+  'audio',
+  'video',
+  'track',
+  'worker',
+  'sharedworker',
+  'serviceworker',
+  'manifest',
+  'xslt',
+  'report',
+  'paintworklet',
+  'audioworklet',
+]);
+
 /**
  * True when this request is a top-level browser PAGE LOAD (address-bar
  * entry, link click, refresh) — the case where sending JSON would render
  * raw data on the user's screen.
  *
- * Two signals, in order of trust:
- *  1. Sec-Fetch-Mode/Dest (Chrome, Edge, Firefox, Safari 16.4+): when
- *     present, they're authoritative — navigate+document is a page load,
- *     anything else (fetch/XHR = cors/same-origin, images, prefetch
- *     subresources) is not.
- *  2. Content negotiation (Safari before 16.4, iOS in-app webviews, older
- *     browsers send NO Sec-Fetch headers): a top-level page load always
- *     asks for text/html first; fetch()/XHR default to the wildcard Accept
- *     or set application/json, images ask for image types, calendar
- *     pollers text/calendar — none of them ever claim text/html.
+ * Three signals, each consulted only where it actually says something:
+ *
+ *  1. Sec-Fetch-Dest, when it is a value we recognise. A document-ish
+ *     destination is a page load; a subresource destination never is,
+ *     whatever else the request claims.
+ *  2. Sec-Fetch-Mode, when the destination was missing or unrecognised.
+ *     `navigate` is a page load; `cors` / `same-origin` / `no-cors` is a
+ *     subresource fetch.
+ *  3. Content negotiation, when no Sec-Fetch header survived at all
+ *     (Safari before 16.4, iOS in-app webviews, older browsers): a page
+ *     load asks for text/html first; fetch()/XHR send the wildcard or
+ *     application/json, images ask for image types, calendar pollers
+ *     text/calendar — none of them ever claim text/html.
+ *
+ * Reading the pair as a unit — "navigate AND document, or it isn't a
+ * page" — is what put this bug back. Some intermediaries (corporate
+ * proxies, security appliances, a few webviews) forward Sec-Fetch-Mode
+ * and drop Sec-Fetch-Dest. A signed-in manager refreshing /clients
+ * through one of those was classified as a subresource fetch, the
+ * `Accept: text/html` sitting right there in the request was never
+ * consulted, and the API list rendered in the address bar as
+ * `{"clients":[…]}`. A missing header is missing information, not
+ * evidence against.
  */
 export function isBrowserNavigation(req: NavigationProbe): boolean {
   if (req.method !== 'GET') return false;
-  const mode = req.headers['sec-fetch-mode'];
-  if (mode !== undefined) {
-    return mode === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+  const header = (name: string) => {
+    const v = req.headers[name];
+    return (Array.isArray(v) ? v[0] : v)?.toLowerCase();
+  };
+
+  const dest = header('sec-fetch-dest');
+  if (dest) {
+    if (DOCUMENT_DESTS.has(dest)) return true;
+    if (SUBRESOURCE_DESTS.has(dest)) return false;
+    // An unknown destination tells us nothing; keep looking.
   }
+
+  const mode = header('sec-fetch-mode');
+  if (mode === 'navigate') return true;
+  if (mode) return false;
+
   const accept = req.headers.accept;
   const acceptStr = Array.isArray(accept) ? accept.join(',') : (accept ?? '');
   return acceptStr.includes('text/html');

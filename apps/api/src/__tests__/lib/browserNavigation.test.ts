@@ -74,6 +74,40 @@ describe('isBrowserNavigation — API clients (must keep getting JSON)', () => {
     ).toBe(false);
   });
 
+  // The regression that put raw JSON back on /clients. Some proxies,
+  // security appliances and webviews forward one Sec-Fetch header and
+  // drop the other; reading the pair as an all-or-nothing unit turned a
+  // page load into a subresource fetch and handed the API list to the
+  // address bar.
+  it('a navigation whose Sec-Fetch-Dest was stripped is still a navigation', () => {
+    expect(nav({ 'sec-fetch-mode': 'navigate', accept: 'text/html,*/*;q=0.8' })).toBe(true);
+  });
+
+  it('a navigation whose Sec-Fetch-Mode was stripped is still a navigation', () => {
+    expect(nav({ 'sec-fetch-dest': 'document', accept: 'text/html,*/*;q=0.8' })).toBe(true);
+  });
+
+  it('the destination wins over a mode that disagrees with it', () => {
+    // A fetch() that somehow claims navigate mode is still a fetch.
+    expect(nav({ 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'empty' })).toBe(false);
+    // …and a document is a document however it was initiated.
+    expect(nav({ 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'document' })).toBe(true);
+  });
+
+  it('a framed document is a document — JSON would render in the frame', () => {
+    expect(nav({ 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' })).toBe(true);
+  });
+
+  it('header case and array values do not change the answer', () => {
+    expect(nav({ 'sec-fetch-mode': 'NAVIGATE', 'sec-fetch-dest': 'DOCUMENT' })).toBe(true);
+    expect(
+      isBrowserNavigation({
+        method: 'GET',
+        headers: { 'sec-fetch-dest': ['document'], accept: 'text/html' },
+      }),
+    ).toBe(true);
+  });
+
   it('non-GET is never a navigation, whatever the headers', () => {
     expect(
       isBrowserNavigation({

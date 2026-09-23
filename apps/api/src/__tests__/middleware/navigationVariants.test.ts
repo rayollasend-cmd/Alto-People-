@@ -47,8 +47,6 @@ describe('page vs JSON on the same URL', () => {
   });
 
   it('answers a page load with the page, whatever the router would say', async () => {
-    // The shell middleware is production-only; the dev/test server hands
-    // API routes straight through so integration tests see JSON.
     const res = await request(createApp()).get('/jobs').set(NAVIGATION);
     // No web build in CI, so the shell middleware answers with its
     // "refresh in a moment" HTML rather than index.html. Either way the

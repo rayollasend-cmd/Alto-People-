@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v16';
+const CACHE_NAME = 'alto-shell-v17';
 const SHELL = [
   '/',
   '/index.html',
@@ -124,6 +124,22 @@ self.addEventListener('activate', (event) => {
 function isHtml(res) {
   const type = res.headers.get('content-type') || '';
   return type.includes('text/html');
+}
+
+/**
+ * Business JSON, where a page was asked for.
+ *
+ * Almost every path on this origin serves the SPA page AND a JSON API
+ * resource, so a navigation CAN come back as JSON — a server that
+ * misread the request, a cache replaying the other variant, a redirect
+ * into an API route mid-deploy. Rendering it puts { "clients": [...] } in
+ * the address bar, which is the bug this worker exists to make
+ * impossible from its side too. Downloads opened by <a href> (PDFs,
+ * CSVs, calendar feeds) are navigations as well and must pass through
+ * untouched, so this names JSON specifically rather than 'not HTML'.
+ */
+function isApiJson(res) {
+  return (res.headers.get('content-type') || '').includes('application/json');
 }
 
 function isApiPath(url) {
@@ -241,16 +257,25 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate' || req.destination === 'document') {
     event.respondWith(
       fetch(req)
-        .then((res) => {
-          // Only ever cache HTML against a page URL. Most paths on this
-          // origin serve the SPA page AND a JSON API resource, so a
-          // navigation can come back as JSON (a cache replaying the other
-          // variant, a redirect to an API route, a mid-deploy edge). Store
-          // that and the page is poisoned for good: every later offline
-          // refresh replays raw JSON where the app should be.
+        .then(async (res) => {
+          // Only ever cache HTML against a page URL. Store JSON and the
+          // page is poisoned for good: every later offline refresh
+          // replays raw data where the app should be.
           if (res && res.ok && isHtml(res)) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(req, clone));
+            return res;
+          }
+          // The server handed a page load its API resource. Don't render
+          // it — give the browser the app shell and let the SPA route
+          // itself, which is what the URL meant.
+          if (res && isApiJson(res)) {
+            const shell = await caches.match('/index.html').then((r) => r || caches.match('/'));
+            if (shell) return shell;
+            // No cached shell yet (first run): ask for the document
+            // explicitly, which the server answers with the SPA.
+            const retry = await fetch('/', { credentials: 'same-origin' }).catch(() => null);
+            if (retry && retry.ok && isHtml(retry)) return retry;
           }
           return res;
         })
