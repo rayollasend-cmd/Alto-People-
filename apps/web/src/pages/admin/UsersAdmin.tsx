@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   Clock,
-  Download,
   KeyRound,
   Lock,
   RefreshCw,
@@ -20,8 +16,7 @@ import { SecondRoleDialog } from './SecondRoleDialog';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
-import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   forcePasswordReset,
   listAdminUsers,
@@ -39,21 +34,12 @@ import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
-import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 
 const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
 
@@ -84,42 +70,6 @@ const CLIENT_REQUIRED_ROLES = new Set<Role>(['SHIFT_SUPERVISOR', 'FLOOR_SUPERVIS
 const BULK_ROLE_OPTIONS: Role[] = ROLE_OPTIONS.filter(
   (r) => !CLIENT_REQUIRED_ROLES.has(r),
 );
-
-type SortKey = 'email' | 'role' | 'status' | 'created';
-type SortDir = 'asc' | 'desc';
-
-function SortHeader({
-  label,
-  k,
-  sortKey,
-  sortDir,
-  onSort,
-}: {
-  label: string;
-  k: SortKey;
-  sortKey: SortKey | null;
-  sortDir: SortDir;
-  onSort: (k: SortKey) => void;
-}) {
-  const active = sortKey === k;
-  const Icon = active ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
-  return (
-    <button
-      type="button"
-      onClick={() => onSort(k)}
-      className="inline-flex items-center gap-1 hover:text-white transition-colors"
-      aria-label={`Sort by ${label.toLowerCase()}${
-        active ? (sortDir === 'asc' ? ', descending' : ', ascending') : ''
-      }`}
-    >
-      {label}
-      <Icon
-        className={`h-3 w-3 ${active ? 'text-gold' : 'text-silver/50'}`}
-        aria-hidden="true"
-      />
-    </button>
-  );
-}
 
 function statusVariant(status: UserStatus) {
   switch (status) {
@@ -162,11 +112,7 @@ export function UsersAdmin() {
   const [secondRoleFor, setSecondRoleFor] = useState<AdminUser | null>(null);
   const [status, setStatus] = useState<UserStatus | ''>('');
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-
-  const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [clientsError, setClientsError] = useState(false);
@@ -265,12 +211,6 @@ export function UsersAdmin() {
       });
       setRows(res.users);
       setTotal(res.total);
-      // Drop selections that no longer exist in the refreshed page.
-      setSelected((prev) => {
-        const next = new Set<string>();
-        for (const u of res.users) if (prev.has(u.id)) next.add(u.id);
-        return next;
-      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load users.');
     } finally {
@@ -328,65 +268,14 @@ export function UsersAdmin() {
     }
   }, [appliedQ, role, status]);
 
-  const sorted = useMemo(() => {
-    if (!rows || !sortKey) return rows;
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case 'email':
-          cmp = a.email.localeCompare(b.email);
-          break;
-        case 'role':
-          cmp = ROLE_LABELS[a.role].localeCompare(ROLE_LABELS[b.role]);
-          break;
-        case 'status':
-          cmp = a.status.localeCompare(b.status);
-          break;
-        case 'created':
-          // ISO timestamps sort correctly as strings.
-          cmp = a.createdAt.localeCompare(b.createdAt);
-          break;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
-
-  const onSort = (k: SortKey) => {
-    if (sortKey === k) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(k);
-      setSortDir('asc');
-    }
-  };
-
-  // Everything selectable on the current page (self excluded — HR can't
-  // bulk-edit their own account, same rule as the per-row controls).
-  const selectableIds = useMemo(
-    () => (rows ?? []).filter((u) => u.id !== me?.id).map((u) => u.id),
-    [rows, me?.id],
-  );
-  const allSelected =
-    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
-
-  const toggleRow = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(selectableIds));
-  };
-
   /** Apply a single-row mutation across the selection, then summarize. */
-  const runBulk = async (label: string, fn: (id: string) => Promise<void>) => {
-    const ids = [...selected].filter((id) => id !== me?.id);
+  const runBulk = async (
+    selectedIds: string[],
+    clear: () => void,
+    label: string,
+    fn: (id: string) => Promise<void>,
+  ) => {
+    const ids = selectedIds.filter((id) => id !== me?.id);
     if (ids.length === 0) return;
     setBulkBusy(true);
     try {
@@ -398,15 +287,15 @@ export function UsersAdmin() {
       } else {
         toast.error(`${label}: ${ok} succeeded, ${failed} failed.`);
       }
-      setSelected(new Set());
+      clear();
       await load();
     } finally {
       setBulkBusy(false);
     }
   };
 
-  const onBulkRole = async (newRole: Role) => {
-    const n = selected.size;
+  const onBulkRole = async (ids: string[], clear: () => void, newRole: Role) => {
+    const n = ids.length;
     if (
       !(await confirm({
         title: `Set role to ${ROLE_LABELS[newRole]} for ${n} user${n === 1 ? '' : 's'}?`,
@@ -415,11 +304,11 @@ export function UsersAdmin() {
     ) {
       return;
     }
-    await runBulk('Set role', (id) => patchAdminUser(id, { role: newRole }));
+    await runBulk(ids, clear, 'Set role', (id) => patchAdminUser(id, { role: newRole }));
   };
 
-  const onBulkStatus = async (newStatus: UserStatus) => {
-    const n = selected.size;
+  const onBulkStatus = async (ids: string[], clear: () => void, newStatus: UserStatus) => {
+    const n = ids.length;
     const isDisable = newStatus === 'DISABLED';
     if (
       !(await confirm({
@@ -432,11 +321,11 @@ export function UsersAdmin() {
     ) {
       return;
     }
-    await runBulk('Set status', (id) => patchAdminUser(id, { status: newStatus }));
+    await runBulk(ids, clear, 'Set status', (id) => patchAdminUser(id, { status: newStatus }));
   };
 
-  const onBulkForceReset = async () => {
-    const n = selected.size;
+  const onBulkForceReset = async (ids: string[], clear: () => void) => {
+    const n = ids.length;
     if (
       !(await confirm({
         title: `Force a password reset for ${n} user${n === 1 ? '' : 's'}?`,
@@ -447,23 +336,7 @@ export function UsersAdmin() {
     ) {
       return;
     }
-    await runBulk('Force reset', (id) => forcePasswordReset(id));
-  };
-
-  const exportCsv = () => {
-    const data = sorted ?? rows;
-    if (!data || data.length === 0) return;
-    downloadCsv(`users-${ymdLocal()}.csv`, [
-      ['Email', 'Name', 'Role', 'Status', 'Client', 'Created'],
-      ...data.map((u) => [
-        u.email,
-        u.associateName ?? '',
-        ROLE_LABELS[u.role],
-        STATUS_LABELS[u.status],
-        u.clientName ?? '',
-        u.createdAt.slice(0, 10),
-      ]),
-    ]);
+    await runBulk(ids, clear, 'Force reset', (id) => forcePasswordReset(id));
   };
 
   const counts = useMemo(() => {
@@ -618,6 +491,285 @@ export function UsersAdmin() {
     }
   };
 
+  // Every control the hand-built table had, as a cell. The grid adds the
+  // rest: sort on any column, a column chooser, an export of what is on
+  // screen, and a card per account on phones instead of a table that
+  // hides its own columns.
+  const columns: GridColumn<AdminUser>[] = [
+    {
+      key: 'user',
+      header: 'User',
+      accessor: (u) => u.associateName ?? u.email,
+      csv: (u) => u.email,
+      sortable: true,
+      primary: true,
+      cell: (u) => {
+        const isMe = me?.id === u.id;
+        return (
+          <>
+            <div className="text-white">
+              {u.associateName ?? u.email}
+              {isMe && <span className="ml-2 text-xs text-gold">(you)</span>}
+            </div>
+            {u.associateName && <div className="text-xs text-silver">{u.email}</div>}
+          </>
+        );
+      },
+    },
+    {
+      key: 'role',
+      header: 'Role',
+      accessor: (u) => ROLE_LABELS[u.role],
+      sortable: true,
+      cardMeta: true,
+      cell: (u) => {
+        const isMe = me?.id === u.id;
+        const busy = pendingId === u.id;
+        return (
+          <>
+            <Select
+              size="sm"
+              aria-label="Change role"
+              value={draftRole[u.id] ?? u.role}
+              onChange={(e) => onChangeRole(u, e.target.value as Role)}
+              disabled={isMe || busy}
+            >
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </Select>
+            {/* One person, two jobs — the supervisor who also drives. A
+                second hat on this account, not a second account. */}
+            {!isMe && u.role !== 'CLIENT_PORTAL' && !draftRole[u.id] && (
+              <button
+                type="button"
+                onClick={() => setSecondRoleFor(u)}
+                disabled={busy}
+                className="mt-1 flex w-full items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs2 text-silver/80 hover:border-silver/40 hover:text-white"
+                title="Other roles this account can switch into"
+              >
+                <Repeat className="h-3 w-3 shrink-0 text-gold" aria-hidden="true" />
+                {u.additionalRoles && u.additionalRoles.length > 0 ? (
+                  <span className="truncate">
+                    also {u.additionalRoles.map((r) => ROLE_LABELS[r]).join(', ')}
+                  </span>
+                ) : (
+                  <span className="truncate text-silver/50">also works as…</span>
+                )}
+              </button>
+            )}
+            {u.activeRole && u.activeRole !== u.role && (
+              <div className="mt-1 text-xs2 text-gold">working as {ROLE_LABELS[u.activeRole]} now</div>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      accessor: (u) => STATUS_LABELS[u.status],
+      sortable: true,
+      cell: (u) => {
+        const isMe = me?.id === u.id;
+        const busy = pendingId === u.id;
+        return (
+          <div className="flex items-center gap-2">
+            <Badge variant={statusVariant(u.status)}>{STATUS_LABELS[u.status]}</Badge>
+            {u.lockedUntil && (
+              <Badge
+                variant="destructive"
+                withDot={false}
+                title={`Too many failed sign-in attempts — locked until ${fmtDateTime(u.lockedUntil)}`}
+              >
+                <Lock className="h-3 w-3" aria-hidden="true" />
+                Locked
+              </Badge>
+            )}
+            <Select
+              size="sm"
+              value={u.status}
+              onChange={(e) => onChangeStatus(u, e.target.value as UserStatus)}
+              disabled={isMe || busy}
+              aria-label="Change status"
+            >
+              {STATUS_OPTIONS.map((st) => (
+                <option key={st} value={st}>
+                  {STATUS_LABELS[st]}
+                </option>
+              ))}
+            </Select>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'client',
+      header: 'Client',
+      accessor: (u) => u.clientName,
+      sortable: true,
+      className: 'text-silver text-xs',
+      cell: (u) => {
+        const isMe = me?.id === u.id;
+        const busy = pendingId === u.id;
+        return (
+          <>
+            {clientsError ? (
+              <button
+                type="button"
+                onClick={() => void loadClients()}
+                className="text-alert underline underline-offset-2 hover:text-white"
+              >
+                Couldn't load clients — retry
+              </button>
+            ) : (
+              <Select
+                size="sm"
+                value={u.clientId ?? ''}
+                onChange={(e) => onAssignClient(u, e.target.value)}
+                disabled={isMe || busy}
+                aria-label="Assign client"
+              >
+                <option value="">
+                  {CLIENT_REQUIRED_ROLES.has(draftRole[u.id] ?? u.role) ? '— select client —' : 'All clients'}
+                </option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {(u.role === 'SHIFT_SUPERVISOR' || u.role === 'FLOOR_SUPERVISOR') &&
+              !draftRole[u.id] &&
+              u.clientId && (
+                <button
+                  type="button"
+                  onClick={() => setShiftFor(u)}
+                  disabled={busy}
+                  aria-label={`Assign shift for ${u.associateName ?? u.email}`}
+                  title={
+                    u.role === 'FLOOR_SUPERVISOR'
+                      ? 'The shift this floor supervisor works, and the shift supervisor in charge of them.'
+                      : 'The shifts this supervisor leads — where their pages open and who hears about a shift first. They still see the whole store.'
+                  }
+                  className="mt-1 flex w-full flex-col gap-0.5 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs hover:border-silver/40"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
+                    {u.shiftWindows && u.shiftWindows.length > 0 ? (
+                      <span className="truncate text-white">{u.shiftWindows.map((w) => w.label).join(', ')}</span>
+                    ) : (
+                      <Badge variant="pending" size="sm">No shift</Badge>
+                    )}
+                  </span>
+                  {u.role === 'FLOOR_SUPERVISOR' && (
+                    <span className="flex items-center gap-1.5">
+                      <UserRound className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
+                      {u.leadName ? (
+                        <span className="truncate text-silver">Reports to {u.leadName}</span>
+                      ) : (
+                        <Badge variant="pending" size="sm">No shift supervisor</Badge>
+                      )}
+                    </span>
+                  )}
+                </button>
+              )}
+            {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && (
+              <Select
+                size="sm"
+                className="mt-1"
+                value={u.regionId ?? ''}
+                onFocus={() => void ensureRegions()}
+                onChange={(e) => onAssignRegion(u, e.target.value)}
+                disabled={isMe || busy}
+                aria-label="Assign region"
+                title="A region account is the command center for every store in the region; it replaces the client and store scope."
+              >
+                <option value="">{u.regionId ? '— no region —' : 'Region (command center)…'}</option>
+                {(regions ?? (u.regionId && u.regionName ? [{ id: u.regionId, name: u.regionName }] : [])).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && u.clientId && (
+              <Select
+                size="sm"
+                className="mt-1"
+                value={u.locationId ?? ''}
+                onFocus={() => void ensureLocations(u.clientId!)}
+                onChange={(e) => onAssignLocation(u, e.target.value)}
+                disabled={isMe || busy}
+                aria-label="Assign store"
+                title="A store manager sees one store; leave on 'Whole client' for a market or district manager."
+              >
+                <option value="">Whole client</option>
+                {(locationsByClient[u.clientId] ?? (u.locationId && u.locationName ? [{ id: u.locationId, name: u.locationName }] : [])).map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      key: 'created',
+      header: 'Created',
+      accessor: (u) => u.createdAt,
+      csv: (u) => u.createdAt.slice(0, 10),
+      sortable: true,
+      searchable: false,
+      cardMeta: true,
+      className: 'text-silver text-xs whitespace-nowrap',
+      cell: (u) => fmtDate(u.createdAt),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      accessor: () => null,
+      searchable: false,
+      csv: () => '',
+      align: 'right',
+      cell: (u) => {
+        const isMe = me?.id === u.id;
+        const busy = pendingId === u.id;
+        return (
+          <>
+            {u.lockedUntil && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void onUnlock(u)}
+                disabled={busy}
+                title="Clear the failed-attempt lock so this user can sign in with their password again"
+              >
+                <Unlock className="mr-1 h-3 w-3" />
+                Unlock
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onForceReset(u)}
+              disabled={isMe || busy}
+              title={isMe ? 'Use /settings to change your own password' : 'Send a fresh reset link and revoke active sessions'}
+            >
+              <KeyRound className="mr-1 h-3 w-3" />
+              Force reset
+            </Button>
+          </>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -680,15 +832,6 @@ export function UsersAdmin() {
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button
-            variant="ghost"
-            onClick={exportCsv}
-            disabled={!rows || rows.length === 0}
-            title="Download the currently filtered rows as CSV"
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Export CSV
-          </Button>
         </CardContent>
       </Card>
 
@@ -719,63 +862,6 @@ export function UsersAdmin() {
         </div>
       )}
 
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2">
-          <span className="text-xs text-silver tabular-nums">
-            {selected.size} selected
-          </span>
-          <Select
-            size="sm"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) void onBulkRole(e.target.value as Role);
-            }}
-            disabled={bulkBusy}
-            aria-label="Set role for selected users"
-          >
-            <option value="">Set role…</option>
-            {BULK_ROLE_OPTIONS.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
-            ))}
-          </Select>
-          <Select
-            size="sm"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) void onBulkStatus(e.target.value as UserStatus);
-            }}
-            disabled={bulkBusy}
-            aria-label="Set status for selected users"
-          >
-            <option value="">Set status…</option>
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABELS[s]}
-              </option>
-            ))}
-          </Select>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void onBulkForceReset()}
-            disabled={bulkBusy}
-          >
-            <KeyRound className="mr-1 h-3 w-3" />
-            Force reset
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSelected(new Set())}
-            disabled={bulkBusy}
-          >
-            Clear selection
-          </Button>
-        </div>
-      )}
-
       {error && (
         <div className="space-y-3">
           <ErrorBanner>{error}</ErrorBanner>
@@ -787,38 +873,25 @@ export function UsersAdmin() {
 
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
-            // Skeleton matches the real row shape (name+email, role pill,
-            // status pill, client text, date, action stack) so when the
-            // data lands there's no layout shift. Six placeholders keep
-            // the table looking populated above the fold.
-            <div className="p-4 space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 py-2 border-b border-navy-secondary/50 last:border-b-0"
-                >
-                  <div className="flex-1 space-y-1.5">
-                    <Skeleton className="h-3.5 w-2/5" />
-                    <Skeleton className="h-3 w-1/3" />
-                  </div>
-                  <Skeleton className="h-7 w-24 hidden sm:block" />
-                  <Skeleton className="h-7 w-16 hidden md:block" />
-                  <Skeleton className="h-3 w-24 hidden lg:block" />
-                  <Skeleton className="h-7 w-20" />
-                </div>
-              ))}
-            </div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title={q || role || status ? 'No users match those filters' : 'No users yet'}
-              description={
+          <DataGrid<AdminUser>
+            id="users-admin"
+            caption="User accounts"
+            rows={rows}
+            columns={columns}
+            rowKey={(u) => u.id}
+            loading={loading && rows === null}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'users' }}
+            total={total ?? undefined}
+            empty={{
+              icon: Users,
+              title: q || role || status ? 'No users match those filters' : 'No users yet',
+              description:
                 q || role || status
                   ? 'Loosen the search or filters to see more accounts.'
-                  : 'Accounts appear here as people are invited.'
-              }
-              action={
+                  : 'Accounts appear here as people are invited.',
+              action:
                 q || role || status ? (
                   <Button
                     variant="secondary"
@@ -831,313 +904,59 @@ export function UsersAdmin() {
                   >
                     Clear filters
                   </Button>
-                ) : undefined
-              }
-            />
-          ) : (
-            <Table caption="User accounts">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleAll}
-                      disabled={selectableIds.length === 0}
-                      aria-label="Select all users on this page"
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortHeader
-                      label="User"
-                      k="email"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortHeader
-                      label="Role"
-                      k="role"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortHeader
-                      label="Status"
-                      k="status"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </TableHead>
-                  <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    <SortHeader
-                      label="Created"
-                      k="created"
-                      sortKey={sortKey}
-                      sortDir={sortDir}
-                      onSort={onSort}
-                    />
-                  </TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(sorted ?? rows).map((u) => {
-                  const isMe = me?.id === u.id;
-                  const busy = pendingId === u.id;
-                  return (
-                    <TableRow key={u.id}>
-                      <TableCell className="w-8">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(u.id)}
-                          onChange={() => toggleRow(u.id)}
-                          disabled={isMe}
-                          title={isMe ? 'You can’t bulk-edit your own account' : undefined}
-                          aria-label={`Select ${u.email}`}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-white">
-                          {u.associateName ?? u.email}
-                          {isMe && (
-                            <span className="ml-2 text-xs text-gold">(you)</span>
-                          )}
-                        </div>
-                        {u.associateName && (
-                          <div className="text-xs text-silver">{u.email}</div>
-                        )}
-                        <div className="text-xs2 text-silver/70 md:hidden">
-                          {u.clientName ?? '—'}
-                        </div>
-                        <div className="text-xs2 text-silver/70 lg:hidden">
-                          {fmtDate(u.createdAt)}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          size="sm"
-                          aria-label="Change role"
-                          value={draftRole[u.id] ?? u.role}
-                          onChange={(e) => onChangeRole(u, e.target.value as Role)}
-                          disabled={isMe || busy}
-                        >
-                          {ROLE_OPTIONS.map((r) => (
-                            <option key={r} value={r}>
-                              {ROLE_LABELS[r]}
-                            </option>
-                          ))}
-                        </Select>
-                        {/* One person, two jobs — the supervisor who also
-                            drives. A second hat on this account, not a
-                            second account. */}
-                        {!isMe && u.role !== 'CLIENT_PORTAL' && !draftRole[u.id] && (
-                          <button
-                            type="button"
-                            onClick={() => setSecondRoleFor(u)}
-                            disabled={busy}
-                            className="mt-1 flex w-full items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs2 text-silver/80 hover:border-silver/40 hover:text-white"
-                            title="Other roles this account can switch into"
-                          >
-                            <Repeat className="h-3 w-3 shrink-0 text-gold" aria-hidden="true" />
-                            {u.additionalRoles && u.additionalRoles.length > 0 ? (
-                              <span className="truncate">
-                                also {u.additionalRoles.map((r) => ROLE_LABELS[r]).join(', ')}
-                              </span>
-                            ) : (
-                              <span className="truncate text-silver/50">also works as…</span>
-                            )}
-                          </button>
-                        )}
-                        {u.activeRole && u.activeRole !== u.role && (
-                          <div className="mt-1 text-xs2 text-gold">
-                            working as {ROLE_LABELS[u.activeRole]} now
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={statusVariant(u.status)}>
-                            {STATUS_LABELS[u.status]}
-                          </Badge>
-                          {u.lockedUntil && (
-                            <Badge
-                              variant="destructive"
-                              withDot={false}
-                              title={`Too many failed sign-in attempts — locked until ${fmtDateTime(u.lockedUntil)}`}
-                            >
-                              <Lock className="h-3 w-3" aria-hidden="true" />
-                              Locked
-                            </Badge>
-                          )}
-                          <Select
-                            size="sm"
-                            value={u.status}
-                            onChange={(e) =>
-                              onChangeStatus(u, e.target.value as UserStatus)
-                            }
-                            disabled={isMe || busy}
-                            aria-label="Change status"
-                          >
-                            {STATUS_OPTIONS.map((s) => (
-                              <option key={s} value={s}>
-                                {STATUS_LABELS[s]}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-silver text-xs hidden md:table-cell">
-                        {clientsError ? (
-                          <button
-                            type="button"
-                            onClick={() => void loadClients()}
-                            className="text-alert underline underline-offset-2 hover:text-white"
-                          >
-                            Couldn't load clients — retry
-                          </button>
-                        ) : (
-                          <Select
-                            size="sm"
-                            value={u.clientId ?? ''}
-                            onChange={(e) => onAssignClient(u, e.target.value)}
-                            disabled={isMe || busy}
-                            aria-label="Assign client"
-                          >
-                            <option value="">
-                              {CLIENT_REQUIRED_ROLES.has(draftRole[u.id] ?? u.role)
-                                ? '— select client —'
-                                : 'All clients'}
-                            </option>
-                            {clients.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                        {(u.role === 'SHIFT_SUPERVISOR' || u.role === 'FLOOR_SUPERVISOR') &&
-                          !draftRole[u.id] &&
-                          u.clientId && (
-                          <button
-                            type="button"
-                            onClick={() => setShiftFor(u)}
-                            disabled={busy}
-                            aria-label={`Assign shift for ${u.associateName ?? u.email}`}
-                            title={
-                              u.role === 'FLOOR_SUPERVISOR'
-                                ? 'The shift this floor supervisor works, and the shift supervisor in charge of them.'
-                                : 'The shifts this supervisor leads — where their pages open and who hears about a shift first. They still see the whole store.'
-                            }
-                            className="mt-1 flex w-full flex-col gap-0.5 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs hover:border-silver/40"
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <Clock className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
-                              {u.shiftWindows && u.shiftWindows.length > 0 ? (
-                                <span className="truncate text-white">
-                                  {u.shiftWindows.map((w) => w.label).join(', ')}
-                                </span>
-                              ) : (
-                                <Badge variant="pending" size="sm">No shift</Badge>
-                              )}
-                            </span>
-                            {u.role === 'FLOOR_SUPERVISOR' && (
-                              <span className="flex items-center gap-1.5">
-                                <UserRound className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
-                                {u.leadName ? (
-                                  <span className="truncate text-silver">Reports to {u.leadName}</span>
-                                ) : (
-                                  <Badge variant="pending" size="sm">No shift supervisor</Badge>
-                                )}
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && (
-                          <Select
-                            size="sm"
-                            className="mt-1"
-                            value={u.regionId ?? ''}
-                            onFocus={() => void ensureRegions()}
-                            onChange={(e) => onAssignRegion(u, e.target.value)}
-                            disabled={isMe || busy}
-                            aria-label="Assign region"
-                            title="A region account is the command center for every store in the region; it replaces the client and store scope."
-                          >
-                            <option value="">{u.regionId ? '— no region —' : 'Region (command center)…'}</option>
-                            {(regions ?? (u.regionId && u.regionName ? [{ id: u.regionId, name: u.regionName }] : [])).map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                        {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && u.clientId && (
-                          <Select
-                            size="sm"
-                            className="mt-1"
-                            value={u.locationId ?? ''}
-                            onFocus={() => void ensureLocations(u.clientId!)}
-                            onChange={(e) => onAssignLocation(u, e.target.value)}
-                            disabled={isMe || busy}
-                            aria-label="Assign store"
-                            title="A store manager sees one store; leave on 'Whole client' for a market or district manager."
-                          >
-                            <option value="">Whole client</option>
-                            {(locationsByClient[u.clientId] ?? (u.locationId && u.locationName
-                              ? [{ id: u.locationId, name: u.locationName }]
-                              : [])
-                            ).map((l) => (
-                              <option key={l.id} value={l.id}>
-                                {l.name}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-silver text-xs hidden lg:table-cell">
-                        {fmtDate(u.createdAt)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {u.lockedUntil && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void onUnlock(u)}
-                            disabled={busy}
-                            title="Clear the failed-attempt lock so this user can sign in with their password again"
-                          >
-                            <Unlock className="mr-1 h-3 w-3" />
-                            Unlock
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onForceReset(u)}
-                          disabled={isMe || busy}
-                          title={
-                            isMe
-                              ? 'Use /settings to change your own password'
-                              : 'Send a fresh reset link and revoke active sessions'
-                          }
-                        >
-                          <KeyRound className="mr-1 h-3 w-3" />
-                          Force reset
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+                ) : undefined,
+            }}
+            selectable={{
+              // HR can't bulk-edit their own account — same rule as the
+              // per-row controls.
+              disabled: (u) => u.id === me?.id,
+              actions: (ids, clear) => (
+                <>
+                  <Select
+                    size="sm"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) void onBulkRole(ids, clear, e.target.value as Role);
+                    }}
+                    disabled={bulkBusy}
+                    aria-label="Set role for selected users"
+                  >
+                    <option value="">Set role…</option>
+                    {BULK_ROLE_OPTIONS.map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    size="sm"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) void onBulkStatus(ids, clear, e.target.value as UserStatus);
+                    }}
+                    disabled={bulkBusy}
+                    aria-label="Set status for selected users"
+                  >
+                    <option value="">Set status…</option>
+                    {STATUS_OPTIONS.map((st) => (
+                      <option key={st} value={st}>
+                        {STATUS_LABELS[st]}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void onBulkForceReset(ids, clear)}
+                    disabled={bulkBusy}
+                  >
+                    <KeyRound className="mr-1 h-3 w-3" />
+                    Force reset
+                  </Button>
+                </>
+              ),
+            }}
+          />
         </CardContent>
       </Card>
 
