@@ -17,14 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { cn } from '@/lib/cn';
 
 // Downloadable header template — header row + one example row, so admins
@@ -215,45 +208,40 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
                 </div>
 
                 <div className="rounded-md border border-navy-secondary max-h-72 overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-14">Line</TableHead>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Client</TableHead>
-                        <TableHead>Hire date</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {preview.rows.slice(0, MAX_RENDERED_ROWS).map((r) => (
-                        <TableRow
-                          key={r.line}
-                          className={cn(r.errors.length > 0 && 'bg-alert/[0.06]')}
-                        >
-                          <TableCell className="font-mono text-xs">{r.line}</TableCell>
-                          <TableCell className="text-sm">
-                            {r.data.firstName} {r.data.lastName}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{r.data.email}</TableCell>
-                          <TableCell className="text-sm">
-                            {r.data.clientName ?? (r.data.clientId ? 'by id' : '—')}
-                          </TableCell>
-                          <TableCell className="text-sm">{r.data.hireDate ?? '—'}</TableCell>
-                          <TableCell className="text-xs">
-                            {r.errors.length === 0 ? (
-                              <span className="text-success inline-flex items-center gap-1">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Ready
-                              </span>
-                            ) : (
-                              <span className="text-alert">{r.errors.join('; ')}</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DataGrid<(typeof preview.rows)[number]>
+                    id="csv-import-preview"
+                    caption="Import preview"
+                    rows={preview.rows.slice(0, MAX_RENDERED_ROWS)}
+                    rowKey={(r) => String(r.line)}
+                    search={false}
+                    urlState={false}
+                    exportCsv={false}
+                    columnChooser={false}
+                    rowClassName={(r) => (r.errors.length > 0 ? 'bg-alert/[0.06]' : undefined)}
+                    columns={[
+                      { key: 'line', header: 'Line', accessor: (r) => r.line, sortable: true, searchable: false, width: '3.5rem', cardMeta: true, className: 'font-mono text-xs' },
+                      { key: 'name', header: 'Name', accessor: (r) => `${r.data.firstName} ${r.data.lastName}`, primary: true, className: 'text-sm' },
+                      { key: 'email', header: 'Email', accessor: (r) => r.data.email, cardMeta: true, className: 'font-mono text-xs' },
+                      { key: 'client', header: 'Client', accessor: (r) => r.data.clientName ?? (r.data.clientId ? 'by id' : null), className: 'text-sm', cell: (r) => r.data.clientName ?? (r.data.clientId ? 'by id' : '—') },
+                      { key: 'hireDate', header: 'Hire date', accessor: (r) => r.data.hireDate, className: 'text-sm', cell: (r) => r.data.hireDate ?? '—' },
+                      {
+                        key: 'status',
+                        header: 'Status',
+                        accessor: (r) => (r.errors.length === 0 ? 'Ready' : r.errors.join('; ')),
+                        sortable: true,
+                        cardMeta: true,
+                        className: 'text-xs',
+                        cell: (r) =>
+                          r.errors.length === 0 ? (
+                            <span className="text-success inline-flex items-center gap-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> Ready
+                            </span>
+                          ) : (
+                            <span className="text-alert">{r.errors.join('; ')}</span>
+                          ),
+                      },
+                    ]}
+                  />
                   {preview.rows.length > MAX_RENDERED_ROWS && (
                     <div className="p-2 text-xs text-silver/70">
                       + {preview.rows.length - MAX_RENDERED_ROWS} more rows not shown

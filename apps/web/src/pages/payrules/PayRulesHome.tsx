@@ -51,17 +51,12 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
@@ -242,45 +237,44 @@ function ProjectsTab({ clientId }: { clientId: string }) {
               description="Create projects to track time-by-project under each client."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Billable</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className="w-32 text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((p) => (
-                  <TableRow
-                    key={p.id}
-                    className="cursor-pointer"
-                    onClick={() => setEditTarget(p)}
-                  >
-                    <TableCell className="font-mono text-xs">{p.code}</TableCell>
-                    <TableCell className="text-white">{p.name}</TableCell>
-                    <TableCell>{p.isBillable ? 'Yes' : 'No'}</TableCell>
-                    <TableCell>
-                      <Badge variant={p.isActive ? 'success' : 'default'}>
-                        {p.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <Button size="sm" variant="ghost" onClick={() => setEditTarget(p)}>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="projects"
+              caption="Projects"
+              rows={rows}
+              rowKey={(pr) => pr.id}
+              search={{ placeholder: 'Code, name…' }}
+              urlState={false}
+              exportCsv={{ filename: 'projects' }}
+              onRowClick={(pr) => setEditTarget(pr)}
+              rowActionLabel={(pr) => `Edit ${pr.name}`}
+              columns={[
+                { key: 'code', header: 'Code', accessor: (pr) => pr.code, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
+                { key: 'name', header: 'Name', accessor: (pr) => pr.name, sortable: true, primary: true, className: 'text-white' },
+                { key: 'billable', header: 'Billable', accessor: (pr) => (pr.isBillable ? 'Yes' : 'No'), sortable: true, searchable: false },
+                { key: 'active', header: 'Active', accessor: (pr) => (pr.isActive ? 'Active' : 'Inactive'), sortable: true, searchable: false, cell: (pr) => <Badge variant={pr.isActive ? 'success' : 'default'}>{pr.isActive ? 'Active' : 'Inactive'}</Badge> },
+                {
+                  key: 'action',
+                  header: 'Action',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (pr) => (
+                    <>
+                      <Button size="sm" variant="ghost" onClick={() => setEditTarget(pr)}>
                         Edit
                       </Button>
-                      {p.isActive && (
-                        <Button size="sm" variant="ghost" onClick={() => onDeactivate(p.id)}>
+                      {pr.isActive && (
+                        <Button size="sm" variant="ghost" onClick={() => onDeactivate(pr.id)}>
                           Deactivate
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -466,48 +460,38 @@ function PremiumTab({ clientId }: { clientId: string }) {
               description="Define overtime multipliers, night differentials, holiday pay, and other premium rules."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead className="text-right">Multiplier</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Add $/hr</TableHead>
-                  <TableHead className="hidden md:table-cell text-right">Threshold</TableHead>
-                  <TableHead>Active</TableHead>
-                  <TableHead className="w-32 text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium text-white">{r.name}</TableCell>
-                    <TableCell>{KIND_LABEL[r.kind] ?? r.kind}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {r.multiplier ? `×${r.multiplier}` : '—'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {r.addPerHour ? fmtMoney(r.addPerHour) : '—'}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-right tabular-nums">
-                      {r.thresholdHours ? `${r.thresholdHours} hr` : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={r.isActive ? 'success' : 'default'}>
-                        {r.isActive ? 'Yes' : 'No'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {r.isActive && (
-                        <Button size="sm" variant="ghost" onClick={() => onDelete(r.id)}>
-                          Deactivate
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="premium-pay-rules"
+              caption="Premium pay rules"
+              rows={rows}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Name, kind…' }}
+              urlState={false}
+              exportCsv={{ filename: 'premium-pay-rules' }}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (r) => r.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'kind', header: 'Kind', accessor: (r) => KIND_LABEL[r.kind] ?? r.kind, sortable: true, cardMeta: true },
+                { key: 'multiplier', header: 'Multiplier', accessor: (r) => r.multiplier, csv: (r) => (r.multiplier ? `×${r.multiplier}` : ''), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => (r.multiplier ? `×${r.multiplier}` : '—') },
+                { key: 'add', header: 'Add $/hr', accessor: (r) => r.addPerHour, csv: (r) => (r.addPerHour ? fmtMoney(r.addPerHour) : ''), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.addPerHour ? fmtMoney(r.addPerHour) : '—') },
+                { key: 'threshold', header: 'Threshold', accessor: (r) => r.thresholdHours, csv: (r) => (r.thresholdHours ? `${r.thresholdHours} hr` : ''), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.thresholdHours ? `${r.thresholdHours} hr` : '—') },
+                { key: 'active', header: 'Active', accessor: (r) => (r.isActive ? 'Yes' : 'No'), sortable: true, searchable: false, cell: (r) => <Badge variant={r.isActive ? 'success' : 'default'}>{r.isActive ? 'Yes' : 'No'}</Badge> },
+                {
+                  key: 'action',
+                  header: 'Action',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (r) =>
+                    r.isActive ? (
+                      <Button size="sm" variant="ghost" onClick={() => onDelete(r.id)}>
+                        Deactivate
+                      </Button>
+                    ) : null,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -714,48 +698,30 @@ function TipsTab({ clientId }: { clientId: string }) {
               description="Create a pool, sum tips, allocate by hours-worked or %, then close + pay out."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Allocations</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((p) => (
-                  <TableRow
-                    key={p.id}
-                    className="cursor-pointer"
-                    onClick={() => setActive(p)}
-                  >
-                    <TableCell>{fmtDate(parseYmd(p.shiftDate))}</TableCell>
-                    <TableCell className="text-white">{p.name}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(p.totalAmount, { currency: p.currency })}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {p.allocationCount}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          p.status === 'PAID_OUT'
-                            ? 'success'
-                            : p.status === 'CLOSED'
-                              ? 'pending'
-                              : 'default'
-                        }
-                      >
-                        {POOL_STATUS_LABELS[p.status] ?? p.status}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="tip-pools"
+              caption="Tip pools"
+              rows={rows}
+              rowKey={(pool) => pool.id}
+              search={{ placeholder: 'Pool name…' }}
+              urlState={false}
+              exportCsv={{ filename: 'tip-pools' }}
+              onRowClick={(pool) => setActive(pool)}
+              rowActionLabel={(pool) => `Open ${pool.name}`}
+              columns={[
+                { key: 'date', header: 'Date', accessor: (pool) => pool.shiftDate, sortable: true, searchable: false, cardMeta: true, cell: (pool) => fmtDate(parseYmd(pool.shiftDate)) },
+                { key: 'name', header: 'Name', accessor: (pool) => pool.name, sortable: true, primary: true, className: 'text-white' },
+                { key: 'total', header: 'Total', accessor: (pool) => Number(pool.totalAmount), csv: (pool) => fmtMoney(pool.totalAmount, { currency: pool.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (pool) => fmtMoney(pool.totalAmount, { currency: pool.currency }) },
+                { key: 'allocations', header: 'Allocations', accessor: (pool) => pool.allocationCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (pool) => POOL_STATUS_LABELS[pool.status] ?? pool.status,
+                  sortable: true,
+                  cell: (pool) => <Badge variant={pool.status === 'PAID_OUT' ? 'success' : pool.status === 'CLOSED' ? 'pending' : 'default'}>{POOL_STATUS_LABELS[pool.status] ?? pool.status}</Badge>,
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1128,58 +1094,34 @@ function TipPoolDrawer({
                 <Download className="mr-2 h-4 w-4" /> Export CSV
               </Button>
             </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="text-right">Hours</TableHead>
-                  <TableHead className="text-right">Share %</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {allocations.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="text-white">{a.associateName}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {a.hoursWorked}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {a.sharePct ? `${a.sharePct}%` : '—'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(a.amount, { currency: pool.currency })}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <TableRow>
-                  <TableCell className="font-medium text-white">
-                    Total allocated ({headcount})
-                  </TableCell>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell className="text-right tabular-nums font-medium text-white">
-                    {fmtMoney(allocatedTotal, { currency: pool.currency })}
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell
-                    className={remainderNonZero ? 'text-alert' : 'text-silver'}
-                  >
-                    Unallocated remainder
-                  </TableCell>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell
-                    className={`text-right tabular-nums ${
-                      remainderNonZero ? 'text-alert font-medium' : 'text-silver'
-                    }`}
-                  >
-                    {fmtMoney(remainder, { currency: pool.currency })}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof allocations)[number]>
+              id="tip-pool-allocations"
+              caption="Allocations"
+              rows={allocations}
+              rowKey={(a) => a.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              columns={[
+                { key: 'associate', header: 'Associate', accessor: (a) => a.associateName, sortable: true, primary: true, className: 'text-white' },
+                { key: 'hours', header: 'Hours', accessor: (a) => a.hoursWorked, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                { key: 'share', header: 'Share %', accessor: (a) => a.sharePct, csv: (a) => (a.sharePct ? `${a.sharePct}%` : ''), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (a) => (a.sharePct ? `${a.sharePct}%` : '—') },
+                { key: 'amount', header: 'Amount', accessor: (a) => Number(a.amount), csv: (a) => fmtMoney(a.amount, { currency: pool.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (a) => fmtMoney(a.amount, { currency: pool.currency }) },
+              ]}
+              footnote={
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-4 font-medium text-white">
+                    <span>Total allocated ({headcount})</span>
+                    <span className="tabular-nums">{fmtMoney(allocatedTotal, { currency: pool.currency })}</span>
+                  </div>
+                  <div className={`flex justify-between gap-4 ${remainderNonZero ? 'text-alert font-medium' : 'text-silver'}`}>
+                    <span>Unallocated remainder</span>
+                    <span className="tabular-nums">{fmtMoney(remainder, { currency: pool.currency })}</span>
+                  </div>
+                </div>
+              }
+            />
           </div>
         )}
       </DrawerBody>

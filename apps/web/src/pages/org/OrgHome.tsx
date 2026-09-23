@@ -70,17 +70,12 @@ import {
   SearchInput,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
@@ -369,44 +364,23 @@ function DepartmentsTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead className="hidden md:table-cell">Code</TableHead>
-              <TableHead className="hidden md:table-cell">Parent</TableHead>
-              <TableHead className="text-right">Associates</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((d) => {
-              const parent = rows.find((p) => p.id === d.parentId);
-              return (
-                <TableRow
-                  key={d.id}
-                  className="group cursor-pointer"
-                  onClick={(e) => {
-                    const t = e.target as HTMLElement;
-                    if (t.closest('button, a, input, [data-no-row-click]')) return;
-                    setDrawerTarget(d);
-                  }}
-                >
-                  <TableCell className="font-medium">
-                    {d.name}
-                    <div className="text-xs2 text-silver/70 md:hidden">
-                      {[d.code, parent?.name].filter(Boolean).join(' · ') || '—'}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-silver hidden md:table-cell">{d.code ?? '—'}</TableCell>
-                  <TableCell className="text-silver hidden md:table-cell">{parent?.name ?? '—'}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {d.associateCount}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <DataGrid<NonNullable<typeof rows>[number]>
+          id="org-departments"
+          caption="Departments"
+          rows={rows}
+          rowKey={(d) => d.id}
+          search={{ placeholder: 'Name, code…' }}
+          urlState={false}
+          exportCsv={{ filename: 'departments' }}
+          onRowClick={(d) => setDrawerTarget(d)}
+          rowActionLabel={(d) => `Open ${d.name}`}
+          columns={[
+            { key: 'name', header: 'Name', accessor: (d) => d.name, sortable: true, primary: true, className: 'font-medium' },
+            { key: 'code', header: 'Code', accessor: (d) => d.code, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => d.code ?? '—' },
+            { key: 'parent', header: 'Parent', accessor: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? null, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? '—' },
+            { key: 'associates', header: 'Associates', accessor: (d) => d.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+          ]}
+        />
       )}
 
       <Drawer
@@ -688,32 +662,22 @@ function CostCentersTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead className="text-right">Associates</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((c) => (
-              <TableRow
-                key={c.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setDrawerTarget(c);
-                }}
-              >
-                <TableCell className="font-medium tabular-nums">{c.code}</TableCell>
-                <TableCell>{c.name}</TableCell>
-                <TableCell className="text-right tabular-nums">{c.associateCount}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<NonNullable<typeof rows>[number]>
+          id="org-cost-centers"
+          caption="Cost centers"
+          rows={rows}
+          rowKey={(c) => c.id}
+          search={{ placeholder: 'Code, name…' }}
+          urlState={false}
+          exportCsv={{ filename: 'cost-centers' }}
+          onRowClick={(c) => setDrawerTarget(c)}
+          rowActionLabel={(c) => `Open ${c.name}`}
+          columns={[
+            { key: 'code', header: 'Code', accessor: (c) => c.code, sortable: true, cardMeta: true, className: 'font-medium tabular-nums' },
+            { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true },
+            { key: 'associates', header: 'Associates', accessor: (c) => c.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+          ]}
+        />
       )}
 
       <Drawer
@@ -977,30 +941,21 @@ function ShiftPositionsTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-16 text-right">Order</TableHead>
-              <TableHead>Name</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((p) => (
-              <TableRow
-                key={p.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setDrawerTarget(p);
-                }}
-              >
-                <TableCell className="text-right tabular-nums text-silver">{p.sortOrder}</TableCell>
-                <TableCell className="font-medium">{p.name}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<NonNullable<typeof rows>[number]>
+          id="org-positions"
+          caption="Positions"
+          rows={rows}
+          rowKey={(pos) => pos.id}
+          search={{ placeholder: 'Position…' }}
+          urlState={false}
+          exportCsv={{ filename: 'positions' }}
+          onRowClick={(pos) => setDrawerTarget(pos)}
+          rowActionLabel={(pos) => `Open ${pos.name}`}
+          columns={[
+            { key: 'order', header: 'Order', accessor: (pos) => pos.sortOrder, sortable: true, searchable: false, align: 'right', cardMeta: true, width: '4rem', className: 'tabular-nums text-silver' },
+            { key: 'name', header: 'Name', accessor: (pos) => pos.name, sortable: true, primary: true, className: 'font-medium' },
+          ]}
+        />
       )}
 
       <Drawer
@@ -1242,49 +1197,25 @@ function JobProfilesTab({
         />
       )}
       {rows && rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead className="hidden md:table-cell">Family</TableHead>
-              <TableHead className="hidden md:table-cell">Level</TableHead>
-              <TableHead className="hidden lg:table-cell">FLSA</TableHead>
-              <TableHead className="text-right">Associates</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((j) => (
-              <TableRow
-                key={j.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setDrawerTarget(j);
-                }}
-              >
-                <TableCell className="font-medium tabular-nums">{j.code}</TableCell>
-                <TableCell>
-                  {j.title}
-                  <div className="text-xs2 text-silver/70 md:hidden">
-                    {[j.family, j.level].filter(Boolean).join(' · ') || '—'}
-                  </div>
-                </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{j.family ?? '—'}</TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{j.level ?? '—'}</TableCell>
-                <TableCell className="hidden lg:table-cell">
-                  <Badge variant={j.isExempt ? 'accent' : 'default'}>
-                    {j.isExempt ? 'Exempt' : 'Non-exempt'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {j.associateCount}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataGrid<NonNullable<typeof rows>[number]>
+          id="org-job-profiles"
+          caption="Job profiles"
+          rows={rows}
+          rowKey={(j) => j.id}
+          search={{ placeholder: 'Code, title, family…' }}
+          urlState={false}
+          exportCsv={{ filename: 'job-profiles' }}
+          onRowClick={(j) => setDrawerTarget(j)}
+          rowActionLabel={(j) => `Open ${j.title}`}
+          columns={[
+            { key: 'code', header: 'Code', accessor: (j) => j.code, sortable: true, cardMeta: true, className: 'font-medium tabular-nums' },
+            { key: 'title', header: 'Title', accessor: (j) => j.title, sortable: true, primary: true },
+            { key: 'family', header: 'Family', accessor: (j) => j.family, sortable: true, cardMeta: true, className: 'text-silver', cell: (j) => j.family ?? '—' },
+            { key: 'level', header: 'Level', accessor: (j) => j.level, sortable: true, className: 'text-silver', cell: (j) => j.level ?? '—' },
+            { key: 'flsa', header: 'FLSA', accessor: (j) => (j.isExempt ? 'Exempt' : 'Non-exempt'), sortable: true, searchable: false, cell: (j) => <Badge variant={j.isExempt ? 'accent' : 'default'}>{j.isExempt ? 'Exempt' : 'Non-exempt'}</Badge> },
+            { key: 'associates', header: 'Associates', accessor: (j) => j.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+          ]}
+        />
       )}
 
       <Drawer
@@ -1689,81 +1620,50 @@ function PeopleTab({
         </div>
       )}
       {filtered && filtered.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {canManage && (
-                <TableHead className="w-8">
-                  <input
-                    type="checkbox"
-                    checked={sel.allSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = sel.someSelected;
-                    }}
-                    onChange={sel.toggleAll}
-                    aria-label="Select all visible associates"
-                  />
-                </TableHead>
-              )}
-              <TableHead>Associate</TableHead>
-              <TableHead className="hidden md:table-cell">Manager</TableHead>
-              <TableHead className="hidden md:table-cell">Department</TableHead>
-              <TableHead className="hidden lg:table-cell">Cost ctr</TableHead>
-              <TableHead>Job profile</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((a) => (
-              <TableRow
-                key={a.id}
-                className="group cursor-pointer"
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.closest('button, a, input, [data-no-row-click]')) return;
-                  setTarget(a);
-                }}
-              >
-                {canManage && (
-                  <TableCell className="w-8">
-                    <input
-                      type="checkbox"
-                      checked={sel.isSelected(a.id)}
-                      onChange={() => sel.toggle(a.id)}
-                      aria-label={`Select ${a.firstName} ${a.lastName}`}
-                    />
-                  </TableCell>
-                )}
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
-                    <div className="min-w-0">
-                      <AssociateLink associateId={a.id}>
-                        {a.firstName} {a.lastName}
-                      </AssociateLink>
-                      <div className="text-xs2 text-silver/70 md:hidden">
-                        {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
-                      </div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">
-                  {a.managerName ? (
-                    <AssociateLink associateId={a.managerId}>
-                      {a.managerName}
+        <DataGrid<NonNullable<typeof filtered>[number]>
+          id="org-associates"
+          caption="Associates and their org fields"
+          rows={filtered}
+          rowKey={(a) => a.id}
+          search={false}
+          urlState={false}
+          exportCsv={{ filename: 'org-assignments' }}
+          onRowClick={(a) => setTarget(a)}
+          rowActionLabel={(a) => `Open ${a.firstName} ${a.lastName}`}
+          selectable={canManage ? { selection: { selected: sel.selected, onChange: sel.replace } } : undefined}
+          columns={[
+            {
+              key: 'associate',
+              header: 'Associate',
+              accessor: (a) => `${a.firstName} ${a.lastName}`,
+              sortable: true,
+              primary: true,
+              className: 'font-medium',
+              cell: (a) => (
+                <div className="flex items-center gap-2.5">
+                  <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
+                  <div className="min-w-0">
+                    <AssociateLink associateId={a.id}>
+                      {a.firstName} {a.lastName}
                     </AssociateLink>
-                  ) : (
-                    '—'
-                  )}
-                </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{a.departmentName ?? '—'}</TableCell>
-                <TableCell className="text-silver tabular-nums hidden lg:table-cell">
-                  {a.costCenterCode ?? '—'}
-                </TableCell>
-                <TableCell className="text-silver">{a.jobProfileTitle ?? '—'}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'manager',
+              header: 'Manager',
+              accessor: (a) => a.managerName,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-silver',
+              cell: (a) => (a.managerName ? <AssociateLink associateId={a.managerId}>{a.managerName}</AssociateLink> : '—'),
+            },
+            { key: 'department', header: 'Department', accessor: (a) => a.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (a) => a.departmentName ?? '—' },
+            { key: 'costCenter', header: 'Cost ctr', accessor: (a) => a.costCenterCode, sortable: true, className: 'text-silver tabular-nums', cell: (a) => a.costCenterCode ?? '—' },
+            { key: 'jobProfile', header: 'Job profile', accessor: (a) => a.jobProfileTitle, sortable: true, cardMeta: true, className: 'text-silver', cell: (a) => a.jobProfileTitle ?? '—' },
+          ]}
+        />
       )}
 
       <Drawer

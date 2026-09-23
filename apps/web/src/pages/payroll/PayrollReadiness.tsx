@@ -25,14 +25,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 
 /**
@@ -124,25 +117,98 @@ export function PayrollReadiness() {
             ) : (
             <Card>
               <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Associate</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="text-center hidden md:table-cell">W-4 / TIN</TableHead>
-                      <TableHead className="text-center hidden md:table-cell">Tax state</TableHead>
-                      <TableHead className="text-center hidden md:table-cell">Payout</TableHead>
-                      <TableHead className="text-center hidden md:table-cell">Schedule</TableHead>
-                      <TableHead className="text-center hidden md:table-cell">User</TableHead>
-                      <TableHead className="text-center">Ready</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((row) => (
-                      <ReadinessTableRow key={row.associateId} row={row} />
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid<PayrollReadinessRow>
+                  id="payroll-readiness"
+                  caption="Payroll readiness by associate"
+                  rows={rows}
+                  rowKey={(row) => row.associateId}
+                  search={{ placeholder: 'Name, email…' }}
+                  urlState={false}
+                  exportCsv={{ filename: 'payroll-readiness' }}
+                  columns={[
+                    {
+                      key: 'associate',
+                      header: 'Associate',
+                      accessor: (row) => `${row.firstName} ${row.lastName}`,
+                      sortable: true,
+                      primary: true,
+                      className: 'font-medium text-white',
+                      cell: (row) => (
+                        <>
+                          {row.firstName} {row.lastName}
+                          <div className="text-xs text-silver">{row.email}</div>
+                        </>
+                      ),
+                    },
+                    {
+                      key: 'type',
+                      header: 'Type',
+                      accessor: (row) => (row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'),
+                      sortable: true,
+                      cardMeta: true,
+                      cell: (row) => <Badge variant={row.employmentType === 'W2_EMPLOYEE' ? 'default' : 'pending'}>{row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'}</Badge>,
+                    },
+                    {
+                      key: 'w4',
+                      header: 'W-4 / TIN',
+                      accessor: (row) => (row.flags.w4OnFile ? 'Yes' : 'No'),
+                      sortable: true,
+                      searchable: false,
+                      align: 'center',
+                      stopRowClick: true,
+                      cell: (row) => <Flag ok={row.flags.w4OnFile} href={`/people?associateId=${row.associateId}&tab=documents`} title={row.employmentType === 'W2_EMPLOYEE' ? 'W-4 missing' : 'W-9 / TIN missing'} />,
+                    },
+                    {
+                      key: 'taxState',
+                      header: 'Tax state',
+                      accessor: (row) => (row.flags.taxStateSet ? 'Yes' : 'No'),
+                      sortable: true,
+                      searchable: false,
+                      align: 'center',
+                      stopRowClick: true,
+                      cell: (row) => <Flag ok={row.flags.taxStateSet} href={`/people?associateId=${row.associateId}`} title="Tax state missing or unsupported" />,
+                    },
+                    {
+                      key: 'payout',
+                      header: 'Payout',
+                      accessor: (row) => (row.flags.payoutMethodOnFile ? 'Yes' : 'No'),
+                      sortable: true,
+                      searchable: false,
+                      align: 'center',
+                      stopRowClick: true,
+                      cell: (row) => <Flag ok={row.flags.payoutMethodOnFile} href={`/people?associateId=${row.associateId}&tab=documents`} title="No Branch card or bank account on file" />,
+                    },
+                    {
+                      key: 'schedule',
+                      header: 'Schedule',
+                      accessor: (row) => (row.flags.payScheduleAssigned ? 'Yes' : 'No'),
+                      sortable: true,
+                      searchable: false,
+                      align: 'center',
+                      stopRowClick: true,
+                      cell: (row) => <Flag ok={row.flags.payScheduleAssigned} href={`/people?associateId=${row.associateId}`} title="No pay schedule assigned" />,
+                    },
+                    {
+                      key: 'user',
+                      header: 'User',
+                      accessor: (row) => (row.flags.userLinked ? 'Yes' : 'No'),
+                      sortable: true,
+                      searchable: false,
+                      align: 'center',
+                      stopRowClick: true,
+                      cell: (row) => <Flag ok={row.flags.userLinked} href={`/people?associateId=${row.associateId}`} title="No user account linked" />,
+                    },
+                    {
+                      key: 'ready',
+                      header: 'Ready',
+                      accessor: (row) => (row.ready ? 'Ready' : 'Action required'),
+                      sortable: true,
+                      align: 'center',
+                      cardMeta: true,
+                      cell: (row) => (row.ready ? <Badge variant="success">Ready</Badge> : <Badge variant="destructive">Action required</Badge>),
+                    },
+                  ]}
+                />
               </CardContent>
             </Card>
             );
@@ -198,103 +264,24 @@ function ReadinessSummary({
   );
 }
 
-function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
-  const profileUrl = `/people?associateId=${row.associateId}`;
-  // Document-shaped gaps (W-4/TIN, payout/bank) land on the profile's
-  // Documents tab; the rest open the default profile view.
-  const documentsUrl = `${profileUrl}&tab=documents`;
-  const w4Label =
-    row.employmentType === 'W2_EMPLOYEE' ? 'W-4 missing' : 'W-9 / TIN missing';
-  return (
-    <TableRow>
-      <TableCell className="font-medium text-white">
-        {row.firstName} {row.lastName}
-        <div className="text-xs text-silver">{row.email}</div>
-        {!row.ready && (
-          <div className="md:hidden text-xs2 text-silver/70 truncate">
-            Missing:{' '}
-            {[
-              !row.flags.w4OnFile &&
-                (row.employmentType === 'W2_EMPLOYEE' ? 'W-4' : 'TIN'),
-              !row.flags.taxStateSet && 'tax state',
-              !row.flags.payoutMethodOnFile && 'payout',
-              !row.flags.payScheduleAssigned && 'schedule',
-              !row.flags.userLinked && 'user',
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        <Badge variant={row.employmentType === 'W2_EMPLOYEE' ? 'default' : 'pending'}>
-          {row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'}
-        </Badge>
-      </TableCell>
-      <Flag ok={row.flags.w4OnFile} href={documentsUrl} title={w4Label} className="hidden md:table-cell" />
-      <Flag ok={row.flags.taxStateSet} href={profileUrl} title="Tax state missing or unsupported" className="hidden md:table-cell" />
-      <Flag
-        ok={row.flags.payoutMethodOnFile}
-        href={documentsUrl}
-        title="No Branch card or bank account on file"
-        className="hidden md:table-cell"
-      />
-      <Flag
-        ok={row.flags.payScheduleAssigned}
-        href={profileUrl}
-        title="No pay schedule assigned"
-        className="hidden md:table-cell"
-      />
-      <Flag ok={row.flags.userLinked} href={profileUrl} title="No user account linked" className="hidden md:table-cell" />
-      <TableCell className="text-center">
-        {row.ready ? (
-          <Badge variant="success">Ready</Badge>
-        ) : (
-          <Badge variant="destructive">Action required</Badge>
-        )}
-      </TableCell>
-    </TableRow>
-  );
-}
-
-function Flag({
-  ok,
-  href,
-  title,
-  className,
-}: {
-  ok: boolean;
-  href: string;
-  title: string;
-  className?: string;
-}) {
+function Flag({ ok, href, title }: { ok: boolean; href: string; title: string }) {
   if (ok) {
-    return (
-      <TableCell className={`text-center ${className ?? ''}`}>
-        <CheckCircle2
-          className="mx-auto h-5 w-5 text-success"
-          aria-label="Complete"
-          role="img"
-        />
-      </TableCell>
-    );
+    return <CheckCircle2 className="mx-auto h-5 w-5 text-success" aria-label="Complete" role="img" />;
   }
   // Red — clickable link to the associate profile so HR can fix the gap.
   // Opens in a NEW TAB so this readiness list (and its filter) survives
   // the fix; come back and the row is still where you left it.
   return (
-    <TableCell className={`text-center ${className ?? ''}`}>
-      <Link
-        to={href}
-        target="_blank"
-        rel="noreferrer"
-        title={`${title} — opens the profile in a new tab`}
-        aria-label={title}
-        className="inline-flex items-center justify-center rounded hover:bg-alert/10 focus:outline-none focus:ring-2 focus:ring-alert"
-      >
-        <XCircle className="h-5 w-5 text-alert" />
-      </Link>
-    </TableCell>
+    <Link
+      to={href}
+      target="_blank"
+      rel="noreferrer"
+      title={`${title} — opens the profile in a new tab`}
+      aria-label={title}
+      className="inline-flex items-center justify-center rounded hover:bg-alert/10 focus:outline-none focus:ring-2 focus:ring-alert"
+    >
+      <XCircle className="h-5 w-5 text-alert" />
+    </Link>
   );
 }
 

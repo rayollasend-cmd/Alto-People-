@@ -51,18 +51,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -791,64 +786,39 @@ function EmergencyPanel({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('me.th.name')}</TableHead>
-                  <TableHead>{t('me.th.relation')}</TableHead>
-                  <TableHead>{t('me.th.phone')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('me.th.email')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('me.th.primary')}</TableHead>
-                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    className="group cursor-pointer"
-                    onClick={() =>
-                      setDraft({
-                        id: row.id,
-                        name: row.name,
-                        relation: row.relation,
-                        phone: row.phone,
-                        email: row.email ?? '',
-                        isPrimary: row.isPrimary,
-                      })
-                    }
-                  >
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">{row.name}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {row.email ?? '—'}{row.isPrimary ? ` · ${t('me.primary')}` : ''}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{relLabel(t, row.relation)}</TableCell>
-                    <TableCell>{row.phone}</TableCell>
-                    <TableCell className="hidden md:table-cell">{row.email ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {row.isPrimary ? <Badge variant="accent">{t('me.primary')}</Badge> : '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <button
-                        data-no-row-click
-                        aria-label={t('me.deleteAria')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(row.id);
-                        }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
-                      >
-                        <Trash2 className="h-4 w-4 inline" />
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="me-emergency-contacts"
+              caption={t('me.tab.emergency')}
+              rows={rows}
+              rowKey={(row) => row.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              onRowClick={(row) => setDraft({ id: row.id, name: row.name, relation: row.relation, phone: row.phone, email: row.email ?? '', isPrimary: row.isPrimary })}
+              rowActionLabel={(row) => row.name}
+              columns={[
+                { key: 'name', header: t('me.th.name'), accessor: (row) => row.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'relation', header: t('me.th.relation'), accessor: (row) => relLabel(t, row.relation), sortable: true, cardMeta: true },
+                { key: 'phone', header: t('me.th.phone'), accessor: (row) => row.phone, cardMeta: true },
+                { key: 'email', header: t('me.th.email'), accessor: (row) => row.email, cell: (row) => row.email ?? '—' },
+                { key: 'primary', header: t('me.th.primary'), accessor: (row) => (row.isPrimary ? t('me.primary') : ''), sortable: true, searchable: false, cell: (row) => (row.isPrimary ? <Badge variant="accent">{t('me.primary')}</Badge> : '—') },
+                {
+                  key: 'actions',
+                  header: t('me.th.actions'),
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (row) => (
+                    <Button size="sm" variant="ghost" className="text-silver hover:text-alert" aria-label={t('me.deleteAria')} onClick={() => onDelete(row.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1040,68 +1010,39 @@ function DependentsPanel({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('me.th.name')}</TableHead>
-                  <TableHead>{t('me.th.relation')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('me.th.dob')}</TableHead>
-                  <TableHead className="hidden lg:table-cell">{t('me.th.ssn4')}</TableHead>
-                  <TableHead>{t('me.th.covered')}</TableHead>
-                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    className="group cursor-pointer"
-                    onClick={() =>
-                      setDraft({
-                        id: row.id,
-                        firstName: row.firstName,
-                        lastName: row.lastName,
-                        relation: row.relation,
-                        dob: row.dob ? row.dob.slice(0, 10) : '',
-                        ssnLast4: row.ssnLast4 ?? '',
-                        isCovered: row.isCovered,
-                      })
-                    }
-                  >
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">
-                          {row.firstName} {row.lastName}
-                        </div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {row.dob ? t('me.dobPrefix', { date: fmtDate(parseYmd(row.dob)) }) : '—'}
-                          {row.ssnLast4 ? ` · •••-••-${row.ssnLast4}` : ''}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{relLabel(t, row.relation)}</TableCell>
-                    <TableCell className="hidden md:table-cell">{fmtDate(parseYmd(row.dob))}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—'}</TableCell>
-                    <TableCell>
-                      {row.isCovered ? <Badge variant="accent">{t('me.yes')}</Badge> : t('me.no')}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <button
-                        data-no-row-click
-                        aria-label={t('me.deleteAria')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(row.id);
-                        }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
-                      >
-                        <Trash2 className="h-4 w-4 inline" />
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="me-dependents"
+              caption={t('me.tab.dependents')}
+              rows={rows}
+              rowKey={(row) => row.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              onRowClick={(row) => setDraft({ id: row.id, firstName: row.firstName, lastName: row.lastName, relation: row.relation, dob: row.dob ? row.dob.slice(0, 10) : '', ssnLast4: row.ssnLast4 ?? '', isCovered: row.isCovered })}
+              rowActionLabel={(row) => `${row.firstName} ${row.lastName}`}
+              columns={[
+                { key: 'name', header: t('me.th.name'), accessor: (row) => `${row.firstName} ${row.lastName}`, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'relation', header: t('me.th.relation'), accessor: (row) => relLabel(t, row.relation), sortable: true, cardMeta: true },
+                { key: 'dob', header: t('me.th.dob'), accessor: (row) => row.dob, sortable: true, searchable: false, cardMeta: true, cell: (row) => fmtDate(parseYmd(row.dob)) },
+                { key: 'ssn4', header: t('me.th.ssn4'), accessor: (row) => row.ssnLast4, searchable: false, cell: (row) => (row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—') },
+                { key: 'covered', header: t('me.th.covered'), accessor: (row) => (row.isCovered ? t('me.yes') : t('me.no')), sortable: true, searchable: false, cell: (row) => (row.isCovered ? <Badge variant="accent">{t('me.yes')}</Badge> : t('me.no')) },
+                {
+                  key: 'actions',
+                  header: t('me.th.actions'),
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (row) => (
+                    <Button size="sm" variant="ghost" className="text-silver hover:text-alert" aria-label={t('me.deleteAria')} onClick={() => onDelete(row.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1353,66 +1294,38 @@ function BeneficiariesPanel({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('me.th.name')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('me.th.relation')}</TableHead>
-                  <TableHead>{t('me.th.kind')}</TableHead>
-                  <TableHead className="text-right">{t('me.th.percentage')}</TableHead>
-                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    className="group cursor-pointer"
-                    onClick={() =>
-                      setDraft({
-                        id: row.id,
-                        name: row.name,
-                        relation: row.relation,
-                        kind: row.kind,
-                        percentage: row.percentage,
-                        dependentId: row.dependentId,
-                      })
-                    }
-                  >
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">{row.name}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {relLabel(t, row.relation)}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{relLabel(t, row.relation)}</TableCell>
-                    <TableCell>
-                      <Badge variant={row.kind === 'PRIMARY' ? 'accent' : 'default'}>
-                        {benkLabel(t, row.kind)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.percentage}%
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <button
-                        data-no-row-click
-                        aria-label={t('me.deleteAria')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(row.id);
-                        }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
-                      >
-                        <Trash2 className="h-4 w-4 inline" />
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="me-beneficiaries"
+              caption={t('me.tab.beneficiaries')}
+              rows={rows}
+              rowKey={(row) => row.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              onRowClick={(row) => setDraft({ id: row.id, name: row.name, relation: row.relation, kind: row.kind, percentage: row.percentage, dependentId: row.dependentId })}
+              rowActionLabel={(row) => row.name}
+              columns={[
+                { key: 'name', header: t('me.th.name'), accessor: (row) => row.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'relation', header: t('me.th.relation'), accessor: (row) => relLabel(t, row.relation), sortable: true, cardMeta: true },
+                { key: 'kind', header: t('me.th.kind'), accessor: (row) => benkLabel(t, row.kind), sortable: true, cardMeta: true, cell: (row) => <Badge variant={row.kind === 'PRIMARY' ? 'accent' : 'default'}>{benkLabel(t, row.kind)}</Badge> },
+                { key: 'percentage', header: t('me.th.percentage'), accessor: (row) => row.percentage, csv: (row) => `${row.percentage}%`, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (row) => `${row.percentage}%` },
+                {
+                  key: 'actions',
+                  header: t('me.th.actions'),
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  cell: (row) => (
+                    <Button size="sm" variant="ghost" className="text-silver hover:text-alert" aria-label={t('me.deleteAria')} onClick={() => onDelete(row.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1684,50 +1597,30 @@ function LifeEventsPanel({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('me.th.event')}</TableHead>
-                  <TableHead>{t('me.th.date')}</TableHead>
-                  <TableHead>{t('me.th.status')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('me.th.submitted')}</TableHead>
-                  <TableHead className="hidden lg:table-cell">{t('me.th.notes')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">
-                          {evkLabel(t, row.kind)}
-                        </div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {t('me.submittedPrefix', { date: fmtDate(row.createdAt) })}
-                          {row.notes ? ` · ${row.notes}` : ''}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{fmtDate(parseYmd(row.eventDate))}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          row.status === 'APPROVED'
-                            ? 'success'
-                            : row.status === 'REJECTED'
-                              ? 'destructive'
-                              : 'pending'
-                        }
-                      >
-                        {evsLabel(t, row.status)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{fmtDate(row.createdAt)}</TableCell>
-                    <TableCell className="hidden lg:table-cell max-w-xs truncate">{row.notes ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof rows>[number]>
+              id="me-life-events"
+              caption={t('me.tab.lifeEvents')}
+              rows={rows}
+              rowKey={(row) => row.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columnChooser={false}
+              columns={[
+                { key: 'event', header: t('me.th.event'), accessor: (row) => evkLabel(t, row.kind), sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'date', header: t('me.th.date'), accessor: (row) => row.eventDate, sortable: true, searchable: false, cardMeta: true, cell: (row) => fmtDate(parseYmd(row.eventDate)) },
+                {
+                  key: 'status',
+                  header: t('me.th.status'),
+                  accessor: (row) => evsLabel(t, row.status),
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (row) => <Badge variant={row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'destructive' : 'pending'}>{evsLabel(t, row.status)}</Badge>,
+                },
+                { key: 'submitted', header: t('me.th.submitted'), accessor: (row) => row.createdAt, sortable: true, searchable: false, cell: (row) => fmtDate(row.createdAt) },
+                { key: 'notes', header: t('me.th.notes'), accessor: (row) => row.notes, className: 'max-w-xs truncate', cell: (row) => row.notes ?? '—' },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1812,61 +1705,43 @@ function TaxDocsPanel({
             description={t('me.tax.emptyDesc')}
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('me.th.form')}</TableHead>
-                <TableHead className="text-right">{t('me.th.taxYear')}</TableHead>
-                <TableHead className="hidden md:table-cell">{t('me.th.issued')}</TableHead>
-                <TableHead className="hidden md:table-cell text-right">
-                  {t('me.th.size')}
-                </TableHead>
-                <TableHead className="w-32 text-right">{t('me.th.action')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="font-medium text-white">
-                    <div className="min-w-0">
-                      <div className="truncate">
-                        {TAX_DOC_LABEL[row.kind] ?? row.kind}
-                      </div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {t('me.issuedPrefix', { date: fmtDate(row.issuedAt) })}
-                        {row.fileSize ? ` · ${Math.round(row.fileSize / 1024)} KB` : ''}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {row.taxYear}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">{fmtDate(row.issuedAt)}</TableCell>
-                  <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
-                    {row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {row.downloadUrl ? (
-                      <Button asChild variant="ghost" size="sm">
-                        <a href={row.downloadUrl} download>
-                          {t('me.tax.download')}
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled
-                        title={t('me.tax.legacyHint')}
-                      >
+          <DataGrid<NonNullable<typeof rows>[number]>
+            id="me-tax-documents"
+            caption={t('me.tab.taxDocs')}
+            rows={rows}
+            rowKey={(row) => row.id}
+            search={false}
+            urlState={false}
+            exportCsv={false}
+            columnChooser={false}
+            columns={[
+              { key: 'form', header: t('me.th.form'), accessor: (row) => TAX_DOC_LABEL[row.kind] ?? row.kind, sortable: true, primary: true, className: 'font-medium text-white' },
+              { key: 'year', header: t('me.th.taxYear'), accessor: (row) => row.taxYear, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+              { key: 'issued', header: t('me.th.issued'), accessor: (row) => row.issuedAt, sortable: true, searchable: false, cardMeta: true, cell: (row) => fmtDate(row.issuedAt) },
+              { key: 'size', header: t('me.th.size'), accessor: (row) => row.fileSize, csv: (row) => (row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : ''), sortable: true, searchable: false, align: 'right', className: 'tabular-nums whitespace-nowrap', cell: (row) => (row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—') },
+              {
+                key: 'action',
+                header: t('me.th.action'),
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                cell: (row) =>
+                  row.downloadUrl ? (
+                    <Button asChild variant="ghost" size="sm">
+                      <a href={row.downloadUrl} download>
                         {t('me.tax.download')}
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" size="sm" disabled title={t('me.tax.legacyHint')}>
+                      {t('me.tax.download')}
+                    </Button>
+                  ),
+              },
+            ]}
+          />
         )}
       </CardContent>
     </Card>

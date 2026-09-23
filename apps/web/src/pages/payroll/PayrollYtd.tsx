@@ -7,14 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { fmtMoney } from '@/lib/format';
@@ -120,64 +113,42 @@ export function PayrollYtd() {
 
           <Card>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="text-right hidden md:table-cell">Paystubs</TableHead>
-                    <TableHead className="text-right">Gross</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">FIT</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">FICA</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">Medicare</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">SIT</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">Pre-tax</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">Post-tax</TableHead>
-                    <TableHead className="text-right">Net</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={10} className="text-center text-silver/70">
-                        {q
-                          ? 'No matches.'
-                          : `No disbursed paystubs for ${year} yet.`}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filtered.map((r) => (
-                    <TableRow key={r.associateId}>
-                      <TableCell>
-                        <Link
-                          to={`/people?associateId=${r.associateId}`}
-                          className="hover:underline"
-                        >
+              <DataGrid<(typeof filtered)[number]>
+                id="payroll-ytd"
+                caption={`Year-to-date payroll by associate, ${year}`}
+                rows={filtered}
+                rowKey={(r) => r.associateId}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: `payroll-ytd-${year}` }}
+                empty={{ title: q ? 'No matches.' : `No disbursed paystubs for ${year} yet.` }}
+                columns={[
+                  {
+                    key: 'associate',
+                    header: 'Associate',
+                    accessor: (r) => `${r.firstName} ${r.lastName}`,
+                    sortable: true,
+                    primary: true,
+                    cell: (r) => (
+                      <>
+                        <Link to={`/people?associateId=${r.associateId}`} className="hover:underline">
                           {r.firstName} {r.lastName}
                         </Link>
                         <div className="text-xs text-silver/70">{r.email}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 tabular-nums truncate">
-                          {r.paystubCount} paystub{r.paystubCount === 1 ? '' : 's'}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums hidden md:table-cell">
-                        {r.paystubCount}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.fit)}</TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.fica)}</TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">
-                        {fmt(r.medicare)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.sit)}</TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.preTax)}</TableCell>
-                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.postTax)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-medium">
-                        {fmt(r.net)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </>
+                    ),
+                  },
+                  { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.paystubCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                  { key: 'gross', header: 'Gross', accessor: (r) => Number(r.gross), csv: (r) => fmt(r.gross), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmt(r.gross) },
+                  { key: 'fit', header: 'FIT', accessor: (r) => Number(r.fit), csv: (r) => fmt(r.fit), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmt(r.fit) },
+                  { key: 'fica', header: 'FICA', accessor: (r) => Number(r.fica), csv: (r) => fmt(r.fica), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmt(r.fica) },
+                  { key: 'medicare', header: 'Medicare', accessor: (r) => Number(r.medicare), csv: (r) => fmt(r.medicare), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmt(r.medicare) },
+                  { key: 'sit', header: 'SIT', accessor: (r) => Number(r.sit), csv: (r) => fmt(r.sit), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmt(r.sit) },
+                  { key: 'preTax', header: 'Pre-tax', accessor: (r) => Number(r.preTax), csv: (r) => fmt(r.preTax), sortable: true, searchable: false, align: 'right', defaultHidden: true, className: 'tabular-nums', cell: (r) => fmt(r.preTax) },
+                  { key: 'postTax', header: 'Post-tax', accessor: (r) => Number(r.postTax), csv: (r) => fmt(r.postTax), sortable: true, searchable: false, align: 'right', defaultHidden: true, className: 'tabular-nums', cell: (r) => fmt(r.postTax) },
+                  { key: 'net', header: 'Net', accessor: (r) => Number(r.net), csv: (r) => fmt(r.net), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium', cell: (r) => fmt(r.net) },
+                ]}
+              />
             </CardContent>
           </Card>
         </>
