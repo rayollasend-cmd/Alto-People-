@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Download, Plus, Target, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -54,27 +55,18 @@ const RAMP_STATUS_TONES = {
 export function RampHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
-  const [rows, setRows] = useState<RampPlanRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null); // associateId
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
   const [missedOnly, setMissedOnly] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listRampPlans()
-      .then((r) => setRows(r.plans))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load ramp plans.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['RampHome', 'rows'],
+    queryFn: () => listRampPlans(),
+  });
+  const rows: RampPlanRow[] | null = refreshQuery.data?.plans ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load ramp plans.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -339,8 +331,6 @@ function PlanDetailDrawer({
 }) {
   const confirm = useConfirm();
   // undefined = loading; null = the associate has no active plan.
-  const [plan, setPlan] = useState<RampPlan | null | undefined>(undefined);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   // One in-flight action at a time — a double-click on Delete/Archive
   // used to fire the write twice.
@@ -355,20 +345,13 @@ function PlanDetailDrawer({
     }
   };
 
-  const refresh = () => {
-    setPlan(undefined);
-    setLoadError(null);
-    getActivePlanForAssociate(associateId)
-      .then((r) => setPlan(r.plan))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load the plan.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, [associateId]);
+  const refreshQuery = useQuery({
+    queryKey: ['PlanDetailDrawer', 'plan', associateId],
+    queryFn: () => getActivePlanForAssociate(associateId),
+  });
+  const plan: RampPlan | null | undefined = refreshQuery.data?.plan ?? undefined;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load the plan.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>

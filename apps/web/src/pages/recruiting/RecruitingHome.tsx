@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -167,11 +168,8 @@ export function RecruitingHome() {
   const canManage = can('manage:recruiting');
   const navigate = useNavigate();
   const [view, setView] = useState<ViewMode>(() => readViewMode());
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-  const [allCandidates, setAllCandidates] = useState<Candidate[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [kpiError, setKpiError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -240,35 +238,27 @@ export function RecruitingHome() {
     writeViewMode(v);
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listCandidates(filter === 'ALL' ? {} : { stage: filter });
-      setCandidates(res.candidates);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [filter]);
+  const refreshQuery = useQuery({
+    queryKey: ['RecruitingHome', 'candidates'],
+    queryFn: () => listCandidates(filter === 'ALL' ? {} : { stage: filter }),
+  });
+  const candidates: Candidate[] | null = refreshQuery.data?.candidates ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  // KPI strip wants stage counts independent of the active filter.
-  const refreshKpis = useCallback(async () => {
-    try {
-      setKpiError(null);
-      const res = await listCandidates({});
-      setAllCandidates(res.candidates);
-    } catch (err) {
-      // Surface the failure — eternal skeletons read as "still loading."
-      setKpiError(err instanceof ApiError ? err.message : 'Failed to load pipeline stats.');
-    }
-  }, []);
+  const refreshKpisQuery = useQuery({
+    queryKey: ['RecruitingHome', 'allCandidates'],
+    queryFn: () => listCandidates({}),
+  });
+  const allCandidates: Candidate[] | null = refreshKpisQuery.data?.candidates ?? null;
+  const kpiError = refreshKpisQuery.error ? refreshKpisQuery.error instanceof ApiError ? refreshKpisQuery.error.message : 'Failed to load pipeline stats.' : null;
+  const refreshKpis = async () => {
+    await refreshKpisQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
-  useEffect(() => {
-    refreshKpis();
-  }, [refreshKpis]);
 
   const advance = async (c: Candidate, target: CandidateStage) => {
     if (pendingId) return;

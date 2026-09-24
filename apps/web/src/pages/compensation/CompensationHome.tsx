@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -216,24 +217,18 @@ type BandDraft = {
 
 function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<CompBand[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<BandDraft | null>(null);
 
+  const refreshQuery = useQuery({
+    queryKey: ['BandsTab', 'rows', clientId],
+    queryFn: () => listBands(clientId),
+  });
+  const rows: CompBand[] | null = refreshQuery.data?.bands ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load pay bands.' : null;
   const refresh = async () => {
-    setRows(null);
-    setError(null);
-    try {
-      const r = await listBands(clientId);
-      setRows(r.bands);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load pay bands.');
-    }
+    await refreshQuery.refetch();
   };
-  useEffect(() => {
-    refresh();
-  }, [clientId]);
 
   const q = search.trim().toLowerCase();
   const filtered = (rows ?? []).filter(
@@ -556,24 +551,18 @@ function BandDrawer({
 // ============ Cycles ============
 
 function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
-  const [cycles, setCycles] = useState<MeritCycle[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<MeritCycle | null>(null);
 
+  const refreshQuery = useQuery({
+    queryKey: ['CyclesTab', 'cycles', clientId],
+    queryFn: () => listCycles(clientId),
+  });
+  const cycles: MeritCycle[] | null = refreshQuery.data?.cycles ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load merit cycles.' : null;
   const refresh = async () => {
-    setCycles(null);
-    setError(null);
-    try {
-      const r = await listCycles(clientId);
-      setCycles(r.cycles);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load merit cycles.');
-    }
+    await refreshQuery.refetch();
   };
-  useEffect(() => {
-    refresh();
-  }, [clientId]);
 
   return (
     <div className="space-y-4">

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Gavel, Plus, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -73,33 +74,24 @@ const KIND_ORDER: DisciplineKind[] = [
 export function DisciplineHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  const [rows, setRows] = useState<DisciplinaryActionRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<DisciplineStatus | 'ALL'>('ACTIVE');
   const [kindFilter, setKindFilter] = useState<DisciplineKind | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<DisciplinaryActionRow | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listDisciplinaryActions({
+  const refreshQuery = useQuery({
+    queryKey: ['DisciplineHome', 'rows', filter, kindFilter],
+    queryFn: () => listDisciplinaryActions({
       status: filter === 'ALL' ? undefined : filter,
       kind: kindFilter === 'ALL' ? undefined : kindFilter,
-    })
-      .then((r) => setRows(r.actions))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load disciplinary actions.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, [filter, kindFilter]);
+    }),
+  });
+  const rows: DisciplinaryActionRow[] | null = refreshQuery.data?.actions ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError
+            ? refreshQuery.error.message
+            : 'Failed to load disciplinary actions.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const visibleRows = useMemo(() => {
     const all = rows ?? [];

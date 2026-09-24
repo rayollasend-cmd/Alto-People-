@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { HeartPulse, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BenefitsPlan, BenefitsPlanKind } from '@alto-people/shared';
@@ -65,26 +66,21 @@ export function BenefitsPlansSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('process:payroll');
 
-  const [plans, setPlans] = useState<BenefitsPlan[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const [editing, setEditing] = useState<BenefitsPlan | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listPlans({ clientId, includeInactive });
-      setPlans(res.plans);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load.');
-    }
-  }, [clientId, includeInactive]);
+  const refreshQuery = useQuery({
+    queryKey: ['BenefitsPlansSection', 'plans'],
+    queryFn: () => listPlans({ clientId, includeInactive }),
+  });
+  const plans: BenefitsPlan[] | null = refreshQuery.data?.plans ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   return (
     <Card>

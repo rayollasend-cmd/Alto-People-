@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -121,8 +122,6 @@ const KEY_STATUS_TONES = { REVOKED: 'destructive' } as const;
 
 function KeysTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [keys, setKeys] = useState<ApiKeyRecord[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | KeyStatus>('all');
   const [showNew, setShowNew] = useState(false);
@@ -130,18 +129,13 @@ function KeysTab({ canManage }: { canManage: boolean }) {
     null,
   );
 
-  const refresh = () => {
-    setKeys(null);
-    setLoadError(null);
-    listApiKeys()
-      .then((r) => setKeys(r.keys))
-      .catch((err) =>
-        setLoadError(err instanceof ApiError ? err.message : 'Failed to load API keys.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['KeysTab', 'keys'],
+    queryFn: () => listApiKeys(),
+  });
+  const keys: ApiKeyRecord[] | null = refreshQuery.data?.keys ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load API keys.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!keys) return [];
@@ -705,25 +699,18 @@ function SecretRevealDrawer({
 
 function WebhooksTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<WebhookRecord[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all');
   const [showNew, setShowNew] = useState(false);
   const [showSecret, setShowSecret] = useState<string | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listWebhooks()
-      .then((r) => setRows(r.webhooks))
-      .catch((err) =>
-        setLoadError(err instanceof ApiError ? err.message : 'Failed to load webhooks.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['WebhooksTab', 'rows'],
+    queryFn: () => listWebhooks(),
+  });
+  const rows: WebhookRecord[] | null = refreshQuery.data?.webhooks ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load webhooks.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!rows) return [];

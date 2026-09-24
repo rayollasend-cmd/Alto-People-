@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
@@ -86,11 +87,10 @@ export function J1DocsTask() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   const [kind, setKind] = useState<DocumentKind>('J1_DS2019');
   const [uploading, setUploading] = useState(false);
   const [finishing, setFinishing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -100,18 +100,16 @@ export function J1DocsTask() {
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('J1_DOCS');
 
-  const refresh = useCallback(async () => {
-    try {
-      const r = await listMyDocuments();
-      setDocs(r.documents);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('ob.j1.loadFailed'));
-    }
-  }, [t]);
+  const refreshQuery = useQuery({
+    queryKey: ['J1DocsTask', 'docs'],
+    queryFn: () => listMyDocuments(),
+  });
+  const docs: DocumentRecord[] | null = refreshQuery.data?.documents ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('ob.j1.loadFailed') : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Hydrate the saved profile so a revisit (or the checklist's
   // "Review / edit") shows what's on file instead of a blank form with a

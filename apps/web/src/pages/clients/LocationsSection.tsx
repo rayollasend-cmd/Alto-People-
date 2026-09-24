@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Crosshair, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -56,8 +57,6 @@ export function LocationsSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('manage:clients');
 
-  const [items, setItems] = useState<LocationSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const [editing, setEditing] = useState<LocationSummary | null>(null);
@@ -65,19 +64,16 @@ export function LocationsSection({ clientId }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<LocationSummary | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listClientLocations(clientId, { includeInactive });
-      setItems(res.locations);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load locations.');
-    }
-  }, [clientId, includeInactive]);
+  const refreshQuery = useQuery({
+    queryKey: ['LocationsSection', 'items'],
+    queryFn: () => listClientLocations(clientId, { includeInactive }),
+  });
+  const items: LocationSummary[] | null = refreshQuery.data?.locations ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load locations.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const onArchive = async (loc: LocationSummary) => {
     setBusy(true);

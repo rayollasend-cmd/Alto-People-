@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Syringe, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -48,8 +49,6 @@ export function VaccinationsHome() {
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [tab, setTab] = useState<'all' | 'expiring'>('all');
-  const [records, setRecords] = useState<VaccinationRecord[] | null>(null);
-  const [recordsError, setRecordsError] = useState<string | null>(null);
   const [expiring, setExpiring] = useState<ExpiringRecord[] | null>(null);
   const [expiringError, setExpiringError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<CoverageReport | null>(null);
@@ -69,20 +68,15 @@ export function VaccinationsHome() {
     }
   };
 
-  // Filtered list only — depends on the kind filter.
-  const refreshRecords = () => {
-    setRecords(null);
-    setRecordsError(null);
-    listVaccinations({
+  const refreshRecordsQuery = useQuery({
+    queryKey: ['VaccinationsHome', 'records', filterKind],
+    queryFn: () => listVaccinations({
       kind: filterKind === 'ALL' ? undefined : filterKind,
-    })
-      .then((r) => setRecords(r.records))
-      .catch((err) =>
-        setRecordsError(
-          err instanceof ApiError ? err.message : 'Could not load records.',
-        ),
-      );
-  };
+    }),
+  });
+  const records: VaccinationRecord[] | null = refreshRecordsQuery.data?.records ?? null;
+  const recordsError = refreshRecordsQuery.error ? refreshRecordsQuery.error instanceof ApiError ? refreshRecordsQuery.error.message : 'Could not load records.' : null;
+  const refreshRecords = () => void refreshRecordsQuery.refetch();
   // Filter-independent summaries (expiring + coverage) — fetched once on
   // mount and re-fetched explicitly after mutations, never on filter clicks.
   const refreshSummaries = () => {
@@ -108,9 +102,6 @@ export function VaccinationsHome() {
     refreshRecords();
     refreshSummaries();
   };
-  useEffect(() => {
-    refreshRecords();
-  }, [filterKind]);
   useEffect(() => {
     refreshSummaries();
   }, []);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -222,18 +223,6 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
     params.delete('return');
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
-  const [rows, setRows] = useState<EVerifyRosterRow[] | null>(null);
-  const [counts, setCounts] = useState<{
-    total: number;
-    authorized: number;
-    pending: number;
-    nonconfirmation: number;
-    notRun: number;
-    overdue: number;
-    blocked: number;
-  } | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [storedFilter, setStoredFilter] = usePersistentState<StatusFilter>(
     'alto:list.everify.status.v1',
@@ -300,22 +289,26 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const { user } = useAuth();
   const canOpenCase = user ? hasCapability(user.role, 'manage:compliance') : false;
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listEVerifyRoster();
-      setRows(res.rows);
-      setCounts(res.counts);
-      setTruncated(res.truncated);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the roster.');
-      setRows([]);
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['EVerifyTab', 'rows'],
+    queryFn: () => listEVerifyRoster(),
+  });
+  const rows: EVerifyRosterRow[] | null = refreshQuery.isError ? [] : (refreshQuery.data?.rows ?? null);
+  const counts: {
+    total: number;
+    authorized: number;
+    pending: number;
+    nonconfirmation: number;
+    notRun: number;
+    overdue: number;
+    blocked: number;
+  } | null = refreshQuery.data?.counts ?? null;
+  const truncated = refreshQuery.data?.truncated ?? false;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load the roster.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   // Deep link: open the linked person's case as soon as their roster row
   // arrives. Gated on canOpenCase — the case detail API is manage-only and

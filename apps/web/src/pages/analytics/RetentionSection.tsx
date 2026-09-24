@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   CartesianGrid,
   Line,
@@ -33,22 +34,14 @@ const SMALL_COHORT = 5;
 const pct = (v: number | null): string => fmtPercent(v);
 
 export function RetentionSection() {
-  const [data, setData] = useState<RetentionResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    setError(null);
-    getRetention()
-      .then((r) => setData(r))
-      .catch((err) => {
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load retention data.',
-        );
-      });
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
+  const loadQuery = useQuery({
+    queryKey: ['RetentionSection', 'data'],
+    queryFn: () => getRetention(),
+  });
+  const data: RetentionResponse | null = loadQuery.data ? loadQuery.data : null;
+  const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load retention data.' : null;
+  const load = () => void loadQuery.refetch();
 
   // Memoized — recharts re-renders whenever the array identity changes.
   const trend = useMemo(

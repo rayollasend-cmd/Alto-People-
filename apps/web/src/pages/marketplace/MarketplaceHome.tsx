@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Award, Briefcase, CalendarDays, RefreshCw } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -669,8 +670,6 @@ function CatalogTab() {
     user?.role === 'CLIENT_PORTAL';
   const canDelete = (q: Qualification) =>
     !boundedToOneClient || (q.clientId != null && q.clientId === user?.clientId);
-  const [rows, setRows] = useState<Qualification[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [code, setCode] = useState('');
   const [codeTouched, setCodeTouched] = useState(false);
@@ -678,20 +677,13 @@ function CatalogTab() {
   const [isCert, setIsCert] = useState(false);
   const [description, setDescription] = useState('');
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listQualifications()
-      .then((r) => setRows(r.qualifications))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load qualifications.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['CatalogTab', 'rows'],
+    queryFn: () => listQualifications(),
+  });
+  const rows: Qualification[] | null = refreshQuery.data?.qualifications ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load qualifications.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const onSave = async () => {
     if (!code.trim() || !name.trim()) {

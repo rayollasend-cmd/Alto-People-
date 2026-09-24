@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, HeartPulse, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -69,9 +70,8 @@ export function BenefitsHome() {
       <Link to="/benefits/lifecycle">Enrollment &amp; COBRA admin</Link>
     </Button>
   ) : undefined;
-  const [enrollments, setEnrollments] = useState<BenefitsEnrollment[] | null>(null);
   const [availablePlans, setAvailablePlans] = useState<BenefitsPlan[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
 
   // The associate's first client drives the available-plans pool. For
@@ -87,19 +87,16 @@ export function BenefitsHome() {
     refetch: refetchClients,
   } = useClients();
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const mine = await listMyEnrollments();
-      setEnrollments(mine.enrollments);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load.');
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['BenefitsHome', 'enrollments'],
+    queryFn: () => listMyEnrollments(),
+  });
+  const enrollments: BenefitsEnrollment[] | null = refreshQuery.data?.enrollments ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load.' : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Pull plans for the associate's client once the client list is in.
   // Backend already enforces the client match; this just feeds the picker.

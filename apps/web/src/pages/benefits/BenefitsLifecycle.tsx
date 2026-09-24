@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   CalendarDays,
@@ -135,26 +136,17 @@ export function BenefitsLifecycle() {
 }
 
 function OeTab({ canManage }: { canManage: boolean }) {
-  const [rows, setRows] = useState<OpenEnrollmentWindow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listOpenEnrollment()
-      .then((r) => setRows(r.windows))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load open enrollment windows.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['OeTab', 'rows'],
+    queryFn: () => listOpenEnrollment(),
+  });
+  const rows: OpenEnrollmentWindow[] | null = refreshQuery.data?.windows ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError
+            ? refreshQuery.error.message
+            : 'Could not load open enrollment windows.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const onOpen = async (w: OpenEnrollmentWindow) => {
     try {
@@ -409,26 +401,17 @@ const QLE_KIND_LABEL: Record<QleKind, string> = {
 
 function QleTab({ canManage }: { canManage: boolean }) {
   const prompt = usePrompt();
-  const [rows, setRows] = useState<Qle[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listQles()
-      .then((r) => setRows(r.qles))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load qualifying life events.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['QleTab', 'rows'],
+    queryFn: () => listQles(),
+  });
+  const rows: Qle[] | null = refreshQuery.data?.qles ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError
+            ? refreshQuery.error.message
+            : 'Could not load qualifying life events.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const onApprove = async (q: Qle) => {
     try {
@@ -665,24 +648,15 @@ const COBRA_STATUS_TONES = { NOTIFIED: 'pending', ELECTED: 'success' } as const;
 
 function CobraTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<CobraOffer[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listCobra()
-      .then((r) => setRows(r.offers))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load COBRA offers.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['CobraTab', 'rows'],
+    queryFn: () => listCobra(),
+  });
+  const rows: CobraOffer[] | null = refreshQuery.data?.offers ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load COBRA offers.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const onElect = async (c: CobraOffer) => {
     if (

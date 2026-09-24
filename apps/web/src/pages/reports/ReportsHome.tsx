@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowDown,
   ArrowUp,
@@ -122,8 +123,6 @@ function exportRowsAsCsv(
 
 export function ReportsHome() {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<ReportSummary[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   // 2-3 recurring weekly exports live here — losing the search/entity
   // narrowing on every visit costs more clicks than a stale query risks.
   const [search, setSearch] = usePersistentState<string>(
@@ -144,18 +143,13 @@ export function ReportsHome() {
     rows: Array<Record<string, unknown>>;
   } | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listReports()
-      .then((r) => setRows(r.reports))
-      .catch((err) =>
-        setLoadError(err instanceof ApiError ? err.message : 'Failed to load reports.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['ReportsHome', 'rows'],
+    queryFn: () => listReports(),
+  });
+  const rows: ReportSummary[] | null = refreshQuery.data?.reports ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load reports.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!rows) return [];
@@ -946,26 +940,17 @@ function SchedulesDrawer({
   onClose: () => void;
 }) {
   const confirm = useConfirm();
-  const [schedules, setSchedules] = useState<ReportSchedule[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [cadence, setCadence] = useState<ReportSchedule['cadence']>('WEEKLY');
   const [recipients, setRecipients] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
-    setSchedules(null);
-    setLoadError(null);
-    listSchedules(report.id)
-      .then((r) => setSchedules(r.schedules))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load schedules.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load();
-  }, [report.id]);
+  const loadQuery = useQuery({
+    queryKey: ['SchedulesDrawer', 'schedules', report.id],
+    queryFn: () => listSchedules(report.id),
+  });
+  const schedules: ReportSchedule[] | null = loadQuery.data?.schedules ?? null;
+  const loadError = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Failed to load schedules.' : null;
+  const load = () => void loadQuery.refetch();
 
   const onCreate = async () => {
     if (!recipients.trim()) {

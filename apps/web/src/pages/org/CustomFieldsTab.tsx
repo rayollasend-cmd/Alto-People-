@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Sparkles, Trash2, X } from 'lucide-react';
 import {
   createDefinition,
@@ -63,26 +64,20 @@ export function CustomFieldsTab({
   clientId: string;
   canManage: boolean;
 }) {
-  const [rows, setRows] = useState<CustomFieldDefinition[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<
     CustomFieldDefinition | 'new' | null
   >(null);
 
+  const refreshQuery = useQuery({
+    queryKey: ['CustomFieldsTab', 'rows', clientId],
+    queryFn: () => listDefinitions({ clientId: clientId || undefined }),
+  });
+  const rows: CustomFieldDefinition[] | null = refreshQuery.data?.definitions ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listDefinitions({ clientId: clientId || undefined });
-      setRows(res.definitions);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await refreshQuery.refetch();
   };
 
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>

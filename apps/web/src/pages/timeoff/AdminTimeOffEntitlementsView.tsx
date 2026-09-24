@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CalendarRange, Download, Pencil, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -87,8 +88,6 @@ interface Props {
 }
 
 export function AdminTimeOffEntitlementsView({ canManage }: Props) {
-  const [items, setItems] = useState<TimeOffEntitlement[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<TimeOffCategory | 'ALL'>(
     'ALL',
@@ -97,19 +96,16 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
   const [creating, setCreating] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listAdminEntitlements();
-      setItems(res.entitlements);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load.');
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['AdminTimeOffEntitlementsView', 'items'],
+    queryFn: () => listAdminEntitlements(),
+  });
+  const items: TimeOffEntitlement[] | null = refreshQuery.data?.entitlements ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const visible = useMemo(() => {
     if (!items) return null;

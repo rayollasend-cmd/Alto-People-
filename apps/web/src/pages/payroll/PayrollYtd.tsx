@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import { getPayrollYtd, type PayrollYtdResponse } from '@/lib/payrollApi';
@@ -17,27 +18,14 @@ const fmt = fmtMoney;
 export function PayrollYtd() {
   const currentYear = new Date().getUTCFullYear();
   const [year, setYear] = useState(currentYear);
-  const [data, setData] = useState<PayrollYtdResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    setData(null);
-    setError(null);
-    getPayrollYtd(year)
-      .then((d) => {
-        if (!cancelled) setData(d);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e instanceof ApiError ? e.message : "Couldn't load YTD report.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [year]);
+  const dataQuery = useQuery({
+    queryKey: ['PayrollYtd', 'data', year],
+    queryFn: () => getPayrollYtd(year),
+  });
+  const data: PayrollYtdResponse | null = dataQuery.data ? dataQuery.data : null;
+  const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : "Couldn't load YTD report." : null;
 
   const filtered = useMemo(() => {
     if (!data) return [];

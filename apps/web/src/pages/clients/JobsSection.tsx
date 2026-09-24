@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Briefcase, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Job } from '@alto-people/shared';
@@ -43,8 +44,6 @@ export function JobsSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
 
-  const [items, setItems] = useState<Job[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const [editing, setEditing] = useState<Job | null>(null);
@@ -52,19 +51,16 @@ export function JobsSection({ clientId }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listJobs({ clientId, includeInactive });
-      setItems(res.jobs);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load jobs.');
-    }
-  }, [clientId, includeInactive]);
+  const refreshQuery = useQuery({
+    queryKey: ['JobsSection', 'items'],
+    queryFn: () => listJobs({ clientId, includeInactive }),
+  });
+  const items: Job[] | null = refreshQuery.data?.jobs ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load jobs.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const onArchive = async (job: Job) => {
     setBusy(true);

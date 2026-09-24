@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -329,11 +330,9 @@ export function ApplicationsList() {
   // returned by the dedicated stats endpoint so the KPI strip / banners /
   // chip counts don't require pulling the entire application table to the
   // client every load.
-  const [statsData, setStatsData] = useState<ApplicationStatsResponse | null>(null);
   // Client list for the "Filter by client" dropdown. Loaded once on
   // mount — clients change rarely enough that a cache miss isn't worth
   // the extra plumbing.
-  const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
@@ -420,13 +419,12 @@ export function ApplicationsList() {
       });
   }, [status, urlQ, clientId, invitedWindow, page]);
 
-  // Roll-up stats for KPIs / banners / chip counts. Tiny payload (counts +
-  // up to ~6 sample rows) regardless of how many applications exist.
-  const refreshStats = useCallback(() => {
-    getApplicationStats()
-      .then((res) => setStatsData(res))
-      .catch(() => setStatsData(null));
-  }, []);
+  const refreshStatsQuery = useQuery({
+    queryKey: ['ApplicationsList', 'statsData'],
+    queryFn: () => getApplicationStats(),
+  });
+  const statsData: ApplicationStatsResponse | null = refreshStatsQuery.isError ? null : (refreshStatsQuery.data ? refreshStatsQuery.data : null);
+  const refreshStats = () => void refreshStatsQuery.refetch();
 
   // Reset to page 1 whenever the filter changes — keeps "page 5 of 8" from
   // pointing at nothing after the user narrows results.
@@ -438,23 +436,12 @@ export function ApplicationsList() {
     refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    refreshStats();
-  }, [refreshStats]);
 
-  useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((res) => {
-        if (!cancelled) setClients(res.clients);
-      })
-      .catch(() => {
-        if (!cancelled) setClients([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const clientsQuery = useQuery({
+    queryKey: ['ApplicationsList', 'clients'],
+    queryFn: () => listClients(),
+  });
+  const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
 
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;

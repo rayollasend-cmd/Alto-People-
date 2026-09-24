@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CalendarDays, Download, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -185,8 +186,6 @@ export function HolidaysHome() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
   const [clientFilter, setClientFilter] = useState<string>('ALL');
-  const [rows, setRows] = useState<HolidayRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // Best-effort client list for the filter chips — a failure (or a role
   // without client access) just leaves the chips hidden. Client-bound
   // viewers are seeded with their one client and never fetch (the
@@ -200,25 +199,18 @@ export function HolidaysHome() {
   const [editing, setEditing] = useState<HolidayRow | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const refresh = useCallback(() => {
-    setRows(null);
-    setError(null);
-    listHolidays({
+  const refreshQuery = useQuery({
+    queryKey: ['HolidaysHome', 'rows'],
+    queryFn: () => listHolidays({
       year,
       type: typeFilter === 'ALL' ? undefined : typeFilter,
       clientId: clientFilter === 'ALL' ? undefined : clientFilter,
-    })
-      .then((r) => setRows(r.holidays))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load holidays.',
-        ),
-      );
-  }, [year, typeFilter, clientFilter]);
+    }),
+  });
+  const rows: HolidayRow[] | null = refreshQuery.data?.holidays ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load holidays.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // One POST — the server computes floating holidays (MLK Day,
   // Thanksgiving, …) and skips rows already present.

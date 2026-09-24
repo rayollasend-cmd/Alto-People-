@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -1258,23 +1259,17 @@ function TargetsDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [locations, setLocations] = useState<StaffingTargetLocation[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const loadTargets = useCallback(async () => {
-    try {
-      setError(null);
-      const r = await listStaffingTargets();
-      setLocations(r.locations);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load targets.');
-      setLocations([]);
-    }
-  }, []);
+  const loadTargetsQuery = useQuery({
+    queryKey: ['TargetsDrawer', 'locations'],
+    queryFn: () => listStaffingTargets(),
+  });
+  const locations: StaffingTargetLocation[] | null = loadTargetsQuery.isError ? [] : (loadTargetsQuery.data?.locations ?? null);
+  const error = loadTargetsQuery.error ? loadTargetsQuery.error instanceof ApiError ? loadTargetsQuery.error.message : 'Could not load targets.' : null;
+  const loadTargets = async () => {
+    await loadTargetsQuery.refetch();
+  };
 
-  useEffect(() => {
-    void loadTargets();
-  }, [loadTargets]);
 
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-xl">

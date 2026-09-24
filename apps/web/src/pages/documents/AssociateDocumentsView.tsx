@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Bus,
@@ -122,10 +123,9 @@ export function AssociateDocumentsView() {
     'docs.rescanNudgeSeen',
     false,
   );
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   const [kind, setKind] = useState<DocumentKind>('ID');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
@@ -138,19 +138,16 @@ export function AssociateDocumentsView() {
   // chip on the upload form so the intent stays visible.
   const [renewTarget, setRenewTarget] = useState<DocumentRecord | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listMyDocuments();
-      setDocs(res.documents);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('docs.loadFailed'));
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['AssociateDocumentsView', 'docs'],
+    queryFn: () => listMyDocuments(),
+  });
+  const docs: DocumentRecord[] | null = refreshQuery.data?.documents ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('docs.loadFailed') : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Web Share Target intake: the service worker stashes files shared from
   // the OS share sheet in the 'alto-shared-intake' cache and lands here

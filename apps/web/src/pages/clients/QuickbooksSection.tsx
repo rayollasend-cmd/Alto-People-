@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Link as LinkIcon, Save, Unlink, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -61,24 +62,21 @@ export function QuickbooksSection({ clientId }: Props) {
   const canManage = can('process:payroll');
   const confirm = useConfirm();
 
-  const [status, setStatus] = useState<QboStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const refresh = useCallback(async () => {
-    try {
-      const s = await getStatus(clientId);
-      setStatus(s);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load QuickBooks status.');
-    }
-  }, [clientId]);
+  const refreshQuery = useQuery({
+    queryKey: ['QuickbooksSection', 'status'],
+    queryFn: () => getStatus(clientId),
+  });
+  const status: QboStatus | null = refreshQuery.data ? refreshQuery.data : null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load QuickBooks status.' : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Surface the post-OAuth "?qbo=connected" toast (or "?qbo_error=...")
   // and clear the param so a refresh doesn't re-fire it. The OAuth return

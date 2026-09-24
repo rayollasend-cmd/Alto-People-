@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { Briefcase, MapPin, Send, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -566,24 +567,19 @@ function ReviewDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [apps, setApps] = useState<ApplicationDetail[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // REJECTED is destructive from the applicant's side, so it routes
   // through a confirm with an optional reviewer note; other statuses
   // apply immediately.
   const [rejectTarget, setRejectTarget] = useState<ApplicationDetail | null>(null);
   const [deciding, setDeciding] = useState(false);
 
-  const refresh = () => {
-    setApps(null);
-    setError(null);
-    listApplicationsForJob(job.id)
-      .then((r) => setApps(r.applications))
-      .catch((err) => setError(errMessage(err, 'Failed to load applicants.')));
-  };
-  useEffect(() => {
-    refresh();
-  }, [job.id]);
+  const refreshQuery = useQuery({
+    queryKey: ['ReviewDrawer', 'apps', job.id],
+    queryFn: () => listApplicationsForJob(job.id),
+  });
+  const apps: ApplicationDetail[] | null = refreshQuery.data?.applications ?? null;
+  const error = refreshQuery.error ? errMessage(refreshQuery.error, 'Failed to load applicants.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const applyStatus = async (
     id: string,

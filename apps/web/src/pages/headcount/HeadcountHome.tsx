@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp, Download } from 'lucide-react';
 import {
@@ -51,8 +52,6 @@ interface Drill {
 export function HeadcountHome() {
   const [snap, setSnap] = useState<HeadcountSnapshot | null>(null);
   const [snapError, setSnapError] = useState<string | null>(null);
-  const [turn, setTurn] = useState<TurnoverSummary | null>(null);
-  const [turnError, setTurnError] = useState<string | null>(null);
   const [days, setDays] = useState<30 | 90 | 365>(90);
   const [turnRetry, setTurnRetry] = useState(0);
   const [drill, setDrill] = useState<Drill | null>(null);
@@ -70,17 +69,12 @@ export function HeadcountHome() {
   };
   useEffect(loadSnap, []);
 
-  useEffect(() => {
-    setTurn(null);
-    setTurnError(null);
-    getTurnover(days)
-      .then(setTurn)
-      .catch((err) =>
-        setTurnError(
-          err instanceof ApiError ? err.message : 'Could not load turnover.',
-        ),
-      );
-  }, [days, turnRetry]);
+  const turnQuery = useQuery({
+    queryKey: ['HeadcountHome', 'turn', days, turnRetry],
+    queryFn: () => getTurnover(days),
+  });
+  const turn: TurnoverSummary | null = turnQuery.data ?? null;
+  const turnError = turnQuery.error ? turnQuery.error instanceof ApiError ? turnQuery.error.message : 'Could not load turnover.' : null;
 
   return (
     <div className="space-y-5">
@@ -354,26 +348,15 @@ function DrillDrawer({
   drill: Drill;
   onClose: () => void;
 }) {
-  const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    setRows(null);
-    setError(null);
-    listOrgAssociates()
-      .then((r) => {
-        setRows(
-          r.associates.filter((a) => a.departmentId === drill.departmentId),
-        );
-      })
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load associates.',
-        ),
-      );
-  }, [drill, retry]);
+  const rowsQuery = useQuery({
+    queryKey: ['DrillDrawer', 'rows', drill, retry],
+    queryFn: () => listOrgAssociates(),
+  });
+  const rows: AssociateOrgSummary[] | null = rowsQuery.data ? rowsQuery.data.associates.filter((a) => a.departmentId === drill.departmentId) : null;
+  const error = rowsQuery.error ? rowsQuery.error instanceof ApiError ? rowsQuery.error.message : 'Could not load associates.' : null;
 
   const filtered = useMemo(() => {
     if (!rows) return null;

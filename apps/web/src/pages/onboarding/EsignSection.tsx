@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, FileSignature, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -50,24 +51,19 @@ interface Props {
 const ESIGN_PREVIEW = 4;
 
 export function EsignSection({ applicationId, canManage, esignTasks, associateId }: Props) {
-  const [items, setItems] = useState<EsignAgreement[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listEsignAgreements(applicationId);
-      setItems(res.agreements);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load.');
-    }
-  }, [applicationId]);
+  const refreshQuery = useQuery({
+    queryKey: ['EsignSection', 'items'],
+    queryFn: () => listEsignAgreements(applicationId),
+  });
+  const items: EsignAgreement[] | null = refreshQuery.data?.agreements ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   return (
     <Card>

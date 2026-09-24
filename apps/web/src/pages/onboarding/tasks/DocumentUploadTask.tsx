@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
@@ -129,10 +130,9 @@ export function DocumentUploadTask() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   const [docTitle, setDocTitle] = useState<string>(I9_DOC_CATALOG[0].title);
   const [side, setSide] = useState<'' | 'FRONT' | 'BACK'>('');
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
@@ -144,18 +144,16 @@ export function DocumentUploadTask() {
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('DOCUMENT_UPLOAD');
 
-  const refresh = useCallback(async () => {
-    try {
-      const r = await listMyDocuments();
-      setDocs(r.documents);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('ob.docs.loadFailed'));
-    }
-  }, [t]);
+  const refreshQuery = useQuery({
+    queryKey: ['DocumentUploadTask', 'docs'],
+    queryFn: () => listMyDocuments(),
+  });
+  const docs: DocumentRecord[] | null = refreshQuery.data?.documents ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('ob.docs.loadFailed') : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const idDocs = (docs ?? []).filter(
     (d) => d.kind === 'ID' || d.kind === 'SSN_CARD' || d.kind === 'I9_SUPPORTING'

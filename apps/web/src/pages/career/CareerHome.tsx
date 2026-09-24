@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2, TrendingUp, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -55,27 +56,18 @@ const LEVEL_VARIANT: Record<SkillLevel, 'pending' | 'accent' | 'success' | 'dest
 export function CareerHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  const [ladders, setLadders] = useState<LadderRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
   const [familyFilter, setFamilyFilter] = useState<string | null>(null);
 
-  const refresh = () => {
-    setLadders(null);
-    setLoadError(null);
-    listLadders()
-      .then((r) => setLadders(r.ladders))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load career ladders.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['CareerHome', 'ladders'],
+    queryFn: () => listLadders(),
+  });
+  const ladders: LadderRow[] | null = refreshQuery.data?.ladders ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load career ladders.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const families = useMemo(
     () =>
@@ -319,8 +311,6 @@ function LadderDetailDrawer({
   onClose: () => void;
 }) {
   const confirm = useConfirm();
-  const [data, setData] = useState<LadderDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddLevel, setShowAddLevel] = useState(false);
   const [skillFor, setSkillFor] = useState<Level | null>(null);
   // Per-row pending key so each delete button gets its own spinner
@@ -328,20 +318,13 @@ function LadderDetailDrawer({
   // `skill:<id>`.
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
-  const refresh = () => {
-    setData(null);
-    setLoadError(null);
-    getLadder(ladderId)
-      .then(setData)
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load this ladder.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, [ladderId]);
+  const refreshQuery = useQuery({
+    queryKey: ['LadderDetailDrawer', 'data', ladderId],
+    queryFn: () => getLadder(ladderId),
+  });
+  const data: LadderDetail | null = refreshQuery.data ?? null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load this ladder.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>

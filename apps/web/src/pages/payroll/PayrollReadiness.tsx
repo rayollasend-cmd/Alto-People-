@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Download, XCircle } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -39,21 +40,16 @@ import { toast } from '@/components/ui/Toaster';
  * the next run is created.
  */
 export function PayrollReadiness() {
-  const [data, setData] = useState<PayrollReadinessResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // "Action required only" lens — the working view when the list is long
   // and only the red rows matter.
   const [actionOnly, setActionOnly] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    getPayrollReadiness()
-      .then((r) => !cancelled && setData(r))
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const dataQuery = useQuery({
+    queryKey: ['PayrollReadiness', 'data'],
+    queryFn: () => getPayrollReadiness(),
+  });
+  const data: PayrollReadinessResponse | null = dataQuery.data ? dataQuery.data : null;
+  const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : 'Failed to load.' : null;
 
   return (
     <div className="space-y-5">

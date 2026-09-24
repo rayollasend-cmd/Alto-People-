@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
 import {
   createWorkflow,
@@ -126,25 +127,20 @@ export function WorkflowsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [tab, setTab] = useState<'definitions' | 'runs'>('definitions');
-  const [defs, setDefs] = useState<WorkflowDefinition[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<WorkflowDefinition | 'new' | null>(null);
   const [defSearch, setDefSearch] = useState('');
   const [defTrigger, setDefTrigger] = useState<'' | WorkflowTrigger>('');
 
+  const refreshQuery = useQuery({
+    queryKey: ['WorkflowsHome', 'defs'],
+    queryFn: () => listWorkflows(),
+  });
+  const defs: WorkflowDefinition[] | null = refreshQuery.data?.definitions ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listWorkflows();
-      setDefs(res.definitions);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await refreshQuery.refetch();
   };
 
-  useEffect(() => {
-    refresh();
-  }, []);
 
   const filteredDefs = useMemo(() => {
     if (!defs) return [];

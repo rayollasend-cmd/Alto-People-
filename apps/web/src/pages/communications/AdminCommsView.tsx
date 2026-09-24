@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
 import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 import { toast } from 'sonner';
@@ -94,8 +95,6 @@ interface AdminCommsViewProps {
 }
 
 export function AdminCommsView({ canManage }: AdminCommsViewProps) {
-  const [items, setItems] = useState<Notification[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showCompose, setShowCompose] = useState(false);
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<Notification | null>(null);
@@ -103,23 +102,19 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   const [statusFilter, setStatusFilter] = useState<NotificationStatus | ''>('');
   const [resendingId, setResendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      setItems(null);
-      const res = await listAdmin({
+  const refreshQuery = useQuery({
+    queryKey: ['AdminCommsView', 'items'],
+    queryFn: () => listAdmin({
         channel: channelFilter || undefined,
         status: statusFilter || undefined,
-      });
-      setItems(res.notifications);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [channelFilter, statusFilter]);
+      }),
+  });
+  const items: Notification[] | null = refreshQuery.data?.notifications ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const exportCsv = () => {
     if (!items || items.length === 0) return;
@@ -438,23 +433,18 @@ const SUPPRESSION_REASON_LABELS: Record<EmailSuppression['reason'], string> = {
  * Suppressed status. Removing an address resumes delivery.
  */
 function SuppressionListCard() {
-  const [rows, setRows] = useState<EmailSuppression[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [removingEmail, setRemovingEmail] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listSuppressions();
-      setRows(res.suppressions);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['SuppressionListCard', 'rows'],
+    queryFn: () => listSuppressions(),
+  });
+  const rows: EmailSuppression[] | null = refreshQuery.data?.suppressions ?? null;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const remove = async (email: string) => {
     setRemovingEmail(email);

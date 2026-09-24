@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ClipboardCheck } from 'lucide-react';
 import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
@@ -20,23 +21,19 @@ function ratingStars(n: number): string {
 export function AssociateReviewsView() {
   const { t } = useI18n();
   const confirm = useConfirm();
-  const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listMyReviews();
-      setReviews(res.reviews);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('reviews.loadFailed'));
-    }
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['AssociateReviewsView', 'reviews'],
+    queryFn: () => listMyReviews(),
+  });
+  const reviews: PerformanceReview[] | null = refreshQuery.data?.reviews ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('reviews.loadFailed') : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const onAck = async (id: string) => {
     if (

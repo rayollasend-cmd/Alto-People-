@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Circle } from 'lucide-react';
 import {
@@ -15,24 +16,13 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 export function PayrollYearEndClose() {
   const lastYear = new Date().getUTCFullYear() - 1;
   const [year, setYear] = useState(lastYear);
-  const [data, setData] = useState<YearEndCloseResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setData(null);
-    setError(null);
-    getYearEndClose(year)
-      .then((d) => !cancelled && setData(d))
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e instanceof ApiError ? e.message : "Couldn't load year-end status.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [year]);
+  const dataQuery = useQuery({
+    queryKey: ['PayrollYearEndClose', 'data', year],
+    queryFn: () => getYearEndClose(year),
+  });
+  const data: YearEndCloseResponse | null = dataQuery.data ? dataQuery.data : null;
+  const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : "Couldn't load year-end status." : null;
 
   const allReady = data?.readyToClose ?? false;
 
