@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { PERSONAS, signIn } from './personas';
 
 /**
  * Horizontal-overflow guard. The shell clips page-level x-overflow (so
@@ -7,36 +8,12 @@ import { test, expect, type Page } from '@playwright/test';
  * inside <main> may extend past the viewport unless it lives inside an
  * intentional overflow-x-auto scroller (admin grids, paystub tables).
  *
- * Runs per persona: personas see entirely different pages (the original
- * "swing" bug was admin-only while every associate page was clean), so
- * a Maria-only guard would let an admin regression ship. DIAG_USER /
- * DIAG_PASS still override for ad-hoc local runs against other accounts.
+ * Runs per persona (e2e/personas.ts): personas see entirely different
+ * pages, so a Maria-only guard would let an admin regression ship.
  */
 
 test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server');
 
-const PERSONAS = [
-  {
-    name: 'associate',
-    email: process.env.DIAG_USER ?? 'maria.lopez@example.com',
-    pass: process.env.DIAG_PASS ?? 'maria-dev-2026!',
-    routes: ['/', '/scheduling', '/time-attendance', '/time-off', '/payroll'],
-  },
-  {
-    name: 'admin',
-    email: 'admin@altohr.com',
-    pass: 'alto-admin-dev',
-    routes: [
-      '/',
-      '/scheduling',
-      '/time-attendance',
-      '/time-off',
-      '/people',
-      '/payroll',
-      '/approvals',
-    ],
-  },
-];
 
 async function collectOffenders(page: Page, routes: string[]): Promise<string[]> {
   const all: string[] = [];
@@ -70,11 +47,7 @@ async function collectOffenders(page: Page, routes: string[]): Promise<string[]>
 
 for (const persona of PERSONAS) {
   test(`no element escapes the viewport horizontally (${persona.name})`, async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel(/email/i).fill(persona.email);
-    await page.getByLabel(/^password/i).fill(persona.pass);
-    await page.getByRole('button', { name: /sign in/i }).click();
-    await page.waitForTimeout(3000);
+    await signIn(page, persona);
 
     const offenders = await collectOffenders(page, persona.routes);
     expect(offenders, `overflow as ${persona.name}`).toEqual([]);
