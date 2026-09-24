@@ -209,15 +209,16 @@ ReactDOM.createRoot(rootEl).render(
                 <StoreScopeProvider>
                   <PageTitleProvider>
                     <ConfirmProvider>
-                      {/* v7_startTransition wraps router state updates in
-                          React.startTransition. That is what lets the page
-                          you're on stay painted while the next one's chunk
-                          streams: Layout's Suspense boundary already has
-                          content, and inside a transition React keeps
+                      {/* React Router 7 wraps router state updates in
+                          React.startTransition by default (the v6
+                          v7_startTransition flag). That is what lets the
+                          page you're on stay painted while the next one's
+                          chunk streams: Layout's Suspense boundary already
+                          has content, and inside a transition React keeps
                           showing it instead of swapping to a fallback.
                           Without it every navigation blanked to a skeleton
                           even when the next page was 80ms away. */}
-                      <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                      <RouterProvider router={router} />
                       <Toaster />
                     </ConfirmProvider>
                   </PageTitleProvider>
