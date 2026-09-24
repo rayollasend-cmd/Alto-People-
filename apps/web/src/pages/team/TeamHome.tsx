@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { getMyDelegations } from '@/lib/delegationsApi';
+import { useAuth } from '@/lib/auth';
 import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Target, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -139,6 +141,7 @@ export function TeamHome() {
         </ErrorBanner>
       )}
 
+      <DelegationBanner />
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>
           <TabsTrigger value="inbox">
@@ -1133,6 +1136,32 @@ function TimeOffTab() {
           },
         ]}
       />
+    </div>
+  );
+}
+
+/**
+ * Whose inbox this is today: cover received (their reports are in the
+ * queues below) and cover given (someone else is reading along).
+ */
+function DelegationBanner() {
+  const { can } = useAuth();
+  const mine = useQuery({ queryKey: ['delegations', 'mine'], queryFn: getMyDelegations, enabled: can('view:my-team') });
+  const received = mine.data?.received.filter((d) => d.startsOn <= (mine.data?.today ?? '')) ?? [];
+  const given = mine.data?.given.filter((d) => d.startsOn <= (mine.data?.today ?? '')) ?? [];
+  if (received.length === 0 && given.length === 0) return null;
+  return (
+    <div className="rounded-md border border-gold/40 bg-gold/5 px-3 py-2 text-sm text-silver">
+      {received.map((d) => (
+        <div key={d.id}>
+          Covering for <span className="text-white">{d.from.name}</span> until {fmtDate(parseYmd(d.endsOn))} — their reports are in these queues.
+        </div>
+      ))}
+      {given.map((d) => (
+        <div key={d.id}>
+          <span className="text-white">{d.to.name}</span> is covering your inbox until {fmtDate(parseYmd(d.endsOn))}.
+        </div>
+      ))}
     </div>
   );
 }

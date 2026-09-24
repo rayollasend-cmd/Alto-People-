@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { coveringManagerIds, teamScope } from '../lib/delegations.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
@@ -35,11 +36,12 @@ const VIEW = requireCapability('view:my-team');
 const APPROVE_TIME = requireCapability('manage:team-time');
 const APPROVE_PTO = requireCapability('manage:team-time-off');
 
-async function requireDirectReportAssociate(
-  managerAssociateId: string | null | undefined,
+async function requireTeamAssociate(
+  user: { id: string; associateId: string | null | undefined },
   associateId: string,
 ): Promise<void> {
-  if (!managerAssociateId) {
+  const managerIds = await coveringManagerIds(user);
+  if (managerIds.length === 0) {
     throw new HttpError(
       403,
       'no_associate_link',
@@ -47,7 +49,7 @@ async function requireDirectReportAssociate(
     );
   }
   const target = await prisma.associate.findFirst({
-    where: { id: associateId, managerId: managerAssociateId, deletedAt: null },
+    where: { id: associateId, managerId: { in: managerIds }, deletedAt: null },
     select: { id: true },
   });
   if (!target) {
@@ -59,21 +61,17 @@ async function requireDirectReportAssociate(
   }
 }
 
-function managerScope(user: { associateId: string | null | undefined }) {
-  return { managerId: user.associateId ?? '__none__', deletedAt: null };
-}
+// A manager's own reports, plus the reports of anyone currently delegating
+// their inbox to this user (lib/delegations).
+const managerScope = teamScope;
 
 // ----- Direct reports list -------------------------------------------------
 
 teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
   const user = req.user!;
-  if (!user.associateId) {
-    res.json({ reports: [] });
-    return;
-  }
   const reports = await prisma.associate.findMany({
     take: 1000,
-    where: managerScope(user),
+    where: await managerScope(user),
     select: {
       id: true,
       firstName: true,
@@ -119,7 +117,7 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
   }
   const reportIdsRows = await prisma.associate.findMany({
     take: 1000,
-    where: managerScope(user),
+    where: await managerScope(user),
     select: { id: true },
   });
   const reportIds = reportIdsRows.map((r) => r.id);
@@ -200,7 +198,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
   }
   const reportIdsRows = await prisma.associate.findMany({
     take: 1000,
-    where: managerScope(user),
+    where: await managerScope(user),
     select: { id: true },
   });
   const reportIds = reportIdsRows.map((r) => r.id);
@@ -361,7 +359,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
   }
   const reportIds = await prisma.associate.findMany({
     take: 1000,
-    where: managerScope(user),
+    where: await managerScope(user),
     select: { id: true },
   });
   const ids = reportIds.map((r) => r.id);
@@ -424,7 +422,7 @@ teamRouter.post(
     if (!entry) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found.');
     }
-    await requireDirectReportAssociate(user.associateId, entry.associateId);
+    await requireTeamAssociate(user, entry.associateId);
     if (entry.status === 'ACTIVE') {
       throw new HttpError(
         409,
@@ -478,7 +476,7 @@ teamRouter.post(
     if (!entry) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found.');
     }
-    await requireDirectReportAssociate(user.associateId, entry.associateId);
+    await requireTeamAssociate(user, entry.associateId);
     const reason = (req.body?.reason ?? '').toString().trim();
     if (!reason) {
       throw new HttpError(
@@ -545,7 +543,7 @@ teamRouter.post(
         await prisma.associate.findMany({
           where: {
             id: { in: [...new Set(entries.map((e) => e.associateId))] },
-            ...managerScope(user),
+            ...(await managerScope(user)),
           },
           select: { id: true },
         })
@@ -620,7 +618,7 @@ teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
   }
   const reportIds = await prisma.associate.findMany({
     take: 1000,
-    where: managerScope(user),
+    where: await managerScope(user),
     select: { id: true },
   });
   const ids = reportIds.map((r) => r.id);
@@ -672,7 +670,7 @@ teamRouter.post(
     if (!reqRow) {
       throw new HttpError(404, 'not_found', 'Request not found.');
     }
-    await requireDirectReportAssociate(user.associateId, reqRow.associateId);
+    await requireTeamAssociate(user, reqRow.associateId);
     try {
       await approveRequest(prisma, id, user.id, req.body?.note ?? null);
     } catch (err) {
@@ -717,7 +715,7 @@ teamRouter.post(
         await prisma.associate.findMany({
           where: {
             id: { in: [...new Set(reqRows.map((r) => r.associateId))] },
-            ...managerScope(user),
+            ...(await managerScope(user)),
           },
           select: { id: true },
         })
@@ -767,7 +765,7 @@ teamRouter.post(
     if (!reqRow) {
       throw new HttpError(404, 'not_found', 'Request not found.');
     }
-    await requireDirectReportAssociate(user.associateId, reqRow.associateId);
+    await requireTeamAssociate(user, reqRow.associateId);
     const note = (req.body?.note ?? '').toString().trim();
     if (!note) {
       throw new HttpError(

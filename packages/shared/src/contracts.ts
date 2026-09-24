@@ -6644,6 +6644,39 @@ export interface ReleaseNoteInput {
   published: boolean;
 }
 
+/** Out-of-office cover for a manager's team inbox. */
+export interface TeamDelegation {
+  id: string;
+  /** YYYY-MM-DD, inclusive. */
+  startsOn: string;
+  endsOn: string;
+  note: string | null;
+  from: { id: string; name: string };
+  to: { id: string; name: string };
+}
+
+export interface TeamDelegationsResponse {
+  /** Cover the caller has given, current and upcoming. */
+  given: TeamDelegation[];
+  /** Cover the caller is providing, current and upcoming. */
+  received: TeamDelegation[];
+  today: string;
+}
+
+export interface TeamDelegationCandidate {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+export interface TeamDelegationInput {
+  toUserId: string;
+  startsOn: string;
+  endsOn: string;
+  note?: string;
+}
+
 /** Universal search — every record kind the command palette can land on. */
 export type SearchKind = 'people' | 'clients' | 'locations' | 'applications' | 'shifts' | 'documents' | 'statements' | 'help';
 

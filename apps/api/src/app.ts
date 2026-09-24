@@ -37,6 +37,7 @@ import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
+import { delegationsRouter } from './routes/delegations.js';
 import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
@@ -417,6 +418,8 @@ export function createApp() {
   app.use('/release-notes', releaseNotesRouter);
   // ⌘K across every record kind; each group is gated by its page's capability.
   app.use('/search', searchRouter);
+  // Out-of-office cover for the team inbox (view:my-team on both ends).
+  app.use('/delegations', delegationsRouter);
   // One-click unsubscribe: mailbox providers POST this with no session, so
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.

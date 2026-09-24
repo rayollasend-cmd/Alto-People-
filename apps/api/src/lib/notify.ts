@@ -46,6 +46,7 @@ import {
   type NotificationCategory,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { activeDelegationsFrom } from './delegations.js';
 import { EmailSuppressedError, send } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -568,6 +569,11 @@ export function notifyManager(associateId: string, opts: NotifyOpts): Promise<vo
       });
       if (!managerUser) return;
       await notifyUser(managerUser.id, opts);
+      // Out of office: whoever is covering this manager's inbox today hears
+      // it too, so the request does not sit unanswered until they are back.
+      for (const d of await activeDelegationsFrom(managerUser.id)) {
+        await notifyUser(d.toUserId, opts);
+      }
     })().catch((err: unknown) => {
       console.warn('[notify] notifyManager failed:', err instanceof Error ? err.message : err);
     }),

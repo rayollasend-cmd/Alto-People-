@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -101,6 +102,7 @@ export function Settings() {
           {user?.associateId && <ProfilePhotoCard />}
           <EmailCard />
           <TimezoneCard />
+          <OutOfOfficeCard />
           <NotificationsCard />
         </div>
         <div className="space-y-6">
