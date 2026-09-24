@@ -21,7 +21,8 @@ vi.mock('@/lib/usePaletteSearch', async (importOriginal) => {
 });
 vi.mock('@/lib/useClients', () => ({ useClients: () => ({ clients: [], isLoading: false }) }));
 
-// cmdk measures its list with ResizeObserver, which jsdom lacks.
+// cmdk measures its list with ResizeObserver and keeps the active row in
+// view with scrollIntoView; jsdom has neither.
 vi.stubGlobal(
   'ResizeObserver',
   class {
@@ -30,6 +31,7 @@ vi.stubGlobal(
     disconnect() {}
   },
 );
+Element.prototype.scrollIntoView = () => undefined;
 
 function renderPalette() {
   const auth = {
