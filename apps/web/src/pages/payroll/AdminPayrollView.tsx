@@ -1704,8 +1704,7 @@ function PayrollHeroSkeleton() {
  *  internal database statuses.
  * -------------------------------------------------------------------------- */
 
-const STEPPER_STAGES = ['DRAFT', 'FINALIZED', 'DISBURSED'] as const;
-type StepperStage = (typeof STEPPER_STAGES)[number] | 'SYNCED';
+type StepperStage = 'DRAFT' | 'FINALIZED' | 'DISBURSED' | 'SYNCED';
 
 function RunStatusStepper({
   status,

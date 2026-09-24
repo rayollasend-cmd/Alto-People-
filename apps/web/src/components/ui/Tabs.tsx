@@ -130,7 +130,7 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
       );
       const idx = triggers.indexOf(target as HTMLButtonElement);
       if (idx < 0) return;
-      let next = idx;
+      let next: number;
       if (e.key === 'ArrowRight') next = (idx + 1) % triggers.length;
       else if (e.key === 'ArrowLeft') next = (idx - 1 + triggers.length) % triggers.length;
       else if (e.key === 'Home') next = 0;

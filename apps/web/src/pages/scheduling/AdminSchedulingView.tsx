@@ -1071,7 +1071,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     return x.toISOString();
   };
   const requestArgs = useMemo<Parameters<typeof listShifts>[0]>(() => {
-    let args: Parameters<typeof listShifts>[0] = {};
+    let args: Parameters<typeof listShifts>[0];
     if (view === 'week') {
       args = { from: padDay(weekStart, -1), to: padDay(weekEnd, 1) };
     } else if (view === 'day') {

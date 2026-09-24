@@ -53,7 +53,7 @@ const RELOAD_KEY = 'alto:chunk-reload-at';
 const RELOAD_COOLDOWN_MS = 60_000;
 
 function reloadOnceForNewBuild(): boolean {
-  let last = 0;
+  let last: number;
   try {
     last = Number(window.sessionStorage.getItem(RELOAD_KEY) ?? 0);
   } catch {

@@ -1253,6 +1253,7 @@ function taskDestination(
     case 'DIRECT_DEPOSIT':
     // The photo itself shows in the profile drawer header, where HR can
     // also replace it.
+    // falls through
     case 'PROFILE_PHOTO':
       return { to: `/people?associateId=${associateId}`, label: 'Open profile' };
     case 'DOCUMENT_UPLOAD':

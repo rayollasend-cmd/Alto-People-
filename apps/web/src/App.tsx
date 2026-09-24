@@ -42,6 +42,7 @@ import { RouterErrorPage } from '@/pages/RouterErrorPage';
 // for React.lazy() (which expects a default export) via `.then(m => ({ default: m.X }))`.
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the bound mirrors React.lazy's own
 function lazyNamed<T extends ComponentType<any>>(
   loader: () => Promise<Record<string, unknown>>,
   exportName: string

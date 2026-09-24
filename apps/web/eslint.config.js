@@ -1,4 +1,6 @@
+import js from '@eslint/js';
 import tsParser from '@typescript-eslint/parser';
+import tsPlugin from '@typescript-eslint/eslint-plugin';
 import reactHooks from 'eslint-plugin-react-hooks';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 
@@ -18,6 +20,31 @@ import jsxA11y from 'eslint-plugin-jsx-a11y';
  *   fmtDate/fmtTime/fmtDateTime from @/lib/format over toLocale*
  */
 export default [
+  /**
+   * Correctness for EVERY source file (2026-09-24): ESLint recommended +
+   * typescript-eslint recommended (non-type-checked) + the React hooks
+   * rules. The design-system blocks below only reach pages/ and
+   * components/, which left lib/ — where the custom hooks live —
+   * unlinted. Held at zero findings.
+   */
+  { ignores: ['dist/**', 'node_modules/**', 'public/**'] },
+  js.configs.recommended,
+  ...tsPlugin.configs['flat/recommended'],
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    plugins: { 'react-hooks': reactHooks },
+    linterOptions: { reportUnusedDisableDirectives: 'warn' },
+    rules: {
+      // TypeScript owns undefined-name checking.
+      'no-undef': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
   {
     files: ['src/pages/**/*.tsx', 'src/components/**/*.tsx'],
     ignores: ['src/components/ui/**'],

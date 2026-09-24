@@ -58,7 +58,7 @@ export function Coachmarks() {
     if (!user) return;
     const candidate = tourFor(location.pathname);
     if (!candidate) return;
-    let seen = false;
+    let seen: boolean;
     try {
       seen = window.localStorage.getItem(seenKey(candidate.id, user.id)) !== null;
     } catch {

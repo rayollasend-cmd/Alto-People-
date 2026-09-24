@@ -152,6 +152,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
 
+  // Refs, not state, inside the listeners: the subscriptions are
+  // mounted once and must always see the CURRENT user without
+  // re-subscribing on every auth change.
+  const userRef = useRef<AuthUser | null>(null);
+  /**
+   * Every write to the signed-in user goes through here so `userRef`
+   * moves in the same tick as the state.
+   *
+   * Mirroring it in an effect left a window between the commit and the
+   * effect flushing where the mid-session 401 handler below read null and
+   * returned — swallowing the only signal that the session had died, so
+   * the app kept a dead session until the next unlucky request. It showed
+   * up as a load-dependent test flake; on a slow phone it is a user
+   * staring at a page that will never load.
+   */
+  const setUser = useCallback((next: AuthUser | null) => {
+    userRef.current = next;
+    setUserState(next);
+  }, []);
+
   // Initial /auth/me probe. Under React.StrictMode (dev) this effect mounts,
   // unmounts, and remounts — we let the second run complete naturally and
   // unconditionally clear isInitializing so the splash never gets stuck.
@@ -201,7 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       ac.abort();
     };
-  }, []);
+  }, [setUser]);
 
   // ---------------------------------------------------------------------
   // App-wide session death + connectivity (see lib/sessionEvents.ts).
@@ -210,25 +230,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // free while keeping its own per-request error banners.
   // ---------------------------------------------------------------------
 
-  // Refs, not state, inside the listeners: the subscriptions are
-  // mounted once and must always see the CURRENT user without
-  // re-subscribing on every auth change.
-  const userRef = useRef<AuthUser | null>(null);
-  /**
-   * Every write to the signed-in user goes through here so `userRef`
-   * moves in the same tick as the state.
-   *
-   * Mirroring it in an effect left a window between the commit and the
-   * effect flushing where the mid-session 401 handler below read null and
-   * returned — swallowing the only signal that the session had died, so
-   * the app kept a dead session until the next unlucky request. It showed
-   * up as a load-dependent test flake; on a slow phone it is a user
-   * staring at a page that will never load.
-   */
-  const setUser = useCallback((next: AuthUser | null) => {
-    userRef.current = next;
-    setUserState(next);
-  }, []);
   const reprobeInFlightRef = useRef(false);
   const deathToastShownRef = useRef(false);
   const offlineTimerRef = useRef<number | null>(null);
@@ -303,7 +304,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       })();
     });
-  }, []);
+  }, [setUser]);
 
   // Connectivity transitions → the isOffline flag the Topbar pill reads.
   // Flapping guard: 'offline' arms a short grace timer instead of
@@ -356,7 +357,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
     setIsOffline(false);
     return { mfaRequired: false, mfaEnrollmentRequired: false };
-  }, []);
+  }, [setUser]);
 
   const submitMfaChallenge = useCallback(async (input: MfaChallengeInput) => {
     const res = await apiFetch<MfaChallengeResponse>('/auth/mfa-challenge', {
@@ -366,7 +367,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
     saveOfflineSession(res.user);
     setIsOffline(false);
-  }, []);
+  }, [setUser]);
 
   const signOut = useCallback(async () => {
     try {
@@ -380,7 +381,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // and needs its own call.
     void clearPersistedQueries();
     setUser(null);
-  }, []);
+  }, [setUser]);
 
   // The timezone preference from Settings reaches every fmt* call site
   // through the format module's own channel — the same way the language
@@ -409,7 +410,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
     saveOfflineSession(res.user);
     setIsOffline(false);
-  }, []);
+  }, [setUser]);
 
   const refreshUser = useCallback(async () => {
     try {
@@ -421,7 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Soft fail — keep the cached user. Network/server errors here
       // shouldn't bounce a signed-in user out of the app.
     }
-  }, []);
+  }, [setUser]);
 
   const value = useMemo<AuthState>(() => {
     const role = user?.role ?? null;

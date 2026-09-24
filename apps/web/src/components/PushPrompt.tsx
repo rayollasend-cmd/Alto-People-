@@ -35,10 +35,6 @@ export function PushPrompt() {
     if (s === undefined) return;
     setStatus(s);
   }, [statusQuery.data]);
-  useEffect(() => {
-    if (!statusQuery.isError) return;
-    undefined
-  }, [statusQuery.isError, statusQuery.error]);
 
   if (dismissed || status !== 'available') return null;
 

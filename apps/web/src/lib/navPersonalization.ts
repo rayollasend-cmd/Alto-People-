@@ -58,6 +58,8 @@ const getNavPins = () => apiFetch<{ pinned: ModuleKey[] }>('/auth/me/nav-pins');
 const putNavPins = (pinned: ModuleKey[]) =>
   apiFetch<void>('/auth/me/nav-pins', { method: 'PUT', body: { pinned } });
 
+const NO_PINS: ModuleKey[] = [];
+
 export function usePinnedModules(): {
   pinned: ModuleKey[];
   isPinned: (key: ModuleKey) => boolean;
@@ -97,7 +99,7 @@ export function usePinnedModules(): {
     },
   });
 
-  const pinned = data?.pinned ?? [];
+  const pinned = data?.pinned ?? NO_PINS;
 
   const togglePin = useCallback(
     (key: ModuleKey) => {
