@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Check,
@@ -52,7 +52,6 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';
 import { usePersistentState } from '@/lib/usePersistentState';
-import type { LocationSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
@@ -113,26 +112,28 @@ export function KioskAdmin() {
   // tab switch AND whenever a tab reports it changed something
   // (badgeBump) — approving 10 punches updates "Review (10)" right away
   // instead of waiting for the next tab switch.
-  const [pendingReview, setPendingReview] = useState<number | null>(null);
-  const [offlineDevices, setOfflineDevices] = useState<number | null>(null);
   const [badgeBump, setBadgeBump] = useState(0);
   const bumpBadges = () => setBadgeBump((b) => b + 1);
+  // The device list is the same query the Devices and Log tabs read, so a
+  // revoke there refreshes this count without a bump.
+  const pendingQuery = useQuery({
+    queryKey: ['kiosk', 'punches', 'pending'],
+    queryFn: () => listKioskPunches({ reviewStatus: 'PENDING' }),
+  });
+  const devicesQuery = useQuery({
+    queryKey: ['kiosk', 'devices'],
+    queryFn: () => listKioskDevices(),
+  });
+  const { refetch: refetchPending } = pendingQuery;
+  const { refetch: refetchDevices } = devicesQuery;
   useEffect(() => {
-    let cancelled = false;
-    void listKioskPunches({ reviewStatus: 'PENDING' })
-      .then((r) => !cancelled && setPendingReview(r.punches.length))
-      .catch(() => !cancelled && setPendingReview(null));
-    void listKioskDevices()
-      .then(
-        (r) =>
-          !cancelled &&
-          setOfflineDevices(r.devices.filter(isDeviceOffline).length),
-      )
-      .catch(() => !cancelled && setOfflineDevices(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, badgeBump]);
+    void refetchPending();
+    void refetchDevices();
+  }, [tab, badgeBump, refetchPending, refetchDevices]);
+  const pendingReview = pendingQuery.data ? pendingQuery.data.punches.length : null;
+  const offlineDevices = devicesQuery.data
+    ? devicesQuery.data.devices.filter(isDeviceOffline).length
+    : null;
 
   const countLabel = (n: number) => (n > 99 ? '99+' : String(n));
 
@@ -186,19 +187,14 @@ export function KioskAdmin() {
 // or can't be displayed (encryption key drifted), before associates hit it at
 // the kiosk. Silent when everything's healthy.
 function PinHealthBanner({ onTab, bump }: { onTab: () => void; bump: number }) {
-  const [health, setHealth] = useState<KioskPinHealth | null>(null);
-  // `bump` re-runs the check after any tab reports a change, so fixing the
-  // affected codes (Rotate all) actually clears the banner instead of it
-  // staying red until a full page reload.
-  useEffect(() => {
-    let cancelled = false;
-    kioskPinsHealth()
-      .then((h) => !cancelled && setHealth(h))
-      .catch(() => !cancelled && setHealth(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [bump]);
+  // `bump` is part of the key: after any tab reports a change the check
+  // re-runs, so fixing the affected codes (Rotate all) actually clears the
+  // banner instead of it staying red until a full page reload.
+  const healthQuery = useQuery({
+    queryKey: ['kiosk', 'pins', 'health', bump],
+    queryFn: () => kioskPinsHealth(),
+  });
+  const health: KioskPinHealth | null = healthQuery.data ?? null;
 
   if (!health) return null;
   const { wontClockIn, unreadable, legacy, healthy, total } = health;
@@ -315,23 +311,20 @@ function DevicesTab({
   onChanged?: () => void;
 }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<KioskDevice[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showToken, setShowToken] = useState<string | null>(null);
 
+  const devicesQuery = useQuery({
+    queryKey: ['kiosk', 'devices'],
+    queryFn: () => listKioskDevices(),
+  });
+  const rows: KioskDevice[] | null = devicesQuery.data?.devices ?? null;
+  const loadError = devicesQuery.isError;
   const refresh = () => {
-    setRows(null);
-    setLoadError(false);
-    listKioskDevices()
-      .then((r) => setRows(r.devices))
-      .catch(() => setLoadError(true));
+    void devicesQuery.refetch();
     // Revoking/deleting/registering changes the offline tab badge too.
     onChanged?.();
   };
-  useEffect(() => {
-    refresh();
-  }, []);
 
   const offline = rows ? rows.filter(isDeviceOffline) : [];
   const expiringSoon = rows ? rows.filter(isTokenExpiringSoon) : [];
@@ -651,7 +644,6 @@ function NewDeviceDrawer({
     boundedClient?.id ??
       (storeScope.enabled && storeScope.clientId ? storeScope.clientId : ''),
   );
-  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [locationId, setLocationId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -669,30 +661,25 @@ function NewDeviceDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsLoading, clientList]);
 
-  // Phase 131 — load Locations when the client changes. Auto-pick the
-  // first one so HR can hit Register without an extra click in the
-  // common single-site case. Resets when client switches.
+  // Phase 131 — the client's locations. The first one is picked as soon
+  // as the list is in, so HR can hit Register without an extra click in
+  // the common single-site case; a client switch clears the pick.
+  const locationsQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+    enabled: Boolean(clientId),
+  });
+  const locations = !clientId
+    ? null
+    : locationsQuery.isError
+      ? []
+      : (locationsQuery.data?.locations ?? null);
   useEffect(() => {
     setLocationId('');
-    if (!clientId) {
-      setLocations(null);
-      return;
-    }
-    let cancelled = false;
-    setLocations(null);
-    listClientLocations(clientId)
-      .then((r) => {
-        if (cancelled) return;
-        setLocations(r.locations);
-        if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
-      })
-      .catch(() => {
-        if (!cancelled) setLocations([]);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [clientId]);
+  useEffect(() => {
+    if (locations && locations.length > 0) setLocationId((cur) => cur || locations[0]!.id);
+  }, [locations]);
 
   const onSubmit = async () => {
     if (!clientId || !name.trim()) {
@@ -1042,8 +1029,6 @@ function PinsTab({
     setPersistedClientId(id);
     storeScope.setClientId(id === ALL_CLIENTS ? '' : id);
   };
-  const [rows, setRows] = useState<KioskPin[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showDiagnose, setShowDiagnose] = useState(false);
   const [showPin, setShowPin] = useState<{
@@ -1059,9 +1044,6 @@ function PinsTab({
   const [view, setView] = useState<'with' | 'missing'>('with');
   // Worksite filter — for a client with multiple stores/locations, narrow the
   // list to one location.
-  const [locationOptions, setLocationOptions] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
   const [locationFilter, setLocationFilter] = useState('');
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
@@ -1097,21 +1079,14 @@ function PinsTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsLoading, clientList]);
 
-  const refresh = () => {
-    if (!clientId) {
-      setRows([]);
-      return;
-    }
-    setRows(null);
-    setLoadError(false);
-    listKioskPins(clientId === ALL_CLIENTS ? undefined : clientId)
-      .then((r) => setRows(r.pins))
-      .catch(() => setLoadError(true));
-  };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+  const pinsQuery = useQuery({
+    queryKey: ['kiosk', 'pins', clientId],
+    queryFn: () => listKioskPins(clientId === ALL_CLIENTS ? undefined : clientId),
+    enabled: Boolean(clientId),
+  });
+  const rows = !clientId ? [] : (pinsQuery.data?.pins ?? null);
+  const loadError = pinsQuery.isError;
+  const refresh = () => void pinsQuery.refetch();
 
   // PIN-eligible associates (ACTIVE = approved application) at the selected
   // client, used to compute who is MISSING a code. Per-client only — the
@@ -1144,25 +1119,22 @@ function PinsTab({
     }));
   }, [clientId, eligibleQuery.data, eligibleQuery.isError]);
 
-  // Locations for the selected client, for the worksite filter. Reset the
-  // filter whenever the client changes.
+  // Locations for the selected client, for the worksite filter. The
+  // filter resets whenever the client changes.
+  const worksitesQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+    enabled: Boolean(clientId && clientId !== ALL_CLIENTS),
+  });
+  const locationOptions = useMemo(
+    () =>
+      clientId && clientId !== ALL_CLIENTS
+        ? (worksitesQuery.data?.locations ?? []).map((l) => ({ id: l.id, name: l.name }))
+        : [],
+    [clientId, worksitesQuery.data],
+  );
   useEffect(() => {
     setLocationFilter('');
-    setLocationOptions([]);
-    if (!clientId || clientId === ALL_CLIENTS) return;
-    let cancelled = false;
-    listClientLocations(clientId)
-      .then((r) => {
-        if (!cancelled) {
-          setLocationOptions(r.locations.map((l) => ({ id: l.id, name: l.name })));
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLocationOptions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [clientId]);
 
   // All clients has no Missing view (no single roster to diff against), so
@@ -2074,7 +2046,6 @@ function NewPinDrawer({
     email: string;
     status: 'ACTIVE' | 'PENDING' | 'INACTIVE';
   };
-  const [associates, setAssociates] = useState<PickerEntry[] | null>(null);
   const [associateId, setAssociateId] = useState('');
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
@@ -2082,39 +2053,32 @@ function NewPinDrawer({
   // Show every associate at the client. The server only allows issuing
   // to ACTIVE (= APPROVED application) associates; the picker reflects
   // that by disabling the others so HR can see who's there and why.
+  const directoryQuery = useQuery({
+    queryKey: ['directory', clientId, 'picker'],
+    queryFn: () => listDirectory({ clientId }),
+  });
+  const associates = useMemo<PickerEntry[] | null>(() => {
+    if (directoryQuery.isError) return [];
+    if (!directoryQuery.data) return null;
+    return directoryQuery.data.associates.map((a) => ({
+      id: a.id,
+      firstName: a.firstName,
+      lastName: a.lastName,
+      email: a.email,
+      status: a.status,
+    }));
+  }, [directoryQuery.data, directoryQuery.isError]);
+  // Preselect the associate we were opened for (issuing from a "missing a
+  // code" row), if they're eligible; otherwise the first eligible one so
+  // HR doesn't have to hunt for a row. Only while nothing is picked yet.
   useEffect(() => {
-    let cancelled = false;
-    listDirectory({ clientId })
-      .then((r) => {
-        if (cancelled) return;
-        const list = r.associates.map((a) => ({
-          id: a.id,
-          firstName: a.firstName,
-          lastName: a.lastName,
-          email: a.email,
-          status: a.status,
-        }));
-        setAssociates(list);
-        // Preselect the associate we were opened for (issuing from a
-        // "missing a code" row), if they're eligible; otherwise default to
-        // the first eligible one so HR doesn't have to hunt for a row.
-        const preset =
-          initialAssociateId &&
-          list.find((a) => a.id === initialAssociateId && a.status === 'ACTIVE');
-        if (preset) {
-          setAssociateId(initialAssociateId);
-        } else {
-          const firstEligible = list.find((a) => a.status === 'ACTIVE');
-          if (firstEligible) setAssociateId(firstEligible.id);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setAssociates([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId, initialAssociateId]);
+    if (!associates) return;
+    const preset =
+      initialAssociateId &&
+      associates.find((a) => a.id === initialAssociateId && a.status === 'ACTIVE');
+    const pick = preset ? initialAssociateId : associates.find((a) => a.status === 'ACTIVE')?.id;
+    if (pick) setAssociateId((cur) => cur || pick);
+  }, [associates, initialAssociateId]);
 
   const selected = associates?.find((a) => a.id === associateId);
   const eligibleCount =
@@ -2272,13 +2236,8 @@ function humanRejectReason(reason: string | null): string | null {
 const LOG_CAP = 600;
 
 function LogTab() {
-  const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
   // Bumped by the error-state Retry button to re-run the first-page load.
   const [reloadKey, setReloadKey] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([]);
   // "Diagnose" jump from an attributed rejected row — opens the same
   // drawer as the Pins tab, prefilled and auto-run.
   const [diagnoseFor, setDiagnoseFor] = useState<string | null>(null);
@@ -2352,62 +2311,48 @@ function LogTab() {
     limit: PAGE,
   });
 
-  // Generation counter: bumped on every filter-driven reload so an
-  // in-flight "Load more" from a previous filter can't splice its stale
-  // page onto the new result set.
-  const loadIdRef = useRef(0);
+  // Every filter is part of the key, so a filter change is a fresh first
+  // page and a "Load more" still in flight for the old filters lands in
+  // the old entry, never spliced onto the new list.
+  const log = useInfiniteQuery({
+    queryKey: [
+      'kiosk',
+      'punches',
+      'log',
+      { associateId: associate?.id, deviceId, action, range, anomaliesOnly, rejectGroup },
+      reloadKey,
+    ],
+    queryFn: ({ pageParam }) => listKioskPunches(queryParams(pageParam)),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+  const rows = useMemo<KioskPunchSummary[] | null>(() => {
+    if (!log.data) return null;
+    const all = log.data.pages.flatMap((p) => p.punches);
+    // On-screen cap — anything past it is CSV-export territory.
+    return all.length > LOG_CAP ? all.slice(0, LOG_CAP) : all;
+  }, [log.data]);
+  const loadError = log.isError && !log.data;
+  const hasMore = Boolean(log.hasNextPage);
+  const loadingMore = log.isFetchingNextPage;
 
-  // (Re)load the first page whenever a filter changes (or Retry is hit).
-  useEffect(() => {
-    const myId = ++loadIdRef.current;
-    setRows(null);
-    setNextCursor(null);
-    setLoadError(false);
-    listKioskPunches(queryParams())
-      .then((r) => {
-        if (loadIdRef.current !== myId) return;
-        setRows(r.punches);
-        setNextCursor(r.nextCursor);
-      })
-      .catch(() => {
-        if (loadIdRef.current !== myId) return;
-        setLoadError(true);
-        setNextCursor(null);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [associate?.id, deviceId, action, range, anomaliesOnly, rejectGroup, reloadKey]);
-
-  // Device dropdown options.
-  useEffect(() => {
-    listKioskDevices()
-      .then((r) =>
-        setDevices(r.devices.map((d) => ({ id: d.id, name: d.name }))),
-      )
-      .catch(() => setDevices([]));
-  }, []);
+  // Device dropdown options — the same query the Devices tab reads.
+  const devicesQuery = useQuery({
+    queryKey: ['kiosk', 'devices'],
+    queryFn: () => listKioskDevices(),
+  });
+  const devices = useMemo(
+    () => (devicesQuery.data?.devices ?? []).map((d) => ({ id: d.id, name: d.name })),
+    [devicesQuery.data],
+  );
 
   const atCap = rows !== null && rows.length >= LOG_CAP;
 
   const loadMore = () => {
-    if (!nextCursor || loadingMore || atCap) return;
-    const myId = loadIdRef.current;
-    setLoadingMore(true);
-    listKioskPunches(queryParams(nextCursor))
-      .then((r) => {
-        // Filters changed while this page was in flight — drop it.
-        if (loadIdRef.current !== myId) return;
-        setRows((prev) => {
-          const merged = [...(prev ?? []), ...r.punches];
-          // On-screen cap — anything past it is CSV-export territory.
-          return merged.length > LOG_CAP ? merged.slice(0, LOG_CAP) : merged;
-        });
-        setNextCursor(r.nextCursor);
-      })
-      .catch(() => {
-        if (loadIdRef.current !== myId) return;
-        toast.error('Could not load more punches — try again.');
-      })
-      .finally(() => setLoadingMore(false));
+    if (!hasMore || loadingMore || atCap) return;
+    void log.fetchNextPage().then((r) => {
+      if (r.isError) toast.error('Could not load more punches — try again.');
+    });
   };
 
   // CSV export of the CURRENT filters — walks the cursor server-side so it
@@ -2621,7 +2566,7 @@ function LogTab() {
           {exporting ? 'Exporting…' : 'Export CSV'}
         </Button>
         <div className="ml-auto text-xs text-silver">
-          {rows ? `${rows.length} loaded${nextCursor ? '+' : ''}` : ''}
+          {rows ? `${rows.length} loaded${hasMore ? '+' : ''}` : ''}
         </div>
       </div>
       <Card>
@@ -2744,7 +2689,7 @@ function LogTab() {
           onClose={() => setDiagnoseFor(null)}
         />
       )}
-      {nextCursor && rows && rows.length > 0 && (
+      {hasMore && rows && rows.length > 0 && (
         atCap ? (
           <div className="text-center text-xs text-silver">
             Showing the first {LOG_CAP} punches — refine filters or use CSV
@@ -2764,19 +2709,13 @@ function LogTab() {
 
 function FacesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<KioskFaceReferenceSummary[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
-  const refresh = () => {
-    setRows(null);
-    setLoadError(false);
-    listKioskFaceReferences()
-      .then((r) => setRows(r.references))
-      .catch(() => setLoadError(true));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const facesQuery = useQuery({
+    queryKey: ['kiosk', 'faces'],
+    queryFn: () => listKioskFaceReferences(),
+  });
+  const rows: KioskFaceReferenceSummary[] | null = facesQuery.data?.references ?? null;
+  const loadError = facesQuery.isError;
+  const refresh = () => void facesQuery.refetch();
 
   return (
     <Card>
@@ -2891,33 +2830,26 @@ function ReviewTab({
   onChanged?: () => void;
 }) {
   const prompt = usePrompt();
-  const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
-  const [truncated, setTruncated] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(false);
-    setSelected(new Set());
+  const reviewQuery = useQuery({
+    queryKey: ['kiosk', 'punches', 'pending', 'oldest'],
     // Oldest first — HR works the back of the queue down, not the
     // freshest punch first.
-    listKioskPunches({ reviewStatus: 'PENDING', sort: 'oldest' })
-      .then((r) => {
-        setRows(r.punches);
-        // The server pages at 500; without this flag a bigger backlog
-        // silently masquerades as "all of it".
-        setTruncated(Boolean(r.nextCursor));
-      })
-      .catch(() => setLoadError(true));
+    queryFn: () => listKioskPunches({ reviewStatus: 'PENDING', sort: 'oldest' }),
+  });
+  const rows: KioskPunchSummary[] | null = reviewQuery.data?.punches ?? null;
+  const loadError = reviewQuery.isError;
+  // The server pages at 500; without this flag a bigger backlog silently
+  // masquerades as "all of it".
+  const truncated = Boolean(reviewQuery.data?.nextCursor);
+  const refresh = () => {
+    setSelected(new Set());
+    void reviewQuery.refetch();
     onChanged?.();
   };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const decide = async (
     id: string,
