@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -122,45 +123,42 @@ export function AgreementsHome() {
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
   const [tab, setTab] = useState<'all' | 'mine'>('mine');
-  const [rows, setRows] = useState<AgreementRow[] | null>(null);
-  const [mine, setMine] = useState<MyAgreement[] | null>(null);
+
   const [statusFilter, setStatusFilter] = useState<AgreementStatus | 'ALL'>(
     'PENDING_SIGNATURE',
   );
   const [showNew, setShowNew] = useState(false);
   const [signRow, setSignRow] = useState<MyAgreement | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   // Track which row's action is in flight so each Button shows its own
   // spinner. Format: `expire:<id>` or `delete:<id>`.
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
-  const refresh = () => {
-    setLoadError(null);
-    if (tab === 'all') {
-      setRows(null);
+  const rowsQuery = useQuery({
+    queryKey: ['AgreementsHome', 'rows', statusFilter],
+    queryFn: () =>
       listAgreements({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
-      })
-        .then((r) => setRows(r.agreements))
-        .catch((err) =>
-          setLoadError(
-            err instanceof ApiError ? err.message : t('agr.loadFailed'),
-          ),
-        );
-    } else {
-      setMine(null);
-      listMyAgreements()
-        .then((r) => setMine(r.agreements))
-        .catch((err) =>
-          setLoadError(
-            err instanceof ApiError ? err.message : t('agr.loadFailed'),
-          ),
-        );
-    }
-  };
-  useEffect(() => {
-    refresh();
-  }, [tab, statusFilter]);
+      }),
+    enabled: tab === 'all',
+  });
+  const mineQuery = useQuery({
+    queryKey: ['AgreementsHome', 'mine'],
+    queryFn: () => listMyAgreements(),
+    enabled: tab === 'mine',
+  });
+  const rows: AgreementRow[] | null = rowsQuery.data?.agreements ?? null;
+  const mine: MyAgreement[] | null = mineQuery.data?.agreements ?? null;
+  const activeError = tab === 'all' ? rowsQuery.error : mineQuery.error;
+  const loadError = activeError
+    ? activeError instanceof ApiError
+      ? activeError.message
+      : t('agr.loadFailed')
+    : null;
+  // Every write touches both views (an issued agreement is also "mine"),
+  // so invalidate the pair: the visible one re-reads now, the other when
+  // its tab next opens.
+  const queryClient = useQueryClient();
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['AgreementsHome'] });
 
   return (
     <div className="space-y-5">

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -218,12 +219,12 @@ function rejectionByTask(
   return out;
 }
 
+const NO_DOCS: DocumentRecord[] = [];
+
 export function AssociateChecklist() {
   const { t } = useI18n();
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
-  const [rejectedDocs, setRejectedDocs] = useState<DocumentRecord[]>([]);
-  const [error, setError] = useState<string | null>(null);
   // Confetti fires only when 100% is REACHED in this session — someone
   // revisiting an already-complete checklist shouldn't get the party again.
   const [celebrate, setCelebrate] = useState(false);
@@ -236,10 +237,37 @@ export function AssociateChecklist() {
   // topbar fell back to the bare wordmark for the entire onboarding flow.
   usePublishPageTitle(t('ob.check.pageTitle'));
 
+  const appQuery = useQuery({
+    queryKey: ['AssociateChecklist', 'application', applicationId ?? null],
+    queryFn: () => getApplication(applicationId!),
+    enabled: !!applicationId,
+  });
+  // Rejection context is best-effort — a failed vault fetch must never
+  // block the checklist itself.
+  const rejectedQuery = useQuery({
+    queryKey: ['AssociateChecklist', 'rejectedDocs'],
+    queryFn: () => listMyDocuments(),
+    enabled: !!applicationId,
+  });
+  const rejectedDocs: DocumentRecord[] = useMemo(
+    () => rejectedQuery.data?.documents.filter((d) => d.status === 'REJECTED') ?? NO_DOCS,
+    [rejectedQuery.data],
+  );
+  const error = appQuery.error
+    ? appQuery.error instanceof ApiError
+      ? appQuery.error.message
+      : t('ob.check.loadFailed')
+    : null;
   const refresh = useCallback(async () => {
-    if (!applicationId) return;
-    try {
-      const next = await getApplication(applicationId);
+    await Promise.all([appQuery.refetch(), rejectedQuery.refetch()]);
+  }, [appQuery.refetch, rejectedQuery.refetch]);
+
+  // Each fresh read of the application drives the progress choreography
+  // (bar travel, just-done flips, confetti) before it lands in state.
+  useEffect(() => {
+    const next = appQuery.data;
+    if (next === undefined || !applicationId) return;
+    {
       if (prevPercent.current !== null && prevPercent.current < 100 && next.percentComplete === 100) {
         setCelebrate(true);
       }
@@ -278,23 +306,8 @@ export function AssociateChecklist() {
       });
       prevPercent.current = next.percentComplete;
       setDetail(next);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('ob.check.loadFailed'));
     }
-    // Rejection context is best-effort — a failed vault fetch must never
-    // block the checklist itself.
-    try {
-      const r = await listMyDocuments();
-      setRejectedDocs(r.documents.filter((d) => d.status === 'REJECTED'));
-    } catch {
-      // leave whatever we had
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applicationId]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  }, [appQuery.data, applicationId]);
 
   if (error) {
     // A new hire's primary surface must never dead-end: the single fetch
@@ -305,7 +318,6 @@ export function AssociateChecklist() {
         <ErrorBanner>{error}</ErrorBanner>
         <Button
           onClick={() => {
-            setError(null);
             void refresh();
           }}
         >

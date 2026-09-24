@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Camera,
@@ -54,8 +55,16 @@ export function OpsShiftRecordDialog({
   shiftId: string;
   onClose: () => void;
 }) {
-  const [detail, setDetail] = useState<OpsShiftDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const recordQuery = useQuery({
+    queryKey: ['OpsShiftRecord', 'detail', shiftId],
+    queryFn: () => getOpsShift(shiftId),
+  });
+  const detail: OpsShiftDetail | null = recordQuery.data ?? null;
+  const error = recordQuery.error
+    ? recordQuery.error instanceof ApiError
+      ? recordQuery.error.message
+      : 'Could not load the record.'
+    : null;
   const { can } = useAuth();
   const prompt = usePrompt();
   const [cancelling, setCancelling] = useState(false);
@@ -93,13 +102,6 @@ export function OpsShiftRecordDialog({
     }
   }
 
-  useEffect(() => {
-    getOpsShift(shiftId)
-      .then(setDetail)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the record.'),
-      );
-  }, [shiftId]);
 
   // Sections in order; follow-up children slot directly under their parent.
   const sections = useMemo(() => {

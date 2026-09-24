@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
@@ -234,16 +234,34 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     // 'none' is a page-local synthetic bucket, not a store the scope knows.
     if (id !== 'none') storeScope.setClientId(id);
   };
-  // Reports for the open drawer — fetched on open (each read is an audited
-  // FCRA disclosure server-side), null while loading.
-  const [detail, setDetail] = useState<BackgroundCheckDetail | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refreshQuery = useQuery({
     queryKey: ['BackgroundTab', 'checks'],
     queryFn: () => listBackgroundChecks(),
   });
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
+  // Reports for the open drawer — fetched on open (each read is an audited
+  // FCRA disclosure server-side), null while loading. gcTime 0 so a
+  // re-opened drawer reads (and discloses) afresh instead of replaying a
+  // cached copy.
+  const detailQuery = useQuery({
+    queryKey: ['BackgroundTab', 'detail', drawerTarget?.id ?? null],
+    queryFn: () => getBackgroundCheckDetail(drawerTarget!.id),
+    enabled: drawerTarget !== null,
+    gcTime: 0,
+  });
+  const detail: BackgroundCheckDetail | null = detailQuery.data ?? null;
+  const error =
+    errorLocal ??
+    (refreshQuery.error
+      ? refreshQuery.error instanceof ApiError
+        ? refreshQuery.error.message
+        : 'Failed to load.'
+      : detailQuery.error
+        ? detailQuery.error instanceof ApiError
+          ? detailQuery.error.message
+          : 'Could not load the report list.'
+        : null);
   useEffect(() => {
     const res = refreshQuery.data;
     if (res === undefined) return;
@@ -254,18 +272,8 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   };
 
 
-  const loadDetail = useCallback(async (id: string) => {
-    try {
-      setDetail(await getBackgroundCheckDetail(id));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the report list.');
-    }
-  }, []);
-
   const openDrawer = (c: BackgroundCheck) => {
     setDrawerTarget(c);
-    setDetail(null);
-    void loadDetail(c.id);
   };
 
   // Deep link: open the linked person's check as soon as the ledger row
@@ -277,10 +285,8 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     if (match) {
       deepLinkOpened.current = true;
       setDrawerTarget(match);
-      setDetail(null);
-      void loadDetail(match.id);
     }
-  }, [checks, deepLinkAssociateId, loadDetail]);
+  }, [checks, deepLinkAssociateId]);
 
   const updateStatus = async (id: string, status: BgCheckStatus) => {
     setPendingId(id);
@@ -610,7 +616,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             pending={pendingId === drawerTarget.id}
             onTransition={(status) => updateStatus(drawerTarget.id, status)}
             onReportsChanged={() => {
-              void loadDetail(drawerTarget.id);
+              void detailQuery.refetch();
               void refresh(); // report counts in the table + KPI strip
             }}
           />

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -106,12 +107,11 @@ const SELF_ATTESTATION_KINDS = new Set([
   'DIRECT_DEPOSIT',
 ]);
 
+const NO_DOCS: DocumentRecord[] = [];
+
 export function InPersonOnboarding() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const navigate = useNavigate();
-  const [detail, setDetail] = useState<ApplicationDetailType | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [docs, setDocs] = useState<DocumentRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const [docKind, setDocKind] = useState<DocumentKind>('ID');
   const [showCamera, setShowCamera] = useState(false);
@@ -121,21 +121,25 @@ export function InPersonOnboarding() {
   // switches the hand-off card from "copy invite link" to "have them sign in".
   const [alreadyAccepted, setAlreadyAccepted] = useState(false);
 
-  const refresh = useCallback(async () => {
-    if (!applicationId) return;
-    try {
-      const d = await getApplication(applicationId);
-      setDetail(d);
+  const appQuery = useQuery({
+    queryKey: ['InPersonOnboarding', 'application', applicationId ?? null],
+    queryFn: async () => {
+      const d = await getApplication(applicationId!);
       const r = await listAdminDocuments({ associateId: d.associateId });
-      setDocs(r.documents);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [applicationId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+      return { detail: d, docs: r.documents };
+    },
+    enabled: !!applicationId,
+  });
+  const detail: ApplicationDetailType | null = appQuery.data?.detail ?? null;
+  const docs: DocumentRecord[] = appQuery.data?.docs ?? NO_DOCS;
+  const error = appQuery.error
+    ? appQuery.error instanceof ApiError
+      ? appQuery.error.message
+      : 'Failed to load.'
+    : null;
+  const refresh = async () => {
+    await appQuery.refetch();
+  };
 
   const handleUploadFile = async (file: File, kind: DocumentKind) => {
     if (!detail) return;

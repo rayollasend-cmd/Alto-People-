@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ShiftPosition, ShiftRateDefault } from '@alto-people/shared';
@@ -31,44 +32,45 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
  * positions no longer in the catalog. Resurrected from
  * wip/scheduling-pay-rates.
  */
+const NO_POSITIONS: string[] = [];
+const NO_CATALOG: ShiftPosition[] = [];
+
 export function RateDefaultsSection({ clientId }: { clientId: string }) {
   const { can } = useAuth();
-  const [defaults, setDefaults] = useState<ShiftRateDefault[] | null>(null);
-  const [positions, setPositions] = useState<string[]>([]);
+  const canManage = can('manage:scheduling');
+  const canFlagLead = can('manage:org');
+  const defaultsQuery = useQuery({
+    queryKey: ['RateDefaultsSection', 'defaults', clientId],
+    queryFn: () => listRateDefaults(clientId),
+    enabled: canManage,
+  });
   // Catalog rows (id + isLead) for the supervisor/lead flag — drives the
-  // labor-cost report's lead-vs-associate split.
-  const [catalogRows, setCatalogRows] = useState<ShiftPosition[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // labor-cost report's lead-vs-associate split. Lead flags are an
+  // enhancement — rates still work without them, so a failure here
+  // stays silent.
+  const catalogQuery = useQuery({
+    queryKey: ['RateDefaultsSection', 'catalog', clientId],
+    queryFn: () => listShiftPositions(clientId),
+    enabled: canManage,
+  });
+  const defaults: ShiftRateDefault[] | null = defaultsQuery.data?.rateDefaults ?? null;
+  const positions: string[] = defaultsQuery.data?.positions ?? NO_POSITIONS;
+  const catalogRows: ShiftPosition[] = catalogQuery.data?.shiftPositions ?? NO_CATALOG;
+  const error = defaultsQuery.error
+    ? defaultsQuery.error instanceof ApiError
+      ? defaultsQuery.error.message
+      : 'Failed to load rate defaults.'
+    : null;
   const [newPosition, setNewPosition] = useState('');
   // Ad-hoc rows added client-side before any rate is saved for them. Held
   // apart from the server-fed `positions` list so refresh() can't drop
   // them; once the server knows the position (catalog or saved default)
   // the merged row list dedupes it away naturally.
   const [customPositions, setCustomPositions] = useState<string[]>([]);
-  const canManage = can('manage:scheduling');
-  const canFlagLead = can('manage:org');
 
-  const refresh = useCallback(async () => {
-    try {
-      const r = await listRateDefaults(clientId);
-      setDefaults(r.rateDefaults);
-      setPositions(r.positions);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load rate defaults.');
-    }
-    try {
-      const p = await listShiftPositions(clientId);
-      setCatalogRows(p.shiftPositions);
-    } catch {
-      // Lead flags are an enhancement — rates still work without them.
-      setCatalogRows([]);
-    }
-  }, [clientId]);
-
-  useEffect(() => {
-    if (canManage) void refresh();
-  }, [refresh, canManage]);
+  const refresh = async () => {
+    await Promise.all([defaultsQuery.refetch(), catalogQuery.refetch()]);
+  };
 
   // One row per catalog position, then any saved defaults whose position
   // fell out of the catalog (renamed/removed) so they stay editable, then

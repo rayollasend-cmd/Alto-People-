@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowDown,
@@ -103,9 +104,7 @@ export function TemplateEditor() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
 
-  const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [loadedTemplate, setLoadedTemplate] = useState<OnboardingTemplate | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -123,82 +122,76 @@ export function TemplateEditor() {
   );
   const justSavedRef = useRef(false);
 
-  // Load clients (always) + template (when editing) on mount.
+  // Clients (always) + the source template (edit or duplicate).
+  const clientsQuery = useQuery({
+    queryKey: ['TemplateEditor', 'clients'],
+    queryFn: () => listClients(),
+  });
+  // Keep the form usable (global templates need no client) but say why
+  // the client picker is empty instead of failing silently.
+  const clients: ClientSummary[] | null =
+    clientsQuery.data?.clients ?? (clientsQuery.isError ? [] : null);
+  // No GET /templates/:id endpoint — list and pick. Cheap; only HR hits
+  // this and templates are tens, not thousands. Not cached across mounts:
+  // the form hydrates exactly once, from a fresh read, so a cached copy
+  // can never overwrite typing after the fact.
+  const sourceId = !isNew && id ? id : duplicateFromId;
+  const sourceQuery = useQuery({
+    queryKey: ['TemplateEditor', 'source', sourceId],
+    queryFn: () => listTemplates(),
+    enabled: sourceId !== null,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const sourceMissing =
+    sourceQuery.data !== undefined && !sourceQuery.data.templates.some((x) => x.id === sourceId);
+  const error = clientsQuery.isError
+    ? 'Could not load the client list — client-specific templates are unavailable until you reload.'
+    : sourceQuery.error
+      ? sourceQuery.error instanceof ApiError
+        ? sourceQuery.error.message
+        : 'Failed to load.'
+      : sourceMissing
+        ? isNew
+          ? 'Template to duplicate not found.'
+          : 'Template not found.'
+        : null;
   useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((r) => !cancelled && setClients(r.clients))
-      .catch(() => {
-        // Keep the form usable (global templates need no client) but say
-        // why the client picker is empty instead of failing silently.
-        if (cancelled) return;
-        setClients([]);
-        setError('Could not load the client list — client-specific templates are unavailable until you reload.');
-      });
-    if (!isNew && id) {
-      // No GET /templates/:id endpoint — list and pick. Cheap; only HR
-      // hits this and templates are tens, not thousands.
-      listTemplates()
-        .then((r) => {
-          if (cancelled) return;
-          const t = r.templates.find((x) => x.id === id);
-          if (!t) {
-            setError('Template not found.');
-            return;
-          }
-          setLoadedTemplate(t);
-          setName(t.name);
-          setTrack(t.track);
-          setClientId(t.clientId ?? '');
-          const loadedTasks: DraftTask[] = t.tasks.map((tk) => ({
-            _key: tk.id,
-            kind: tk.kind,
-            title: tk.title,
-            description: tk.description ?? '',
-            order: tk.order,
-            dueOffsetDays: tk.dueOffsetDays ?? null,
-          }));
-          setTasks(loadedTasks);
-          setPristine(serialiseForm(t.name, t.track, t.clientId ?? '', loadedTasks));
-        })
-        .catch((err) =>
-          !cancelled &&
-          setError(err instanceof ApiError ? err.message : 'Failed to load.')
-        );
-    } else if (duplicateFromId) {
-      // Seed the new-template form from the source. The pristine snapshot
-      // is deliberately NOT updated: a fresh duplicate is unsaved work, so
-      // navigating away without saving warns like any other dirty form.
-      listTemplates()
-        .then((r) => {
-          if (cancelled) return;
-          const t = r.templates.find((x) => x.id === duplicateFromId);
-          if (!t) {
-            setError('Template to duplicate not found.');
-            return;
-          }
-          setName(`${t.name} (copy)`);
-          setTrack(t.track);
-          setClientId(t.clientId ?? '');
-          setTasks(
-            t.tasks.map((tk) => ({
-              _key: tk.id,
-              kind: tk.kind,
-              title: tk.title,
-              description: tk.description ?? '',
-              dueOffsetDays: tk.dueOffsetDays ?? null,
-            })),
-          );
-        })
-        .catch((err) =>
-          !cancelled &&
-          setError(err instanceof ApiError ? err.message : 'Failed to load.')
-        );
+    const t = sourceQuery.data?.templates.find((x) => x.id === sourceId);
+    if (!t) return;
+    if (!isNew) {
+      setLoadedTemplate(t);
+      setName(t.name);
+      setTrack(t.track);
+      setClientId(t.clientId ?? '');
+      const loadedTasks: DraftTask[] = t.tasks.map((tk) => ({
+        _key: tk.id,
+        kind: tk.kind,
+        title: tk.title,
+        description: tk.description ?? '',
+        order: tk.order,
+        dueOffsetDays: tk.dueOffsetDays ?? null,
+      }));
+      setTasks(loadedTasks);
+      setPristine(serialiseForm(t.name, t.track, t.clientId ?? '', loadedTasks));
+      return;
     }
-    return () => {
-      cancelled = true;
-    };
-  }, [id, isNew, duplicateFromId]);
+    // Seed the new-template form from the source. The pristine snapshot
+    // is deliberately NOT updated: a fresh duplicate is unsaved work, so
+    // navigating away without saving warns like any other dirty form.
+    setName(`${t.name} (copy)`);
+    setTrack(t.track);
+    setClientId(t.clientId ?? '');
+    setTasks(
+      t.tasks.map((tk) => ({
+        _key: tk.id,
+        kind: tk.kind,
+        title: tk.title,
+        description: tk.description ?? '',
+        dueOffsetDays: tk.dueOffsetDays ?? null,
+      })),
+    );
+  }, [sourceQuery.data, sourceId, isNew]);
 
   const updateTask = (i: number, patch: Partial<DraftTask>) => {
     setTasks((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));

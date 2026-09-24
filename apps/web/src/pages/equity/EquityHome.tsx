@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Coins, Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -112,8 +112,7 @@ export function EquityHome() {
   const { user } = useAuth();
   const canManageComp = user ? hasCapability(user.role, 'manage:comp') : false;
   const [tab, setTab] = useState<'mine' | 'admin'>('mine');
-  const [summary, setSummary] = useState<EquitySummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
+
   const [statusFilter, setStatusFilter] = useState<EquityGrantStatus | 'ALL'>(
     'GRANTED',
   );
@@ -139,23 +138,18 @@ export function EquityHome() {
   const refresh = () => void (tab === 'mine' ? refreshAQuery.refetch() : refreshBQuery.refetch());
   // Filter-independent KPI summary — fetched once on mount and re-fetched
   // explicitly after mutations, never on tab/filter clicks.
-  const refreshSummary = () => {
-    setSummaryError(null);
-    getEquitySummary()
-      .then(setSummary)
-      .catch((err) => {
-        setSummary(null);
-        setSummaryError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load the equity summary.',
-        );
-      });
-  };
-  useEffect(() => {
-    if (canManageComp) refreshSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canManageComp]);
+  const summaryQuery = useQuery({
+    queryKey: ['EquityHome', 'summary'],
+    queryFn: () => getEquitySummary(),
+    enabled: canManageComp,
+  });
+  const summary: EquitySummary | null = summaryQuery.data ?? null;
+  const summaryError = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Could not load the equity summary.'
+    : null;
+  const refreshSummary = () => void summaryQuery.refetch();
 
   const q = search.trim().toLowerCase();
   const filteredAdmin = (admin ?? []).filter(

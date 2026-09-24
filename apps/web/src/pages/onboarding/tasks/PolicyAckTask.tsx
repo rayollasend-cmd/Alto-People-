@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileText } from 'lucide-react';
 import type { PolicyForApplication } from '@alto-people/shared';
@@ -52,26 +53,31 @@ export function PolicyAckTask() {
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('POLICY_ACK');
 
-  const refresh = useCallback(async (): Promise<PolicyForApplication[] | null> => {
-    if (!applicationId) return null;
-    try {
-      const res = await getApplicationPolicies(applicationId);
-      if (readingOrderRef.current === null) {
-        readingOrderRef.current = res.policies
-          .filter((p) => !p.acknowledged)
-          .map((p) => p.id);
-      }
-      setPolicies(res.policies);
-      return res.policies;
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('ob.policy.loadFailed'));
-      return null;
-    }
-  }, [applicationId, t]);
-
+  const policiesQuery = useQuery({
+    queryKey: ['PolicyAckTask', 'policies', applicationId ?? null],
+    queryFn: () => getApplicationPolicies(applicationId!),
+    enabled: !!applicationId,
+  });
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = policiesQuery.data;
+    if (res === undefined) return;
+    if (readingOrderRef.current === null) {
+      readingOrderRef.current = res.policies
+        .filter((p) => !p.acknowledged)
+        .map((p) => p.id);
+    }
+    setPolicies(res.policies);
+  }, [policiesQuery.data]);
+  useEffect(() => {
+    const err = policiesQuery.error;
+    if (!err) return;
+    setError(err instanceof ApiError ? err.message : t('ob.policy.loadFailed'));
+  }, [policiesQuery.error, t]);
+  const { refetch } = policiesQuery;
+  const refresh = useCallback(async (): Promise<PolicyForApplication[] | null> => {
+    const r = await refetch();
+    return r.data?.policies ?? null;
+  }, [refetch]);
 
   // Mark a section read once its sentinel (below the body's last line)
   // scrolls into view. Sections short enough to be fully visible on mount

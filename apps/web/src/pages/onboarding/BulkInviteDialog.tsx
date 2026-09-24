@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Send, X as XIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -175,9 +176,6 @@ interface Props {
  * after submit; HR can fix the source list and re-run on just the failed ones.
  */
 export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
-  const [clients, setClients] = useState<ClientSummary[] | null>(null);
-  const [clientsFailed, setClientsFailed] = useState(false);
-  const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
   // Last-used picks — shared key with NewApplicationDialog, so whichever
   // dialog HR invited from last seeds this one's defaults.
   const [lastUsed, setLastUsed] = usePersistentState<InviteLastUsed>(
@@ -187,7 +185,6 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   );
   const [clientId, setClientId] = useState(lastUsed.clientId);
   const [locationId, setLocationId] = useState('');
-  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [templateId, setTemplateId] = useState(lastUsed.templateId);
   const [employmentType, setEmploymentType] = useState<EmploymentType>(
     lastUsed.employmentType,
@@ -213,74 +210,69 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     setResults(null);
   };
 
+  const clientsQuery = useQuery({
+    queryKey: ['BulkInviteDialog', 'clients'],
+    queryFn: () => listClients(),
+    enabled: open,
+  });
+  // Failure ≠ "no clients exist" — say so instead of rendering an
+  // unsubmittable empty picker.
+  const clients: ClientSummary[] | null =
+    clientsQuery.data?.clients ?? (clientsQuery.isError ? [] : null);
+  const clientsFailed = clientsQuery.isError;
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    if (!clients) {
-      listClients()
-        .then((r) => {
-          if (cancelled) return;
-          setClients(r.clients);
-          // Client-bounded callers (SHIFT_SUPERVISOR) only ever get their own
-          // client back from the scoped list — don't make them answer a
-          // question with one possible answer. The server clamps this anyway.
-          if (r.clients.length === 1) setClientId(r.clients[0].id);
-          // A persisted client can be stale — fall back to '' rather than
-          // submitting a ghost id.
-          else
-            setClientId((prev) =>
-              prev && !r.clients.some((c) => c.id === prev) ? '' : prev,
-            );
-        })
-        .catch(() => {
-          if (cancelled) return;
-          // Failure ≠ "no clients exist" — say so instead of rendering an
-          // unsubmittable empty picker.
-          setClients([]);
-          setClientsFailed(true);
-        });
-    }
-    if (!templates) {
-      listTemplates()
-        .then((r) => !cancelled && setTemplates(r.templates))
-        .catch(() => !cancelled && setTemplates([]));
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [open, clients, templates]);
+    const r = clientsQuery.data;
+    if (r === undefined) return;
+    // Client-bounded callers (SHIFT_SUPERVISOR) only ever get their own
+    // client back from the scoped list — don't make them answer a
+    // question with one possible answer. The server clamps this anyway.
+    if (r.clients.length === 1) setClientId(r.clients[0].id);
+    // A persisted client can be stale — fall back to '' rather than
+    // submitting a ghost id.
+    else
+      setClientId((prev) =>
+        prev && !r.clients.some((c) => c.id === prev) ? '' : prev,
+      );
+  }, [clientsQuery.data]);
+  const templatesQuery = useQuery({
+    queryKey: ['BulkInviteDialog', 'templates'],
+    queryFn: () => listTemplates(),
+    enabled: open,
+  });
+  const templates: OnboardingTemplate[] | null =
+    templatesQuery.data?.templates ?? (templatesQuery.isError ? [] : null);
 
   // Work-site picker for the batch. Loads via the invite-scoped endpoint
   // (supervisors have no view:clients). Required when the client has sites —
   // a location-less invite leaves the associate's site unrecorded forever.
+  const locationsQuery = useQuery({
+    queryKey: ['BulkInviteDialog', 'locations', clientId],
+    queryFn: () => listInviteLocations(clientId),
+    enabled: open && clientId !== '',
+  });
+  const locations: LocationSummary[] | null =
+    !clientId || !open
+      ? null
+      : locationsQuery.data?.locations ?? (locationsQuery.isError ? [] : null);
+  // Every client change wipes the pick — declared before the seed below so
+  // a cached list re-applies its default in the same commit.
   useEffect(() => {
     setLocationId('');
-    if (!clientId || !open) {
-      setLocations(null);
+  }, [clientId, open]);
+  useEffect(() => {
+    const r = locationsQuery.data;
+    if (r === undefined || !clientId || !open) return;
+    // Restore the persisted work site (once) if it still belongs to
+    // this client — a stale id falls through to the defaults below.
+    const restore = restoreLocationId.current;
+    restoreLocationId.current = '';
+    if (restore && r.locations.some((l) => l.id === restore)) {
+      setLocationId(restore);
       return;
     }
-    let cancelled = false;
-    setLocations(null);
-    listInviteLocations(clientId)
-      .then((r) => {
-        if (cancelled) return;
-        setLocations(r.locations);
-        // Restore the persisted work site (once) if it still belongs to
-        // this client — a stale id falls through to the defaults below.
-        const restore = restoreLocationId.current;
-        restoreLocationId.current = '';
-        if (restore && r.locations.some((l) => l.id === restore)) {
-          setLocationId(restore);
-          return;
-        }
-        // One possible answer — don't make them pick it.
-        if (r.locations.length === 1) setLocationId(r.locations[0].id);
-      })
-      .catch(() => !cancelled && setLocations([]));
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId, open]);
+    // One possible answer — don't make them pick it.
+    if (r.locations.length === 1) setLocationId(r.locations[0].id);
+  }, [locationsQuery.data, clientId, open]);
 
   const visibleTemplates = useMemo(() => {
     if (!templates) return [];
@@ -437,8 +429,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                           type="button"
                           className="underline"
                           onClick={() => {
-                            setClientsFailed(false);
-                            setClients(null); // re-triggers the load effect
+                            void clientsQuery.refetch();
                           }}
                         >
                           Retry

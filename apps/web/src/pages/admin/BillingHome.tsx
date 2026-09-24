@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BadgeDollarSign, CreditCard, FileText, Users as UsersIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { getOrgBranding } from '@/lib/brandingApi';
@@ -24,36 +24,20 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * has a billing entry. Every interactive control is intentionally a stub.
  */
 export function BillingHome() {
-  const [supportEmail, setSupportEmail] = useState<string | null>(null);
-  const [activeSeats, setActiveSeats] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // Bumped by the Retry button to re-run the loader effect.
-  const [reloadTick, setReloadTick] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+  const billingQuery = useQuery({
+    queryKey: ['BillingHome', 'billing'],
     // getUserCounts is uncapped — the /admin/users list truncates at the
     // server page size, so its length undercounts seats on large orgs.
-    Promise.all([getOrgBranding(), getUserCounts()])
-      .then(([branding, counts]) => {
-        if (cancelled) return;
-        setSupportEmail(branding.supportEmail);
-        setActiveSeats(counts.counts.ACTIVE);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Could not load billing info.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadTick]);
+    queryFn: () => Promise.all([getOrgBranding(), getUserCounts()]),
+  });
+  const supportEmail = billingQuery.data?.[0].supportEmail ?? null;
+  const activeSeats = billingQuery.data?.[1].counts.ACTIVE ?? null;
+  const loading = billingQuery.data === undefined && billingQuery.isFetching;
+  const error = billingQuery.error
+    ? billingQuery.error instanceof ApiError
+      ? billingQuery.error.message
+      : 'Could not load billing info.'
+    : null;
 
   const supportLine = supportEmail ?? 'your account manager';
 
@@ -90,7 +74,7 @@ export function BillingHome() {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => setReloadTick((t) => t + 1)}
+            onClick={() => void billingQuery.refetch()}
           >
             Retry
           </Button>

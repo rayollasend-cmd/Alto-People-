@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Copy, Globe, LayoutTemplate, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -39,26 +40,23 @@ export function TemplatesList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
 
-  const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
-  const [clients, setClients] = useState<ClientSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OnboardingTemplate | null>(null);
 
+  const listQuery = useQuery({
+    queryKey: ['TemplatesList', 'all'],
+    queryFn: () => Promise.all([listTemplates(), listClients()]),
+  });
+  const templates: OnboardingTemplate[] | null = listQuery.data?.[0].templates ?? null;
+  const clients: ClientSummary[] | null = listQuery.data?.[1].clients ?? null;
+  const error = listQuery.error
+    ? listQuery.error instanceof ApiError
+      ? listQuery.error.message
+      : 'Failed to load.'
+    : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const [t, c] = await Promise.all([listTemplates(), listClients()]);
-      setTemplates(t.templates);
-      setClients(c.clients);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await listQuery.refetch();
   };
-
-  useEffect(() => {
-    refresh();
-  }, []);
 
   const clientName = useMemo(() => {
     const m = new Map<string, string>();

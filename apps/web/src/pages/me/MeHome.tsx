@@ -149,11 +149,15 @@ const NO_SECTION_ERRORS: SectionErrors = {
   taxDocs: null,
 };
 
-function settledError(t: Translate, r: PromiseSettledResult<unknown>): string | null {
-  if (r.status === 'fulfilled') return null;
+function settledError(t: Translate, r: PromiseSettledResult<unknown> | undefined): string | null {
+  if (!r || r.status === 'fulfilled') return null;
   return r.reason instanceof ApiError
     ? r.reason.message
     : t('me.sectionFailed');
+}
+
+function fulfilled<T>(r: PromiseSettledResult<T> | undefined): T | null {
+  return r && r.status === 'fulfilled' ? r.value : null;
 }
 
 export function MeHome() {
@@ -169,69 +173,53 @@ export function MeHome() {
     else next.set('tab', v);
     setSearchParams(next, { replace: true });
   };
-  const [profile, setProfile] = useState<SelfProfile | null>(null);
-  const [employeeNumber, setEmployeeNumberState] =
-    useState<EmployeeNumber | null>(null);
-  const [contacts, setContacts] = useState<EmergencyContact[] | null>(null);
-  const [dependents, setDependents] = useState<Dependent[] | null>(null);
-  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[] | null>(null);
-  const [events, setEvents] = useState<LifeEvent[] | null>(null);
-  const [taxDocs, setTaxDocs] = useState<TaxDoc[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [sectionErrors, setSectionErrors] =
-    useState<SectionErrors>(NO_SECTION_ERRORS);
-
   // allSettled, not all: one flaky endpoint must not blank the whole
   // portal. Each section keeps its own data/error; the page-level error
   // only fires when everything failed (likely network/auth-wide).
+  const sectionsQuery = useQuery({
+    queryKey: ['MeHome', 'sections'],
+    queryFn: () =>
+      Promise.allSettled([
+        getProfile(),
+        getEmployeeNumber(),
+        listEmergency(),
+        listDependents(),
+        listBeneficiaries(),
+        listLifeEvents(),
+        listTaxDocs(),
+      ] as const),
+  });
+  const results = sectionsQuery.data;
+  const [p, n, c, d, b, e, taxRes] = results ?? [];
+  const profile = fulfilled(p) as SelfProfile | null;
+  const employeeNumber = fulfilled(n) as EmployeeNumber | null;
+  const contacts =
+    (fulfilled(c) as { contacts: EmergencyContact[] } | null)?.contacts ?? null;
+  const dependents =
+    (fulfilled(d) as { dependents: Dependent[] } | null)?.dependents ?? null;
+  const beneficiaries =
+    (fulfilled(b) as { beneficiaries: Beneficiary[] } | null)?.beneficiaries ?? null;
+  const events = (fulfilled(e) as { events: LifeEvent[] } | null)?.events ?? null;
+  const taxDocs = (fulfilled(taxRes) as { documents: TaxDoc[] } | null)?.documents ?? null;
+  const sectionErrors: SectionErrors = results
+    ? {
+        profile: settledError(t, p) ?? settledError(t, n),
+        contacts: settledError(t, c),
+        dependents: settledError(t, d),
+        beneficiaries: settledError(t, b),
+        events: settledError(t, e),
+        taxDocs: settledError(t, taxRes),
+      }
+    : NO_SECTION_ERRORS;
+  const error =
+    results && results.every((r) => r.status === 'rejected')
+      ? p && p.status === 'rejected' && p.reason instanceof ApiError
+        ? p.reason.message
+        : t('me.loadFailed')
+      : null;
   const refresh = async () => {
-    setError(null);
-    const results = await Promise.allSettled([
-      getProfile(),
-      getEmployeeNumber(),
-      listEmergency(),
-      listDependents(),
-      listBeneficiaries(),
-      listLifeEvents(),
-      listTaxDocs(),
-    ] as const);
-    const [p, n, c, d, b, e, taxRes] = results;
-    if (p.status === 'fulfilled') setProfile(p.value as SelfProfile);
-    if (n.status === 'fulfilled')
-      setEmployeeNumberState(n.value as EmployeeNumber);
-    if (c.status === 'fulfilled')
-      setContacts((c.value as { contacts: EmergencyContact[] }).contacts);
-    if (d.status === 'fulfilled')
-      setDependents((d.value as { dependents: Dependent[] }).dependents);
-    if (b.status === 'fulfilled')
-      setBeneficiaries(
-        (b.value as { beneficiaries: Beneficiary[] }).beneficiaries,
-      );
-    if (e.status === 'fulfilled')
-      setEvents((e.value as { events: LifeEvent[] }).events);
-    if (taxRes.status === 'fulfilled')
-      setTaxDocs((taxRes.value as { documents: TaxDoc[] }).documents);
-    setSectionErrors({
-      profile: settledError(t, p) ?? settledError(t, n),
-      contacts: settledError(t, c),
-      dependents: settledError(t, d),
-      beneficiaries: settledError(t, b),
-      events: settledError(t, e),
-      taxDocs: settledError(t, taxRes),
-    });
-    if (results.every((r) => r.status === 'rejected')) {
-      const first = results[0];
-      setError(
-        first.status === 'rejected' && first.reason instanceof ApiError
-          ? first.reason.message
-          : t('me.loadFailed'),
-      );
-    }
+    await sectionsQuery.refetch();
   };
-
-  useEffect(() => {
-    refresh();
-  }, []);
 
   const pullState = usePullToRefresh(refresh);
 

@@ -164,39 +164,44 @@ export function OpsRunner() {
     [setSearchParams],
   );
 
-  const load = useCallback(
-    async (id: string) => {
-      try {
-        const d = await getOpsShift(id);
-        if (d.shift.status !== 'ACTIVE') {
-          // Stale link — the shift already closed (another tab, another day).
-          toast.info(tr('opsRun.alreadyClosed'));
-          setDetail(null);
-          setShiftParam(null);
-          return;
-        }
-        setDetail(d);
-        setError(null);
-      } catch (err) {
-        if (detailRef.current?.shift.id === id) {
-          setError(err instanceof ApiError ? err.message : tr('opsRun.loadShiftFailed'));
-        } else {
-          // Restore failed (gone, or not this supervisor's) — back to the picker.
-          toast.error(
-            err instanceof ApiError ? err.message : tr('opsRun.resumeFailed'),
-          );
-          setDetail(null);
-          setShiftParam(null);
-        }
-      }
-    },
-    [setShiftParam],
-  );
-
+  // Always a fresh read on open: a closed, foreign, or stale id has to
+  // fall back to the picker, never replay from cache.
+  const shiftQuery = useQuery({
+    queryKey: ['OpsRunner', 'shift', shiftId],
+    queryFn: () => getOpsShift(shiftId!),
+    enabled: shiftId !== null,
+    staleTime: 0,
+  });
   useEffect(() => {
-    if (shiftId) void load(shiftId);
-    else setDetail(null);
-  }, [shiftId, load]);
+    if (!shiftId) {
+      setDetail(null);
+      return;
+    }
+    const d = shiftQuery.data;
+    if (d === undefined) return;
+    if (d.shift.status !== 'ACTIVE') {
+      // Stale link — the shift already closed (another tab, another day).
+      toast.info(tr('opsRun.alreadyClosed'));
+      setDetail(null);
+      setShiftParam(null);
+      return;
+    }
+    setDetail(d);
+    setError(null);
+  }, [shiftQuery.data, shiftId, setShiftParam, tr]);
+  useEffect(() => {
+    const err = shiftQuery.error;
+    if (!err || !shiftId) return;
+    if (detailRef.current?.shift.id === shiftId) {
+      setError(err instanceof ApiError ? err.message : tr('opsRun.loadShiftFailed'));
+    } else {
+      // Restore failed (gone, or not this supervisor's) — back to the picker.
+      toast.error(err instanceof ApiError ? err.message : tr('opsRun.resumeFailed'));
+      setDetail(null);
+      setShiftParam(null);
+    }
+  }, [shiftQuery.error, shiftId, setShiftParam, tr]);
+  const load = () => void shiftQuery.refetch();
 
   if (!shiftId) {
     return (
@@ -234,7 +239,7 @@ export function OpsRunner() {
   return (
     <ShiftRunner
       detail={detail}
-      refresh={() => void load(shiftId)}
+      refresh={load}
       onClosed={() => {
         clearOpsDrafts(shiftId);
         setClosedRecordId(shiftId);

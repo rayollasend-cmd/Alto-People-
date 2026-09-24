@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -16,7 +16,6 @@ import {
   YAxis,
 } from 'recharts';
 import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react';
-import type { FloorNowResponse, OtOutlookResponse } from '@alto-people/shared';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -716,44 +715,73 @@ interface PortalEngagement {
 
 export function ExecutiveDashboard() {
   const { user } = useAuth();
-  const [summary, setSummary] = useState<ExecSummary | null>(null);
-  const [floor, setFloor] = useState<FloorNowResponse | null>(null);
-  const [ot, setOt] = useState<OtOutlookResponse | null>(null);
-  const [recv, setRecv] = useState<Receivables | null>(null);
-  const [targets, setTargets] = useState<TargetsResponse | null>(null);
-  const [prospects, setProspects] = useState<ProspectsResponse | null>(null);
-  const [brief, setBrief] = useState<ExecBriefing | null>(null);
-  const [batons, setBatons] = useState<ExecBatons | null>(null);
-  const [engagement, setEngagement] = useState<PortalEngagement | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
 
-  const load = useCallback(() => {
-    setError(null);
-    apiFetch<ExecSummary>('/executive/summary')
-      .then(setSummary)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the executive summary.'),
-      );
-    floorNow().then(setFloor).catch(() => setFloor(null));
-    otOutlook().then(setOt).catch(() => setOt(null));
-    apiFetch<Receivables>('/executive/receivables').then(setRecv).catch(() => setRecv(null));
-    apiFetch<TargetsResponse>('/executive/targets').then(setTargets).catch(() => setTargets(null));
-    apiFetch<ProspectsResponse>('/executive/prospects')
-      .then(setProspects)
-      .catch(() => setProspects(null));
-    apiFetch<ExecBriefing>('/executive/briefing').then(setBrief).catch(() => setBrief(null));
-    apiFetch<ExecBatons>('/executive/batons').then(setBatons).catch(() => setBatons(null));
-    apiFetch<PortalEngagement>('/executive/portal-engagement').then(setEngagement).catch(() => setEngagement(null));
-  }, []);
-  useEffect(() => {
-    load();
-    // Keep the live tiles honest without a manual refresh.
-    const t = setInterval(() => {
-      floorNow().then(setFloor).catch(() => undefined);
-    }, 120_000);
-    return () => clearInterval(t);
-  }, [load]);
+  // The summary is the page; every other tile is optional and renders
+  // empty when its read fails.
+  const summaryQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'summary'],
+    queryFn: () => apiFetch<ExecSummary>('/executive/summary'),
+  });
+  // Keep the live floor tile honest without a manual refresh.
+  const floorQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'floor'],
+    queryFn: () => floorNow(),
+    refetchInterval: 120_000,
+  });
+  const otQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'ot'],
+    queryFn: () => otOutlook(),
+  });
+  const recvQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'receivables'],
+    queryFn: () => apiFetch<Receivables>('/executive/receivables'),
+  });
+  const targetsQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'targets'],
+    queryFn: () => apiFetch<TargetsResponse>('/executive/targets'),
+  });
+  const prospectsQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'prospects'],
+    queryFn: () => apiFetch<ProspectsResponse>('/executive/prospects'),
+  });
+  const briefQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'briefing'],
+    queryFn: () => apiFetch<ExecBriefing>('/executive/briefing'),
+  });
+  const batonsQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'batons'],
+    queryFn: () => apiFetch<ExecBatons>('/executive/batons'),
+  });
+  const engagementQuery = useQuery({
+    queryKey: ['ExecutiveDashboard', 'portal-engagement'],
+    queryFn: () => apiFetch<PortalEngagement>('/executive/portal-engagement'),
+  });
+  const summary = summaryQuery.data ?? null;
+  const floor = floorQuery.data ?? null;
+  const ot = otQuery.data ?? null;
+  const recv = recvQuery.data ?? null;
+  const targets = targetsQuery.data ?? null;
+  const prospects = prospectsQuery.data ?? null;
+  const brief = briefQuery.data ?? null;
+  const batons = batonsQuery.data ?? null;
+  const engagement = engagementQuery.data ?? null;
+  const error = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Could not load the executive summary.'
+    : null;
+  const load = () => {
+    void summaryQuery.refetch();
+    void floorQuery.refetch();
+    void otQuery.refetch();
+    void recvQuery.refetch();
+    void targetsQuery.refetch();
+    void prospectsQuery.refetch();
+    void briefQuery.refetch();
+    void batonsQuery.refetch();
+    void engagementQuery.refetch();
+  };
 
   const downloadBoardPack = async () => {
     if (packBusy) return;

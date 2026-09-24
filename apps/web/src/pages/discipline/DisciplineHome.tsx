@@ -351,51 +351,41 @@ function NewActionDrawer({
   const [description, setDescription] = useState('');
   const [expected, setExpected] = useState('');
   const [saving, setSaving] = useState(false);
-  const [ladder, setLadder] = useState<{
-    total: number;
-    prior: Array<{ kind: DisciplineKind; effectiveDate: string }>;
-    suggested: DisciplineKind;
-  } | null>(null);
-  const [ladderError, setLadderError] = useState(false);
-
   // When the associate resolves, pull their prior-action rollup so the
   // issuer sees where this person sits on the ladder before picking a kind.
   const assocId = assoc?.id ?? null;
-  useEffect(() => {
-    setLadder(null);
-    setLadderError(false);
-    if (!assocId) return;
-    let cancelled = false;
-    Promise.all([
-      getLadder(assocId),
-      listDisciplinaryActions({ associateId: assocId }),
-    ])
-      .then(([rollup, list]) => {
-        if (cancelled) return;
-        const prior = list.actions
-          .filter((a) => a.status !== 'RESCINDED')
-          .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate))
-          .map((a) => ({ kind: a.kind, effectiveDate: a.effectiveDate }));
-        const total = KIND_ORDER.reduce((n, k) => n + rollup.ladder[k], 0);
-        let highest = -1;
-        KIND_ORDER.forEach((k, i) => {
-          if (rollup.ladder[k] > 0) highest = i;
-        });
-        const suggested =
-          highest >= KIND_ORDER.length - 1
-            ? 'TERMINATION'
-            : KIND_ORDER[highest + 1];
-        setLadder({ total, prior, suggested });
-        // Pre-select the suggested rung; the Select stays fully editable.
-        setKind(suggested);
-      })
-      .catch(() => {
-        if (!cancelled) setLadderError(true);
+  const ladderQuery = useQuery({
+    queryKey: ['NewActionDrawer', 'ladder', assocId],
+    queryFn: async () => {
+      const [rollup, list] = await Promise.all([
+        getLadder(assocId!),
+        listDisciplinaryActions({ associateId: assocId! }),
+      ]);
+      const prior = list.actions
+        .filter((a) => a.status !== 'RESCINDED')
+        .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate))
+        .map((a) => ({ kind: a.kind, effectiveDate: a.effectiveDate }));
+      const total = KIND_ORDER.reduce((n, k) => n + rollup.ladder[k], 0);
+      let highest = -1;
+      KIND_ORDER.forEach((k, i) => {
+        if (rollup.ladder[k] > 0) highest = i;
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [assocId]);
+      const suggested: DisciplineKind =
+        highest >= KIND_ORDER.length - 1
+          ? 'TERMINATION'
+          : KIND_ORDER[highest + 1];
+      return { total, prior, suggested };
+    },
+    enabled: assocId !== null,
+  });
+  const ladder = assocId ? ladderQuery.data ?? null : null;
+  const ladderError = assocId ? ladderQuery.isError : false;
+  // Pre-select the suggested rung; the Select stays fully editable.
+  useEffect(() => {
+    const res = ladderQuery.data;
+    if (res === undefined) return;
+    setKind(res.suggested);
+  }, [ladderQuery.data]);
 
   const effective = parseYmd(effectiveDate);
   const days = parseInt(suspensionDays, 10);

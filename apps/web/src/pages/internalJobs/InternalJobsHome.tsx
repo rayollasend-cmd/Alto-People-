@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { Briefcase, MapPin, Send, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -91,10 +91,6 @@ export function InternalJobsHome() {
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
   const [tab, setTab] = useState<'browse' | 'mine'>('browse');
-  const [jobs, setJobs] = useState<JobRow[] | null>(null);
-  const [jobsError, setJobsError] = useState<string | null>(null);
-  const [mine, setMine] = useState<MyApplicationWithReview[] | null>(null);
-  const [mineError, setMineError] = useState<string | null>(null);
   const [applyJob, setApplyJob] = useState<JobRow | null>(null);
   const [reviewJob, setReviewJob] = useState<JobRow | null>(null);
   const [search, setSearch] = useState('');
@@ -112,25 +108,28 @@ export function InternalJobsHome() {
     }
   };
 
-  const refresh = () => {
-    setJobs(null);
-    setJobsError(null);
-    listInternalJobs()
-      .then((r) => setJobs(r.jobs))
-      .catch((err) => setJobsError(errMessage(err, 'Failed to load open positions.')));
-    if (tab === 'mine') {
-      setMine(null);
-      setMineError(null);
-      listMyApplications()
-        .then((r) => setMine(r.applications))
-        .catch((err) =>
-          setMineError(errMessage(err, 'Failed to load your applications.')),
-        );
-    }
-  };
-  useEffect(() => {
-    refresh();
-  }, [tab]);
+  const jobsQuery = useQuery({
+    queryKey: ['InternalJobsHome', 'jobs'],
+    queryFn: () => listInternalJobs(),
+  });
+  const mineQuery = useQuery({
+    queryKey: ['InternalJobsHome', 'mine'],
+    queryFn: () => listMyApplications(),
+    enabled: tab === 'mine',
+  });
+  const jobs: JobRow[] | null = jobsQuery.data?.jobs ?? null;
+  const jobsError = jobsQuery.error
+    ? errMessage(jobsQuery.error, 'Failed to load open positions.')
+    : null;
+  const mine: MyApplicationWithReview[] | null = mineQuery.data?.applications ?? null;
+  const mineError = mineQuery.error
+    ? errMessage(mineQuery.error, 'Failed to load your applications.')
+    : null;
+  // Applying or withdrawing changes both the job counts and "mine", so
+  // invalidate the pair: the visible reads refresh now, the hidden tab
+  // when it next opens.
+  const queryClient = useQueryClient();
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['InternalJobsHome'] });
 
   // Distinct locations across open jobs power the filter chips.
   const locations = useMemo(() => {

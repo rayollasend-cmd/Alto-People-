@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -112,7 +113,6 @@ export function NotificationsBell() {
   const hasInboxPage = can('view:communications');
   const [items, setItems] = useState<Notification[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [loadError, setLoadError] = useState(false);
   const [open, setOpen] = useState(false);
   // aria-live announcement text — screen readers hear arrivals without
   // the panel being open.
@@ -122,52 +122,42 @@ export function NotificationsBell() {
   // arrival can replay it.
   const [swing, setSwing] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listMyInbox();
-      setItems(res.notifications);
-      setTotal(res.total ?? res.notifications.length);
-      setLoadError(false);
-    } catch (err) {
-      // 403 just means this user can't view the inbox (CLIENT_PORTAL etc.)
-      // — render the bell as empty rather than spamming an error.
-      if (err instanceof ApiError && err.status === 403) {
-        setItems([]);
-        return;
+  const inboxQuery = useQuery({
+    queryKey: ['NotificationsBell', 'inbox'],
+    queryFn: async () => {
+      try {
+        return await listMyInbox();
+      } catch (err) {
+        // 403 just means this user can't view the inbox (CLIENT_PORTAL etc.)
+        // — render the bell as empty rather than spamming an error.
+        if (err instanceof ApiError && err.status === 403) return null;
+        throw err;
       }
-      setLoadError(true);
-    }
-  }, []);
-
+    },
+    // Poll while the tab is visible (the interval pauses in a hidden tab,
+    // so no backlog of fires dumps at once when the user returns) and
+    // re-read the moment the tab comes back into focus.
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+  const loadError = inboxQuery.isError;
   useEffect(() => {
-    refresh();
-    let t = window.setInterval(refresh, POLL_MS);
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        // Tab came back into focus — refetch immediately and reset the
-        // polling interval so we don't fire two close requests.
-        window.clearInterval(t);
-        refresh();
-        t = window.setInterval(refresh, POLL_MS);
-      } else {
-        // Hidden tabs throttle setInterval anyway; explicitly pause so
-        // we don't accumulate a backlog of fires that all dump at once
-        // when the user returns.
-        window.clearInterval(t);
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', refresh);
-    // Live SSE nudge — a notification just landed for this user; refetch
-    // immediately instead of waiting out the poll interval.
-    const offLive = onLiveEvent('notification', refresh);
-    return () => {
-      window.clearInterval(t);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', refresh);
-      offLive();
-    };
-  }, [refresh]);
+    const res = inboxQuery.data;
+    if (res === undefined) return;
+    if (res === null) {
+      setItems([]);
+      return;
+    }
+    setItems(res.notifications);
+    setTotal(res.total ?? res.notifications.length);
+  }, [inboxQuery.data]);
+  const { refetch } = inboxQuery;
+  const refresh = useCallback(() => void refetch(), [refetch]);
+
+  // Live SSE nudge — a notification just landed for this user; refetch
+  // immediately instead of waiting out the poll interval.
+  useEffect(() => onLiveEvent('notification', refresh), [refresh]);
 
   // Badge = UNSEEN (not unread): it clears when the panel opens, while
   // the per-row unread highlight persists until each item is clicked.

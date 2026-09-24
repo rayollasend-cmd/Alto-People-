@@ -70,8 +70,6 @@ export function BenefitsHome() {
       <Link to="/benefits/lifecycle">Enrollment &amp; COBRA admin</Link>
     </Button>
   ) : undefined;
-  const [availablePlans, setAvailablePlans] = useState<BenefitsPlan[] | null>(null);
-  const [errorLocal, setError] = useState<string | null>(null);
   const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
 
   // The associate's first client drives the available-plans pool. For
@@ -92,35 +90,33 @@ export function BenefitsHome() {
     queryFn: () => listMyEnrollments(),
   });
   const enrollments: BenefitsEnrollment[] | null = refreshQuery.data?.enrollments ?? null;
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load.' : null);
   const refresh = async () => {
     await refreshQuery.refetch();
   };
 
-
   // Pull plans for the associate's client once the client list is in.
   // Backend already enforces the client match; this just feeds the picker.
-  useEffect(() => {
-    if (clientsLoading || clientsError) return;
-    const firstClient = clients[0];
-    if (!firstClient) {
-      setAvailablePlans([]);
-      return;
-    }
-    let live = true;
-    listPlans({ clientId: firstClient.id })
-      .then((plans) => {
-        if (live) setAvailablePlans(plans.plans);
-      })
-      .catch((err) => {
-        if (live) {
-          setError(err instanceof ApiError ? err.message : 'Could not load.');
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [clients, clientsLoading, clientsError]);
+  const firstClient = clientsLoading || clientsError ? undefined : clients[0];
+  const plansQuery = useQuery({
+    queryKey: ['BenefitsHome', 'plans', firstClient?.id ?? null],
+    queryFn: () => listPlans({ clientId: firstClient!.id }),
+    enabled: firstClient !== undefined,
+  });
+  const availablePlans: BenefitsPlan[] | null =
+    clientsLoading || clientsError
+      ? null
+      : !firstClient
+        ? []
+        : plansQuery.data?.plans ?? null;
+  const error = refreshQuery.error
+    ? refreshQuery.error instanceof ApiError
+      ? refreshQuery.error.message
+      : 'Could not load.'
+    : plansQuery.error
+      ? plansQuery.error instanceof ApiError
+        ? plansQuery.error.message
+        : 'Could not load.'
+      : null;
 
   const enrolledPlanIds = new Set(
     (enrollments ?? [])

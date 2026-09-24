@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Briefcase, Plus, Trash2, Users } from 'lucide-react';
 import type {
   CostCenter,
@@ -62,6 +63,10 @@ const STATUS_LABELS: Record<PositionStatus, string> = {
   CLOSED: 'Closed',
 };
 
+const NO_DEPARTMENTS: Department[] = [];
+const NO_COST_CENTERS: CostCenter[] = [];
+const NO_JOB_PROFILES: JobProfile[] = [];
+
 export function PositionsTab({
   clientId,
   canManage,
@@ -69,38 +74,33 @@ export function PositionsTab({
   clientId: string;
   canManage: boolean;
 }) {
-  const [rows, setRows] = useState<Position[] | null>(null);
-  const [headcount, setHeadcount] = useState<PositionHeadcount | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [jobProfiles, setJobProfiles] = useState<JobProfile[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<Position | 'new' | null>(null);
 
-  const refresh = async () => {
-    try {
-      setError(null);
-      const [p, h, d, c, j] = await Promise.all([
+  const orgQuery = useQuery({
+    queryKey: ['PositionsTab', 'all', clientId],
+    queryFn: () =>
+      Promise.all([
         listPositions({ clientId: clientId || undefined }),
         getHeadcount(clientId || undefined),
         listDepartments(clientId || undefined),
         listCostCenters(clientId || undefined),
         listJobProfiles(clientId || undefined),
-      ]);
-      setRows(p.positions);
-      setHeadcount(h);
-      setDepartments(d.departments);
-      setCostCenters(c.costCenters);
-      setJobProfiles(j.jobProfiles);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+      ]),
+  });
+  const [p, h, d, c, j] = orgQuery.data ?? [];
+  const rows: Position[] | null = p?.positions ?? null;
+  const headcount: PositionHeadcount | null = h ?? null;
+  const departments: Department[] = d?.departments ?? NO_DEPARTMENTS;
+  const costCenters: CostCenter[] = c?.costCenters ?? NO_COST_CENTERS;
+  const jobProfiles: JobProfile[] = j?.jobProfiles ?? NO_JOB_PROFILES;
+  const error = orgQuery.error
+    ? orgQuery.error instanceof ApiError
+      ? orgQuery.error.message
+      : 'Failed to load.'
+    : null;
+  const refresh = async () => {
+    await orgQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>

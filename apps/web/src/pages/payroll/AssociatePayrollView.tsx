@@ -5,7 +5,7 @@
 // the page. Associates can also download their own paystub as a PDF —
 // the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -335,30 +335,24 @@ const EMPTY_W4: MyW4 = {
 
 function W4Card() {
   const { t } = useI18n();
-  const [w4, setW4] = useState<MyW4 | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<MyW4 | null>(null);
   const [busy, setBusy] = useState(false);
-  const [missing, setMissing] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
 
-  const load = () =>
-    getMyW4()
-      .then((r) => {
-        setW4(r);
-        setMissing(false);
-        setLoadFailed(false);
-      })
-      .catch((err) => {
-        // no_w4 = genuinely none on file. Anything else is a FAILED fetch —
-        // it used to render a silent blank card with no way out.
-        if (err instanceof ApiError && err.code === 'no_w4') setMissing(true);
-        else setLoadFailed(true);
-      });
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const w4Query = useQuery({
+    queryKey: ['W4Card', 'w4'],
+    queryFn: () => getMyW4(),
+    // no_w4 is an answer, not a blip — don't retry it.
+    retry: (count, err) => !(err instanceof ApiError && err.code === 'no_w4') && count < 1,
+  });
+  const w4: MyW4 | null = w4Query.data ?? null;
+  // no_w4 = genuinely none on file. Anything else is a FAILED fetch —
+  // it used to render a silent blank card with no way out.
+  const missing = w4Query.error instanceof ApiError && w4Query.error.code === 'no_w4';
+  const loadFailed = w4Query.isError && !missing;
+  const load = async () => {
+    await w4Query.refetch();
+  };
 
   const save = async () => {
     if (!form) return;

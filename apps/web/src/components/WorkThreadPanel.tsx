@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { MessageSquare, Send } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -64,8 +65,6 @@ export function WorkThreadPanel({
 }) {
   const { user } = useAuth();
   const myDesk = deskOf(user?.role);
-  const [notes, setNotes] = useState<WorkNoteRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState('');
   const [mentions, setMentions] = useState<Desk[]>([]);
   const [decisionDesk, setDecisionDesk] = useState<Desk | ''>('');
@@ -74,21 +73,21 @@ export function WorkThreadPanel({
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decisionText, setDecisionText] = useState('');
 
-  const load = (soft = false) => {
-    if (!soft) setNotes(null);
-    setError(null);
-    apiFetch<{ notes: WorkNoteRow[] }>(
-      `/work-notes?subjectType=ASSOCIATE&subjectKey=${associateId}`,
-    )
-      .then((r) => setNotes(r.notes))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the thread.'),
-      );
-  };
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [associateId]);
+  const notesQuery = useQuery({
+    queryKey: ['WorkThreadPanel', 'notes', associateId],
+    queryFn: () =>
+      apiFetch<{ notes: WorkNoteRow[] }>(
+        `/work-notes?subjectType=ASSOCIATE&subjectKey=${associateId}`,
+      ),
+  });
+  const notes = notesQuery.data?.notes ?? null;
+  const error = notesQuery.error
+    ? notesQuery.error instanceof ApiError
+      ? notesQuery.error.message
+      : 'Could not load the thread.'
+    : null;
+  // Re-reads keep the thread on screen while the fresh copy lands.
+  const load = () => void notesQuery.refetch();
 
   const post = async () => {
     const text = body.trim();
@@ -108,7 +107,7 @@ export function WorkThreadPanel({
       setBody('');
       setMentions([]);
       setDecisionDesk('');
-      load(true);
+      load();
       onChanged?.();
       if (mentions.length > 0) {
         toast.success(
@@ -130,7 +129,7 @@ export function WorkThreadPanel({
       });
       setDeciding(null);
       setDecisionText('');
-      load(true);
+      load();
       onChanged?.();
       toast.success(approve ? 'Approved — receipt recorded.' : 'Declined — receipt recorded.');
     } catch (err) {

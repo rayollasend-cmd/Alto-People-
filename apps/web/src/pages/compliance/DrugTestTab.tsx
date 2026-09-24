@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
@@ -240,16 +240,33 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     // 'none' is a page-local synthetic bucket, not a store the scope knows.
     if (id !== 'none') storeScope.setClientId(id);
   };
-  // Results for the open drawer — fetched on open (each read is an audited
-  // disclosure server-side), null while loading.
-  const [detail, setDetail] = useState<DrugTestDetail | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refreshQuery = useQuery({
     queryKey: ['DrugTestTab', 'tests'],
     queryFn: () => listDrugTests(),
   });
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
+  // Results for the open drawer — fetched on open (each read is an audited
+  // disclosure server-side), null while loading. gcTime 0 so a re-opened
+  // drawer reads (and discloses) afresh instead of replaying a cached copy.
+  const detailQuery = useQuery({
+    queryKey: ['DrugTestTab', 'detail', drawerTarget?.id ?? null],
+    queryFn: () => getDrugTestDetail(drawerTarget!.id),
+    enabled: drawerTarget !== null,
+    gcTime: 0,
+  });
+  const detail: DrugTestDetail | null = detailQuery.data ?? null;
+  const error =
+    errorLocal ??
+    (refreshQuery.error
+      ? refreshQuery.error instanceof ApiError
+        ? refreshQuery.error.message
+        : 'Failed to load.'
+      : detailQuery.error
+        ? detailQuery.error instanceof ApiError
+          ? detailQuery.error.message
+          : 'Could not load the result list.'
+        : null);
   useEffect(() => {
     const res = refreshQuery.data;
     if (res === undefined) return;
@@ -260,18 +277,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
   };
 
 
-  const loadDetail = useCallback(async (id: string) => {
-    try {
-      setDetail(await getDrugTestDetail(id));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the result list.');
-    }
-  }, []);
-
   const openDrawer = (t: DrugTest) => {
     setDrawerTarget(t);
-    setDetail(null);
-    void loadDetail(t.id);
   };
 
   // Deep link: open the linked person's test as soon as the ledger row
@@ -283,10 +290,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     if (match) {
       deepLinkOpened.current = true;
       setDrawerTarget(match);
-      setDetail(null);
-      void loadDetail(match.id);
     }
-  }, [tests, deepLinkAssociateId, loadDetail]);
+  }, [tests, deepLinkAssociateId]);
 
   const updateStatus = async (id: string, status: DrugTestStatus) => {
     setPendingId(id);
@@ -616,7 +621,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             pending={pendingId === drawerTarget.id}
             onTransition={(status) => updateStatus(drawerTarget.id, status)}
             onReportsChanged={() => {
-              void loadDetail(drawerTarget.id);
+              void detailQuery.refetch();
               void refresh(); // result counts in the table + KPI strip
             }}
           />

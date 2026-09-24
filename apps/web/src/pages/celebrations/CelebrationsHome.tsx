@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Cake, PartyPopper, Send } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,8 +43,6 @@ const keyOf = (c: CelebrationItem) => `${c.associateId}-${c.kind}-${c.date}`;
  * the in-app notification system.
  */
 export function CelebrationsHome() {
-  const [items, setItems] = useState<CelebrationItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<number>(60);
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState<CelebrationItem | null>(null);
@@ -51,22 +50,17 @@ export function CelebrationsHome() {
   // double-sends the same congrats.
   const [sentKeys, setSentKeys] = useState<Set<string>>(new Set());
 
-  const load = (d: number) => {
-    setItems(null);
-    setError(null);
-    listUpcomingCelebrations(d)
-      .then((r) => setItems(r.items))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load celebrations.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load(days);
-  }, [days]);
+  const itemsQuery = useQuery({
+    queryKey: ['CelebrationsHome', 'items', days],
+    queryFn: () => listUpcomingCelebrations(days),
+  });
+  const items = itemsQuery.data?.items ?? null;
+  const error = itemsQuery.error
+    ? itemsQuery.error instanceof ApiError
+      ? itemsQuery.error.message
+      : 'Failed to load celebrations.'
+    : null;
+  const load = () => void itemsQuery.refetch();
 
   const term = search.trim().toLowerCase();
   const filtered = items
@@ -102,7 +96,7 @@ export function CelebrationsHome() {
         <ErrorBanner>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>{error}</span>
-            <Button size="sm" variant="outline" onClick={() => load(days)}>
+            <Button size="sm" variant="outline" onClick={() => load()}>
               Retry
             </Button>
           </div>

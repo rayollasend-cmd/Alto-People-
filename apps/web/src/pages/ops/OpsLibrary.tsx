@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlarmClock,
   Camera,
@@ -85,24 +86,23 @@ const RESPONSE_ICON: Partial<Record<OpsResponseType, LucideIcon>> = {
 };
 
 export function OpsLibrary() {
-  const [library, setLibrary] = useState<{
-    departments: string[];
-    templates: OpsLibraryTemplate[];
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [newOpen, setNewOpen] = useState(false);
   const confirm = useConfirm();
   const { can } = useAuth();
 
-  const load = useCallback(() => {
-    getOpsLibrary()
-      .then(setLibrary)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the library.'),
-      );
-  }, []);
-  useEffect(() => load(), [load]);
+  const libraryQuery = useQuery({
+    queryKey: ['OpsLibrary', 'library'],
+    queryFn: () => getOpsLibrary(),
+  });
+  const library: { departments: string[]; templates: OpsLibraryTemplate[] } | null =
+    libraryQuery.data ?? null;
+  const error = libraryQuery.error
+    ? libraryQuery.error instanceof ApiError
+      ? libraryQuery.error.message
+      : 'Could not load the library.'
+    : null;
+  const load = () => void libraryQuery.refetch();
 
   // After "New SOP": once the reloaded library contains the fresh
   // template (already added to `expanded`), scroll it into view so "add

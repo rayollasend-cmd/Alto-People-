@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileSignature } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -28,8 +29,6 @@ export function EsignTask() {
   const { user } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [agreements, setAgreements] = useState<EsignAgreement[] | null>(null);
-  const [topError, setTopError] = useState<string | null>(null);
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -37,21 +36,22 @@ export function EsignTask() {
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('E_SIGN');
 
+  const agreementsQuery = useQuery({
+    queryKey: ['EsignTask', 'agreements', applicationId ?? null],
+    queryFn: () => listEsignAgreements(applicationId!),
+    enabled: !!applicationId,
+  });
+  const agreements: EsignAgreement[] | null = agreementsQuery.data?.agreements ?? null;
+  const topError = agreementsQuery.error
+    ? agreementsQuery.error instanceof ApiError
+      ? agreementsQuery.error.message
+      : t('ob.esign.loadFailed')
+    : null;
+  const { refetch } = agreementsQuery;
   const refresh = useCallback(async (): Promise<EsignAgreement[] | null> => {
-    if (!applicationId) return null;
-    try {
-      const r = await listEsignAgreements(applicationId);
-      setAgreements(r.agreements);
-      return r.agreements;
-    } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : t('ob.esign.loadFailed'));
-      return null;
-    }
-  }, [applicationId]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const r = await refetch();
+    return r.data?.agreements ?? null;
+  }, [refetch]);
 
   // The task's final success action: once the LAST agreement is signed,
   // chain forward like the sibling tasks. Intermediate signatures stay an

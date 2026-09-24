@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RotateCcw } from 'lucide-react';
@@ -373,19 +373,24 @@ function DocumentsCard({
   // Hydrate from the server so the list survives a page reload — fixes the
   // "where did my upload go?" gap from the prior version that only kept
   // uploads in local React state.
-  const refresh = useCallback(async () => {
-    try {
-      const r = await listI9Documents(applicationId);
-      setDocs(r.documents);
-      setPreexistingCount((cur) => cur ?? r.documents.length);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('ob.i9.loadDocsFailed'));
-    }
-  }, [applicationId, t]);
-
+  const docsQuery = useQuery({
+    queryKey: ['I9DocsStep', 'docs', applicationId],
+    queryFn: () => listI9Documents(applicationId),
+  });
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const r = docsQuery.data;
+    if (r === undefined) return;
+    setDocs(r.documents);
+    setPreexistingCount((cur) => cur ?? r.documents.length);
+  }, [docsQuery.data]);
+  useEffect(() => {
+    const err = docsQuery.error;
+    if (!err) return;
+    setError(err instanceof ApiError ? err.message : t('ob.i9.loadDocsFailed'));
+  }, [docsQuery.error, t]);
+  const refresh = async () => {
+    await docsQuery.refetch();
+  };
 
   const doUpload = async (
     file: File,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
@@ -189,9 +189,30 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     if (id !== 'none') storeScope.setClientId(id);
   };
   const [search, setSearch] = useState('');
-  const [rows, setRows] = useState<I9Verification[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
+  const rowsQuery = useQuery({
+    queryKey: ['I9Tab', 'rows'],
+    // Always fetch the full list: the filters are client-side views and
+    // the KPI strip must count the whole population, not one slice.
+    queryFn: () => listI9s('all'),
+  });
+  const rows: I9Verification[] | null = rowsQuery.data?.i9s ?? null;
+  const error = rowsQuery.error
+    ? rowsQuery.error instanceof ApiError
+      ? rowsQuery.error.message
+      : 'Failed to load.'
+    : null;
+  // Keep the open drawer pointed at the fresh row after a reload.
+  useEffect(() => {
+    const res = rowsQuery.data;
+    if (res === undefined) return;
+    setDrawerTarget((prev) =>
+      prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
+    );
+  }, [rowsQuery.data]);
+  const refresh = async () => {
+    await rowsQuery.refetch();
+  };
 
   useEffect(() => {
     if (!deepLinkAssociateId || deepLinkOpened.current || !rows) return;
@@ -202,24 +223,6 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     }
   }, [rows, deepLinkAssociateId]);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      // Always fetch the full list: the filters are client-side views and
-      // the KPI strip must count the whole population, not one slice.
-      const res = await listI9s('all');
-      setRows(res.i9s);
-      setDrawerTarget((prev) =>
-        prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const closeAndRefresh = () => {
     setDrawerTarget(null);

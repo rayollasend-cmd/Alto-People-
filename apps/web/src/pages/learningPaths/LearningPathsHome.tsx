@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -346,53 +346,46 @@ function PathDetailDrawer({
   onClose: () => void;
 }) {
   const confirm = useConfirm();
-  const [data, setData] = useState<LearningPathDetail | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [enrollments, setEnrollments] = useState<PathEnrollment[] | null>(null);
-  const [enrollmentsError, setEnrollmentsError] = useState<string | null>(null);
-  const [courses, setCourses] = useState<Course[] | null>(null);
-  const [coursesError, setCoursesError] = useState<string | null>(null);
   const [courseId, setCourseId] = useState('');
   const [picked, setPicked] = useState<PickedAssociate[]>([]);
   const [enrolling, setEnrolling] = useState(false);
 
+  const detailQuery = useQuery({
+    queryKey: ['LearningPathDrawer', 'detail', pathId],
+    queryFn: () => getLearningPath(pathId),
+  });
+  const enrollmentsQuery = useQuery({
+    queryKey: ['LearningPathDrawer', 'enrollments', pathId],
+    queryFn: () => listPathEnrollments(pathId),
+  });
+  // Lazy-load the step-picker source only for managers.
+  const coursesQuery = useQuery({
+    queryKey: ['LearningPathDrawer', 'courses'],
+    queryFn: () => listCourses('PUBLISHED'),
+    enabled: canManage,
+  });
+  const data: LearningPathDetail | null = detailQuery.data ?? null;
+  const detailError = detailQuery.error
+    ? detailQuery.error instanceof ApiError
+      ? detailQuery.error.message
+      : 'Failed to load the learning path.'
+    : null;
+  const enrollments: PathEnrollment[] | null = enrollmentsQuery.data?.enrollments ?? null;
+  const enrollmentsError = enrollmentsQuery.error
+    ? enrollmentsQuery.error instanceof ApiError
+      ? enrollmentsQuery.error.message
+      : 'Failed to load enrollments.'
+    : null;
+  const courses: Course[] | null = coursesQuery.data?.courses ?? null;
+  const coursesError = coursesQuery.error
+    ? coursesQuery.error instanceof ApiError
+      ? coursesQuery.error.message
+      : 'Failed to load courses.'
+    : null;
   const refresh = () => {
-    setData(null);
-    setDetailError(null);
-    setEnrollments(null);
-    setEnrollmentsError(null);
-    getLearningPath(pathId)
-      .then(setData)
-      .catch((err) =>
-        setDetailError(
-          err instanceof ApiError ? err.message : 'Failed to load the learning path.',
-        ),
-      );
-    listPathEnrollments(pathId)
-      .then((r) => setEnrollments(r.enrollments))
-      .catch((err) =>
-        setEnrollmentsError(
-          err instanceof ApiError ? err.message : 'Failed to load enrollments.',
-        ),
-      );
+    void detailQuery.refetch();
+    void enrollmentsQuery.refetch();
   };
-  const loadCourses = () => {
-    setCourses(null);
-    setCoursesError(null);
-    listCourses('PUBLISHED')
-      .then((r) => setCourses(r.courses))
-      .catch((err) =>
-        setCoursesError(
-          err instanceof ApiError ? err.message : 'Failed to load courses.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-    // Lazy-load the step-picker source only for managers.
-    if (canManage) loadCourses();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathId]);
 
   const moveStep = async (idx: number, delta: number) => {
     if (!data) return;
@@ -580,7 +573,7 @@ function PathDetailDrawer({
                 <ErrorBanner
                   className="mt-2"
                   action={
-                    <Button size="sm" variant="secondary" onClick={loadCourses}>
+                    <Button size="sm" variant="secondary" onClick={() => void coursesQuery.refetch()}>
                       Retry
                     </Button>
                   }

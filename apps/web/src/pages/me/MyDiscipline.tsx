@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -33,21 +34,15 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 export function MyDiscipline() {
   const { t } = useI18n();
   const { actionId } = useParams<{ actionId?: string }>();
-  const [actions, setActions] = useState<MyDisciplinaryAction[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
+  const actionsQuery = useQuery({
+    queryKey: ['MyDiscipline', 'actions'],
+    queryFn: () => listMyDisciplinaryActions(),
+  });
+  const actions: MyDisciplinaryAction[] | null = actionsQuery.data?.actions ?? null;
+  const loadError = actionsQuery.isError;
   const refresh = async () => {
-    try {
-      setLoadError(false);
-      const r = await listMyDisciplinaryActions();
-      setActions(r.actions);
-    } catch {
-      setLoadError(true);
-    }
+    await actionsQuery.refetch();
   };
-  useEffect(() => {
-    void refresh();
-  }, []);
 
   // Deep-linked record floats to the top and starts highlighted.
   const ordered =

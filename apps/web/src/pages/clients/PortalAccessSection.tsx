@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, CircleAlert, ExternalLink, Store, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -49,40 +50,45 @@ interface Props {
  * address, MFA policy). Rendered on the client page so the person who
  * closes the deal can provision the login without leaving it.
  */
+const NO_LOCATIONS: { id: string; name: string }[] = [];
+
 export function PortalAccessSection({ clientId }: Props) {
   const { can } = useAuth();
   const confirm = useConfirm();
   const canManage = can('manage:clients');
   const canPreview = can('view:executive') || can('manage:org');
-  const [users, setUsers] = useState<PortalUserRow[] | null>(null);
-  const [readiness, setReadiness] = useState<PortalReadiness | null>(null);
-  const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
+  const accessQuery = useQuery({
+    queryKey: ['PortalAccessSection', 'access', clientId],
+    queryFn: async () => {
       const [u, r, l] = await Promise.all([
         listPortalUsers(clientId),
         getPortalReadiness(clientId),
         listClientLocations(clientId),
       ]);
-      setUsers(u.users);
-      setReadiness(r);
-      setLocations(l.locations.map((x) => ({ id: x.id, name: x.name })));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load portal access.');
-    }
-  }, [clientId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      return {
+        users: u.users,
+        readiness: r,
+        locations: l.locations.map((x) => ({ id: x.id, name: x.name })),
+      };
+    },
+  });
+  const users: PortalUserRow[] | null = accessQuery.data?.users ?? null;
+  const readiness: PortalReadiness | null = accessQuery.data?.readiness ?? null;
+  const locations = accessQuery.data?.locations ?? NO_LOCATIONS;
+  const error = accessQuery.error
+    ? accessQuery.error instanceof ApiError
+      ? accessQuery.error.message
+      : 'Could not load portal access.'
+    : null;
+  const load = async () => {
+    await accessQuery.refetch();
+  };
 
   const invite = async () => {
     setBusy(true);

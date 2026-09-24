@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Globe, Plane, Plus } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
@@ -80,10 +81,27 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
     params.delete('return');
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
-  const [profiles, setProfiles] = useState<J1Profile[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<J1Profile | null>(null);
   const [upsertSeed, setUpsertSeed] = useState<UpsertSeed | null>(null);
+  const profilesQuery = useQuery({
+    queryKey: ['J1Tab', 'profiles'],
+    queryFn: () => listJ1Profiles(),
+  });
+  const profiles: J1Profile[] | null = profilesQuery.data?.profiles ?? null;
+  const error = profilesQuery.error
+    ? profilesQuery.error instanceof ApiError
+      ? profilesQuery.error.message
+      : 'Failed to load.'
+    : null;
+  // Keep the open drawer pointed at the fresh row after a reload.
+  useEffect(() => {
+    const res = profilesQuery.data;
+    if (res === undefined) return;
+    setDrawerTarget((prev) =>
+      prev ? res.profiles.find((p) => p.associateId === prev.associateId) ?? null : null,
+    );
+  }, [profilesQuery.data]);
+  const refresh = () => void profilesQuery.refetch();
 
   // Deep link: open the linked participant's drawer as soon as their row
   // arrives. No profile yet is a plain landing on the tab — the Add button
@@ -97,22 +115,6 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
     }
   }, [profiles, deepLinkAssociateId]);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listJ1Profiles();
-      setProfiles(res.profiles);
-      setDrawerTarget((prev) =>
-        prev ? res.profiles.find((p) => p.associateId === prev.associateId) ?? null : null,
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const openEditFromDrawer = () => {
     if (!drawerTarget) return;

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { listMyInbox, markAllRead as markAllInboxRead, markRead } from '@/lib/communicationsApi';
 import { markBroadcastRead, myBroadcasts } from '@/lib/dirCommsApi';
@@ -40,16 +41,15 @@ interface InboxEntry {
 
 export function AssociateInboxView() {
   const navigate = useNavigate();
-  const [items, setItems] = useState<InboxEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [q, setQ] = useState('');
   const [markingAll, setMarkingAll] = useState(false);
   const { t } = useI18n();
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
+  const inboxQuery = useQuery({
+    queryKey: ['AssociateInboxView', 'inbox'],
+    queryFn: async () => {
       const [inbox, bcasts] = await Promise.all([listMyInbox(), myBroadcasts()]);
       const merged: InboxEntry[] = [
         ...inbox.notifications.map(
@@ -84,15 +84,22 @@ export function AssociateInboxView() {
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
-      setItems(merged);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('inbox.loadFailed'));
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+      return merged;
+    },
+  });
+  const items = inboxQuery.data ?? null;
+  const error =
+    errorLocal ??
+    (inboxQuery.error
+      ? inboxQuery.error instanceof ApiError
+        ? inboxQuery.error.message
+        : t('inbox.loadFailed')
+      : null);
+  const { refetch } = inboxQuery;
+  const refresh = useCallback(async () => {
+    setError(null);
+    await refetch();
+  }, [refetch]);
 
   const onClick = async (entry: InboxEntry) => {
     if (entry.readAt) return;

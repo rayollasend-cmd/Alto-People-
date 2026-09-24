@@ -124,12 +124,13 @@ export function MyPlanCard() {
     if (r === undefined) return;
     setItems(r.items)
   }, [loadQuery.data]);
-  const load = () => void loadQuery.refetch();
+  const { refetch } = loadQuery;
+  const load = () => void refetch();
   useEffect(() => {
-    const onChanged = () => load();
+    const onChanged = () => void refetch();
     window.addEventListener(PLAN_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(PLAN_CHANGED_EVENT, onChanged);
-  }, [load]);
+  }, [refetch]);
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
