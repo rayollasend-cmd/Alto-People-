@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Briefcase, ClipboardList, Download, Gift, Plus, Send, UserPlus, X } from 'lucide-react';
 import type { Candidate } from '@alto-people/shared';
@@ -103,18 +104,17 @@ function errMessage(err: unknown, fallback: string): string {
 
 /** Client list for the offer/posting drawers' <Select>. */
 function useClients() {
-  const [clients, setClients] = useState<Array<{ id: string; name: string }> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    setError(null);
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch((err) => setError(errMessage(err, 'Failed to load clients.')));
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
-  return { clients, error, reload: load };
+  const query = useQuery({ queryKey: ['clients', 'names'], queryFn: () => listClients() });
+  const clients = useMemo(
+    () => (query.data ? query.data.clients.map((c) => ({ id: c.id, name: c.name })) : null),
+    [query.data],
+  );
+  const error = query.error ? errMessage(query.error, 'Failed to load clients.') : null;
+  const { refetch } = query;
+  const reload = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+  return { clients, error, reload };
 }
 
 interface PickedCandidate {
@@ -138,20 +138,18 @@ function CandidatePicker({
   placeholder?: string;
 }) {
   const [term, setTerm] = useState('');
-  const [all, setAll] = useState<Candidate[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [results, setResults] = useState<Array<PickedCandidate & { email: string }>>([]);
   const [open, setOpen] = useState(false);
 
+  const candidatesQuery = useQuery({ queryKey: ['recruiting', 'candidates'], queryFn: () => listCandidates() });
+  const all: Candidate[] | null = candidatesQuery.data?.candidates ?? null;
+  const loadError = candidatesQuery.error
+    ? errMessage(candidatesQuery.error, 'Failed to load candidates.')
+    : null;
+  const { refetch: refetchCandidates } = candidatesQuery;
   const load = useCallback(() => {
-    setLoadError(null);
-    listCandidates()
-      .then((r) => setAll(r.candidates))
-      .catch((err) => setLoadError(errMessage(err, 'Failed to load candidates.')));
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
+    void refetchCandidates();
+  }, [refetchCandidates]);
 
   useEffect(() => {
     if (value || !all || term.trim().length < 2) {
@@ -328,21 +326,13 @@ export function RecruitingExtras() {
 
 function KitsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [kits, setKits] = useState<InterviewKit[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editTarget, setEditTarget] = useState<InterviewKit | null>(null);
 
-  const refresh = () => {
-    setKits(null);
-    setError(null);
-    listInterviewKits()
-      .then((r) => setKits(r.kits))
-      .catch((err) => setError(errMessage(err, 'Failed to load interview kits.')));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const kitsQuery = useQuery({ queryKey: ['recruiting', 'kits'], queryFn: () => listInterviewKits() });
+  const kits: InterviewKit[] | null = kitsQuery.data?.kits ?? null;
+  const error = kitsQuery.error ? errMessage(kitsQuery.error, 'Failed to load interview kits.') : null;
+  const refresh = () => void kitsQuery.refetch();
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this kit?', destructive: true }))) return;
@@ -633,8 +623,6 @@ function OffersTab({
   seed?: { candidateId: string | null } | null;
   onSeedConsumed?: () => void;
 }) {
-  const [offers, setOffers] = useState<OfferRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [seedCandidateId, setSeedCandidateId] = useState<string | null>(null);
@@ -646,16 +634,10 @@ function OffersTab({
     onSeedConsumed?.();
   }, [seed, onSeedConsumed]);
 
-  const refresh = () => {
-    setOffers(null);
-    setError(null);
-    listOffers()
-      .then((r) => setOffers(r.offers))
-      .catch((err) => setError(errMessage(err, 'Failed to load offers.')));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const offersQuery = useQuery({ queryKey: ['recruiting', 'offers'], queryFn: () => listOffers() });
+  const offers: OfferRecord[] | null = offersQuery.data?.offers ?? null;
+  const error = offersQuery.error ? errMessage(offersQuery.error, 'Failed to load offers.') : null;
+  const refresh = () => void offersQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!offers) return null;
@@ -869,22 +851,22 @@ function NewOfferDrawer({
   // Resolve the seeded candidate to {id, name} + default the job title to
   // their applied-for position. Failure just leaves the picker for manual
   // selection — the drawer must not block on it.
+  const seededQuery = useQuery({
+    queryKey: ['recruiting', 'candidate', seedCandidateId],
+    queryFn: () => getCandidate(seedCandidateId!),
+    enabled: Boolean(seedCandidateId),
+  });
   useEffect(() => {
-    if (!seedCandidateId) return;
-    let live = true;
-    getCandidate(seedCandidateId)
-      .then((c) => {
-        if (!live) return;
-        setCandidate({ id: c.id, name: `${c.firstName} ${c.lastName}`.trim() });
-        if (c.position) setJobTitle((prev) => prev || c.position!);
-      })
-      .catch(() => {
-        if (live) toast.error('Could not load the candidate — pick them manually.');
-      });
-    return () => {
-      live = false;
-    };
-  }, [seedCandidateId]);
+    const c = seededQuery.data;
+    if (!seedCandidateId || !c) return;
+    setCandidate({ id: c.id, name: `${c.firstName} ${c.lastName}`.trim() });
+    if (c.position) setJobTitle((prev) => prev || c.position!);
+  }, [seedCandidateId, seededQuery.data]);
+  useEffect(() => {
+    if (seedCandidateId && seededQuery.isError) {
+      toast.error('Could not load the candidate — pick them manually.');
+    }
+  }, [seedCandidateId, seededQuery.isError]);
 
   const onSubmit = async () => {
     if (!candidate || !clientId || !jobTitle || !startDate) {
@@ -1038,21 +1020,13 @@ function NewOfferDrawer({
 const REF_STATUSES: ReferralStatus[] = ['OPEN', 'INTERVIEWING', 'HIRED', 'REJECTED'];
 
 function ReferralsTab({ canManage }: { canManage: boolean }) {
-  const [referrals, setReferrals] = useState<ReferralRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [convertingId, setConvertingId] = useState<string | null>(null);
 
-  const refresh = () => {
-    setReferrals(null);
-    setError(null);
-    listReferrals()
-      .then((r) => setReferrals(r.referrals))
-      .catch((err) => setError(errMessage(err, 'Failed to load referrals.')));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const referralsQuery = useQuery({ queryKey: ['recruiting', 'referrals'], queryFn: () => listReferrals() });
+  const referrals: ReferralRecord[] | null = referralsQuery.data?.referrals ?? null;
+  const error = referralsQuery.error ? errMessage(referralsQuery.error, 'Failed to load referrals.') : null;
+  const refresh = () => void referralsQuery.refetch();
 
   const onStatus = async (id: string, status: ReferralStatus) => {
     try {
@@ -1326,20 +1300,12 @@ function NewReferralDrawer({
 
 function PostingsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [postings, setPostings] = useState<JobPostingRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setPostings(null);
-    setError(null);
-    listJobPostings()
-      .then((r) => setPostings(r.postings))
-      .catch((err) => setError(errMessage(err, 'Failed to load job postings.')));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const postingsQuery = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings() });
+  const postings: JobPostingRecord[] | null = postingsQuery.data?.postings ?? null;
+  const error = postingsQuery.error ? errMessage(postingsQuery.error, 'Failed to load job postings.') : null;
+  const refresh = () => void postingsQuery.refetch();
 
   const onOpen = async (id: string) => {
     try {

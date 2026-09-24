@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
   Check,
@@ -176,25 +177,22 @@ const DIRECTORY_RENDER_CAP = 200;
 
 function DirectoryTab() {
   const [q, setQ] = useState('');
-  const [people, setPeople] = useState<Person[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = async (term: string) => {
-    setPeople(null);
-    setError(null);
-    try {
-      const r = await searchDirectory(term || undefined);
-      setPeople(r.people);
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Could not load the directory.',
-      );
-    }
+  // The term the list answers — set by Search / Enter, not by typing.
+  const [term, setTerm] = useState('');
+  const directoryQuery = useQuery({
+    queryKey: ['dirComms', 'directory', term],
+    queryFn: () => searchDirectory(term || undefined),
+  });
+  const people: Person[] | null = directoryQuery.data?.people ?? null;
+  const error = directoryQuery.error
+    ? directoryQuery.error instanceof ApiError
+      ? directoryQuery.error.message
+      : 'Could not load the directory.'
+    : null;
+  const refresh = (next: string) => {
+    if (next === term) void directoryQuery.refetch();
+    else setTerm(next);
   };
-
-  useEffect(() => {
-    refresh('');
-  }, []);
 
   const exportCsv = () => {
     if (!people || people.length === 0) return;
@@ -313,25 +311,17 @@ function DirectoryTab() {
 
 function BroadcastsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Broadcast[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Broadcast | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listBroadcasts()
-      .then((r) => setRows(r.broadcasts))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load broadcasts.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const broadcastsQuery = useQuery({ queryKey: ['dirComms', 'broadcasts'], queryFn: () => listBroadcasts() });
+  const rows: Broadcast[] | null = broadcastsQuery.data?.broadcasts ?? null;
+  const error = broadcastsQuery.error
+    ? broadcastsQuery.error instanceof ApiError
+      ? broadcastsQuery.error.message
+      : 'Could not load broadcasts.'
+    : null;
+  const refresh = () => void broadcastsQuery.refetch();
 
   const onSend = async (id: string) => {
     if (!(await confirm({ title: 'Send this broadcast now?' }))) return;
@@ -469,30 +459,21 @@ function BroadcastDrawer({
     isError: clientsError,
     refetch: refetchClients,
   } = useClients();
-  const [departments, setDepartments] = useState<Department[] | null>(null);
-  const [costCenters, setCostCenters] = useState<CostCenter[] | null>(null);
-  const [targetsError, setTargetsError] = useState<string | null>(null);
-
-  const loadTargets = () => {
-    setTargetsError(null);
-    setDepartments(null);
-    setCostCenters(null);
-    Promise.all([listDepartments(), listCostCenters()])
-      .then(([d, cc]) => {
-        setDepartments(d.departments);
-        setCostCenters(cc.costCenters);
-      })
-      .catch((err) =>
-        setTargetsError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load targeting options.',
-        ),
-      );
-  };
-  useEffect(() => {
-    loadTargets();
-  }, []);
+  const targetsQuery = useQuery({
+    queryKey: ['dirComms', 'broadcast-targets'],
+    queryFn: async () => {
+      const [d, cc] = await Promise.all([listDepartments(), listCostCenters()]);
+      return { departments: d.departments, costCenters: cc.costCenters };
+    },
+  });
+  const departments: Department[] | null = targetsQuery.data?.departments ?? null;
+  const costCenters: CostCenter[] | null = targetsQuery.data?.costCenters ?? null;
+  const targetsError = targetsQuery.error
+    ? targetsQuery.error instanceof ApiError
+      ? targetsQuery.error.message
+      : 'Could not load targeting options.'
+    : null;
+  const loadTargets = () => void targetsQuery.refetch();
 
   // Departments / cost centers belong to a client — narrow the pickers when
   // a client is chosen so cross-client combos can't be assembled.
@@ -663,27 +644,19 @@ function BroadcastDrawer({
 
 function SurveysTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Survey[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [questionsFor, setQuestionsFor] = useState<Survey | null>(null);
   const [resultsFor, setResultsFor] = useState<Survey | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listSurveys()
-      .then((r) => setRows(r.surveys))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load surveys.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const surveysQuery = useQuery({ queryKey: ['dirComms', 'surveys'], queryFn: () => listSurveys() });
+  const rows: Survey[] | null = surveysQuery.data?.surveys ?? null;
+  const error = surveysQuery.error
+    ? surveysQuery.error instanceof ApiError
+      ? surveysQuery.error.message
+      : 'Could not load surveys.'
+    : null;
+  const refresh = () => void surveysQuery.refetch();
 
   const onOpen = async (s: Survey) => {
     if (s.questionCount === 0) {
@@ -896,8 +869,6 @@ function QuestionsDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [questions, setQuestions] = useState<SurveyQuestion[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const [kind, setKind] = useState<SurveyQuestionKind>('SCALE_1_5');
   const [prompt, setPrompt] = useState('');
@@ -905,21 +876,17 @@ function QuestionsDrawer({
   const [isRequired, setIsRequired] = useState(true);
   const [adding, setAdding] = useState(false);
 
-  const load = () => {
-    setQuestions(null);
-    setError(null);
-    listSurveyQuestions(survey.id)
-      .then((r) => setQuestions(r.questions))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load questions.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [survey.id]);
+  const questionsQuery = useQuery({
+    queryKey: ['dirComms', 'survey-questions', survey.id],
+    queryFn: () => listSurveyQuestions(survey.id),
+  });
+  const questions: SurveyQuestion[] | null = questionsQuery.data?.questions ?? null;
+  const error = questionsQuery.error
+    ? questionsQuery.error instanceof ApiError
+      ? questionsQuery.error.message
+      : 'Could not load questions.'
+    : null;
+  const load = () => void questionsQuery.refetch();
 
   const addQuestion = async () => {
     if (!prompt.trim()) {
@@ -1058,24 +1025,17 @@ function SurveyResultsDrawer({
   survey: Survey;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<SurveyAggregate | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = () => {
-    setData(null);
-    setError(null);
-    getSurveyAggregate(survey.id)
-      .then(setData)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load results.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [survey.id]);
+  const resultsQuery = useQuery({
+    queryKey: ['dirComms', 'survey-results', survey.id],
+    queryFn: () => getSurveyAggregate(survey.id),
+  });
+  const data: SurveyAggregate | null = resultsQuery.data ?? null;
+  const load = () => void resultsQuery.refetch();
+  const error = resultsQuery.error
+    ? resultsQuery.error instanceof ApiError
+      ? resultsQuery.error.message
+      : 'Could not load results.'
+    : null;
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
@@ -299,24 +300,21 @@ function DepartmentsTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
-  const [rows, setRows] = useState<Department[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<Department | 'new' | null>(null);
 
+  const listQuery = useQuery({
+    queryKey: ['org', 'departments', clientId],
+    queryFn: () => listDepartments(clientId || undefined),
+  });
+  const rows: Department[] | null = listQuery.data?.departments ?? null;
+  const error = listQuery.error
+    ? listQuery.error instanceof ApiError
+      ? listQuery.error.message
+      : 'Failed to load.'
+    : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listDepartments(clientId || undefined);
-      setRows(res.departments);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await listQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>
@@ -597,24 +595,21 @@ function CostCentersTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
-  const [rows, setRows] = useState<CostCenter[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<CostCenter | 'new' | null>(null);
 
+  const listQuery = useQuery({
+    queryKey: ['org', 'cost-centers', clientId],
+    queryFn: () => listCostCenters(clientId || undefined),
+  });
+  const rows: CostCenter[] | null = listQuery.data?.costCenters ?? null;
+  const error = listQuery.error
+    ? listQuery.error instanceof ApiError
+      ? listQuery.error.message
+      : 'Failed to load.'
+    : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listCostCenters(clientId || undefined);
-      setRows(res.costCenters);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await listQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>
@@ -871,24 +866,21 @@ function ShiftPositionsTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
-  const [rows, setRows] = useState<ShiftPosition[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<ShiftPosition | 'new' | null>(null);
 
+  const listQuery = useQuery({
+    queryKey: ['org', 'shift-positions', clientId],
+    queryFn: () => listShiftPositions(clientId || undefined),
+  });
+  const rows: ShiftPosition[] | null = listQuery.data?.shiftPositions ?? null;
+  const error = listQuery.error
+    ? listQuery.error instanceof ApiError
+      ? listQuery.error.message
+      : 'Failed to load.'
+    : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listShiftPositions(clientId || undefined);
-      setRows(res.shiftPositions);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await listQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>
@@ -1132,24 +1124,21 @@ function JobProfilesTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
-  const [rows, setRows] = useState<JobProfile[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<JobProfile | 'new' | null>(null);
 
+  const listQuery = useQuery({
+    queryKey: ['org', 'job-profiles', clientId],
+    queryFn: () => listJobProfiles(clientId || undefined),
+  });
+  const rows: JobProfile[] | null = listQuery.data?.jobProfiles ?? null;
+  const error = listQuery.error
+    ? listQuery.error instanceof ApiError
+      ? listQuery.error.message
+      : 'Failed to load.'
+    : null;
   const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listJobProfiles(clientId || undefined);
-      setRows(res.jobProfiles);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+    await listQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   return (
     <section>
@@ -1444,12 +1433,7 @@ function PeopleTab({
   clients: ClientSummary[];
   initialAssociateId: string | null;
 }) {
-  const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [jobProfiles, setJobProfiles] = useState<JobProfile[]>([]);
   const [target, setTarget] = useState<AssociateOrgSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // Client-side name/email filter over the loaded rows, debounced so
   // typing doesn't re-filter a 1000-row list on every keystroke.
   const [search, setSearch] = useState('');
@@ -1462,28 +1446,35 @@ function PeopleTab({
   // once when the first row set arrives.
   const deepLinkConsumed = useRef(false);
 
-  const refresh = async () => {
-    try {
-      setError(null);
+  const peopleQuery = useQuery({
+    queryKey: ['org', 'people', clientId],
+    queryFn: async () => {
       const [a, d, c, j] = await Promise.all([
         listOrgAssociates(clientId || undefined),
         listDepartments(clientId || undefined),
         listCostCenters(clientId || undefined),
         listJobProfiles(clientId || undefined),
       ]);
-      setRows(a.associates);
-      setDepartments(d.departments);
-      setCostCenters(c.costCenters);
-      setJobProfiles(j.jobProfiles);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
+      return {
+        rows: a.associates,
+        departments: d.departments,
+        costCenters: c.costCenters,
+        jobProfiles: j.jobProfiles,
+      };
+    },
+  });
+  const rows: AssociateOrgSummary[] | null = peopleQuery.data?.rows ?? null;
+  const departments: Department[] = peopleQuery.data?.departments ?? [];
+  const costCenters: CostCenter[] = peopleQuery.data?.costCenters ?? [];
+  const jobProfiles: JobProfile[] = peopleQuery.data?.jobProfiles ?? [];
+  const error = peopleQuery.error
+    ? peopleQuery.error instanceof ApiError
+      ? peopleQuery.error.message
+      : 'Failed to load.'
+    : null;
+  const refresh = async () => {
+    await peopleQuery.refetch();
   };
-
-  useEffect(() => {
-    setRows(null);
-    refresh();
-  }, [clientId]);
 
   // Auto-open the drawer for a deep-linked associate once rows land.
   useEffect(() => {
@@ -1838,29 +1829,16 @@ function PersonOrgDrawer({
   const [jobProfileId, setJobProfileId] = useState(associate.jobProfileId ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<AssociateHistoryEntry[] | null>(null);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [historyRetry, setHistoryRetry] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setHistory(null);
-    setHistoryError(null);
-    listAssociateHistory(associate.id)
-      .then((res) => {
-        if (!cancelled) setHistory(res.history);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setHistoryError(
-            err instanceof ApiError ? err.message : 'Could not load history.',
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [associate.id, historyRetry]);
+  const historyQuery = useQuery({
+    queryKey: ['org', 'associate-history', associate.id],
+    queryFn: () => listAssociateHistory(associate.id),
+  });
+  const history: AssociateHistoryEntry[] | null = historyQuery.data?.history ?? null;
+  const historyError = historyQuery.error
+    ? historyQuery.error instanceof ApiError
+      ? historyQuery.error.message
+      : 'Could not load history.'
+    : null;
 
   const submit = async () => {
     setError(null);
@@ -1982,7 +1960,7 @@ function PersonOrgDrawer({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setHistoryRetry((n) => n + 1)}
+                    onClick={() => void historyQuery.refetch()}
                   >
                     Retry
                   </Button>
