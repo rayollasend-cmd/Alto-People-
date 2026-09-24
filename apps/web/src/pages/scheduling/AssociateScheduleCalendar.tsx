@@ -63,13 +63,17 @@ const DAY_MS = 86_400_000;
  *  the anchor date from shifting in western zones. */
 function calendarNames(lang: string): { weekdays: string[]; months: string[] } {
   const locale = lang === 'es' ? 'es-US' : 'en-US';
+  // Builds the picker's weekday/month name tables from fixed UTC anchors —
+  // not a date being displayed, so the shared formatters don't apply.
   const weekdays = Array.from({ length: 7 }, (_, i) =>
+    // eslint-disable-next-line no-restricted-syntax
     new Date(Date.UTC(2021, 7, 1 + i)).toLocaleDateString(locale, {
       weekday: 'short',
       timeZone: 'UTC',
     }),
   );
   const months = Array.from({ length: 12 }, (_, i) =>
+    // eslint-disable-next-line no-restricted-syntax
     new Date(Date.UTC(2021, i, 1)).toLocaleDateString(locale, {
       month: 'long',
       timeZone: 'UTC',

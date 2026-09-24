@@ -49,8 +49,13 @@ export default [
             'Use the ui Textarea (or <Field>) instead of a raw <textarea>.',
         },
         {
+          // A SOLID gold fill (`bg-gold` / `bg-gold-bright`) on a raw
+          // <button> is a hand-rolled primary CTA. Gold tints (`bg-gold/10`,
+          // `hover:bg-gold/5`) are the selected / hover state of pills,
+          // calendar cells and interactive surfaces — a different pattern
+          // that <Button> has no variant for, so those stay out of scope.
           selector:
-            "JSXOpeningElement[name.name='button'] JSXAttribute[name.name='className'] Literal[value=/bg-gold/]",
+            "JSXOpeningElement[name.name='button'] JSXAttribute[name.name='className'] Literal[value=/(^| )bg-gold(-bright)?( |$)/]",
           message:
             'Use <Button> (variant="primary"/"outline"/"ghost"/"destructive") instead of a hand-styled gold <button> — hand-rolled copies miss the loading spinner, disabled states, and focus ring.',
         },

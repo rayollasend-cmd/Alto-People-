@@ -12,6 +12,7 @@ import {
 import { downloadPayrollCensus } from '@/lib/orgApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Textarea } from '@/components/ui/Input';
 import { Card, CardContent } from '@/components/ui/Card';
 import {
   Dialog,
@@ -355,13 +356,12 @@ function CensusExportDialog() {
           <label htmlFor="census-reason" className="text-sm font-medium text-white">
             Reason for this export
           </label>
-          <textarea
+          <Textarea
             id="census-reason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
             placeholder="e.g. Trial import for Acme Payroll — new provider evaluation"
-            className="w-full rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white placeholder:text-silver/50 focus:outline-none focus:ring-2 focus:ring-gold-bright"
           />
           <p className="text-xs text-silver">
             Recorded in the audit log. Minimum 8 characters.

@@ -211,41 +211,49 @@ function RespondCard({
         {survey.scale === 'SCORE_1_5' ? (
           <div className="flex gap-2">
             {[1, 2, 3, 4, 5].map((n) => (
-              <button
+              <Button
                 key={n}
+                type="button"
+                size="lg"
+                variant={score === n ? 'primary' : 'secondary'}
+                className="flex-1"
+                aria-pressed={score === n}
                 onClick={() => setScore(n)}
-                className={`flex-1 py-3 rounded-md border transition-colors ${
-                  score === n
-                    ? 'bg-gold border-gold text-navy'
-                    : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-                }`}
               >
                 {n}
-              </button>
+              </Button>
             ))}
           </div>
         ) : (
           <div className="flex gap-3">
-            <button
-              onClick={() => setScore(1)}
-              className={`flex-1 py-3 rounded-md border transition-colors ${
+            <Button
+              type="button"
+              size="lg"
+              variant="secondary"
+              aria-pressed={score === 1}
+              className={`flex-1 ${
                 score === 1
-                  ? 'bg-success border-success text-white'
-                  : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+                  ? 'border-success bg-success text-white hover:border-success hover:bg-success'
+                  : ''
               }`}
+              onClick={() => setScore(1)}
             >
               Yes
-            </button>
-            <button
-              onClick={() => setScore(0)}
-              className={`flex-1 py-3 rounded-md border transition-colors ${
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="secondary"
+              aria-pressed={score === 0}
+              className={`flex-1 ${
                 score === 0
-                  ? 'bg-alert border-alert text-white'
-                  : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+                  ? 'border-alert bg-alert text-white hover:border-alert hover:bg-alert'
+                  : ''
               }`}
+              onClick={() => setScore(0)}
             >
               No
-            </button>
+            </Button>
           </div>
         )}
         <div>

@@ -1039,7 +1039,7 @@ export function KioskPage() {
             {t.confirmOutTitle}{' '}
             <span className="text-gold-bright">{preflight.firstName}</span>?
           </div>
-          <button
+          <Button
             onClick={() => {
               // "Just a break" — same outcome as the break toggle they
               // forgot: the punch carries intent=BREAK and the entry
@@ -1050,10 +1050,11 @@ export function KioskPage() {
               );
               routeByConsent(preflight.faceConsent, 'BREAK');
             }}
-            className="w-full min-h-[56px] bg-gold hover:bg-gold-bright text-navy rounded-xl py-4 text-xl font-medium transition-colors"
+            size="lg"
+            className="w-full min-h-[56px] rounded-xl py-4 text-xl font-medium"
           >
             {t.confirmOutBreak}
-          </button>
+          </Button>
           <button
             onClick={() => routeByConsent(preflight.faceConsent, null)}
             className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
@@ -1233,10 +1234,15 @@ function IdleScreen({
   t: KioskStrings;
   onTap: () => void;
 }) {
+  // The wall clock renders in the kiosk's own language toggle and the
+  // tablet's local zone, not the signed-in user's locale — the shared
+  // formatters have neither.
+  // eslint-disable-next-line no-restricted-syntax
   const time = now.toLocaleTimeString(t.locale, {
     hour: 'numeric',
     minute: '2-digit',
   });
+  // eslint-disable-next-line no-restricted-syntax
   const date = now.toLocaleDateString(t.locale, {
     weekday: 'long',
     month: 'long',
@@ -1490,12 +1496,13 @@ function ConsentScreen({
       </div>
       <p className="text-silver text-lg mb-2">{t.consentBody1}</p>
       <p className="text-silver/80 text-sm mb-8">{t.consentBody2}</p>
-      <button
+      <Button
         onClick={() => onChoice(true)}
-        className="w-full min-h-[56px] bg-gold hover:bg-gold-bright text-navy rounded-xl py-4 text-xl font-medium transition-colors"
+        size="lg"
+        className="w-full min-h-[56px] rounded-xl py-4 text-xl font-medium"
       >
         {t.consentYes}
-      </button>
+      </Button>
       <button
         onClick={() => onChoice(false)}
         className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
@@ -1779,6 +1786,8 @@ function SelfieCapture({
 }
 
 function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
+  // Kiosk language toggle, not the user locale — see ClockFace.
+  // eslint-disable-next-line no-restricted-syntax
   const time = new Date(result.at).toLocaleTimeString(t.locale, {
     hour: 'numeric',
     minute: '2-digit',
