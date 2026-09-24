@@ -1,5 +1,9 @@
-import 'dotenv/config';
+import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
+
+// dotenv 17+ prints an "injected env" banner on every boot (and in every
+// test worker) unless told not to; the values are read by the schema below.
+loadDotenv({ quiet: true });
 
 const EnvSchema = z.object({
   NODE_ENV: z
