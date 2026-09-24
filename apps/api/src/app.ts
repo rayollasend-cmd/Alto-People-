@@ -36,6 +36,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
+import { searchRouter } from './routes/search.js';
 import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
@@ -414,6 +415,8 @@ export function createApp() {
   app.use('/telemetry', telemetryRouter);
   // "What's new" — readable by anyone signed in, written under manage:org.
   app.use('/release-notes', releaseNotesRouter);
+  // ⌘K across every record kind; each group is gated by its page's capability.
+  app.use('/search', searchRouter);
   // One-click unsubscribe: mailbox providers POST this with no session, so
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.

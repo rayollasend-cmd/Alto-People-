@@ -6644,6 +6644,28 @@ export interface ReleaseNoteInput {
   published: boolean;
 }
 
+/** Universal search — every record kind the command palette can land on. */
+export type SearchKind = 'people' | 'clients' | 'locations' | 'applications' | 'shifts' | 'documents' | 'statements' | 'help';
+
+export interface SearchHit {
+  id: string;
+  title: string;
+  /** One line of context — a store, a status, a date. */
+  hint: string | null;
+  /** In-app path the hit opens. */
+  href: string;
+}
+
+export interface SearchGroup {
+  kind: SearchKind;
+  hits: SearchHit[];
+}
+
+export interface SearchResponse {
+  /** Only the kinds the caller may see, in display order; empty groups omitted. */
+  groups: SearchGroup[];
+}
+
 export interface AdoptionResponse {
   signups: { day: string; accounts: number }[];
   funnel: {

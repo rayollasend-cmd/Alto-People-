@@ -3,12 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
 import {
   Banknote,
+  BookOpen,
   Building2,
+  CalendarDays,
   CalendarPlus,
   ClipboardCheck,
+  FileText,
   HelpCircle,
   Inbox,
   LogOut,
+  MapPin,
+  Receipt,
   Search,
   Sparkles,
   User,
@@ -20,7 +25,8 @@ import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
-import { usePeopleSearch } from '@/lib/usePaletteSearch';
+import { usePeopleSearch, useUniversalSearch } from '@/lib/usePaletteSearch';
+import type { SearchKind } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import {
   Dialog,
@@ -39,6 +45,18 @@ interface CommandPaletteProps {
    */
   onShowKeyboardShortcuts?: () => void;
 }
+
+/** Heading and icon per record kind the universal search returns. */
+const RECORD_GROUP: Record<SearchKind, { heading: string; icon: LucideIcon }> = {
+  people: { heading: 'People', icon: User },
+  clients: { heading: 'Clients', icon: Building2 },
+  locations: { heading: 'Stores', icon: MapPin },
+  applications: { heading: 'Applications', icon: ClipboardCheck },
+  shifts: { heading: 'Shifts', icon: CalendarDays },
+  documents: { heading: 'Documents', icon: FileText },
+  statements: { heading: 'Statements', icon: Receipt },
+  help: { heading: 'Help center', icon: BookOpen },
+};
 
 interface PaletteItem {
   id: string;
@@ -305,8 +323,13 @@ export function CommandPalette({
   const showPeopleGroup =
     canSearchPeople && entityQueryActive && (people.length > 0 || peopleSearching);
   const showClientsGroup = clientMatches.length > 0;
+  // Everything else — applications, shifts, documents, statements, stores,
+  // help articles — from one request; people and clients above keep their
+  // own (cached, instant) paths, so those two groups are skipped here.
+  const { groups: recordGroups } = useUniversalSearch(search, open && entityQueryActive);
+  const extraGroups = recordGroups.filter((g) => g.kind !== 'people' && g.kind !== 'clients');
   const hasAnyResult =
-    visibleItems.length > 0 || people.length > 0 || showClientsGroup;
+    visibleItems.length > 0 || people.length > 0 || showClientsGroup || extraGroups.length > 0;
 
   const renderStaticGroup = (group: PaletteItem['group'], heading: string) => {
     const groupItems = visibleItems.filter((i) => i.group === group);
@@ -352,7 +375,7 @@ export function CommandPalette({
               autoFocus
               value={search}
               onValueChange={setSearch}
-              placeholder="Search pages, people, clients…"
+              placeholder="Search pages, people, clients, shifts, documents…"
               className={cn(
                 'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/70',
                 'outline-none border-0 focus:ring-0'
@@ -442,6 +465,31 @@ export function CommandPalette({
                 ))}
               </Command.Group>
             )}
+
+            {extraGroups.map((g) => (
+              <Command.Group key={g.kind} heading={RECORD_GROUP[g.kind].heading} className={GROUP_CLASS}>
+                {g.hits.map((hit) => {
+                  const Icon = RECORD_GROUP[g.kind].icon;
+                  return (
+                    <Command.Item
+                      key={`${g.kind}-${hit.id}`}
+                      value={`${g.kind}-${hit.id}`}
+                      onSelect={() => {
+                        navigate(hit.href);
+                        close();
+                      }}
+                      className={ITEM_CLASS}
+                    >
+                      <Icon className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate">{hit.title}</div>
+                        {hit.hint && <div className="text-xs2 text-silver/70 truncate">{hit.hint}</div>}
+                      </div>
+                    </Command.Item>
+                  );
+                })}
+              </Command.Group>
+            ))}
 
             {renderStaticGroup('Actions', 'Actions')}
             {renderStaticGroup('Account', 'Account')}
