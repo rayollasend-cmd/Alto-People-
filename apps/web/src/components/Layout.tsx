@@ -13,6 +13,8 @@ import { MobileNav } from './MobileNav';
 import { BottomTabBar, tabBarHiddenFrom } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
 import { WhatsNew } from './WhatsNew';
+import { HelpSheet } from './HelpSheet';
+import { Coachmarks } from './Coachmarks';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -104,6 +106,7 @@ export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
+  const [helpOpen, setHelpOpen] = useState(false);
   const location = useLocation();
   // A soft navigation closes the books on the previous route's web vitals.
   useEffect(() => {
@@ -245,6 +248,7 @@ export function Layout() {
         >
           <Topbar
             onOpenCommandPalette={() => setPaletteOpen(true)}
+            onOpenHelp={() => setHelpOpen(true)}
           />
           <main
             id="main-content"
@@ -315,6 +319,15 @@ export function Layout() {
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}
         />
+        <HelpSheet
+          open={helpOpen}
+          onOpenChange={setHelpOpen}
+          onShowKeyboardShortcuts={() => {
+            setHelpOpen(false);
+            setShortcutsOpen(true);
+          }}
+        />
+        <Coachmarks />
         <WhatsNew />
       </div>
     </TooltipProvider>

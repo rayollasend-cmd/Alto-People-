@@ -113,6 +113,12 @@ export function KbHome() {
   const [adminStatus, setAdminStatus] = useState<KbStatus | ''>('');
   const [adminSearch, setAdminSearch] = useState('');
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  // ?article=<slug> opens straight onto an article — the help sheet links
+  // here. Read once; the query string is not kept in sync afterwards.
+  useEffect(() => {
+    const slug = new URLSearchParams(window.location.search).get('article');
+    if (slug) setOpenSlug(slug);
+  }, []);
   const [editing, setEditing] = useState<KbAdminRow | 'new' | null>(null);
   // One in-flight action at a time — a double-click on Publish/Delete
   // used to fire the write twice.

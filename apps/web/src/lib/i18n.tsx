@@ -59,6 +59,22 @@ const en = {
   'whatsnew.empty': 'Nothing announced yet.',
   'whatsnew.draft': 'Draft',
 
+  // Contextual help sheet and coach marks
+  'help.title': 'Help for this page',
+  'help.generic': 'Help',
+  'help.genericIntro': 'Search from the top bar, press ? for keyboard shortcuts, and find the manual in the help center.',
+  'help.youCan': 'You can',
+  'help.related': 'From the help center',
+  'help.noArticles': 'No articles on this yet.',
+  'help.openCenter': 'Open the help center',
+  'help.shortcuts': 'Keyboard shortcuts',
+  'help.whatsNew': "What's new",
+  'help.replayTour': 'Show the tour again',
+  'tour.next': 'Next',
+  'tour.back': 'Back',
+  'tour.done': 'Done',
+  'tour.skip': 'Skip',
+
   // Store Ops — the shift supervisor's SOP runner
   'opsRun.alreadyClosed': 'That shift is already closed — its record is final.',
   'opsRun.loadShiftFailed': 'Could not load the shift.',
@@ -2768,6 +2784,22 @@ const es: Record<MessageKey, string> = {
   'whatsnew.pageSubtitle': 'Cada versión, la más reciente primero.',
   'whatsnew.empty': 'Todavía no hay novedades.',
   'whatsnew.draft': 'Borrador',
+
+  // Contextual help sheet and coach marks
+  'help.title': 'Ayuda para esta página',
+  'help.generic': 'Ayuda',
+  'help.genericIntro': 'Busca desde la barra superior, pulsa ? para los atajos de teclado y encuentra el manual en el centro de ayuda.',
+  'help.youCan': 'Puedes',
+  'help.related': 'Del centro de ayuda',
+  'help.noArticles': 'Aún no hay artículos sobre esto.',
+  'help.openCenter': 'Abrir el centro de ayuda',
+  'help.shortcuts': 'Atajos de teclado',
+  'help.whatsNew': 'Novedades',
+  'help.replayTour': 'Volver a ver el recorrido',
+  'tour.next': 'Siguiente',
+  'tour.back': 'Atrás',
+  'tour.done': 'Listo',
+  'tour.skip': 'Omitir',
 
   // Store Ops — the shift supervisor's SOP runner
   'opsRun.alreadyClosed': 'Ese turno ya está cerrado — su registro es definitivo.',

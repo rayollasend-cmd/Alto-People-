@@ -231,7 +231,7 @@ export function Sidebar() {
     >
       <SidebarBrand railCollapsed={railCollapsed} onToggleRail={toggleRail} />
 
-      <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label="Primary navigation">
+      <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label="Primary navigation" data-tour="nav">
         <SidebarLink
           to={DASHBOARD_NAV.path}
           active={activePath === DASHBOARD_NAV.path}

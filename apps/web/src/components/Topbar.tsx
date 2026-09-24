@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Globe, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -29,6 +29,7 @@ import { isSectionRoot } from './Layout';
 
 interface TopbarProps {
   onOpenCommandPalette: () => void;
+  onOpenHelp: () => void;
 }
 
 // One-click store scope — set once here, followed by Scheduling / Time /
@@ -97,7 +98,7 @@ function StoreScopeBar() {
   );
 }
 
-export function Topbar({ onOpenCommandPalette }: TopbarProps) {
+export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
   const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
@@ -271,6 +272,7 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
         onClick={onOpenCommandPalette}
         className="hidden md:inline-flex items-center gap-2 w-72 h-9 px-3 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label="Open command palette"
+        data-tour="search"
       >
         <Search className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="flex-1 text-left">Search or jump to…</span>
@@ -335,7 +337,19 @@ export function Topbar({ onOpenCommandPalette }: TopbarProps) {
             </Tooltip>
           )}
           <InstallAppButton />
-          <NotificationsBell />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onOpenHelp}
+            aria-label="Help for this page"
+            title="Help for this page"
+            data-tour="help"
+          >
+            <CircleHelp className="h-5 w-5" aria-hidden="true" />
+          </Button>
+          <span data-tour="bell" className="inline-flex">
+            <NotificationsBell />
+          </span>
 
           {/* Mobile-only avatar fallback. The full account menu lives in the
               sidebar footer on desktop; on mobile the sidebar is hidden behind
