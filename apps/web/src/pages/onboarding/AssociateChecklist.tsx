@@ -258,9 +258,11 @@ export function AssociateChecklist() {
       ? appQuery.error.message
       : t('ob.check.loadFailed')
     : null;
+  const { refetch: refetchApp } = appQuery;
+  const { refetch: refetchRejected } = rejectedQuery;
   const refresh = useCallback(async () => {
-    await Promise.all([appQuery.refetch(), rejectedQuery.refetch()]);
-  }, [appQuery.refetch, rejectedQuery.refetch]);
+    await Promise.all([refetchApp(), refetchRejected()]);
+  }, [refetchApp, refetchRejected]);
 
   // Each fresh read of the application drives the progress choreography
   // (bar travel, just-done flips, confetti) before it lands in state.

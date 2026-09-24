@@ -403,7 +403,7 @@ export function useNextTask(currentKind: string): NextTaskTarget | null {
           }
         : null
     );
-  }, [nextQuery.data]);
+  }, [nextQuery.data, applicationId, currentKind, t]);
 
   return next;
 }

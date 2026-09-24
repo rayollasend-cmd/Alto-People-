@@ -118,6 +118,8 @@ function shiftChipClass(name: string): string {
   return SHIFT_CHIP_PALETTE[h % SHIFT_CHIP_PALETTE.length];
 }
 
+const NO_ROWS: TimesheetWeekResponse['rows'] = [];
+
 export function TimesheetsView() {
   const { can, user } = useAuth();
   const navigate = useNavigate();
@@ -376,7 +378,7 @@ export function TimesheetsView() {
     }
   };
 
-  const allRows = data?.rows ?? [];
+  const allRows = data?.rows ?? NO_ROWS;
   // ST / OT / DT / NB stay zero under a flat "Others" SOW — shown only when
   // a week actually uses them (the export always carries every column).
   const showBuckets = allRows.some((r) => r.st > 0 || r.ot > 0 || r.dt > 0 || r.nb > 0);

@@ -197,6 +197,8 @@ function matchesHiredFilter(hireDate: string | null, f: HiredFilter): boolean {
   }
 }
 
+const NO_ROWS: EVerifyRosterRow[] = [];
+
 export function EVerifyTab({ canManage }: { canManage: boolean }) {
   // ?associateId= deep-links one person's case (the scorecard's Fix links,
   // the profile document vault, and application checklists all send it) —
@@ -293,7 +295,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
     queryKey: ['EVerifyTab', 'rows'],
     queryFn: () => listEVerifyRoster(),
   });
-  const rows: EVerifyRosterRow[] | null = refreshQuery.isError ? [] : (refreshQuery.data?.rows ?? null);
+  const rows: EVerifyRosterRow[] | null = refreshQuery.isError ? NO_ROWS : (refreshQuery.data?.rows ?? null);
   const counts: {
     total: number;
     authorized: number;

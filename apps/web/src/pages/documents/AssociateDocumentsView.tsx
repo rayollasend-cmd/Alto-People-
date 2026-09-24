@@ -194,6 +194,7 @@ export function AssociateDocumentsView() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot intake on mount; re-running on a language flip would re-attach the shared file
   }, []);
 
   // Image uploads pause at the standardization crop (fixed ratio, rotate,

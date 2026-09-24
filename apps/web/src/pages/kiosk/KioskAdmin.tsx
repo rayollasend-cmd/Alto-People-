@@ -85,6 +85,12 @@ import { toast } from 'sonner';
 
 type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
 
+type ClientLocation = Awaited<ReturnType<typeof listClientLocations>>['locations'][number];
+// Stable empties so derived lists keep their identity across renders
+// (they sit in memo/effect deps).
+const NO_LOCATIONS: ClientLocation[] = [];
+const NO_PINS: KioskPin[] = [];
+
 export function KioskAdmin() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:time') : false;
@@ -669,10 +675,10 @@ function NewDeviceDrawer({
     queryFn: () => listClientLocations(clientId),
     enabled: Boolean(clientId),
   });
-  const locations = !clientId
+  const locations: ClientLocation[] | null = !clientId
     ? null
     : locationsQuery.isError
-      ? []
+      ? NO_LOCATIONS
       : (locationsQuery.data?.locations ?? null);
   useEffect(() => {
     setLocationId('');
@@ -1084,7 +1090,7 @@ function PinsTab({
     queryFn: () => listKioskPins(clientId === ALL_CLIENTS ? undefined : clientId),
     enabled: Boolean(clientId),
   });
-  const rows = !clientId ? [] : (pinsQuery.data?.pins ?? null);
+  const rows: KioskPin[] | null = !clientId ? NO_PINS : (pinsQuery.data?.pins ?? null);
   const loadError = pinsQuery.isError;
   const refresh = () => void pinsQuery.refetch();
 

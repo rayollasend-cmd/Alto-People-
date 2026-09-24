@@ -452,8 +452,8 @@ function DayShiftChip({
   const [resizeDeltaPx, setResizeDeltaPx] = useState<number | null>(null);
   const startYRef = useRef<number | null>(null);
 
-  const startsAt = new Date(shift.startsAt);
-  const endsAt = new Date(shift.endsAt);
+  const startsAt = useMemo(() => new Date(shift.startsAt), [shift.startsAt]);
+  const endsAt = useMemo(() => new Date(shift.endsAt), [shift.endsAt]);
   // Position by store-local minutes (null zone → browser-local, unchanged) so
   // the chip lands on the hour gridline its label reads.
   const startMinFromGrid = Math.max(

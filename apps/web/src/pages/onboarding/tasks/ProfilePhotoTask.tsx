@@ -70,7 +70,7 @@ export function ProfilePhotoTask() {
   };
 
   // Path B: a photo is already on file — accepting it just flips the task.
-  const useCurrent = async () => {
+  const applyCurrent = async () => {
     if (!applicationId) return;
     setBusy(true);
     try {
@@ -121,7 +121,7 @@ export function ProfilePhotoTask() {
               {hasPhoto ? t('ob.photo.retake') : t('ob.photo.openCamera')}
             </Button>
             {hasPhoto && (
-              <Button variant="outline" onClick={() => void useCurrent()} loading={busy}>
+              <Button variant="outline" onClick={() => void applyCurrent()} loading={busy}>
                 {next
                   ? t('ob.photo.useAndContinue', { next: next.label })
                   : t('ob.photo.usePhoto')}

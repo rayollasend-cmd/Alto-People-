@@ -2018,7 +2018,6 @@ function CloseDialog({
       );
     }
     // Seeds from tasksRef so mid-dialog refreshes can't re-run the reset.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   return (

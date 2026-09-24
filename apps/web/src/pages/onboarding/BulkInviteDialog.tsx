@@ -169,6 +169,8 @@ interface Props {
   onCreated: () => void;
 }
 
+const NO_TEMPLATES: OnboardingTemplate[] = [];
+
 /**
  * HR pastes a list of emails (one per line) → picks one client / template /
  * employment type that applies to the whole batch → POST /applications/bulk.
@@ -240,7 +242,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     enabled: open,
   });
   const templates: OnboardingTemplate[] | null =
-    templatesQuery.data?.templates ?? (templatesQuery.isError ? [] : null);
+    templatesQuery.data?.templates ?? (templatesQuery.isError ? NO_TEMPLATES : null);
 
   // Work-site picker for the batch. Loads via the invite-scoped endpoint
   // (supervisors have no view:clients). Required when the client has sites —

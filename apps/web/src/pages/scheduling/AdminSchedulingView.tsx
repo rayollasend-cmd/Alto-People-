@@ -153,6 +153,12 @@ import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useClientBounded } from '@/lib/useClientBounded';
 
+// Stable empties so derived lists keep their identity across renders
+// (they sit in memo/callback/effect deps throughout this file).
+const NO_ASSOCIATES: AssociateLite[] = [];
+const NO_LOCATIONS: LocationSummary[] = [];
+const NO_CANDIDATES: AutoFillCandidate[] = [];
+
 // Loads the curated shift-position names for a client (Org → Shift positions).
 // null = still loading / no client picked. The dropdown in the shift dialogs
 // is sourced from this; admins manage the list in org settings.
@@ -547,13 +553,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view'));
-  const setView = (v: ViewMode) => {
-    const next = new URLSearchParams(searchParams);
-    if (v === 'list') next.delete('view');
-    else next.set('view', v);
-    setSearchParams(next, { replace: true });
-    if (typeof window !== 'undefined') window.localStorage.setItem(VIEW_KEY, v);
-  };
+  const setView = useCallback(
+    (v: ViewMode) => {
+      const next = new URLSearchParams(searchParams);
+      if (v === 'list') next.delete('view');
+      else next.set('view', v);
+      setSearchParams(next, { replace: true });
+      if (typeof window !== 'undefined') window.localStorage.setItem(VIEW_KEY, v);
+    },
+    [searchParams, setSearchParams],
+  );
   // The view lives in the URL for deep-linking, but returning to /scheduling
   // via a fresh nav link carries no ?view= and would snap back to the default
   // (list) even if the manager was on week. Restore the last-used view from
@@ -666,7 +675,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       setLocationFilter('');
       return scopeClientId;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeClientId]);
   // A ?client= deep link focuses the whole app on that store, not just this
   // page — push it into the global scope once so Time/Labor follow along.
@@ -1225,7 +1233,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     enabled: canManage,
     placeholderData: keepPreviousData,
   });
-  const associates: AssociateLite[] = rosterQuery.isError ? [] : (rosterQuery.data?.associates ?? []);
+  const associates: AssociateLite[] = rosterQuery.isError
+    ? NO_ASSOCIATES
+    : (rosterQuery.data?.associates ?? NO_ASSOCIATES);
   const associatesError = rosterQuery.isError;
   // The roster is the grid's row axis, and the server pages it. Without
   // surfacing the cut, an org-wide view past the page cap renders an
@@ -1400,8 +1410,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     enabled: Boolean(clientFilter),
   });
   const clientLocations: LocationSummary[] = clientFilter
-    ? (clientLocationsQuery.data?.locations ?? [])
-    : [];
+    ? (clientLocationsQuery.data?.locations ?? NO_LOCATIONS)
+    : NO_LOCATIONS;
 
   // Position is the only client-side narrowing left — client and location
   // are both filtered server-side (clientId + locationId params). Exact
@@ -1560,7 +1570,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const w = startOfWeekMonday(earliest);
     setWeekStart(w);
     setView('week');
-  }, [allDrafts]);
+  }, [allDrafts, setView]);
 
   // Unassigned OPEN *or DRAFT* shifts in the visible week (powers the
   // auto-schedule ribbon). Drafts are the normal state of a week being
@@ -2963,7 +2973,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {/* Calendar shift-click router — shared by day/week views */}
-      {/* eslint-disable react-hooks/rules-of-hooks */}
 
       {/* One density value for every shift tile below, so week / day / month
           all render at the same weight instead of each grid picking its own. */}
@@ -3914,7 +3923,7 @@ function AssignDialog({
   const candidates: AutoFillCandidate[] | null = !target
     ? null
     : candidatesQuery.isError
-      ? []
+      ? NO_CANDIDATES
       : (candidatesQuery.data ?? null);
   // Prefetch conflict checks for the top picks so choosing one of them
   // renders its verdict without a round-trip.
@@ -5063,7 +5072,7 @@ function CreateShiftDialog({
   const locations: LocationSummary[] | null = !clientId
     ? null
     : locationsQuery.isError
-      ? []
+      ? NO_LOCATIONS
       : (locationsQuery.data?.locations ?? null);
   useEffect(() => {
     if (!open || !locations || locations.length === 0) return;

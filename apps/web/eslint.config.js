@@ -29,13 +29,14 @@ export default [
         ecmaFeatures: { jsx: true },
       },
     },
-    // Registered (rules off) so the pre-existing
-    // `eslint-disable react-hooks/exhaustive-deps` directives in pages
-    // resolve instead of erroring. Hook correctness is the IDE/review's
-    // job today; this config is design-system guardrails only.
+    // Hook correctness is lint's job too (2026-09-24): rules-of-hooks is an
+    // error, exhaustive-deps a warning that stays at zero. A directive that
+    // silences nothing is itself a warning, so stale ones get pruned.
     plugins: { 'react-hooks': reactHooks },
-    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    linterOptions: { reportUnusedDisableDirectives: 'warn' },
     rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'no-restricted-syntax': [
         'warn',
         {
@@ -101,12 +102,13 @@ export default [
         ecmaFeatures: { jsx: true },
       },
     },
-    // react-hooks registered (rules off) for the same reason as the block
-    // above: files under ui/** are matched only by THIS block, and their
-    // pre-existing eslint-disable directives must resolve, not error.
+    // Files under ui/** are matched only by THIS block, so the hook rules
+    // are repeated here.
     plugins: { 'jsx-a11y': jsxA11y, 'react-hooks': reactHooks },
-    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    linterOptions: { reportUnusedDisableDirectives: 'warn' },
     rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'jsx-a11y/alt-text': 'error',
       'jsx-a11y/anchor-has-content': 'error',
       'jsx-a11y/aria-props': 'error',

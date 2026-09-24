@@ -172,7 +172,7 @@ export function ReimbursementsHome() {
   useEffect(() => {
     if (!refreshQuery.isError) return;
     setLoadError(t('rmb.loadFailed'))
-  }, [refreshQuery.isError, refreshQuery.error]);
+  }, [refreshQuery.isError, refreshQuery.error, t]);
   const refresh = () => void refreshQuery.refetch();
 
   const q = search.trim().toLowerCase();
@@ -471,7 +471,7 @@ function ReimbursementDrawer({
   useEffect(() => {
     if (!refreshQuery.isError) return;
     setLoadError(t('rmb.loadOneFailed'))
-  }, [refreshQuery.isError, refreshQuery.error]);
+  }, [refreshQuery.isError, refreshQuery.error, t]);
   const refresh = () => void refreshQuery.refetch();
 
   const onSubmit = async () => {

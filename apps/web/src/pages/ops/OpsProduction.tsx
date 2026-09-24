@@ -17,6 +17,7 @@ import { metricLabel, type getOpsScorecard } from '@/lib/opsApi';
 import { fmtShortDayKey } from './opsTime';
 
 type Scorecard = Awaited<ReturnType<typeof getOpsScorecard>>;
+const NO_TRENDS: NonNullable<Scorecard['metricTrends']> = [];
 type Trend = Scorecard['metricTrends'][number];
 
 /**
@@ -164,7 +165,7 @@ function MetricPanel({ t }: { t: Trend }) {
 
 export function OpsProduction({ scorecard }: { scorecard: Scorecard | null }) {
   const [showTable, setShowTable] = useState(false);
-  const trends = scorecard?.metricTrends ?? [];
+  const trends = scorecard?.metricTrends ?? NO_TRENDS;
   const weekKeys = useMemo(
     () => (trends[0]?.weeks ?? []).map((w) => w.weekKey),
     [trends],

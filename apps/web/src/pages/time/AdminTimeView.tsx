@@ -3443,10 +3443,15 @@ function TimeEntryFormDrawer({
   // (where missing clock-outs get repaired) shows the same chip: the entry's
   // own linked shift times are already denormalized on the row (zero extra
   // fetch); unlinked entries fall back to the create-mode schedule lookup.
-  const linkedShift =
-    mode === 'edit' && entry?.shiftStartsAt && entry?.shiftEndsAt
-      ? { startsAt: entry.shiftStartsAt, endsAt: entry.shiftEndsAt }
-      : null;
+  const linkedStartsAt = mode === 'edit' ? entry?.shiftStartsAt : undefined;
+  const linkedEndsAt = mode === 'edit' ? entry?.shiftEndsAt : undefined;
+  const linkedShift = useMemo(
+    () =>
+      linkedStartsAt && linkedEndsAt
+        ? { startsAt: linkedStartsAt, endsAt: linkedEndsAt }
+        : null,
+    [linkedStartsAt, linkedEndsAt],
+  );
   const dayShiftsQuery = useQuery({
     queryKey: ['shifts', 'day', dateStr],
     queryFn: () =>

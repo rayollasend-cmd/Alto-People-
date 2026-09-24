@@ -76,6 +76,9 @@ interface Props {
   onCreated: () => void;
 }
 
+const NO_TEMPLATES: OnboardingTemplate[] = [];
+const NO_LOCATIONS: LocationSummary[] = [];
+
 /**
  * HR-only dialog. One submit triggers `POST /onboarding/applications`,
  * which atomically: creates the Associate (or finds existing), creates
@@ -105,7 +108,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
   const clientsFailed = clientsQuery.isError;
   const templates: OnboardingTemplate[] | null = templatesQuery.isError
-    ? []
+    ? NO_TEMPLATES
     : (templatesQuery.data?.templates ?? null);
 
   // Last-used client / location / template / employment type — shared with
@@ -188,7 +191,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const locations: LocationSummary[] | null = !clientId
     ? null
     : locationsQuery.isError
-      ? []
+      ? NO_LOCATIONS
       : (locationsQuery.data?.locations ?? null);
   useEffect(() => {
     if (!locations) return;

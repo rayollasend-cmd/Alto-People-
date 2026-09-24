@@ -581,7 +581,6 @@ export function KioskPage() {
     if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut') return;
     const t = window.setTimeout(reset, ABANDONED_AFTER_MS);
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only
     // touches stable setters; pin/intent are deliberate "activity" deps.
   }, [stage, pin, intent]);
 
@@ -1626,9 +1625,9 @@ function SelfieCapture({
       cancelled = true;
       stream?.getTracks().forEach((track) => track.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable
-    // per language; acquisition must run exactly once per mount.
-  }, []);
+    // Acquisition must run exactly once per mount; the one string read from
+    // `t` is listed so a language flip can't leave a stale message behind.
+  }, [t.cameraNoStart]);
 
   // Retry counter for frames that aren't ready yet — a distinct state (not
   // setCountdown(0) again) because setting state to its current value

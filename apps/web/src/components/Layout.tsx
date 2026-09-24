@@ -178,7 +178,7 @@ export function Layout() {
     }
     prevKey.current = location.key;
     prevPath.current = location.pathname;
-  }, [location.key, navigationType]);
+  }, [location.key, location.pathname, navigationType]);
 
   return (
     <TooltipProvider delayDuration={250}>

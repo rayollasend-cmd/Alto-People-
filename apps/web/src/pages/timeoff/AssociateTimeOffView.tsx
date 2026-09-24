@@ -117,6 +117,8 @@ async function emptyOnForbidden<T>(p: Promise<T>): Promise<T | null> {
   }
 }
 
+const NO_REQUESTS: TimeOffRequest[] = [];
+
 export function AssociateTimeOffView() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -159,7 +161,7 @@ export function AssociateTimeOffView() {
   const requests: TimeOffRequest[] | null =
     requestsQuery.data === undefined
       ? null
-      : (requestsQuery.data?.requests ?? []);
+      : (requestsQuery.data?.requests ?? NO_REQUESTS);
 
   const loadError = balancesQuery.error ?? requestsQuery.error;
   useEffect(() => {

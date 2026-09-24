@@ -930,8 +930,8 @@ function TimeChip({
     id: shift.id,
   });
 
-  const startsAt = new Date(shift.startsAt);
-  const endsAt = new Date(shift.endsAt);
+  const startsAt = useMemo(() => new Date(shift.startsAt), [shift.startsAt]);
+  const endsAt = useMemo(() => new Date(shift.endsAt), [shift.endsAt]);
   const baseDuration = shiftMinutes(shift);
   // Position by the shift's store-local minutes so the chip lands on the hour
   // gridline its label reads (null zone → browser-local, unchanged).

@@ -169,7 +169,7 @@ export function DocumentCapture({
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     };
-  }, [facingMode]);
+  }, [facingMode, t]);
 
   const capture = useCallback(() => {
     const v = videoRef.current;
@@ -205,7 +205,7 @@ export function DocumentCapture({
       'image/jpeg',
       0.92,
     );
-  }, [snapshot, filenameBase, onCapture]);
+  }, [snapshot, filenameBase, onCapture, t]);
 
   return (
     <div className="space-y-3">

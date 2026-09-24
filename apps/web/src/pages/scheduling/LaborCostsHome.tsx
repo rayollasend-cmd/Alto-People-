@@ -1784,6 +1784,8 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
   }
 };
 
+const NO_COST_ROWS: LaborCostRow[] = [];
+
 export function LaborCostsHome() {
   const [from, setFrom] = useState(todayYmd);
   const [toInclusive, setToInclusive] = useState(todayYmd);
@@ -1800,7 +1802,7 @@ export function LaborCostsHome() {
     enabled: Boolean(from && toInclusive && toInclusive >= from),
     placeholderData: keepPreviousData,
   });
-  const rows: LaborCostRow[] | null = costsQuery.isError ? [] : costsQuery.data?.rows ?? null;
+  const rows: LaborCostRow[] | null = costsQuery.isError ? NO_COST_ROWS : costsQuery.data?.rows ?? null;
   const truncated = costsQuery.data?.truncated ?? false;
   const fallbacks = costsQuery.data?.fallbacks ?? null;
   const error = costsQuery.error

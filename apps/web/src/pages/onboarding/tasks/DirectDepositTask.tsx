@@ -80,7 +80,7 @@ export function DirectDepositTask() {
         ? t('ob.dd.loadFailedWith', { message: err.message })
         : t('ob.dd.loadFailed'),
     );
-  }, [statusQuery.isError, statusQuery.error]);
+  }, [statusQuery.isError, statusQuery.error, t]);
 
   const onFile = !!status?.hasPayoutMethod;
   const showForm = !onFile || replaceMethod;

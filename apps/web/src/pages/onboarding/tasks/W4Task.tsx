@@ -79,7 +79,7 @@ export function W4Task() {
         ? t('ob.w4.loadFailedWith', { message: err.message })
         : t('ob.w4.loadFailed'),
     );
-  }, [statusQuery.isError, statusQuery.error]);
+  }, [statusQuery.isError, statusQuery.error, t]);
 
   const ssnOnFile = !!status?.hasSsnOnFile;
   const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;

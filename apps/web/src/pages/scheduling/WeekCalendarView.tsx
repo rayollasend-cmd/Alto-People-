@@ -1301,8 +1301,8 @@ function ShiftChip({
   const [resizeDeltaPx, setResizeDeltaPx] = useState<number | null>(null);
   const startXRef = useRef<number | null>(null);
 
-  const startsAt = new Date(shift.startsAt);
-  const endsAt = new Date(shift.endsAt);
+  const startsAt = useMemo(() => new Date(shift.startsAt), [shift.startsAt]);
+  const endsAt = useMemo(() => new Date(shift.endsAt), [shift.endsAt]);
   const baseDurationMin = Math.max(
     0,
     Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000),
