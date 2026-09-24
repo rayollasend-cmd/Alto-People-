@@ -21,6 +21,9 @@ const TABLES = [
   // no FK to anything, so counters accumulate across tests and the unique
   // key collides the moment a second test seeds the same route.
   'RouteUsageDaily',
+  'WebVitalDaily',
+  'ReleaseNote',
+  'TeamDelegation',
   // BranchWebhookEvent FK to PayrollItem is ON DELETE SET NULL, so rows
   // would persist across tests with payrollItemId=null and trip the
   // branchEventId unique constraint on the next test that reuses an id.
