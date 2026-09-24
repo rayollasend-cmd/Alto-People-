@@ -38,6 +38,7 @@ import { startWeekAheadCron } from './lib/weekAheadDigest.js';
 import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { startOfferLetterCron } from './lib/offerLetters.js';
 import { startUsageFlusher } from './lib/usageTracker.js';
+import { startVitalsFlusher } from './lib/webVitals.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { startNotificationRetentionCron } from './lib/notificationRetention.js';
@@ -104,6 +105,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // and never in tests, where a stray interval would write rollup rows
   // into alto_test between suites; tests drive flushUsageForTests().
   startUsageFlusher();
+  // Same deal for the browser's web-vitals samples.
+  startVitalsFlusher();
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

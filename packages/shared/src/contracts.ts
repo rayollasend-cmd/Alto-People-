@@ -6577,6 +6577,37 @@ export interface RouteUsageResponse {
   failing: RouteUsageRow[];
 }
 
+export type WebVitalMetric = 'LCP' | 'INP' | 'CLS' | 'TTFB';
+export type WebVitalRating = 'good' | 'needs-improvement' | 'poor';
+
+/** One Core Web Vital over the window: p75 and how the samples rated. */
+export interface WebVitalSummary {
+  metric: WebVitalMetric;
+  samples: number;
+  /** Milliseconds, or the unitless CLS score. Null with no samples. */
+  p75: number | null;
+  rating: WebVitalRating | null;
+  good: number;
+  needsImprovement: number;
+  poor: number;
+}
+
+export interface WebVitalRouteRow {
+  /** SPA path pattern — "/clients/:id". Never a resolved path. */
+  route: string;
+  samples: number;
+  lcpP75: number | null;
+  inpP75: number | null;
+  clsP75: number | null;
+  ttfbP75: number | null;
+}
+
+export interface WebVitalsResponse {
+  metrics: WebVitalSummary[];
+  /** Busiest routes first. */
+  routes: WebVitalRouteRow[];
+}
+
 export interface AdoptionResponse {
   signups: { day: string; accounts: number }[];
   funnel: {

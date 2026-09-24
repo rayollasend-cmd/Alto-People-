@@ -26,6 +26,7 @@ import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
 import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
 import { clearPersistedQueries, startQueryPersistence } from './queryPersist';
 import { setDisplayTimeZone } from './format';
+import { startWebVitals } from './webVitals';
 
 /**
  * How long a network failure must go un-contradicted (no request getting
@@ -388,6 +389,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setDisplayTimeZone(user?.timezone ?? null);
   }, [user?.timezone]);
+
+  // The web-vitals beacon rides the session cookie, so measuring starts
+  // with the first signed-in render (idempotent after that).
+  const signedIn = Boolean(user);
+  useEffect(() => {
+    if (signedIn) startWebVitals();
+  }, [signedIn]);
 
   const switchRole = useCallback(async (role: Role) => {
     const res = await apiFetch<MeResponse>('/auth/me/active-role', {

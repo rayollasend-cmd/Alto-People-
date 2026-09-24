@@ -35,6 +35,9 @@ jobs:
       - run: npm ci
       # Builds shared → web → api (the api build runs prisma generate).
       - run: npm run build
+      # The bundle-size budget (apps/web/size-budget.json): a chunk that
+      # grows past its line fails here, in the commit that grew it.
+      - run: npm -w apps/web run size:check
       # Design-system guardrails: rules are warn-level on the existing
       # debt (the warning count is the burndown metric) but any ERROR —
       # including parse failures — fails the job.

@@ -3,6 +3,7 @@ import type {
   AdoptionResponse,
   RouteUsageResponse,
   TrafficResponse,
+  WebVitalsResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -28,4 +29,8 @@ export function getRouteUsage(days: number, limit = 15): Promise<RouteUsageRespo
 
 export function getAdoption(days: number): Promise<AdoptionResponse> {
   return apiFetch<AdoptionResponse>(`/product-analytics/adoption?days=${days}`);
+}
+
+export function getWebVitals(days: number, limit = 15): Promise<WebVitalsResponse> {
+  return apiFetch<WebVitalsResponse>(`/product-analytics/web-vitals?days=${days}&limit=${limit}`);
 }

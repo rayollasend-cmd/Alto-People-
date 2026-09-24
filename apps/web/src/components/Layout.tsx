@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
+import { noteRouteChange } from '@/lib/webVitals';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
 import {
@@ -104,6 +105,10 @@ export function Layout() {
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
   const location = useLocation();
+  // A soft navigation closes the books on the previous route's web vitals.
+  useEffect(() => {
+    noteRouteChange(location.pathname);
+  }, [location.pathname]);
   const navigationType = useNavigationType();
   const mainRef = useRef<HTMLElement>(null);
   // True while a page chunk is still on the wire — see lib/chunkLoading.

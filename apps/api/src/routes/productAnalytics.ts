@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import {
+  addHistograms,
+  emptyHistogram,
+  p75FromHistogram,
+  rate,
+  WEB_VITAL_METRICS,
+  type WebVitalMetric,
+} from '../lib/webVitals.js';
 
 export const productAnalyticsRouter = Router();
 
@@ -257,6 +265,87 @@ productAnalyticsRouter.get('/adoption', VIEW, async (req, res, next) => {
       neverSignedIn: never,
       dormant30d: dormant,
       totalActiveAccounts: total,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /product-analytics/web-vitals?days=30&limit=15
+ *
+ * How the app feels on real devices: p75 of each Core Web Vital across
+ * the window, rated against Google's thresholds, and the same per route
+ * for the routes people actually open. Everything comes from the daily
+ * histogram rollup — the 75th percentile is a walk over buckets, so the
+ * page costs the same whether the window holds a hundred samples or a
+ * million.
+ */
+productAnalyticsRouter.get('/web-vitals', VIEW, async (req, res, next) => {
+  try {
+    const days = parseDays(req.query.days);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 15, 1), 100);
+    const from = windowStart(days);
+
+    const rows = await prisma.webVitalDaily.findMany({
+      where: { day: { gte: from } },
+      select: { route: true, metric: true, count: true, good: true, needsWork: true, poor: true, histogram: true },
+    });
+
+    type Fold = { samples: number; good: number; needsWork: number; poor: number; histogram: number[] };
+    const fold = (): Record<WebVitalMetric, Fold> =>
+      Object.fromEntries(
+        WEB_VITAL_METRICS.map((m) => [m, { samples: 0, good: 0, needsWork: 0, poor: 0, histogram: emptyHistogram(m) }]),
+      ) as Record<WebVitalMetric, Fold>;
+    const overall = fold();
+    const byRoute = new Map<string, Record<WebVitalMetric, Fold>>();
+    for (const r of rows) {
+      const metric = r.metric as WebVitalMetric;
+      if (!WEB_VITAL_METRICS.includes(metric)) continue;
+      const add = (f: Fold) => {
+        f.samples += r.count;
+        f.good += r.good;
+        f.needsWork += r.needsWork;
+        f.poor += r.poor;
+        f.histogram = addHistograms(metric, f.histogram, r.histogram);
+      };
+      add(overall[metric]);
+      let route = byRoute.get(r.route);
+      if (!route) {
+        route = fold();
+        byRoute.set(r.route, route);
+      }
+      add(route[metric]);
+    }
+
+    const summarise = (metric: WebVitalMetric, f: Fold) => {
+      const p75 = p75FromHistogram(metric, f.histogram);
+      return {
+        metric,
+        samples: f.samples,
+        p75,
+        rating: p75 === null ? null : rate(metric, p75),
+        good: f.good,
+        needsImprovement: f.needsWork,
+        poor: f.poor,
+      };
+    };
+
+    res.json({
+      metrics: WEB_VITAL_METRICS.map((m) => summarise(m, overall[m])),
+      routes: [...byRoute.entries()]
+        .map(([route, f]) => ({
+          route,
+          // Page views ≈ LCP samples: one per hard navigation; the SPA's
+          // soft navigations report CLS/INP only, so take the max.
+          samples: Math.max(...WEB_VITAL_METRICS.map((m) => f[m].samples)),
+          lcpP75: p75FromHistogram('LCP', f.LCP.histogram),
+          inpP75: p75FromHistogram('INP', f.INP.histogram),
+          clsP75: p75FromHistogram('CLS', f.CLS.histogram),
+          ttfbP75: p75FromHistogram('TTFB', f.TTFB.histogram),
+        }))
+        .sort((a, b) => b.samples - a.samples)
+        .slice(0, limit),
     });
   } catch (err) {
     next(err);

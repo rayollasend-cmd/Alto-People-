@@ -34,6 +34,7 @@ import { complianceRouter } from './routes/compliance.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
+import { telemetryRouter } from './routes/telemetry.js';
 import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
@@ -407,6 +408,9 @@ export function createApp() {
   // the workforce analytics above, so its own capability rather than a
   // sub-path under view:dashboard.
   app.use('/product-analytics', productAnalyticsRouter);
+  // The browser's own report card (web vitals). Signed-in only; nothing
+  // here is readable, it only feeds the rollups product-analytics reads.
+  app.use('/telemetry', telemetryRouter);
   // One-click unsubscribe: mailbox providers POST this with no session, so
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.

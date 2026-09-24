@@ -7923,6 +7923,27 @@ model RouteUsageDaily {
   @@index([day])
 }
 
+/// Real-user web vitals (LCP, INP, CLS, TTFB), rolled up per SPA route and
+/// UTC day. Values live in a fixed log-spaced histogram whose edges
+/// lib/webVitals.ts owns, so p75 is a walk over ~25 integers and a day of
+/// a route costs one row however busy it was. The route is a path
+/// pattern ("/clients/:id"), never a resolved id.
+model WebVitalDaily {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day       DateTime @db.Date
+  route     String   @db.VarChar(200)
+  metric    String   @db.VarChar(8)
+  count     Int      @default(0)
+  sum       Float    @default(0)
+  good      Int      @default(0)
+  needsWork Int      @default(0)
+  poor      Int      @default(0)
+  histogram Int[]    @default([])
+
+  @@unique([day, route, metric])
+  @@index([day])
+}
+
 /// Every IP an account has successfully signed in from. Small by nature —
 /// people have few networks — and it exists so "is this sign-in from
 /// somewhere new?" is an indexed lookup instead of a scan of the audit log.

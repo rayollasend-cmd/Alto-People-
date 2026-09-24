@@ -13,12 +13,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Activity, AlertTriangle, TrendingUp, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Gauge, TrendingUp, Users } from 'lucide-react';
+import type { WebVitalMetric, WebVitalRating, WebVitalRouteRow } from '@alto-people/shared';
 import {
   getActiveUsers,
   getAdoption,
   getRouteUsage,
   getTraffic,
+  getWebVitals,
 } from '@/lib/productAnalyticsApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -51,6 +53,29 @@ const shortDay = (day: string) => day.slice(5);
 
 const pct = (v: number) => `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`;
 
+// Web vitals read as plain words; the acronyms stay in the tooltip.
+const VITAL_LABEL: Record<WebVitalMetric, string> = {
+  LCP: 'Largest paint',
+  INP: 'Tap response',
+  CLS: 'Layout shift',
+  TTFB: 'Server time',
+};
+const VITAL_HINT: Record<WebVitalMetric, string> = {
+  LCP: 'LCP — time until the biggest thing on the page has painted',
+  INP: 'INP — how long a tap or key takes to get a visible response',
+  CLS: 'CLS — how much the page jumped while it loaded',
+  TTFB: 'TTFB — how long the server took to start answering',
+};
+const RATING_TONE: Record<WebVitalRating, string> = {
+  good: 'text-success',
+  'needs-improvement': 'text-warning',
+  poor: 'text-alert',
+};
+const ratingWord = (r: WebVitalRating | null) =>
+  r === 'good' ? 'Good' : r === 'poor' ? 'Poor' : r === 'needs-improvement' ? 'Needs work' : '—';
+const fmtVital = (metric: WebVitalMetric, v: number | null) =>
+  v === null ? '—' : metric === 'CLS' ? v.toFixed(2) : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
+
 export function ProductAnalytics() {
   const [window, setWindow] = useState('30');
   const days = Number(window);
@@ -66,6 +91,10 @@ export function ProductAnalytics() {
   const routes = useQuery({
     queryKey: ['product-analytics', 'routes', days],
     queryFn: () => getRouteUsage(days),
+  });
+  const vitals = useQuery({
+    queryKey: ['product-analytics', 'web-vitals', days],
+    queryFn: () => getWebVitals(days),
   });
   const adoption = useQuery({
     queryKey: ['product-analytics', 'adoption', days],
@@ -303,6 +332,70 @@ export function ProductAnalytics() {
                   <Line type="monotone" dataKey="serverError" name="Server errors" stroke="#e05260" dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---- Web vitals ---------------------------------------------- */}
+      {vitals.isError ? (
+        <QueryError what="web vitals" query={vitals} />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-gold" aria-hidden="true" />
+              How it feels on real devices
+              <span className="ml-auto text-xs font-normal text-silver">
+                75th percentile · Core Web Vitals
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {vitals.isLoading ? (
+              <Skeleton className="h-24" />
+            ) : (
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                {(vitals.data?.metrics ?? []).map((m) => (
+                  <div key={m.metric} title={VITAL_HINT[m.metric]}>
+                    <MetricCard
+                      label={VITAL_LABEL[m.metric]}
+                      value={fmtVital(m.metric, m.p75)}
+                      hint={
+                        m.samples === 0 ? (
+                          'No samples yet'
+                        ) : (
+                          <>
+                            <span className={m.rating ? RATING_TONE[m.rating] : ''}>{ratingWord(m.rating)}</span>
+                            {' · '}
+                            {m.samples.toLocaleString()} samples
+                          </>
+                        )
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {(vitals.data?.routes ?? []).length > 0 && (
+              <DataGrid<WebVitalRouteRow>
+                id="analytics-vitals-routes"
+                caption="Web vitals by route"
+                rows={vitals.data?.routes ?? []}
+                rowKey={(r) => r.route}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'web-vitals-by-route' }}
+                columnChooser={false}
+                columns={[
+                  { key: 'route', header: 'Route', accessor: (r) => r.route, sortable: true, primary: true, className: 'font-mono text-xs' },
+                  { key: 'samples', header: 'Views', accessor: (r) => r.samples, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                  { key: 'lcp', header: 'Largest paint', accessor: (r) => r.lcpP75, csv: (r) => fmtVital('LCP', r.lcpP75), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtVital('LCP', r.lcpP75) },
+                  { key: 'inp', header: 'Tap response', accessor: (r) => r.inpP75, csv: (r) => fmtVital('INP', r.inpP75), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtVital('INP', r.inpP75) },
+                  { key: 'cls', header: 'Layout shift', accessor: (r) => r.clsP75, csv: (r) => fmtVital('CLS', r.clsP75), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtVital('CLS', r.clsP75) },
+                  { key: 'ttfb', header: 'Server time', accessor: (r) => r.ttfbP75, csv: (r) => fmtVital('TTFB', r.ttfbP75), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtVital('TTFB', r.ttfbP75) },
+                ]}
+              />
             )}
           </CardContent>
         </Card>
