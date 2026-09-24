@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryClient } from '@/lib/queryClient';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -156,28 +157,18 @@ import { useClientBounded } from '@/lib/useClientBounded';
 // null = still loading / no client picked. The dropdown in the shift dialogs
 // is sourced from this; admins manage the list in org settings.
 function useShiftPositionNames(clientId: string | null | undefined): string[] | null {
-  const [names, setNames] = useState<string[] | null>(null);
-  useEffect(() => {
-    if (!clientId) {
-      setNames([]);
-      return;
-    }
-    let cancelled = false;
-    setNames(null);
-    listShiftPositions(clientId)
-      .then((res) => {
-        if (!cancelled) setNames(res.shiftPositions.map((p) => p.name));
-      })
-      .catch(() => {
-        // Non-fatal: fall back to an empty list (the field still preserves
-        // any current value and shows a "manage positions" hint).
-        if (!cancelled) setNames([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
-  return names;
+  const positions = useQuery({
+    queryKey: ['scheduling', 'positions', clientId ?? ''],
+    queryFn: () => listShiftPositions(clientId!),
+    enabled: Boolean(clientId),
+  });
+  return useMemo(() => {
+    if (!clientId) return [];
+    // Non-fatal: fall back to an empty list (the field still preserves
+    // any current value and shows a "manage positions" hint).
+    if (positions.isError) return [];
+    return positions.data ? positions.data.shiftPositions.map((p) => p.name) : null;
+  }, [clientId, positions.data, positions.isError]);
 }
 
 // Shared position dropdown for the shift create/edit/template dialogs. Sources
@@ -486,54 +477,33 @@ function fmtPrintRange(from: string, to: string): string {
 
 /* ----- Short-TTL request caches (candidates + conflict checks) ----------- */
 // Hover-opening a chip and prefetching the AssignDialog's top picks both
-// re-request the same rankings/checks within seconds. A tiny in-memory
-// promise cache absorbs that without an invalidation story — 30s is short
-// enough that staleness self-heals, and every write path still goes through
-// the server's own validation.
+// re-request the same rankings/checks within seconds. The query cache
+// absorbs that with a 30s freshness window — short enough that staleness
+// self-heals, and every write path still goes through the server's own
+// validation. The dialog reads the same entries through useQuery.
 const RANK_CACHE_TTL_MS = 30_000;
 
-const candidateCache = new Map<
-  string,
-  { at: number; promise: Promise<AutoFillCandidate[]> }
->();
-/** Ranked candidates for a shift, best first — cached ~30s per shift id. */
+/** Ranked candidates for a shift, best first. */
+const candidatesQueryOptions = (shiftId: string) => ({
+  queryKey: ['scheduling', 'candidates', shiftId] as const,
+  queryFn: () =>
+    getAutoFillCandidates(shiftId).then((r) => [...r.candidates].sort((a, b) => b.score - a.score)),
+  staleTime: RANK_CACHE_TTL_MS,
+});
+/** The conflict check for one (shift, associate) pair. */
+const conflictsQueryOptions = (shiftId: string, associateId: string) => ({
+  queryKey: ['scheduling', 'conflicts', shiftId, associateId] as const,
+  queryFn: () => getShiftConflicts(shiftId, associateId),
+  staleTime: RANK_CACHE_TTL_MS,
+});
+/** Ranked candidates through the cache — the hover chip's top pick and the
+ *  AssignDialog's list read one entry. */
 function getCachedCandidates(shiftId: string): Promise<AutoFillCandidate[]> {
-  const hit = candidateCache.get(shiftId);
-  const now = Date.now();
-  if (hit && now - hit.at < RANK_CACHE_TTL_MS) return hit.promise;
-  const promise = getAutoFillCandidates(shiftId).then((r) =>
-    [...r.candidates].sort((a, b) => b.score - a.score),
-  );
-  // Never cache a failure for the whole TTL — the next call retries.
-  promise.catch(() => candidateCache.delete(shiftId));
-  candidateCache.set(shiftId, { at: now, promise });
-  return promise;
+  return queryClient.fetchQuery(candidatesQueryOptions(shiftId));
 }
-
-const conflictsCache = new Map<
-  string,
-  { at: number; promise: Promise<ShiftConflictsResponse> }
->();
-/** Conflict check cached ~30s per (shift, associate) pair. */
-function getCachedConflicts(
-  shiftId: string,
-  associateId: string,
-): Promise<ShiftConflictsResponse> {
-  const key = `${shiftId}_${associateId}`;
-  const hit = conflictsCache.get(key);
-  const now = Date.now();
-  if (hit && now - hit.at < RANK_CACHE_TTL_MS) return hit.promise;
-  const promise = getShiftConflicts(shiftId, associateId);
-  promise.catch(() => conflictsCache.delete(key));
-  conflictsCache.set(key, { at: now, promise });
-  return promise;
-}
-
-/** True when a fresh conflict check is already cached — lets the
- *  AssignDialog skip its debounce for prefetched candidates. */
-function hasCachedConflicts(shiftId: string, associateId: string): boolean {
-  const hit = conflictsCache.get(`${shiftId}_${associateId}`);
-  return !!hit && Date.now() - hit.at < RANK_CACHE_TTL_MS;
+/** Conflict check through the cache. */
+function getCachedConflicts(shiftId: string, associateId: string): Promise<ShiftConflictsResponse> {
+  return queryClient.fetchQuery(conflictsQueryOptions(shiftId, associateId));
 }
 
 interface AdminSchedulingViewProps {
@@ -639,12 +609,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const valid = ['ALL', 'OPEN', 'ASSIGNED', 'DRAFT', 'COMPLETED', 'CANCELLED'];
     return s && valid.includes(s) ? (s as ShiftStatus | 'ALL') : 'OPEN';
   });
-  const [shifts, setShifts] = useState<Shift[] | null>(null);
-  // True when the server capped the result — the visible list is a prefix, not
-  // the whole match set. Drives a "narrow your range" banner in list view.
-  const [listTruncated, setListTruncated] = useState(false);
-  const [clients, setClients] = useState<ClientSummary[]>([]);
-  const [associates, setAssociates] = useState<AssociateLite[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
   // End of a drag-created range (time-grid drag-to-create); null = default.
@@ -729,26 +693,23 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [clientFilter, locationFilter, filter, posFilter]);
   // Locations belonging to the currently-selected client, for the cascade.
   // null = loading; [] = client has none (or no client selected).
-  const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
   const [showAllAssociates, setShowAllAssociates] = useState<boolean>(true);
   // Standing shift crews at the selected location — the third level of the
   // Client → Location → Shift cascade. Picking one narrows the roster (grid
   // rows, assign + create pickers) to that crew's members.
-  const [teams, setTeams] = useState<ShiftTeamData[]>([]);
   const [teamFilter, setTeamFilter] = useState<string>('');
   const [teamsOpen, setTeamsOpen] = useState(false);
+  const teamsQuery = useQuery({
+    queryKey: ['scheduling', 'teams', locationFilter],
+    queryFn: () => listShiftTeams({ locationId: locationFilter }),
+    enabled: Boolean(clientFilter && locationFilter),
+  });
+  const teams: ShiftTeamData[] =
+    clientFilter && locationFilter && !teamsQuery.isError ? (teamsQuery.data?.teams ?? []) : [];
+  const { refetch: refetchTeams } = teamsQuery;
   const refreshTeams = useCallback(() => {
-    if (!clientFilter || !locationFilter) {
-      setTeams([]);
-      return;
-    }
-    listShiftTeams({ locationId: locationFilter })
-      .then((r) => setTeams(r.teams))
-      .catch(() => setTeams([]));
-  }, [clientFilter, locationFilter]);
-  useEffect(() => {
-    refreshTeams();
-  }, [refreshTeams]);
+    void refetchTeams();
+  }, [refetchTeams]);
   // A team belongs to one location — clear the selection when the site (or
   // client) changes so a stale crew can't silently keep filtering.
   useEffect(() => {
@@ -796,12 +757,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [highlightAssociateId, setHighlightAssociateId] = useState<string | null>(
     () => searchParams.get('associate'),
   );
-  const shiftsLoaded = shifts !== null;
-  useEffect(() => {
-    if (!highlightAssociateId || !shiftsLoaded) return;
-    const t = window.setTimeout(() => setHighlightAssociateId(null), 2500);
-    return () => window.clearTimeout(t);
-  }, [highlightAssociateId, shiftsLoaded]);
 
   // Day-view anchor (defaults to today, or the last day viewed). Independent
   // of weekStart so the user can have a "calendar week" they're planning AND a
@@ -875,9 +830,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Phase 54.4 — PDF export pending flag.
   const [exportingPdf, setExportingPdf] = useState(false);
 
-  // KPI strip — always pulls the *current* week regardless of which week
-  // the calendar is showing, so the "right now" signal stays consistent.
-  const [kpis, setKpis] = useState<SchedulingKpis | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
   const [copyingWeek, setCopyingWeek] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -1005,24 +957,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       : false);
   // Counted on the STORE's calendar, server-side (see kpiWindow).
   const kpi = useMemo(() => kpiWindow({ view, weekStart, weekDayCount }), [view, weekStart, weekDayCount]);
-  const kpiSeq = useRef(0);
-  useEffect(() => {
-    if (!canSeeKpis) return;
-    const seq = ++kpiSeq.current;
-    const t = window.setTimeout(() => {
+  // KPI strip — always pulls the *current* week regardless of which week
+  // the calendar is showing, so the "right now" signal stays consistent.
+  const kpisQuery = useQuery({
+    queryKey: ['scheduling', 'kpis', kpi.query, clientFilter],
+    queryFn: () =>
       getSchedulingKpis({
         ...kpi.query,
         ...(clientFilter ? { clientId: clientFilter } : {}),
-      })
-        .then((k) => {
-          if (seq === kpiSeq.current) setKpis(k);
-        })
-        .catch(() => {
-          if (seq === kpiSeq.current) setKpis(null);
-        });
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [shifts, kpi, clientFilter, canSeeKpis]);
+      }),
+    enabled: canSeeKpis,
+    placeholderData: keepPreviousData,
+  });
+  const kpis: SchedulingKpis | null =
+    canSeeKpis && !kpisQuery.isError ? (kpisQuery.data ?? null) : null;
 
   // Last position used in the create dialog this session — most weeks
   // schedule one role at a time, so it prefills the next create.
@@ -1035,42 +983,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Availability/PTO fit for the visible range — shades grid cells where
   // an associate is on approved time off or outside their weekly windows,
   // BEFORE a shift gets dropped on them.
-  const [availabilityFit, setAvailabilityFit] = useState<Map<
-    string,
-    { dows: Set<number>; blocked: Set<string> }
-  > | null>(null);
-  useEffect(() => {
-    if (!canManage || (view !== 'week' && view !== 'day')) {
-      setAvailabilityFit(null);
-      return;
-    }
-    let cancelled = false;
-    // Padded ±1 day for the same cross-zone edge reason as the shift fetch:
-    // shading keys are store-zone days while these bounds are browser-local.
-    const from = addDaysLocal(view === 'week' ? weekStart : dayAnchor, -1);
-    const to = addDaysLocal(view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1), 1);
-    getAvailabilityOverview(from.toISOString(), to.toISOString())
-      .then((r) => {
-        if (cancelled) return;
-        setAvailabilityFit(
-          new Map(
-            r.associates.map((a) => [
-              a.associateId,
-              {
-                dows: new Set(a.windows.map((w) => w.dayOfWeek)),
-                blocked: new Set(a.blockedDays),
-              },
-            ]),
-          ),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setAvailabilityFit(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canManage, view, weekStart, weekEnd, dayAnchor]);
+  // Padded ±1 day for the same cross-zone edge reason as the shift fetch:
+  // shading keys are store-zone days while these bounds are browser-local.
+  const fitOn = canManage && (view === 'week' || view === 'day');
+  const fitFrom = fitOn ? addDaysLocal(view === 'week' ? weekStart : dayAnchor, -1).toISOString() : null;
+  const fitTo = fitOn
+    ? addDaysLocal(view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1), 1).toISOString()
+    : null;
+  const availabilityQuery = useQuery({
+    queryKey: ['scheduling', 'availability-fit', fitFrom, fitTo],
+    queryFn: () => getAvailabilityOverview(fitFrom!, fitTo!),
+    enabled: fitOn,
+  });
+  const availabilityFit = useMemo<Map<string, { dows: Set<number>; blocked: Set<string> }> | null>(() => {
+    if (!fitOn || !availabilityQuery.data) return null;
+    return new Map(
+      availabilityQuery.data.associates.map((a) => [
+        a.associateId,
+        {
+          dows: new Set(a.windows.map((w) => w.dayOfWeek)),
+          blocked: new Set(a.blockedDays),
+        },
+      ]),
+    );
+  }, [fitOn, availabilityQuery.data]);
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
@@ -1168,28 +1104,42 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
 
-  // Monotonic request id: a newer refresh() supersedes any in-flight one, so
-  // a slow earlier response can't land last and repaint stale shifts (rapid
-  // week paging, or a mutation's refresh racing a navigation's).
-  const reqSeq = useRef(0);
-  const refresh = useCallback(async () => {
-    const seq = ++reqSeq.current;
-    try {
-      const res = await listShifts(requestArgs);
-      // A newer request started while we were awaiting → discard this result.
-      if (seq !== reqSeq.current) return;
-      setShifts(res.shifts);
-      setListTruncated(res.truncated ?? false);
-    } catch (err) {
-      if (seq !== reqSeq.current) return;
-      const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
-      toast.error(msg);
-    }
-  }, [requestArgs]);
-
+  // Keyed on the request identity: a newer window supersedes any in-flight
+  // read (rapid week paging, a mutation's refresh racing a navigation's),
+  // and the previous rows stay up until the new ones land.
+  const shiftsKey = ['scheduling', 'shifts', requestKey] as const;
+  const shiftsQuery = useQuery({
+    queryKey: shiftsKey,
+    queryFn: () => listShifts(requestArgs),
+    placeholderData: keepPreviousData,
+  });
+  const shifts: Shift[] | null = shiftsQuery.data?.shifts ?? null;
+  const shiftsLoaded = shifts !== null;
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!highlightAssociateId || !shiftsLoaded) return;
+    const t = window.setTimeout(() => setHighlightAssociateId(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [highlightAssociateId, shiftsLoaded]);
+  // True when the server capped the result — the visible list is a prefix, not
+  // the whole match set. Drives a "narrow your range" banner in list view.
+  const listTruncated = shiftsQuery.data?.truncated ?? false;
+  const { refetch: refetchShifts } = shiftsQuery;
+  const refresh = useCallback(async () => {
+    await refetchShifts();
+  }, [refetchShifts]);
+  useEffect(() => {
+    if (!shiftsQuery.error) return;
+    toast.error(shiftsQuery.error instanceof ApiError ? shiftsQuery.error.message : 'Failed to load shifts.');
+  }, [shiftsQuery.error]);
+  // The KPI strip follows the schedule: a burst of edits re-reads it once,
+  // 300ms after the last one.
+  const { refetch: refetchKpis } = kpisQuery;
+  useEffect(() => {
+    if (!canSeeKpis || !shifts) return;
+    const t = window.setTimeout(() => void refetchKpis(), 300);
+    return () => window.clearTimeout(t);
+  }, [shifts, canSeeKpis, refetchKpis]);
+  const queryCache = useQueryClient();
 
   // New query window or position filter → back to the first page. NOT reset
   // on every refresh: a mutation's refetch would collapse an expanded list.
@@ -1197,46 +1147,39 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setListVisibleCount(LIST_PAGE_SIZE);
   }, [requestArgs, posFilter]);
 
+  // /clients is the accounts area (view:clients, carries bill rates);
+  // scheduler-tier roles without it read the operational directory. A
+  // client-bound role reads neither — /clients would 403 — and is seeded
+  // with its one client.
+  const canSeeAccounts = can('view:clients');
+  const clientsQuery = useQuery({
+    queryKey: ['scheduling', 'clients', canSeeAccounts ? 'accounts' : 'directory'],
+    queryFn: async (): Promise<ClientSummary[]> => {
+      if (canSeeAccounts) {
+        const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
+        return res.clients;
+      }
+      const res = await apiFetch<{ clients: Array<{ id: string; name: string }> }>('/scheduling/clients');
+      return res.clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        industry: null,
+        status: 'ACTIVE' as const,
+        contactEmail: null,
+        state: null,
+      }));
+    },
+    enabled: canManage && !boundedClient,
+  });
+  const clients: ClientSummary[] = boundedClient ? [boundedClient] : (clientsQuery.data ?? []);
   // True when the admin client fetch failed — the New-shift dialog shows an
   // error + retry instead of the old silent free-text UUID fallback.
-  const [clientsError, setClientsError] = useState(false);
+  const clientsError = !boundedClient && clientsQuery.isError;
+  const { refetch: refetchClients } = clientsQuery;
   const loadClients = useCallback(async () => {
-    if (!canManage) return;
-    if (boundedClient) {
-      // Client-bound role: /clients would 403 — seed with the one client.
-      setClients([boundedClient]);
-      setClientsError(false);
-      return;
-    }
-    try {
-      // /clients is the accounts area (view:clients, carries bill rates);
-      // scheduler-tier roles without it read the operational directory.
-      if (can('view:clients')) {
-        const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
-        setClients(res.clients);
-      } else {
-        const res = await apiFetch<{
-          clients: Array<{ id: string; name: string }>;
-        }>('/scheduling/clients');
-        setClients(
-          res.clients.map((c) => ({
-            id: c.id,
-            name: c.name,
-            industry: null,
-            status: 'ACTIVE' as const,
-            contactEmail: null,
-            state: null,
-          })),
-        );
-      }
-      setClientsError(false);
-    } catch {
-      setClientsError(true);
-    }
-  }, [canManage, boundedClient, can]);
-  useEffect(() => {
-    loadClients();
-  }, [loadClients]);
+    if (!canManage || boundedClient) return;
+    await refetchClients();
+  }, [canManage, boundedClient, refetchClients]);
 
   // ?new=shift (command palette deep link): open the create-shift dialog
   // once the client list the dialog needs has arrived, then consume the
@@ -1264,33 +1207,49 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // grid with no roster rows — indistinguishable from "this client has
   // nobody". Surface it so the manager knows to retry instead of
   // concluding the schedule is empty.
-  const [associatesError, setAssociatesError] = useState(false);
+  const rosterKey = [
+    'scheduling',
+    'roster',
+    clientFilter,
+    clientFilter ? locationFilter : '',
+    clientFilter && locationFilter ? teamFilter : '',
+  ] as const;
+  const rosterQuery = useQuery({
+    queryKey: rosterKey,
+    queryFn: () =>
+      listSchedulingAssociates({
+        clientId: clientFilter || undefined,
+        locationId: (clientFilter && locationFilter) || undefined,
+        teamId: (clientFilter && locationFilter && teamFilter) || undefined,
+      }),
+    enabled: canManage,
+    placeholderData: keepPreviousData,
+  });
+  const associates: AssociateLite[] = rosterQuery.isError ? [] : (rosterQuery.data?.associates ?? []);
+  const associatesError = rosterQuery.isError;
   // The roster is the grid's row axis, and the server pages it. Without
   // surfacing the cut, an org-wide view past the page cap renders an
   // incomplete grid that looks complete — the manager scans for unstaffed
   // people and never sees the ones that fell off the end.
-  const [associatesTruncated, setAssociatesTruncated] = useState(false);
+  const associatesTruncated = !rosterQuery.isError && rosterQuery.data?.truncated === true;
+  const { refetch: refetchRoster } = rosterQuery;
   const loadAssociates = useCallback(() => {
     if (!canManage) return;
-    listSchedulingAssociates({
-      clientId: clientFilter || undefined,
-      locationId: (clientFilter && locationFilter) || undefined,
-      teamId: (clientFilter && locationFilter && teamFilter) || undefined,
-    })
-      .then((res) => {
-        setAssociates(res.associates);
-        setAssociatesTruncated(res.truncated === true);
-        setAssociatesError(false);
-      })
-      .catch(() => {
-        setAssociates([]);
-        setAssociatesTruncated(false);
-        setAssociatesError(true);
-      });
-  }, [canManage, clientFilter, locationFilter, teamFilter]);
-  useEffect(() => {
-    loadAssociates();
-  }, [loadAssociates]);
+    void refetchRoster();
+  }, [canManage, refetchRoster]);
+  // Optimistic roster edits (reorder, crew add/remove) patch the cached
+  // page; the save follows and a reload restores the server's truth.
+  type RosterPage = Awaited<ReturnType<typeof listSchedulingAssociates>>;
+  const patchRoster = useCallback(
+    (update: (prev: AssociateLite[]) => AssociateLite[]) => {
+      queryCache.setQueryData<RosterPage>(rosterKey, (prev) =>
+        prev ? { ...prev, associates: update(prev.associates) } : prev,
+      );
+    },
+    // rosterKey is a fresh tuple each render; these are its moving parts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryCache, clientFilter, locationFilter, teamFilter],
+  );
 
   // Row reordering — the supervisor's whiteboard order, saved per client
   // and shared by everyone who schedules it. Only meaningful when one
@@ -1315,7 +1274,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const moveAssociateRow = useCallback(
     (associateId: string, neighborId: string, dir: -1 | 1) => {
       if (!clientFilter || reorderBusy.current) return;
-      setAssociates((prev) => {
+      patchRoster((prev) => {
         const from = prev.findIndex((a) => a.id === associateId);
         const anchor = prev.findIndex((a) => a.id === neighborId);
         if (from === -1 || anchor === -1) return prev;
@@ -1341,22 +1300,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         return next;
       });
     },
-    [clientFilter, loadAssociates],
+    [clientFilter, loadAssociates, patchRoster],
   );
 
   /* ----- Coverage targets (expected floor headcount) --------------------- */
   // The Labor page's staffing targets, surfaced in the week grid's footer:
   // per day, peak scheduled heads vs the site's floor target, with a
   // tappable "N short" that posts that many open shifts.
-  const [staffingTargets, setStaffingTargets] = useState<
-    StaffingTargetLocation[] | null
-  >(null);
-  useEffect(() => {
-    if (!canManage) return;
-    listStaffingTargets()
-      .then((r) => setStaffingTargets(r.locations))
-      .catch(() => setStaffingTargets(null));
-  }, [canManage]);
+  const staffingTargetsQuery = useQuery({
+    queryKey: ['scheduling', 'staffing-targets'],
+    queryFn: () => listStaffingTargets(),
+    enabled: canManage,
+  });
+  const staffingTargets: StaffingTargetLocation[] | null =
+    canManage && !staffingTargetsQuery.isError ? (staffingTargetsQuery.data?.locations ?? null) : null;
   const coverageTarget = useMemo(() => {
     if (!clientFilter || !staffingTargets) return null;
     const rows = staffingTargets.filter(
@@ -1399,7 +1356,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // Optimistic: the row appears NOW (which also drops them from the
     // picker's candidate list); the save follows, then a reload picks up
     // the saved roster order.
-    setAssociates((prev) => (prev.some((x) => x.id === a.id) ? prev : [...prev, a]));
+    patchRoster((prev) => (prev.some((x) => x.id === a.id) ? prev : [...prev, a]));
     addShiftTeamMember(teamFilter, a.id)
       .then(() => loadAssociates())
       .catch(() => {
@@ -1411,13 +1368,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const removeFromCrew = useCallback(
     (associateId: string) => {
       if (!teamFilter) return;
-      setAssociates((prev) => prev.filter((a) => a.id !== associateId));
+      patchRoster((prev) => prev.filter((a) => a.id !== associateId));
       removeShiftTeamMember(teamFilter, associateId).catch(() => {
         toast.error('Could not remove them from the crew.');
         loadAssociates();
       });
     },
-    [teamFilter, loadAssociates],
+    [teamFilter, loadAssociates, patchRoster],
   );
 
   // Cascade: when the client narrows, load THAT client's locations for the
@@ -1436,22 +1393,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     } else {
       cascadeMounted.current = true;
     }
-    if (!clientFilter) {
-      setClientLocations([]);
-      return;
-    }
-    let cancelled = false;
-    listClientLocations(clientFilter)
-      .then((r) => {
-        if (!cancelled) setClientLocations(r.locations);
-      })
-      .catch(() => {
-        if (!cancelled) setClientLocations([]);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [clientFilter]);
+  const clientLocationsQuery = useQuery({
+    queryKey: ['clients', clientFilter, 'locations'],
+    queryFn: () => listClientLocations(clientFilter),
+    enabled: Boolean(clientFilter),
+  });
+  const clientLocations: LocationSummary[] = clientFilter
+    ? (clientLocationsQuery.data?.locations ?? [])
+    : [];
 
   // Position is the only client-side narrowing left — client and location
   // are both filtered server-side (clientId + locationId params). Exact
@@ -1993,16 +1943,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // a drag/resize/reassign is reflected in the grid before the server round-trip
   // lands, instead of snapping back and waiting on a full refetch. On error the
   // handler calls refresh() to snap back to server truth.
-  const patchShift = useCallback((id: string, patch: Partial<Shift>) => {
-    setShifts((prev) =>
-      prev ? prev.map((s) => (s.id === id ? { ...s, ...patch } : s)) : prev,
-    );
-  }, []);
-  const replaceShift = useCallback((updated: Shift) => {
-    setShifts((prev) =>
-      prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
-    );
-  }, []);
+  type ShiftsPage = Awaited<ReturnType<typeof listShifts>>;
+  const patchShift = useCallback(
+    (id: string, patch: Partial<Shift>) => {
+      queryCache.setQueryData<ShiftsPage>(shiftsKey, (prev) =>
+        prev ? { ...prev, shifts: prev.shifts.map((s) => (s.id === id ? { ...s, ...patch } : s)) } : prev,
+      );
+    },
+    // shiftsKey is a fresh tuple each render; its one moving part is requestKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryCache, requestKey],
+  );
+  const replaceShift = useCallback(
+    (updated: Shift) => {
+      queryCache.setQueryData<ShiftsPage>(shiftsKey, (prev) =>
+        prev ? { ...prev, shifts: prev.shifts.map((s) => (s.id === updated.id ? updated : s)) } : prev,
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryCache, requestKey],
+  );
 
   // Drag-resize / drag-move undo goes through the shared performWithUndo
   // (lib/undoToast) — the ONE undo pattern in the app. Deferred-commit: the
@@ -3920,16 +3880,7 @@ function AssignDialog({
 }) {
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
-  const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
-  const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
-  const [unavailable, setUnavailable] = useState<
-    { date: string; note: string | null }[] | null
-  >(null);
   const confirmOverride = useConfirm();
-  const [checking, setChecking] = useState(false);
-  // Set when the conflict check itself FAILS (network/500) — distinct from
-  // "checked, no conflicts" so the admin isn't misled into assigning blind.
-  const [checkError, setCheckError] = useState<string | null>(null);
   // Which submit is in flight: the plain assign or "assign & next".
   const [submitMode, setSubmitMode] = useState<null | 'one' | 'next'>(null);
   const submitting = submitMode !== null;
@@ -3945,12 +3896,7 @@ function AssignDialog({
           : null,
       );
       setQuery('');
-      setConflicts(null);
-      setTimeOff(null);
-      setUnavailable(null);
-      setCheckError(null);
       setSubmitMode(null);
-      setChecking(false);
       setHighlight(0);
     }
     // Reset only when the TARGET changes — a mid-dialog associates refetch
@@ -3961,84 +3907,70 @@ function AssignDialog({
   // Ranked fit for THIS shift — availability, conflicts, PTO, weekly hours.
   // Shown as the default list so assigning starts from "who fits" instead
   // of a blind name search.
-  const [candidates, setCandidates] = useState<AutoFillCandidate[] | null>(null);
+  const candidatesQuery = useQuery({
+    ...candidatesQueryOptions(target?.id ?? ''),
+    enabled: Boolean(target),
+  });
+  const candidates: AutoFillCandidate[] | null = !target
+    ? null
+    : candidatesQuery.isError
+      ? []
+      : (candidatesQuery.data ?? null);
+  // Prefetch conflict checks for the top picks so choosing one of them
+  // renders its verdict without a round-trip.
+  const queryCache = useQueryClient();
   useEffect(() => {
-    setCandidates(null);
-    if (!target) return;
-    let cancelled = false;
-    getCachedCandidates(target.id)
-      .then((ranked) => {
-        if (!cancelled) setCandidates(ranked);
-        // Prefetch conflict checks for the top picks so choosing one of
-        // them renders its verdict without the debounce round-trip.
-        for (const c of ranked.slice(0, 3)) {
-          getCachedConflicts(target.id, c.associateId).catch(() => {});
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setCandidates([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [target]);
+    if (!target || !candidatesQuery.data) return;
+    for (const c of candidatesQuery.data.slice(0, 3)) {
+      void queryCache.prefetchQuery(conflictsQueryOptions(target.id, c.associateId));
+    }
+  }, [queryCache, target, candidatesQuery.data]);
   const candidateById = useMemo(
     () => new Map((candidates ?? []).map((c) => [c.associateId, c])),
     [candidates],
   );
 
-  // Live conflict check on the picked associate — debounced, except when a
-  // fresh prefetched result is already cached (top candidates): then the
-  // check resolves immediately instead of sitting out the debounce.
-  useEffect(() => {
-    if (!target || !picked) {
-      setConflicts(null);
-      setTimeOff(null);
-      setUnavailable(null);
-      setCheckError(null);
-      return;
-    }
-    let cancelled = false;
-    const delay = hasCachedConflicts(target.id, picked.id) ? 0 : 250;
-    const handle = setTimeout(async () => {
-      setChecking(true);
-      try {
-        const c = await getCachedConflicts(target.id, picked.id);
-        if (cancelled) return;
-        setCheckError(null);
-        setConflicts(
-          c.conflicts.map((cf) => ({
+  // Live conflict check on the picked associate — through the cache, so a
+  // prefetched top candidate's verdict is there the moment they are picked.
+  const check = useQuery({
+    ...conflictsQueryOptions(target?.id ?? '', picked?.id ?? ''),
+    enabled: Boolean(target && picked),
+  });
+  const checking = Boolean(target && picked) && check.isPending;
+  // Set when the conflict check itself FAILS (network/500) — distinct from
+  // "checked, no conflicts" so the admin isn't misled into assigning blind.
+  const checkError =
+    target && picked && check.isError
+      ? 'Couldn’t check for conflicts — verify manually before assigning.'
+      : null;
+  const verdict = target && picked ? check.data : undefined;
+  const conflicts = useMemo<ConflictRow[] | null>(
+    () =>
+      verdict
+        ? verdict.conflicts.map((cf) => ({
             shiftId: cf.conflictingShiftId,
             position: cf.conflictingPosition,
             client: cf.conflictingClientName,
             startsAt: cf.conflictingStartsAt,
           }))
-        );
-        setTimeOff(
-          c.timeOffConflicts.map((t) => ({
+        : null,
+    [verdict],
+  );
+  const timeOff = useMemo<TimeOffRow[] | null>(
+    () =>
+      verdict
+        ? verdict.timeOffConflicts.map((t) => ({
             requestId: t.requestId,
             category: t.category,
             startDate: t.startDate,
             endDate: t.endDate,
           }))
-        );
-        setUnavailable(c.unavailableDays ?? []);
-      } catch {
-        if (!cancelled) {
-          setConflicts(null);
-          setTimeOff(null);
-          setUnavailable(null);
-          setCheckError('Couldn’t check for conflicts — verify manually before assigning.');
-        }
-      } finally {
-        if (!cancelled) setChecking(false);
-      }
-    }, delay);
-    return () => {
-      cancelled = true;
-      clearTimeout(handle);
-    };
-  }, [picked, target]);
+        : null,
+    [verdict],
+  );
+  const unavailable: { date: string; note: string | null }[] | null = verdict
+    ? (verdict.unavailableDays ?? [])
+    : null;
 
   const submit = async (mode: 'one' | 'next' = 'one') => {
     if (!target || !picked || submitting) return;
@@ -4651,26 +4583,19 @@ function DuplicateToEmployeeDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [associates, setAssociates] = useState<AssociateLite[] | null>(null);
   const [search, setSearch] = useState('');
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Scope the picker to the source shift's client.
-  useEffect(() => {
-    let cancelled = false;
-    setAssociates(null);
-    listSchedulingAssociates({ clientId: source.clientId })
-      .then((r) => {
-        if (!cancelled) setAssociates(r.associates);
-      })
-      .catch(() => {
-        if (!cancelled) setAssociates([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source.clientId]);
+  // Scope the picker to the source shift's client — the same roster entry
+  // the page reads for that client.
+  const rosterQuery = useQuery({
+    queryKey: ['scheduling', 'roster', source.clientId, '', ''],
+    queryFn: () => listSchedulingAssociates({ clientId: source.clientId }),
+  });
+  const associates: AssociateLite[] | null = rosterQuery.isError
+    ? []
+    : (rosterQuery.data?.associates ?? null);
 
   const filtered = (associates ?? []).filter((a) => {
     const q = search.trim().toLowerCase();
@@ -5093,16 +5018,6 @@ function CreateShiftDialog({
   const hideBillRate = useClientBounded();
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
-  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
-  // Employees scoped to the dialog's selected client — so the multi-assign
-  // picker only offers people who work for that client. Seeded from the
-  // page-level roster prop, then refined per client below.
-  const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
-  // A failed roster fetch used to silently render "no employees" — which
-  // reads as "nobody works here", not "the request failed". Track the
-  // failure so the picker can say so and offer a retry.
-  const [rosterError, setRosterError] = useState(false);
-  const [rosterRetry, setRosterRetry] = useState(0);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(clientId);
   // One Date field + time-only start/end. Opened from a calendar cell the
@@ -5132,73 +5047,53 @@ function CreateShiftDialog({
   // this shift at the same wall-clock times. The picked Day is implicit.
   const [extraDays, setExtraDays] = useState<Set<string>>(new Set());
 
-  // Phase 131 — load Locations under the selected client. Auto-picks
-  // the first option so HR can hit Save in the single-site case
-  // without an extra click. Re-runs on every OPEN (not just client change)
-  // so reopening for the same client re-fetches and re-auto-picks — the
-  // open-reset effect clears locationId, and without this the Location
-  // field would be blank (and Save blocked) on reopen.
+  // Phase 131 — the Locations under the selected client. The first one is
+  // auto-picked so HR can hit Save in the single-site case without an
+  // extra click; the page's location filter wins when it belongs to this
+  // client. The pick is redone on every OPEN, not just on a client change,
+  // so reopening for the same client lands on a location again.
   useEffect(() => {
-    if (!open) return;
-    setLocationId('');
-    if (!clientId) {
-      setLocations(null);
-      return;
-    }
-    let cancelled = false;
-    setLocations(null);
-    listClientLocations(clientId)
-      .then((r) => {
-        if (cancelled) return;
-        setLocations(r.locations);
-        // Honor the page's location filter when it belongs to this client;
-        // otherwise auto-pick the first so single-site clients need no click.
-        const preferred =
-          initialLocationId && clientId === initialClientId
-            ? r.locations.find((l) => l.id === initialLocationId)
-            : undefined;
-        if (preferred) setLocationId(preferred.id);
-        else if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
-      })
-      .catch(() => {
-        if (!cancelled) setLocations([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId, open, initialClientId, initialLocationId]);
+    if (open) setLocationId('');
+  }, [clientId, open]);
+  const locationsQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+    enabled: open && Boolean(clientId),
+  });
+  const locations: LocationSummary[] | null = !clientId
+    ? null
+    : locationsQuery.isError
+      ? []
+      : (locationsQuery.data?.locations ?? null);
+  useEffect(() => {
+    if (!open || !locations || locations.length === 0) return;
+    const preferred =
+      initialLocationId && clientId === initialClientId
+        ? locations.find((l) => l.id === initialLocationId)
+        : undefined;
+    setLocationId((cur) => cur || preferred?.id || locations[0]!.id);
+  }, [open, locations, clientId, initialClientId, initialLocationId]);
 
   // Scope the multi-assign picker to the chosen client's employees. Without
   // a client we fall back to the page roster prop. (Scoped by client, not
   // the specific location, so you can still staff a new site with any of
-  // the client's people.)
-  useEffect(() => {
-    if (!open) return;
-    if (!clientId) {
-      setScopedAssociates(associates);
-      return;
-    }
-    let cancelled = false;
-    // When a shift team is selected (and the dialog is still on that
-    // team's client), the multi-assign picker narrows to the crew.
-    setRosterError(false);
-    listSchedulingAssociates({
-      clientId,
-      ...(team && team.clientId === clientId ? { teamId: team.id } : {}),
-    })
-      .then((r) => {
-        if (!cancelled) setScopedAssociates(r.associates);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setScopedAssociates([]);
-          setRosterError(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, clientId, associates, team, rosterRetry]);
+  // the client's people.) When a shift team is selected (and the dialog is
+  // still on that team's client), the picker narrows to the crew.
+  const teamId = team && team.clientId === clientId ? team.id : '';
+  const scopedQuery = useQuery({
+    queryKey: ['scheduling', 'roster', clientId, '', teamId],
+    queryFn: () => listSchedulingAssociates({ clientId, ...(teamId ? { teamId } : {}) }),
+    enabled: open && Boolean(clientId),
+  });
+  const scopedAssociates: AssociateLite[] = !clientId
+    ? associates
+    : scopedQuery.isError
+      ? []
+      : (scopedQuery.data?.associates ?? associates);
+  // A failed roster fetch used to silently render "no employees" — which
+  // reads as "nobody works here", not "the request failed". Say so and
+  // offer a retry.
+  const rosterError = Boolean(clientId) && scopedQuery.isError;
 
   // Seeded-values fingerprint for the discard guard: any field differing
   // from what this reset effect stamped means real typed input worth a
@@ -5719,7 +5614,7 @@ function CreateShiftDialog({
                 <Button
                   size="xs"
                   variant="outline"
-                  onClick={() => setRosterRetry((n) => n + 1)}
+                  onClick={() => void scopedQuery.refetch()}
                 >
                   Retry
                 </Button>
@@ -5930,29 +5825,27 @@ function TemplatesDialog({
   weekStart: Date;
   onApplied: () => void;
 }) {
-  const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
-  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const confirmDialog = useConfirm();
 
+  const templatesQuery = useQuery({
+    queryKey: ['scheduling', 'templates'],
+    queryFn: () => listShiftTemplates(),
+    enabled: open,
+  });
+  const templates: ShiftTemplate[] | null = templatesQuery.data?.templates ?? null;
+  // A toast alone left the skeleton shimmering forever inside an
+  // otherwise-interactive dialog; the banner + Retry replaces it.
+  const templatesError = templatesQuery.error
+    ? templatesQuery.error instanceof ApiError
+      ? templatesQuery.error.message
+      : 'Failed to load templates.'
+    : null;
+  const { refetch: refetchTemplates } = templatesQuery;
   const refresh = useCallback(async () => {
-    setTemplatesError(null);
-    try {
-      const res = await listShiftTemplates();
-      setTemplates(res.templates);
-    } catch (err) {
-      // A toast alone left the skeleton shimmering forever inside an
-      // otherwise-interactive dialog; the banner + Retry replaces it.
-      setTemplatesError(
-        err instanceof ApiError ? err.message : 'Failed to load templates.',
-      );
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open) refresh();
-  }, [open, refresh]);
+    await refetchTemplates();
+  }, [refetchTemplates]);
 
   const onApply = async (id: string, requiresClient: boolean) => {
     let clientId: string | undefined;
