@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { cn } from '@/lib/cn';
 import { fmtTime } from '@/lib/format';
@@ -121,6 +122,7 @@ function clearOpsDrafts(shiftId: string) {
 }
 
 export function OpsRunner() {
+  const { t: tr } = useI18n();
   // The open shift lives in ?shift= (alongside ?tab=) so a reload, a
   // discarded tab, or an overnight tablet sleep restores the live
   // checklist instead of dumping the supervisor on the picker. The id is
@@ -168,7 +170,7 @@ export function OpsRunner() {
         const d = await getOpsShift(id);
         if (d.shift.status !== 'ACTIVE') {
           // Stale link — the shift already closed (another tab, another day).
-          toast.info('That shift is already closed — its record is final.');
+          toast.info(tr('opsRun.alreadyClosed'));
           setDetail(null);
           setShiftParam(null);
           return;
@@ -177,11 +179,11 @@ export function OpsRunner() {
         setError(null);
       } catch (err) {
         if (detailRef.current?.shift.id === id) {
-          setError(err instanceof ApiError ? err.message : 'Could not load the shift.');
+          setError(err instanceof ApiError ? err.message : tr('opsRun.loadShiftFailed'));
         } else {
           // Restore failed (gone, or not this supervisor's) — back to the picker.
           toast.error(
-            err instanceof ApiError ? err.message : 'Could not resume that shift.',
+            err instanceof ApiError ? err.message : tr('opsRun.resumeFailed'),
           );
           setDetail(null);
           setShiftParam(null);
@@ -242,14 +244,14 @@ export function OpsRunner() {
         // standing between them and the clock-out.
         if (assistOnly) {
           // Floor supervisors punch at the store tablet, never in the app.
-          toast.success('SOP submitted — clock out at the store tablet when you’re done.', { duration: 12_000 });
+          toast.success(tr('opsRun.submittedClockOutKiosk'), { duration: 12_000 });
         } else if (isSupervisor) {
-          toast.success('SOP submitted — the record is final.', {
+          toast.success(tr('opsRun.submittedFinal'), {
             duration: 12_000,
-            action: { label: 'Clock out now', onClick: () => void clock.clockOutNow() },
+            action: { label: tr('opsRun.clockOutNow'), onClick: () => void clock.clockOutNow() },
           });
         } else {
-          toast.success('Shift closed — the record is final.');
+          toast.success(tr('opsRun.shiftClosedFinal'));
         }
       }}
     />
@@ -281,6 +283,7 @@ function readStoredOpsClient(): string | null {
  * straight away; else the one they help on; else what happens next.
  */
 function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
+  const { t: tr } = useI18n();
   const q = useQuery({ queryKey: ['ops', 'my-sop'], queryFn: getMySop, refetchInterval: 60_000 });
   const running = q.data?.sop ?? null;
   useEffect(() => {
@@ -295,7 +298,7 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
       <Card className="border-gold/40 bg-gold/[0.05]">
         <CardContent className="space-y-3 p-5">
           <div>
-            <div className="text-2xs uppercase tracking-[0.2em] text-gold">Your shift&apos;s SOP</div>
+            <div className="text-2xs uppercase tracking-[0.2em] text-gold">{tr('opsRun.yourShiftSop')}</div>
             <div className="mt-1 text-lg font-medium text-white">
               {helping.locationName ? `${helping.locationName} · ` : ''}
               {helping.windowLabel ?? helping.position}
@@ -308,18 +311,18 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
             <div className="h-full rounded-full bg-gold" style={{ width: `${pct}%` }} />
           </div>
-          <Button onClick={() => onOpen(helping.id)}>Help on the checklist</Button>
+          <Button onClick={() => onOpen(helping.id)}>{tr('opsRun.helpOnChecklist')}</Button>
         </CardContent>
       </Card>
     );
   }
   return (
     <EmptyState
-      title="No SOP running on your shift"
-      description="Your shift supervisor's clock-in opens it, and you help on it here. On a day they hand you the shift — or if no shift supervisor is on the clock 30 minutes in — it opens for you, and it's yours to submit."
+      title={tr('opsRun.noSopTitle')}
+      description={tr('opsRun.noSopDesc')}
       action={
         <Button variant="outline" asChild>
-          <Link to="/">Back to My floor</Link>
+          <Link to="/">{tr('opsRun.backToFloor')}</Link>
         </Button>
       }
     />
@@ -327,6 +330,7 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
 }
 
 function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
+  const { t: tr } = useI18n();
   const [options, setOptions] = useState<Awaited<
     ReturnType<typeof getOpsOpenOptions>
   > | null>(null);
@@ -386,7 +390,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
     getOpsOpenOptions(bounded ? undefined : clientId)
       .then((o) => live && setOptions(o))
       .catch((err) =>
-        live && setError(err instanceof ApiError ? err.message : 'Could not load today.'),
+        live && setError(err instanceof ApiError ? err.message : tr('opsRun.loadTodayFailed')),
       );
     return () => {
       live = false;
@@ -396,7 +400,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const clientPicker = !bounded && clients.length > 1 && (
     <div className="flex flex-wrap items-center gap-2">
       <Label htmlFor="ops-client" className="text-xs text-silver">
-        Floor
+        {tr('opsRun.floor')}
       </Label>
       <Select
         id="ops-client"
@@ -405,7 +409,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
         value={clientId}
         onChange={(e) => pickClient(e.target.value)}
       >
-        {!clientId && <option value="">Pick a client…</option>}
+        {!clientId && <option value="">{tr('opsRun.pickClient')}</option>}
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
@@ -424,11 +428,11 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           <CardContent className="py-8">
             <EmptyState
               icon={ClipboardList}
-              title="Whose floor are you running?"
+              title={tr('opsRun.whoseFloor')}
               description={
                 clients.length === 0
-                  ? 'No active clients yet.'
-                  : 'Pick the client above — its shifts and SOP checklists load for today.'
+                  ? tr('opsRun.noClients')
+                  : tr('opsRun.pickClientHint')
               }
             />
           </CardContent>
@@ -445,7 +449,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
       const res = await openStoreShiftOps(bounded ? undefined : clientId);
       onOpened(res.shiftId);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not open your shift.');
+      toast.error(err instanceof ApiError ? err.message : tr('opsRun.openYourShiftFailed'));
     } finally {
       setBusy(null);
     }
@@ -461,7 +465,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
       });
       onOpened(res.shiftId);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not open the shift.');
+      toast.error(err instanceof ApiError ? err.message : tr('opsRun.openShiftFailed'));
     } finally {
       setBusy(null);
     }
@@ -482,28 +486,28 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           </div>
           <div className="mt-1 text-xl font-medium text-white">
             {options.resumeShift
-              ? 'Pick up where you left off'
+              ? tr('opsRun.resumeTitle')
               : submitted
                 ? `Your ${submitted.windowLabel ?? submitted.position} SOP is submitted`
                 : offClock
-                  ? 'Clock in to start your shift'
-                  : 'Start your shift'}
+                  ? tr('opsRun.clockInToStart')
+                  : tr('opsRun.startYourShift')}
           </div>
           <div className="mt-0.5 max-w-prose text-xs text-silver/70">
             {submitted
-              ? `${submitted.closedIncomplete ? 'Submitted incomplete — operations has your reason.' : 'Every required item done, handover written.'} You can clock out.`
+              ? `${submitted.closedIncomplete ? tr('opsRun.submittedIncomplete') : tr('opsRun.allRequiredDone')} ${tr('opsRun.youCanClockOut')}`
               : offClock
-                ? "Your shift's SOP opens by itself when you clock in — here or at the store's kiosk — and it's due when the shift ends."
-                : 'Open a shift and its SOP checklist loads itself — store, headcounts, and standards fill in automatically.'}
+                ? tr('opsRun.sopOpensItself')
+                : tr('opsRun.openShiftLoads')}
           </div>
           {offClock && !options.resumeShift && (
             <Button className="mt-3" onClick={() => void clock.clockInNow()} loading={clock.busy}>
-              Clock in
+              {tr('opsRun.clockIn')}
             </Button>
           )}
           {submitted && !options.resumeShift && (
             <Button className="mt-3" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
-              Clock out
+              {tr('opsRun.clockOut')}
             </Button>
           )}
         </div>
@@ -564,7 +568,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           aria-expanded={showPicker}
           className="flex w-full items-center justify-between rounded-md border border-navy-secondary px-4 py-3 text-left text-sm text-silver hover:text-white coarse:min-h-11"
         >
-          {submitted ? 'Open another checklist by hand' : 'Open a checklist by hand'}
+          {submitted ? tr('opsRun.openAnotherByHand') : tr('opsRun.openByHand')}
           <ChevronRight className={cn('h-4 w-4 transition-transform', showPicker && 'rotate-90')} />
         </button>
       )}
@@ -575,8 +579,8 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
             <CardContent className="py-8">
               <EmptyState
                 icon={ClipboardList}
-                title="Nothing scheduled today"
-                description="No shifts are on today's schedule for your store, and no SOP is assigned to a shift running there now. Ask operations to assign one on Store shifts."
+                title={tr('opsRun.nothingScheduledTitle')}
+                description={tr('opsRun.nothingScheduledDesc')}
               />
             </CardContent>
           </Card>
@@ -607,7 +611,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver">
                       <span className={cn(!p.department && 'text-silver/60')}>
-                        {p.department ?? 'No SOP department yet'}
+                        {p.department ?? tr('opsRun.noDepartment')}
                       </span>
                       <span className="rounded-full border border-navy-secondary px-1.5 py-px text-2xs text-silver/70">
                         {PERIOD_LABEL[p.period]}
@@ -631,7 +635,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                           }))
                         }
                       >
-                        <option value="">Pick department…</option>
+                        <option value="">{tr('opsRun.pickDepartment')}</option>
                         {options.departments.map((d) => (
                           <option key={d} value={d}>
                             {d}
@@ -648,14 +652,14 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                     onClick={() => setChoosing(p.position)}
                     disabled={busy !== null}
                   >
-                    Open shift
+                    {tr('opsRun.openShift')}
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 ) : (
                   <div className="mt-3 flex gap-2">
                     {needsDept && (
                       <Button variant="ghost" onClick={() => setChoosing(null)} disabled={busy !== null}>
-                        Cancel
+                        {tr('common.cancel')}
                       </Button>
                     )}
                     <Button
@@ -664,7 +668,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                       loading={busy === p.position}
                       disabled={busy !== null || (needsDept && !manualDept[p.position])}
                     >
-                      {needsDept ? 'Open with this department' : 'Open shift'}
+                      {needsDept ? tr('opsRun.openWithDept') : tr('opsRun.openShift')}
                       <ChevronRight className="h-4 w-4" />
                     </Button>
                   </div>
@@ -689,12 +693,13 @@ function ShiftRunner({
   refresh: () => void;
   onClosed: () => void;
 }) {
+  const { t: tr } = useI18n();
   const { shift, tasks, handoverIn, clockedIn } = detail;
   // A floor supervisor helping on their shift supervisor's SOP checks
   // items off; the one running it adds tasks, reads the notes in, and
   // submits.
   const helping = detail.access === 'help';
-  const runnerFirst = shift.runBy?.name.split(' ')[0] ?? 'The supervisor running it';
+  const runnerFirst = shift.runBy?.name.split(' ')[0] ?? tr('opsRun.supervisorRunning');
   const [adhocOpen, setAdhocOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
   // The same crew member usually does consecutive tasks — remember the
@@ -873,7 +878,7 @@ function ShiftRunner({
             )}
             {!helping && shift.coveringFor && (
               <div className="mt-1 text-xs text-silver">
-                {shift.runBy?.name ?? 'You'} · covering for {shift.coveringFor.name}
+                {shift.runBy?.name ?? tr('opsRun.you')} · {tr('opsRun.coveringFor', { name: shift.coveringFor.name })}
               </div>
             )}
             {/* Evidence strip — the shift's proof, live. */}
@@ -932,14 +937,14 @@ function ShiftRunner({
             <div className="flex w-full shrink-0 gap-2 sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
               <Button variant="outline" onClick={() => setAdhocOpen(true)}>
                 <Plus className="h-4 w-4" />
-                Add task
+                {tr('opsRun.addTaskShort')}
               </Button>
               {/* Phones submit from the sticky bar at the bottom. */}
               <Button
                 onClick={() => setCloseOpen(true)}
                 className={cn('hidden md:inline-flex', allDone && 'animate-pulse')}
               >
-                {allDone ? 'Ready — submit SOP' : 'Submit SOP'}
+                {allDone ? tr('opsRun.readySubmit') : tr('opsRun.submitSop')}
               </Button>
             </div>
           )}
@@ -998,7 +1003,7 @@ function ShiftRunner({
               <p className="mt-1 text-xs text-silver">
                 {helping
                   ? `What the last shift left — ${runnerFirst} acknowledges these.`
-                  : "Read each one — tap Got it, or add it to your list. You can't submit until they're acknowledged."}
+                  : tr('opsRun.readEachOne')}
               </p>
             </div>
             {!helping && handoverIn.length > 1 && (
@@ -1113,7 +1118,7 @@ function ShiftRunner({
             <span className="shrink-0 text-xs text-silver">{runnerFirst} submits it</span>
           ) : (
             <Button variant={allDone ? 'primary' : 'secondary'} onClick={() => setCloseOpen(true)}>
-              Submit SOP
+              {tr('opsRun.submitSop')}
             </Button>
           )}
         </div>
@@ -1158,6 +1163,7 @@ function TaskRow({
   flash: boolean;
   onFollowUp: (taskId: string) => void;
 }) {
+  const { t: tr } = useI18n();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
@@ -1225,7 +1231,7 @@ function TaskRow({
       }
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+      toast.error(err instanceof ApiError ? err.message : tr('opsRun.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -1239,7 +1245,7 @@ function TaskRow({
         setFailedUploads((prev) => prev.filter((f) => f.id !== retryId));
       }
       toast.success(
-        res.autoCompleted ? 'Photo attached — task complete.' : 'Photo attached.',
+        res.autoCompleted ? tr('opsRun.photoAttachedDone') : tr('opsRun.photoAttached'),
       );
       onChanged();
     } catch (err) {
@@ -1250,7 +1256,7 @@ function TaskRow({
         const id = failedSeq.current;
         setFailedUploads((prev) => [...prev, { id, file }]);
       }
-      toast.error(err instanceof Error ? err.message : 'Upload failed.');
+      toast.error(err instanceof Error ? err.message : tr('opsRun.uploadFailed'));
     } finally {
       setBusy(false);
     }
@@ -1266,7 +1272,7 @@ function TaskRow({
   const recordNumber = () => {
     const n = parseReading(numberDraft);
     if (n == null) {
-      toast.error('Enter a number.');
+      toast.error(tr('opsRun.enterNumber'));
       return;
     }
     void patch({ answerNumber: n, status: 'DONE' });
@@ -1332,17 +1338,17 @@ function TaskRow({
               {!task.required && (
                 <span className="text-2xs text-silver/50">optional</span>
               )}
-              {task.source === 'CARRYOVER' && <Badge variant="pending">carried over</Badge>}
+              {task.source === 'CARRYOVER' && <Badge variant="pending">{tr('opsRun.carriedOver')}</Badge>}
               {task.source === 'FOLLOWUP' && (
-                <Badge variant="destructive">follow-up</Badge>
+                <Badge variant="destructive">{tr('opsRun.followUp')}</Badge>
               )}
               {task.source === 'ADHOC' && task.priority === 'HIGH' && (
-                <Badge variant="destructive">high</Badge>
+                <Badge variant="destructive">{tr('opsRun.high')}</Badge>
               )}
               {task.tempOutOfRange && (
                 <span
                   className="inline-flex items-center gap-1 text-2xs text-alert"
-                  title="This reading was outside the allowed range — ops has been alerted."
+                  title={tr('opsRun.outOfRange')}
                 >
                   <AlertTriangle className="h-3 w-3" aria-hidden="true" />
                   out of range
@@ -1360,7 +1366,7 @@ function TaskRow({
             <div className="mt-0.5 text-xs text-silver/70">
               {task.responseType === 'TEMPERATURE' && task.answerNumber != null && (
                 <span className="tabular-nums">
-                  {task.tempLabel ?? 'Reading'}: {task.answerNumber}°F
+                  {task.tempLabel ?? tr('opsRun.reading')}: {task.answerNumber}°F
                   {task.tempMin != null && task.tempMax != null
                     ? ` (allowed ${task.tempMin}–${task.tempMax})`
                     : ''}
@@ -1402,7 +1408,7 @@ function TaskRow({
                 loading={busy}
               >
                 <Camera className="h-3.5 w-3.5" />
-                Retry upload
+                {tr('opsRun.retryUpload')}
               </Button>
               <Button
                 size="sm"
@@ -1413,7 +1419,7 @@ function TaskRow({
                 }}
                 disabled={busy}
               >
-                Choose different
+                {tr('opsRun.chooseDifferent')}
               </Button>
             </div>
           ))}
@@ -1438,7 +1444,7 @@ function TaskRow({
                       className="px-2.5"
                       aria-pressed={isNegativeReading(numberDraft)}
                       aria-label={`${task.title} — below zero (minus)`}
-                      title="Below zero — a freezer reading"
+                      title={tr('opsRun.freezerReading')}
                       onClick={() => setNumberDraft(flipReadingSign)}
                     >
                       ±
@@ -1477,7 +1483,7 @@ function TaskRow({
                     ) : (
                       <Check className="h-3.5 w-3.5" />
                     )}
-                    Record
+                    {tr('opsRun.record')}
                   </Button>
                 </>
               )}
@@ -1494,7 +1500,7 @@ function TaskRow({
                     disabled={busy}
                     aria-label={`${task.title} — answer ${choice.toLowerCase()}`}
                   >
-                    {choice === 'YES' ? 'Yes' : choice === 'NO' ? 'No' : 'Partial'}
+                    {choice === 'YES' ? tr('opsRun.yes') : choice === 'NO' ? tr('opsRun.no') : tr('opsRun.partial')}
                   </Button>
                 ))}
               {isPhotoTask && (
@@ -1531,7 +1537,7 @@ function TaskRow({
                       onClick={() => void patch({ answerChoice: choice, status: 'DONE' })}
                       disabled={busy}
                     >
-                      {choice === 'YES' ? 'Yes' : choice === 'NO' ? 'No' : 'Partial'}
+                      {choice === 'YES' ? tr('opsRun.yes') : choice === 'NO' ? tr('opsRun.no') : tr('opsRun.partial')}
                     </Button>
                   ))}
                 </div>
@@ -1542,8 +1548,8 @@ function TaskRow({
                   <div>
                     <Label className="text-xs">
                       {task.responseType === 'TEMPERATURE'
-                        ? (task.tempLabel ?? 'Temperature °F')
-                        : 'Count'}
+                        ? (task.tempLabel ?? tr('opsRun.temperatureF'))
+                        : tr('opsRun.count')}
                     </Label>
                     <Input
                       inputMode="decimal"
@@ -1551,7 +1557,7 @@ function TaskRow({
                       value={numberDraft}
                       onChange={(e) => setNumberDraft(e.target.value)}
                       placeholder={
-                        task.responseType === 'TEMPERATURE' ? 'e.g. 36 or -10' : 'e.g. 84'
+                        task.responseType === 'TEMPERATURE' ? tr('opsRun.egTemp') : tr('opsRun.egCount')
                       }
                     />
                   </div>
@@ -1574,7 +1580,7 @@ function TaskRow({
                     {task.responseType === 'TEMPERATURE' ? (
                       <Thermometer className="h-3.5 w-3.5" />
                     ) : null}
-                    Record
+                    {tr('opsRun.record')}
                   </Button>
                   {task.responseType === 'TEMPERATURE' &&
                     task.tempMin != null &&
@@ -1592,7 +1598,7 @@ function TaskRow({
                     rows={2}
                     value={textDraft}
                     onChange={(e) => setTextDraft(e.target.value)}
-                    placeholder="Write it down — this becomes part of the record."
+                    placeholder={tr('opsRun.writeItDown')}
                   />
                   <Button
                     size="sm"
@@ -1600,7 +1606,7 @@ function TaskRow({
                     loading={busy}
                     disabled={!textDraft.trim()}
                   >
-                    Save answer
+                    {tr('opsRun.saveAnswer')}
                   </Button>
                 </div>
               )}
@@ -1614,7 +1620,7 @@ function TaskRow({
                   loading={busy}
                 >
                   <Camera className="h-3.5 w-3.5" />
-                  {task.photos.length > 0 ? 'Add another photo' : 'Take photo'}
+                  {task.photos.length > 0 ? tr('opsRun.addAnotherPhoto') : tr('opsRun.takePhoto')}
                 </Button>
                 {task.photos.map((p) => (
                   <a
@@ -1638,7 +1644,7 @@ function TaskRow({
               {clockedIn.length > 0 && (
                 <div className="flex items-end gap-2">
                   <div className="min-w-[180px]">
-                    <Label className="text-xs">Done by (clocked in now)</Label>
+                    <Label className="text-xs">{tr('opsRun.doneBy')}</Label>
                     <Select
                       value={task.doneAssociate?.id ?? ''}
                       onChange={(e) =>
@@ -1680,7 +1686,7 @@ function TaskRow({
                     disabled={busy || isDone}
                   >
                     <Flag className="h-3.5 w-3.5" />
-                    Blocked
+                    {tr('opsRun.blocked')}
                   </Button>
                 ) : (
                   <Button
@@ -1689,7 +1695,7 @@ function TaskRow({
                     onClick={() => void patch({ status: 'OPEN', blockedReason: null })}
                     disabled={busy}
                   >
-                    Unblock
+                    {tr('opsRun.unblock')}
                   </Button>
                 )}
               </div>
@@ -1702,13 +1708,13 @@ function TaskRow({
       <Dialog open={blockOpen} onOpenChange={setBlockOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Mark blocked</DialogTitle>
+            <DialogTitle>{tr('opsRun.markBlocked')}</DialogTitle>
             <DialogDescription>“{task.title}” — what&apos;s in the way?</DialogDescription>
           </DialogHeader>
           <Input
             value={blockReason}
             onChange={(e) => setBlockReason(e.target.value)}
-            placeholder="e.g. Waiting on maintenance for the compactor"
+            placeholder={tr('opsRun.blockedPlaceholder')}
             autoFocus
             onKeyDown={(e) => {
               if (e.key === 'Enter' && blockReason.trim()) {
@@ -1727,7 +1733,7 @@ function TaskRow({
               }}
             >
               <Flag className="h-3.5 w-3.5" />
-              Mark blocked
+              {tr('opsRun.markBlocked')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1750,6 +1756,7 @@ function HandoverDecisionRow({
   /** Helping, not running: the note is shown, the decision isn't theirs. */
   readOnly?: boolean;
 }) {
+  const { t: tr } = useI18n();
   const [busy, setBusy] = useState<string | null>(null);
   const KindIcon = HANDOVER_KIND_ICON[item.kind];
   const decide = async (action: 'CARRY' | 'DISMISS' | 'REVIEW') => {
@@ -1758,14 +1765,14 @@ function HandoverDecisionRow({
       await decideOpsHandover(item.id, { action, shiftId });
       toast.success(
         action === 'CARRY'
-          ? 'Added to your checklist.'
+          ? tr('opsRun.addedToChecklist')
           : action === 'DISMISS'
-            ? 'Dismissed — on the record.'
-            : 'Got it.',
+            ? tr('opsRun.dismissedOnRecord')
+            : tr('opsRun.gotIt'),
       );
       onDecided();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not decide.');
+      toast.error(err instanceof ApiError ? err.message : tr('opsRun.decideFailed'));
     } finally {
       setBusy(null);
     }
@@ -1786,7 +1793,7 @@ function HandoverDecisionRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-2xs text-silver/60">
             <span className="font-medium text-silver">{HANDOVER_KIND_LABEL[item.kind]}</span>
-            {item.priority === 'HIGH' && <Badge variant="destructive">high</Badge>}
+            {item.priority === 'HIGH' && <Badge variant="destructive">{tr('opsRun.high')}</Badge>}
             <span>
               from {item.from.position} · {item.from.dateKey}
             </span>
@@ -1797,7 +1804,7 @@ function HandoverDecisionRow({
       {!readOnly && (
         <div className="flex shrink-0 gap-2">
           <Button size="sm" onClick={() => void decide('REVIEW')} loading={busy === 'REVIEW'}>
-            Got it
+            {tr('opsRun.gotItShort')}
           </Button>
           <Button
             size="sm"
@@ -1805,7 +1812,7 @@ function HandoverDecisionRow({
             onClick={() => void decide('CARRY')}
             loading={busy === 'CARRY'}
           >
-            Add to my list
+            {tr('opsRun.addToMyList')}
           </Button>
           <Button
             size="sm"
@@ -1813,7 +1820,7 @@ function HandoverDecisionRow({
             onClick={() => void decide('DISMISS')}
             loading={busy === 'DISMISS'}
           >
-            Dismiss
+            {tr('opsRun.dismiss')}
           </Button>
         </div>
       )}
@@ -1831,6 +1838,7 @@ function AckAllButton({
   shiftId: string;
   onDone: () => void;
 }) {
+  const { t: tr } = useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <Button
@@ -1841,10 +1849,10 @@ function AckAllButton({
         setBusy(true);
         try {
           for (const h of items) await decideOpsHandover(h.id, { action: 'REVIEW', shiftId });
-          toast.success(`Got all ${items.length}.`);
+          toast.success(tr('opsRun.gotAll', { count: items.length }));
           onDone();
         } catch (err) {
-          toast.error(err instanceof ApiError ? err.message : 'Could not acknowledge.');
+          toast.error(err instanceof ApiError ? err.message : tr('opsRun.ackFailed'));
           onDone();
         } finally {
           setBusy(false);
@@ -1869,6 +1877,7 @@ function AdhocDialog({
   shiftId: string;
   onAdded: () => void;
 }) {
+  const { t: tr } = useI18n();
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<'HIGH' | 'MEDIUM' | 'LOW'>('MEDIUM');
   const [busy, setBusy] = useState(false);
@@ -1882,7 +1891,7 @@ function AdhocDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a task</DialogTitle>
+          <DialogTitle>{tr('opsRun.addTask')}</DialogTitle>
           <DialogDescription>
             Something came up on the floor — spill in aisle 7, recount a
             delivery, recheck a unit.
@@ -1890,23 +1899,23 @@ function AdhocDialog({
         </DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label className="text-xs">What needs doing</Label>
+            <Label className="text-xs">{tr('opsRun.whatNeedsDoing')}</Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Clean up spill in aisle 7"
+              placeholder={tr('opsRun.taskPlaceholder')}
               autoFocus
             />
           </div>
           <div>
-            <Label className="text-xs">Priority</Label>
+            <Label className="text-xs">{tr('opsRun.priority')}</Label>
             <Select
               value={priority}
               onChange={(e) => setPriority(e.target.value as 'HIGH' | 'MEDIUM' | 'LOW')}
             >
-              <option value="HIGH">High</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="LOW">Low</option>
+              <option value="HIGH">{tr('opsRun.priorityHigh')}</option>
+              <option value="MEDIUM">{tr('opsRun.priorityMedium')}</option>
+              <option value="LOW">{tr('opsRun.priorityLow')}</option>
             </Select>
           </div>
         </div>
@@ -1920,7 +1929,7 @@ function AdhocDialog({
                 onAdded();
                 onOpenChange(false);
               } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Could not add.');
+                toast.error(err instanceof ApiError ? err.message : tr('opsRun.addFailed'));
               } finally {
                 setBusy(false);
               }
@@ -1928,7 +1937,7 @@ function AdhocDialog({
             loading={busy}
             disabled={!title.trim()}
           >
-            Add task
+            {tr('opsRun.addTaskShort')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1958,6 +1967,7 @@ function CloseDialog({
   detail: OpsShiftDetail;
   onClosed: () => void;
 }) {
+  const { t: tr } = useI18n();
   const { shift, tasks } = detail;
   const [summary, setSummary] = useState('');
   const [items, setItems] = useState<
@@ -2024,7 +2034,7 @@ function CloseDialog({
     >
       <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Submit your SOP — handover first</DialogTitle>
+          <DialogTitle>{tr('opsRun.submitHandoverFirst')}</DialogTitle>
           <DialogDescription>
             What does the next shift need to know? Unfinished work, special
             orders, coach complaints, equipment — nothing on paper, nothing
@@ -2042,7 +2052,7 @@ function CloseDialog({
                 Tap Got it on each (top of your checklist) — then submit.
               </div>
               <Button size="sm" variant="outline" className="mt-2" onClick={() => onOpenChange(false)}>
-                Back to the notes
+                {tr('opsRun.backToNotes')}
               </Button>
             </div>
           )}
@@ -2065,7 +2075,7 @@ function CloseDialog({
                 className="mt-1"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Two call-outs — stocking carried to the evening shift"
+                placeholder={tr('opsRun.handoverPlaceholder')}
               />
             </div>
           )}
@@ -2081,7 +2091,7 @@ function CloseDialog({
                 className="text-gold underline underline-offset-2 coarse:min-h-9"
                 onClick={() => setShowChips(true)}
               >
-                Choose which
+                {tr('opsRun.chooseWhich')}
               </button>
             </div>
           )}
@@ -2149,7 +2159,7 @@ function CloseDialog({
                     type="button"
                     className="text-silver/50 hover:text-alert"
                     onClick={() => setItems((prev) => prev.filter((_, j) => j !== idx))}
-                    aria-label="Remove handover item"
+                    aria-label={tr('opsRun.removeHandoverItem')}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -2158,7 +2168,7 @@ function CloseDialog({
             })}
             <div className="flex flex-wrap items-end gap-2">
               <div>
-                <Label className="text-xs">Type</Label>
+                <Label className="text-xs">{tr('opsRun.type')}</Label>
                 <Select
                   size="sm"
                   value={draftKind}
@@ -2172,11 +2182,11 @@ function CloseDialog({
                 </Select>
               </div>
               <div className="min-w-[160px] flex-1">
-                <Label className="text-xs">Detail</Label>
+                <Label className="text-xs">{tr('opsRun.detail')}</Label>
                 <Input
                   value={draftBody}
                   onChange={(e) => setDraftBody(e.target.value)}
-                  placeholder="e.g. 2 pallets of dairy left in staging"
+                  placeholder={tr('opsRun.detailPlaceholder')}
                 />
               </div>
               <Button
@@ -2192,7 +2202,7 @@ function CloseDialog({
                 }}
                 disabled={!draftBody.trim()}
               >
-                Add
+                {tr('opsRun.add')}
               </Button>
             </div>
           </div>
@@ -2209,12 +2219,12 @@ function CloseDialog({
           )}
 
           <div>
-            <Label className="text-xs">Closing summary (optional)</Label>
+            <Label className="text-xs">{tr('opsRun.closingSummary')}</Label>
             <Textarea
               rows={2}
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              placeholder="How did the shift go?"
+              placeholder={tr('opsRun.howDidItGo')}
             />
           </div>
         </div>
@@ -2242,7 +2252,7 @@ function CloseDialog({
                 onOpenChange(false);
                 onClosed();
               } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Could not close.');
+                toast.error(err instanceof ApiError ? err.message : tr('opsRun.closeFailed'));
               } finally {
                 setBusy(false);
               }
@@ -2254,7 +2264,7 @@ function CloseDialog({
               (openRequired.length > 0 && reason.trim().length < 5)
             }
           >
-            {openRequired.length > 0 ? 'Submit incomplete' : 'Submit SOP'}
+            {openRequired.length > 0 ? tr('opsRun.submitIncomplete') : tr('opsRun.submitSop')}
           </Button>
         </DialogFooter>
       </DialogContent>
