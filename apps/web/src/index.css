@@ -142,11 +142,16 @@
   /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
      (every destructive badge). red-700 clears both. */
   --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */
-  /* success + warning darkened a step so SMALL status text / inline
-     errors clear AA on white (the emerald-600 / amber-600 tier was only
-     ~3.2-3.8:1, large-text-only). */
-  --color-success:          4 120  87;  /* #047857 — ≈5.5:1 on white (AA) */
-  --color-warning:        180  83   9;  /* #B45309 — ≈5.0:1 on white (AA) */
+  /* success + warning sit two steps down from the emerald-600 / amber-600
+     tier (~3.2-3.8:1 on white, large-text-only). One step (emerald-700 /
+     amber-700) cleared white but not a status chip on a tinted card: the
+     chip paints its text on an 8% wash of itself, and on a
+     bg-navy-secondary/20 panel that pair measured warning 4.18 and
+     success 4.55 — the full-stack axe sweep's last light-mode finding.
+     emerald-800 / amber-800 clear every surface the chips sit on: 6.3 /
+     6.8 on white, 5.1 / 5.5 on solid navy-secondary. */
+  --color-success:          6  95  70;  /* #065F46 — emerald-800 */
+  --color-warning:        146  64  14;  /* #92400E — amber-800 */
   --color-muted:          148 163 184;  /* #94A3B8 */
   /* Primary text in light mode. */
   --color-fg:              15  23  42;  /* #0F172A — slate-900 */
