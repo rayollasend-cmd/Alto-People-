@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type {
   AvailabilityException,
   AvailabilityWindow,
@@ -276,22 +277,20 @@ function DaysOffEditor() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dataQuery = useQuery({
+    queryKey: ['DaysOffEditor', 'data'],
+    queryFn: () => listMyAvailabilityExceptions(),
+  });
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await listMyAvailabilityExceptions();
-        if (!cancelled) setExceptions(res.exceptions);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Failed to load days off.');
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const res = dataQuery.data;
+    if (res === undefined) return;
+    setExceptions(res.exceptions);
+  }, [dataQuery.data]);
+  useEffect(() => {
+    if (!dataQuery.isError) return;
+    const err = dataQuery.error;
+    setError(err instanceof ApiError ? err.message : 'Failed to load days off.');
+  }, [dataQuery.isError, dataQuery.error]);
 
   const add = async () => {
     if (!date || saving) return;

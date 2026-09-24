@@ -417,22 +417,17 @@ function NewRecordDrawer({
   // Prefill dose = (max existing dose for this associate + kind) + 1, but only
   // while the user hasn't touched the field. Skipped for OTHER — custom labels
   // don't form one dose series.
+  const doseNumberQuery = useQuery({
+    queryKey: ['NewRecordDrawer', 'doseNumber', assoc, kind, doseTouched],
+    queryFn: () => listVaccinations({ associateId: assoc!.id, kind }),
+    enabled: !(doseTouched || !assoc || kind === 'OTHER'),
+  });
   useEffect(() => {
-    if (doseTouched || !assoc || kind === 'OTHER') return;
-    let live = true;
-    listVaccinations({ associateId: assoc.id, kind })
-      .then((r) => {
-        if (!live) return;
-        const maxDose = r.records.reduce((m, rec) => Math.max(m, rec.doseNumber), 0);
-        setDoseNumber(String(maxDose + 1));
-      })
-      .catch(() => {
-        // Silent — the field keeps its current value.
-      });
-    return () => {
-      live = false;
-    };
-  }, [assoc, kind, doseTouched]);
+    const r = doseNumberQuery.data;
+    if (r === undefined) return;
+    const maxDose = r.records.reduce((m, rec) => Math.max(m, rec.doseNumber), 0);
+    setDoseNumber(String(maxDose + 1));
+  }, [doseNumberQuery.data]);
 
   // Expiry hint only — never auto-filled. Most records here (flu, TB test)
   // are re-verified annually.

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -87,25 +88,15 @@ export function AnalyticsHome() {
   // re-renders the page and chartColor() re-reads the swapped CSS vars
   // for the status donut.
   useTheme();
-  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<WindowDays>(30);
   const [reloadTick, setReloadTick] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setKpis(null);
-    setError(null);
-    getDashboardKPIs(days)
-      .then((res) => !cancelled && setKpis(res))
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Could not load KPIs.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, reloadTick]);
+  const kpisQuery = useQuery({
+    queryKey: ['AnalyticsHome', 'kpis', days, reloadTick],
+    queryFn: () => getDashboardKPIs(days),
+  });
+  const kpis: DashboardKPIs | null = kpisQuery.data ?? null;
+  const error = kpisQuery.error ? kpisQuery.error instanceof ApiError ? kpisQuery.error.message : 'Could not load KPIs.' : null;
 
   const exportCsv = () => {
     if (!kpis) return;

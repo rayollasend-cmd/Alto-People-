@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, Upload } from 'lucide-react';
@@ -53,31 +54,32 @@ export function W4Task() {
 
   // Hydrate from server so re-opens show "•••-••-1234" rather than asking
   // the associate to retype an already-encrypted SSN.
+  const statusQuery = useQuery({
+    queryKey: ['W4Task', 'status', applicationId],
+    queryFn: () => getW4(applicationId!),
+    enabled: Boolean(applicationId),
+  });
   useEffect(() => {
-    if (!applicationId) return;
-    void getW4(applicationId)
-      .then((s) => {
-        setStatus(s);
-        setCardOnFile(!!s.hasSsnCardOnFile);
-        if (s.filingStatus) setFilingStatus(s.filingStatus);
-        setMultipleJobs(s.multipleJobs);
-        if (s.dependentsAmount != null) setDependents(s.dependentsAmount);
-        if (s.otherIncome != null) setOtherIncome(s.otherIncome);
-        if (s.deductions != null) setDeductions(s.deductions);
-        if (s.extraWithholding != null) setExtraWithholding(s.extraWithholding);
-      })
-      .catch((err) => {
-        // A failed hydration must NOT fall through to a blank form: the
-        // associate would see factory defaults, believe that's what's on
-        // file, and resubmit zeroed elections over their real ones (the
-        // null status also silently bypassed the SSN-card resubmit gate).
-        setError(
-          err instanceof ApiError
-            ? t('ob.w4.loadFailedWith', { message: err.message })
-            : t('ob.w4.loadFailed'),
-        );
-      });
-  }, [applicationId]);
+    const s = statusQuery.data;
+    if (s === undefined) return;
+    setStatus(s);
+    setCardOnFile(!!s.hasSsnCardOnFile);
+    if (s.filingStatus) setFilingStatus(s.filingStatus);
+    setMultipleJobs(s.multipleJobs);
+    if (s.dependentsAmount != null) setDependents(s.dependentsAmount);
+    if (s.otherIncome != null) setOtherIncome(s.otherIncome);
+    if (s.deductions != null) setDeductions(s.deductions);
+    if (s.extraWithholding != null) setExtraWithholding(s.extraWithholding);
+  }, [statusQuery.data]);
+  useEffect(() => {
+    if (!statusQuery.isError) return;
+    const err = statusQuery.error;
+    setError(
+      err instanceof ApiError
+        ? t('ob.w4.loadFailedWith', { message: err.message })
+        : t('ob.w4.loadFailed'),
+    );
+  }, [statusQuery.isError, statusQuery.error]);
 
   const ssnOnFile = !!status?.hasSsnOnFile;
   const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;

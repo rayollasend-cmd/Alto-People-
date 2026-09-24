@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -727,21 +727,17 @@ function CaseDrawer({
   /** Jump to the next person in view with no case yet. Null = none left. */
   onNextPending?: (() => void) | null;
 }) {
-  const [detail, setDetail] = useState<EVerifyCaseDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setError(null);
-      setDetail(await getEVerifyCase(associateId));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the case.');
-    }
-  }, [associateId]);
+  const loadQuery = useQuery({
+    queryKey: ['CaseDrawer', 'detail'],
+    queryFn: () => getEVerifyCase(associateId),
+  });
+  const detail: EVerifyCaseDetail | null = loadQuery.data ?? null;
+  const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load the case.' : null;
+  const load = async () => {
+    await loadQuery.refetch();
+  };
 
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>

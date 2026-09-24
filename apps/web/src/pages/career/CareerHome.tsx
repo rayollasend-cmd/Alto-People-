@@ -560,19 +560,15 @@ function AddLevelDrawer({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [jobProfileId, setJobProfileId] = useState('');
-  const [jobProfiles, setJobProfiles] = useState<JobProfile[] | null>(null);
-  const [jobProfilesError, setJobProfilesError] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const loadJobProfiles = () => {
-    setJobProfilesError(false);
-    listJobProfiles()
-      .then((r) => setJobProfiles(r.jobProfiles))
-      .catch(() => setJobProfilesError(true));
-  };
-  useEffect(() => {
-    loadJobProfiles();
-  }, []);
+  const loadJobProfilesQuery = useQuery({
+    queryKey: ['AddLevelDrawer', 'jobProfiles'],
+    queryFn: () => listJobProfiles(),
+  });
+  const jobProfilesError = loadJobProfilesQuery.isError;
+  const jobProfiles: JobProfile[] | null = loadJobProfilesQuery.data?.jobProfiles ?? null;
+  const loadJobProfiles = () => void loadJobProfilesQuery.refetch();
 
   const submit = async () => {
     if (!title.trim()) {

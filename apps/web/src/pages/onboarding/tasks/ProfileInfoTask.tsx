@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -75,36 +76,32 @@ export function ProfileInfoTask() {
 
   // Hydrate from the server, seeding only fields the user (or their draft)
   // hasn't already filled — server values must never clobber typed input.
+  const stateQuery = useQuery({
+    queryKey: ['ProfileInfoTask', 'state', applicationId],
+    queryFn: () => getProfile(applicationId!),
+    enabled: Boolean(applicationId),
+  });
   useEffect(() => {
-    if (!applicationId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const p = await getProfile(applicationId);
-        if (cancelled) return;
-        const seed = (
-          setter: React.Dispatch<React.SetStateAction<string>>,
-          value: string | null
-        ) => setter((cur) => (cur !== '' ? cur : value ?? ''));
-        seed(setFirstName, p.firstName);
-        seed(setLastName, p.lastName);
-        seed(setDob, p.dob);
-        seed(setPhone, p.phone);
-        seed(setAddressLine1, p.addressLine1);
-        seed(setAddressLine2, p.addressLine2);
-        seed(setCity, p.city);
-        seed(setZip, p.zip);
-        setState((cur) => cur || p.state || 'FL');
-      } catch {
-        // Hydration is best-effort — the blank form still works. Apply the
-        // final state fallback so the select isn't left empty.
-        if (!cancelled) setState((cur) => cur || 'FL');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [applicationId]);
+    const p = stateQuery.data;
+    if (p === undefined) return;
+    const seed = (
+      setter: React.Dispatch<React.SetStateAction<string>>,
+      value: string | null
+    ) => setter((cur) => (cur !== '' ? cur : value ?? ''));
+    seed(setFirstName, p.firstName);
+    seed(setLastName, p.lastName);
+    seed(setDob, p.dob);
+    seed(setPhone, p.phone);
+    seed(setAddressLine1, p.addressLine1);
+    seed(setAddressLine2, p.addressLine2);
+    seed(setCity, p.city);
+    seed(setZip, p.zip);
+    setState((cur) => cur || p.state || 'FL');
+  }, [stateQuery.data]);
+  useEffect(() => {
+    if (!stateQuery.isError) return;
+    setState((cur) => cur || 'FL');
+  }, [stateQuery.isError, stateQuery.error]);
 
   // Draft saves only fire once the USER has typed something. Without the
   // dirty gate, the effect persisted the server-hydrated snapshot as a
@@ -378,43 +375,35 @@ export function useNextTask(currentKind: string): NextTaskTarget | null {
   const [next, setNext] = useState<NextTaskTarget | null>(null);
   const isAssociate = user?.role === 'ASSOCIATE';
 
+  const nextQuery = useQuery({
+    queryKey: ['useNextTask', 'next', applicationId, isAssociate, currentKind, t],
+    queryFn: () => getApplication(applicationId!),
+    enabled: !(!applicationId || !isAssociate),
+  });
   useEffect(() => {
-    if (!applicationId || !isAssociate) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const detail = await getApplication(applicationId);
-        if (cancelled) return;
-        const candidates = detail.tasks.filter(
-          (t) =>
-            t.kind !== currentKind &&
-            t.status !== 'DONE' &&
-            t.status !== 'SKIPPED' &&
-            CHAINABLE_KINDS.has(t.kind)
-        );
-        // Prefer the first incomplete task AFTER this one in checklist order;
-        // wrap around to earlier unfinished ones so nothing gets stranded.
-        const curIdx = detail.tasks.findIndex((t) => t.kind === currentKind);
-        const target =
-          candidates.find((t) => detail.tasks.indexOf(t) > curIdx) ??
-          candidates[0] ??
-          null;
-        setNext(
-          target
-            ? {
-                route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
-                label: taskShortLabel(t, target.kind) ?? target.title,
-              }
-            : null
-        );
-      } catch {
-        // Chaining is an enhancement — the checklist fallback always works.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [applicationId, isAssociate, currentKind, t]);
+    const detail = nextQuery.data;
+    if (detail === undefined) return;
+    const candidates = detail.tasks.filter(
+      (t) =>
+        t.kind !== currentKind &&
+        t.status !== 'DONE' &&
+        t.status !== 'SKIPPED' &&
+        CHAINABLE_KINDS.has(t.kind)
+    );
+    const curIdx = detail.tasks.findIndex((t) => t.kind === currentKind);
+    const target =
+    candidates.find((t) => detail.tasks.indexOf(t) > curIdx) ??
+    candidates[0] ??
+    null;
+    setNext(
+      target
+        ? {
+            route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
+            label: taskShortLabel(t, target.kind) ?? target.title,
+          }
+        : null
+    );
+  }, [nextQuery.data]);
 
   return next;
 }

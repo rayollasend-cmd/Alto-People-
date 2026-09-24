@@ -28,7 +28,7 @@ import {
 } from '@/lib/usersAdminApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { listRegions } from '@/lib/regionsApi';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { SupervisorShiftDialog } from './SupervisorShiftDialog';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Badge } from '@/components/ui/Badge';
@@ -114,8 +114,6 @@ export function UsersAdmin() {
 
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
-  const [clientsError, setClientsError] = useState(false);
   // A role change to a client-scoped role for a user with no client is held
   // here until a client is picked, then applied together.
   const [draftRole, setDraftRole] = useState<Record<string, Role>>({});
@@ -185,20 +183,16 @@ export function UsersAdmin() {
     }
   };
 
-  const loadClients = useCallback(async () => {
-    setClientsError(false);
-    try {
-      const r = await listClients({ status: 'ACTIVE' });
-      setClients(r.clients.map((c) => ({ id: c.id, name: c.name })));
-    } catch {
-      // Surfaced as an inline retry affordance where the picker renders.
-      setClientsError(true);
-    }
-  }, []);
+  const loadClientsQuery = useQuery({
+    queryKey: ['UsersAdmin', 'clients'],
+    queryFn: () => listClients({ status: 'ACTIVE' }),
+  });
+  const clientsError = loadClientsQuery.isError;
+  const clients: { id: string; name: string }[] = loadClientsQuery.data ? loadClientsQuery.data.clients.map((c) => ({ id: c.id, name: c.name })) : [];
+  const loadClients = async () => {
+    await loadClientsQuery.refetch();
+  };
 
-  useEffect(() => {
-    void loadClients();
-  }, [loadClients]);
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RotateCcw } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -79,25 +80,19 @@ export function I9Task() {
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('I9_VERIFICATION');
 
-  const [status, setStatus] = useState<I9Status | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [topError, setTopError] = useState<string | null>(null);
 
+  const refreshQuery = useQuery({
+    queryKey: ['I9Task', 'status', applicationId],
+    queryFn: () => getI9Status(applicationId!),
+    enabled: Boolean(applicationId),
+  });
+  const status: I9Status | null = refreshQuery.data ?? null;
+  const topError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('ob.i9.loadFailed') : null;
+  const loading = refreshQuery.isPending;
   const refresh = async () => {
-    if (!applicationId) return;
-    try {
-      setStatus(await getI9Status(applicationId));
-    } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : t('ob.i9.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+    await refreshQuery.refetch();
   };
 
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applicationId]);
 
   if (loading) {
     return (

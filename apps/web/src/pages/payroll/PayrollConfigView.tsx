@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ShieldAlert } from 'lucide-react';
 import type { PayrollConfig, PayrollConfigBracket } from '@alto-people/shared';
 import { getPayrollConfig } from '@/lib/payrollApi';
@@ -26,23 +26,13 @@ const fmtPct = (rate: number) => fmtPercent(rate, { fromFraction: true, decimals
  * tables come from IRS Pub 15-T, so this UI is intentionally display-only.
  */
 export function PayrollConfigView() {
-  const [config, setConfig] = useState<PayrollConfig | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setConfig(null);
-    setError(null);
-    getPayrollConfig()
-      .then((res) => !cancelled && setConfig(res))
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Could not load payroll config.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const configQuery = useQuery({
+    queryKey: ['PayrollConfigView', 'config'],
+    queryFn: () => getPayrollConfig(),
+  });
+  const config: PayrollConfig | null = configQuery.data ?? null;
+  const error = configQuery.error ? configQuery.error instanceof ApiError ? configQuery.error.message : 'Could not load payroll config.' : null;
 
   return (
     <div className="mx-auto">

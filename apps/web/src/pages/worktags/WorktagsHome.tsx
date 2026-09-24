@@ -275,8 +275,6 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
   const [categories, setCategories] = useState<WorktagCategory[]>([]);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState('');
-  const [worktags, setWorktags] = useState<Worktag[] | null>(null);
-  const [worktagsError, setWorktagsError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -297,22 +295,14 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
   };
   useEffect(loadCategories, []);
 
-  const refresh = () => {
-    if (!categoryId) return;
-    setWorktags(null);
-    setWorktagsError(null);
-    listWorktags(categoryId)
-      .then((r) => setWorktags(r.worktags))
-      .catch((err) =>
-        setWorktagsError(
-          err instanceof ApiError ? err.message : 'Could not load values.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryId]);
+  const refreshQuery = useQuery({
+    queryKey: ['ValuesTab', 'worktags', categoryId],
+    queryFn: () => listWorktags(categoryId!),
+    enabled: Boolean(categoryId),
+  });
+  const worktags: Worktag[] | null = refreshQuery.data?.worktags ?? null;
+  const worktagsError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load values.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!worktags) return null;

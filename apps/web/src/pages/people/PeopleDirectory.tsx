@@ -2187,23 +2187,21 @@ function DepartmentField({
   >(null);
   const [saving, setSaving] = useState(false);
 
+  const departmentsQuery = useQuery({
+    queryKey: ['DepartmentField', 'departments', editing, departments],
+    queryFn: () => listDepartments(),
+    enabled: !(!editing || departments !== null),
+  });
   useEffect(() => {
-    if (!editing || departments !== null) return;
-    let alive = true;
-    listDepartments()
-      .then((r) => {
-        if (alive) setDepartments(r.departments.map((d) => ({ id: d.id, name: d.name })));
-      })
-      .catch(() => {
-        if (alive) {
-          toast.error('Could not load departments.');
-          setEditing(false);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [editing, departments]);
+    const r = departmentsQuery.data;
+    if (r === undefined) return;
+    setDepartments(r.departments.map((d) => ({ id: d.id, name: d.name })));
+  }, [departmentsQuery.data]);
+  useEffect(() => {
+    if (!departmentsQuery.isError) return;
+    toast.error('Could not load departments.');
+    setEditing(false);
+  }, [departmentsQuery.isError, departmentsQuery.error]);
 
   async function save(next: string) {
     if (saving) return;

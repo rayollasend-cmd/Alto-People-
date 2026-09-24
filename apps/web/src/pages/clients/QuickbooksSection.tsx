@@ -432,22 +432,21 @@ function AccountMappingForm({
     );
   }, [status]);
 
+  const accountsQuery = useQuery({
+    queryKey: ['AccountMappingForm', 'accounts', clientId, loadAttempt],
+    queryFn: () => listQboAccounts(clientId),
+  });
   useEffect(() => {
-    let alive = true;
-    listQboAccounts(clientId)
-      .then((res) => {
-        if (alive) setAccounts(res.accounts);
-      })
-      .catch((err) => {
-        if (alive) {
-          setLoadError(err instanceof ApiError ? err.message : 'Failed to load chart of accounts.');
-          setAccounts([]);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [clientId, loadAttempt]);
+    const res = accountsQuery.data;
+    if (res === undefined) return;
+    setAccounts(res.accounts);
+  }, [accountsQuery.data]);
+  useEffect(() => {
+    if (!accountsQuery.isError) return;
+    const err = accountsQuery.error;
+    setLoadError(err instanceof ApiError ? err.message : 'Failed to load chart of accounts.');
+    setAccounts([]);
+  }, [accountsQuery.isError, accountsQuery.error]);
 
   const submit = async () => {
     setSaving(true);

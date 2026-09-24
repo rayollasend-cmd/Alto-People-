@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Activity, ChevronDown, ChevronUp, Clock, TrendingUp, Users } from 'lucide-react';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
@@ -54,24 +55,15 @@ export function OnboardingAnalytics() {
   const { can } = useAuth();
   const canView = can('view:dashboard');
 
-  const [data, setData] = useState<OnboardingAnalyticsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [clientsExpanded, setClientsExpanded] = useState(false);
 
-  useEffect(() => {
-    if (!canView) return;
-    let cancelled = false;
-    getOnboardingAnalytics()
-      .then((r) => !cancelled && setData(r))
-      .catch(
-        (err) =>
-          !cancelled &&
-          setError(err instanceof ApiError ? err.message : 'Failed to load.')
-      );
-    return () => {
-      cancelled = true;
-    };
-  }, [canView]);
+  const dataQuery = useQuery({
+    queryKey: ['OnboardingAnalytics', 'data', canView],
+    queryFn: () => getOnboardingAnalytics(),
+    enabled: Boolean(canView),
+  });
+  const data: OnboardingAnalyticsResponse | null = dataQuery.data ?? null;
+  const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : 'Failed to load.' : null;
 
   if (!canView) {
     return (

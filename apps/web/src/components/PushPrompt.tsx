@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/lib/i18n';
@@ -25,17 +26,19 @@ export function PushPrompt() {
       return false;
     }
   });
+  const statusQuery = useQuery({
+    queryKey: ['PushPrompt', 'status'],
+    queryFn: () => getPushStatus(),
+  });
   useEffect(() => {
-    let live = true;
-    getPushStatus()
-      .then((s) => {
-        if (live) setStatus(s);
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, []);
+    const s = statusQuery.data;
+    if (s === undefined) return;
+    setStatus(s);
+  }, [statusQuery.data]);
+  useEffect(() => {
+    if (!statusQuery.isError) return;
+    undefined
+  }, [statusQuery.isError, statusQuery.error]);
 
   if (dismissed || status !== 'available') return null;
 

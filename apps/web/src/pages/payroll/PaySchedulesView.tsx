@@ -4,7 +4,8 @@
 // from. Each schedule shows its computed "next period" + "next pay date"
 // so finance can see at a glance which payroll is up next.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Calendar, Pencil, Plus, Trash2, UserPlus, Users } from 'lucide-react';
 import { BulkAssignScheduleDialog } from './BulkAssignScheduleDialog';
 import type {
@@ -122,18 +123,24 @@ export function PaySchedulesView({ canProcess }: Props) {
   const [bulkAssignTarget, setBulkAssignTarget] = useState<PayrollSchedule | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listPayrollSchedules({ includeInactive });
-      setSchedules(res.schedules);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to load schedules.');
-    }
-  }, [includeInactive]);
-
+  const refreshQuery = useQuery({
+    queryKey: ['PaySchedulesView', 'schedules'],
+    queryFn: () => listPayrollSchedules({ includeInactive }),
+  });
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setSchedules(res.schedules);
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    const err = refreshQuery.error;
+    toast.error(err instanceof ApiError ? err.message : 'Failed to load schedules.');
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   const onDelete = async () => {
     if (!confirmDelete) return;

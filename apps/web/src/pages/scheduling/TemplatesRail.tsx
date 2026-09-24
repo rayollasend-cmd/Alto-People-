@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, LayoutTemplate, Plus, Settings2 } from 'lucide-react';
 import type { ShiftTemplate } from '@alto-people/shared';
 import { listShiftTemplates } from '@/lib/schedulingApi';
@@ -63,24 +64,22 @@ export function TemplatesRail({ clientId, onManage }: Props) {
     window.localStorage.setItem(RAIL_KEY, collapsed ? 'collapsed' : 'open');
   }, [collapsed]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await listShiftTemplates(
+  const dataQuery = useQuery({
+    queryKey: ['TemplatesRail', 'data', clientId],
+    queryFn: () => listShiftTemplates(
           clientId ? { clientId } : {},
-        );
-        if (!cancelled) setTemplates(res.templates);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Could not load templates.');
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
+        ),
+  });
+  useEffect(() => {
+    const res = dataQuery.data;
+    if (res === undefined) return;
+    setTemplates(res.templates);
+  }, [dataQuery.data]);
+  useEffect(() => {
+    if (!dataQuery.isError) return;
+    const err = dataQuery.error;
+    setError(err instanceof ApiError ? err.message : 'Could not load templates.');
+  }, [dataQuery.isError, dataQuery.error]);
 
   // Nothing to drag yet: an open rail would be an empty panel over the
   // grid, so the tab stays and opens the template manager instead.

@@ -170,20 +170,20 @@ function PasskeysCard() {
   const [busy, setBusy] = useState(false);
   const supported = passkeysSupported();
 
+  const passkeysQuery = useQuery({
+    queryKey: ['PasskeysCard', 'passkeys', supported],
+    queryFn: () => listPasskeys(),
+    enabled: Boolean(supported),
+  });
   useEffect(() => {
-    if (!supported) return;
-    let cancelled = false;
-    listPasskeys()
-      .then((rows) => {
-        if (!cancelled) setPasskeys(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setPasskeys([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [supported]);
+    const rows = passkeysQuery.data;
+    if (rows === undefined) return;
+    setPasskeys(rows);
+  }, [passkeysQuery.data]);
+  useEffect(() => {
+    if (!passkeysQuery.isError) return;
+    setPasskeys([]);
+  }, [passkeysQuery.isError, passkeysQuery.error]);
 
   if (!supported) return null;
 
@@ -857,15 +857,15 @@ function NotificationsCard() {
   const [pushStatus, setPushStatus] = useState<PushRowStatus>('loading');
   const [pushBusy, setPushBusy] = useState(false);
 
+  const pushStatusQuery = useQuery({
+    queryKey: ['NotificationsCard', 'pushStatus'],
+    queryFn: () => getPushStatus(),
+  });
   useEffect(() => {
-    let cancelled = false;
-    getPushStatus().then((s) => {
-      if (!cancelled) setPushStatus(s);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const s = pushStatusQuery.data;
+    if (s === undefined) return;
+    setPushStatus(s);
+  }, [pushStatusQuery.data]);
 
   const onEnablePush = async () => {
     setPushBusy(true);

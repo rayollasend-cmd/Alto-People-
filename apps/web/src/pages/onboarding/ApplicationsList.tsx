@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -320,9 +320,7 @@ export function ApplicationsList() {
   };
 
   // The visible (filtered, paginated) page of rows.
-  const [items, setItems] = useState<ApplicationSummary[] | null>(null);
   // Total count for the *current filter* — drives the pagination footer.
-  const [filteredTotal, setFilteredTotal] = useState(0);
   // 1-indexed page number for the visible rows. Reset on filter change.
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
@@ -333,7 +331,6 @@ export function ApplicationsList() {
   // Client list for the "Filter by client" dropdown. Loaded once on
   // mount — clients change rarely enough that a cache miss isn't worth
   // the extra plumbing.
-  const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
   const [openCsvImport, setOpenCsvImport] = useState(false);
@@ -396,28 +393,21 @@ export function ApplicationsList() {
   // page 1). Without the guard, whichever response lands LAST wins — a
   // stale page-5 result could blank the list with "no applications match"
   // even though page 1 has rows. Same pattern as AdminTimeView.
-  const listReqSeq = useRef(0);
-  const refresh = useCallback(() => {
-    const seq = ++listReqSeq.current;
-    setError(null);
-    listApplications({
+  const refreshQuery = useQuery({
+    queryKey: ['ApplicationsList', 'items'],
+    queryFn: () => listApplications({
       status,
       q: urlQ,
       clientId: clientId || undefined,
       ...invitedRange(invitedWindow),
       page,
       pageSize: PAGE_SIZE,
-    })
-      .then((res) => {
-        if (seq !== listReqSeq.current) return; // newer request in flight
-        setItems(res.applications);
-        setFilteredTotal(res.total);
-      })
-      .catch((err) => {
-        if (seq !== listReqSeq.current) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-  }, [status, urlQ, clientId, invitedWindow, page]);
+    }),
+  });
+  const items: ApplicationSummary[] | null = refreshQuery.data?.applications ?? null;
+  const filteredTotal = refreshQuery.data?.total ?? 0;
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const refreshStatsQuery = useQuery({
     queryKey: ['ApplicationsList', 'statsData'],
@@ -432,9 +422,6 @@ export function ApplicationsList() {
     setPage(1);
   }, [status, urlQ, clientId, invitedWindow]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
 
   const clientsQuery = useQuery({

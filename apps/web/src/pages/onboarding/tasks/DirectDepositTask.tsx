@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -51,33 +52,35 @@ export function DirectDepositTask() {
   const next = useNextTask('DIRECT_DEPOSIT');
 
   // Hydrate so re-opens show the redacted view rather than blank fields.
+  const statusQuery = useQuery({
+    queryKey: ['DirectDepositTask', 'status', applicationId],
+    queryFn: () => getDirectDeposit(applicationId!),
+    enabled: Boolean(applicationId),
+  });
   useEffect(() => {
-    if (!applicationId) return;
-    void getDirectDeposit(applicationId)
-      .then((s) => {
-        setStatus(s);
-        if (s.hasPayoutMethod) {
-          if (s.type === 'BANK_ACCOUNT') setType('BANK_ACCOUNT');
-          if (s.type === 'BRANCH_CARD') setType('BRANCH_CARD');
-          if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
-            setAccountType(s.accountType);
-          }
-          // Safe to prefill — a bank's name isn't a secret, and retyping it on
-          // every edit is how it ends up blank or inconsistent.
-          if (s.bankName) setBankName(s.bankName);
-        }
-      })
-      .catch((err) => {
-        // A silent failure showed the blank "add a bank account" form to
-        // someone with a verified account on file — implying nothing was
-        // set up and inviting a re-entry that resets verification.
-        setError(
-          err instanceof ApiError
-            ? t('ob.dd.loadFailedWith', { message: err.message })
-            : t('ob.dd.loadFailed'),
-        );
-      });
-  }, [applicationId]);
+    const s = statusQuery.data;
+    if (s === undefined) return;
+    setStatus(s);
+    if (s.hasPayoutMethod) {
+      if (s.type === 'BANK_ACCOUNT') setType('BANK_ACCOUNT');
+      if (s.type === 'BRANCH_CARD') setType('BRANCH_CARD');
+      if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
+        setAccountType(s.accountType);
+      }
+      // Safe to prefill — a bank's name isn't a secret, and retyping it on
+      // every edit is how it ends up blank or inconsistent.
+      if (s.bankName) setBankName(s.bankName);
+    }
+  }, [statusQuery.data]);
+  useEffect(() => {
+    if (!statusQuery.isError) return;
+    const err = statusQuery.error;
+    setError(
+      err instanceof ApiError
+        ? t('ob.dd.loadFailedWith', { message: err.message })
+        : t('ob.dd.loadFailed'),
+    );
+  }, [statusQuery.isError, statusQuery.error]);
 
   const onFile = !!status?.hasPayoutMethod;
   const showForm = !onFile || replaceMethod;

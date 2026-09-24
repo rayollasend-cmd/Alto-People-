@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlarmClock, AlertTriangle, Check, ClipboardCopy, FileUp, MessageSquare, RotateCcw, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FieldglassStatus, TimesheetAssociateDetailResponse, TimesheetRow, TimesheetWeekResponse } from '@alto-people/shared';
@@ -339,7 +340,6 @@ export function EnterInFieldglass({
   // reshuffles the list under the finger.
   const [queue, setQueue] = useState<TimesheetRow[]>([]);
   const [at, setAt] = useState(0);
-  const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -353,17 +353,12 @@ export function EnterInFieldglass({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const row = queue[at] ?? null;
-  useEffect(() => {
-    if (!open || !row) return;
-    let live = true;
-    setDetail(null);
-    getAssociateTimesheetDetail({ associateId: row.associateId, weekStart: weekStartIso, clientId: row.clientId ?? undefined })
-      .then((d) => live && setDetail(d))
-      .catch(() => live && setDetail(null));
-    return () => {
-      live = false;
-    };
-  }, [open, row, weekStartIso]);
+  const detailQuery = useQuery({
+    queryKey: ['EnterInFieldglass', 'detail', open, row, weekStartIso],
+    queryFn: () => getAssociateTimesheetDetail({ associateId: row.associateId, weekStart: weekStartIso, clientId: row.clientId ?? undefined }),
+    enabled: !(!open || !row),
+  });
+  const detail: TimesheetAssociateDetailResponse | null = detailQuery.isError ? null : (detailQuery.data ?? null);
 
   const entered = async () => {
     if (!row?.clientId) return;

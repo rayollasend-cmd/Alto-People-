@@ -735,21 +735,18 @@ function Sparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
 }
 
 function StoreTrendsCard() {
-  const [data, setData] = useState<{ stores: StoreTrend[]; bestMarginPerHour: number } | null>(
-    null,
-  );
-  const [failed, setFailed] = useState(false);
   const [open, setOpen] = usePersistentState<boolean>(
     'alto:laborcosts.trends.open.v1',
     true,
     (v): v is boolean => typeof v === 'boolean',
   );
 
-  useEffect(() => {
-    apiFetch<{ stores: StoreTrend[]; bestMarginPerHour: number }>('/scheduling/store-trends')
-      .then(setData)
-      .catch(() => setFailed(true));
-  }, []);
+  const dataQuery = useQuery({
+    queryKey: ['StoreTrendsCard', 'data'],
+    queryFn: () => apiFetch<{ stores: StoreTrend[]; bestMarginPerHour: number }>('/scheduling/store-trends'),
+  });
+  const failed = dataQuery.isError;
+  const data: { stores: StoreTrend[]; bestMarginPerHour: number } | null = dataQuery.data ?? null;
 
   if (failed || (data !== null && data.stores.length === 0)) return null;
   if (data === null) return <Skeleton className="h-24" />;

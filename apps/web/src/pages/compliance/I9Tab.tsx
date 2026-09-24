@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
@@ -802,32 +803,28 @@ function Section2Verifier({
   /** Index into `docs` currently open in the full-screen viewer. */
   const [viewerAt, setViewerAt] = useState<number | null>(null);
 
+  const docsQuery = useQuery({
+    queryKey: ['Section2Verifier', 'docs', applicationId],
+    queryFn: () => listI9Documents(applicationId),
+  });
   useEffect(() => {
-    let cancelled = false;
-    listI9Documents(applicationId)
-      .then((res) => {
-        if (cancelled) return;
-        setDocs(res.documents);
-        // Shared with the application drawer's inline verifier — see
-        // autoDetectSection2 for the list/pre-check rules.
-        const auto = autoDetectSection2(res.documents);
-        if (auto) {
-          setDocumentList(auto.documentList);
-          setPicked(new Set(auto.preChecked));
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof ApiError ? err.message : 'Failed to load documents.',
-          );
-          setDocs([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [applicationId]);
+    const res = docsQuery.data;
+    if (res === undefined) return;
+    setDocs(res.documents);
+    const auto = autoDetectSection2(res.documents);
+    if (auto) {
+      setDocumentList(auto.documentList);
+      setPicked(new Set(auto.preChecked));
+    }
+  }, [docsQuery.data]);
+  useEffect(() => {
+    if (!docsQuery.isError) return;
+    const err = docsQuery.error;
+    setLoadError(
+      err instanceof ApiError ? err.message : 'Failed to load documents.',
+    );
+    setDocs([]);
+  }, [docsQuery.isError, docsQuery.error]);
 
   const togglePick = (id: string) => {
     setPicked((prev) => {

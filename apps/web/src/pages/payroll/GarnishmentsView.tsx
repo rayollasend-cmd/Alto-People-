@@ -5,7 +5,8 @@
 // page is the only place a garnishment can be created without hitting
 // the API directly.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Pause, Play, Plus, Square } from 'lucide-react';
 import {
   createGarnishment,
@@ -88,18 +89,24 @@ export function GarnishmentsView({ canProcess }: Props) {
     | null
   >(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listGarnishments(filter === 'ALL' ? {} : { status: filter });
-      setRows(res.garnishments);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to load garnishments.');
-    }
-  }, [filter]);
-
+  const refreshQuery = useQuery({
+    queryKey: ['GarnishmentsView', 'rows'],
+    queryFn: () => listGarnishments(filter === 'ALL' ? {} : { status: filter }),
+  });
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setRows(res.garnishments);
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    const err = refreshQuery.error;
+    toast.error(err instanceof ApiError ? err.message : 'Failed to load garnishments.');
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   const onChangeStatus = async () => {
     if (!statusChange) return;

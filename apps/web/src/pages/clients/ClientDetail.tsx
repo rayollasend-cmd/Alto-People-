@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Archive, Building2, MapPin, Save } from 'lucide-react';
 import { toast } from 'sonner';
@@ -108,19 +109,25 @@ export function ClientDetail() {
     }
   };
 
-  const refresh = useCallback(async () => {
-    if (!id) return;
-    try {
-      const c = await getClient(id);
-      setClient(c);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [id]);
-
+  const refreshQuery = useQuery({
+    queryKey: ['ClientDetail', 'client'],
+    queryFn: () => getClient(id!),
+    enabled: Boolean(id),
+  });
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const c = refreshQuery.data;
+    if (c === undefined) return;
+    setClient(c);
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    const err = refreshQuery.error;
+    setError(err instanceof ApiError ? err.message : 'Failed to load.');
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   if (error) {
     return (

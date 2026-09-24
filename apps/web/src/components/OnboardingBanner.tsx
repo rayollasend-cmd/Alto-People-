@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import type { ApplicationSummary } from '@alto-people/shared';
@@ -16,37 +17,27 @@ import { ProgressBar } from '@/components/ProgressBar';
 export function OnboardingBanner() {
   const [item, setItem] = useState<ApplicationSummary | null | undefined>(undefined);
 
+  const itemQuery = useQuery({
+    queryKey: ['OnboardingBanner', 'item'],
+    queryFn: () => listApplications({ pageSize: 10 }),
+  });
   useEffect(() => {
-    let cancelled = false;
-    // Banner only needs the most recent few applications for this associate
-    // to find one that's still incomplete. pageSize=10 covers any realistic
-    // associate (most have one) and avoids paying for the full list.
-    listApplications({ pageSize: 10 })
-      .then((res) => {
-        if (cancelled) return;
-        // For ASSOCIATE callers the API only returns their own apps; pick
-        // the most recent incomplete one. APPROVED/REJECTED are terminal
-        // and not actionable from the associate's side.
-        const open = res.applications.find(
-          (a) => a.percentComplete < 100 && a.status !== 'REJECTED'
-        );
-        setItem(open ?? null);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        // 403 = caller isn't an associate → silently render nothing.
-        if (err instanceof ApiError && err.status === 403) {
-          setItem(null);
-          return;
-        }
-        // Any other error → fail-quiet; the regular onboarding tile is
-        // still in the module grid below.
-        setItem(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const res = itemQuery.data;
+    if (res === undefined) return;
+    const open = res.applications.find(
+      (a) => a.percentComplete < 100 && a.status !== 'REJECTED'
+    );
+    setItem(open ?? null);
+  }, [itemQuery.data]);
+  useEffect(() => {
+    if (!itemQuery.isError) return;
+    const err = itemQuery.error;
+    if (err instanceof ApiError && err.status === 403) {
+      setItem(null);
+      return;
+    }
+    setItem(null);
+  }, [itemQuery.isError, itemQuery.error]);
 
   if (!item) return null;
 

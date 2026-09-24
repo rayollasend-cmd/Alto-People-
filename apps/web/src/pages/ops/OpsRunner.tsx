@@ -331,10 +331,6 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
 
 function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const { t: tr } = useI18n();
-  const [options, setOptions] = useState<Awaited<
-    ReturnType<typeof getOpsOpenOptions>
-  > | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // A supervisor runs their own client's floor (clamped server-side). An
   // org-wide role (ops, HR) covering a floor picks the client — asking the
   // API with none read "clientId is required." in a red banner. Their home
@@ -382,20 +378,15 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   // forms before anyone had started anything.
   const [choosing, setChoosing] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!bounded && !clientId) return;
-    let live = true;
-    setOptions(null);
-    setError(null);
-    getOpsOpenOptions(bounded ? undefined : clientId)
-      .then((o) => live && setOptions(o))
-      .catch((err) =>
-        live && setError(err instanceof ApiError ? err.message : tr('opsRun.loadTodayFailed')),
-      );
-    return () => {
-      live = false;
-    };
-  }, [bounded, clientId]);
+  const optionsQuery = useQuery({
+    queryKey: ['OpenShiftPanel', 'options', bounded, clientId],
+    queryFn: () => getOpsOpenOptions(bounded ? undefined : clientId),
+    enabled: !(!bounded && !clientId),
+  });
+  const options: Awaited<
+    ReturnType<typeof getOpsOpenOptions>
+  > | null = optionsQuery.data ?? null;
+  const error = optionsQuery.error ? optionsQuery.error instanceof ApiError ? optionsQuery.error.message : tr('opsRun.loadTodayFailed') : null;
 
   const clientPicker = !bounded && clients.length > 1 && (
     <div className="flex flex-wrap items-center gap-2">
