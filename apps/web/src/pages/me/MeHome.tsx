@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
@@ -601,7 +601,7 @@ function FaceConsentRow() {
 
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver">
         {t('me.face.title')}
       </div>
       {loadError ? (
@@ -661,7 +661,7 @@ function EmployeeNumberRow({
   const { t } = useI18n();
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver">
         {t('me.num.title')}
       </div>
       {employeeNumber === null ? (
@@ -708,10 +708,12 @@ function FieldInput({
   type?: string;
   inputMode?: 'tel' | 'numeric' | 'email';
 }) {
+  const id = useId();
   return (
     <div>
-      <Label>{label}</Label>
+      <Label htmlFor={id}>{label}</Label>
       <Input
+        id={id}
         className="mt-1"
         value={value}
         onChange={(e) => onChange(e.target.value)}

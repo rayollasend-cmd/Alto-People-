@@ -408,3 +408,63 @@ export function executiveDigestBody(s: ExecutiveSummary): string {
   lines.push('Open the dashboard for the live floor, OT outlook, and the board pack.');
   return lines.join('\n');
 }
+
+/**
+ * The week in a few sentences — what moved, against the week before, in
+ * the words an executive would use to relay it. One source for the
+ * Saturday digest, the board pack's opening paragraph and the dashboard,
+ * so they never disagree.
+ */
+export function executiveNarrative(s: ExecutiveSummary): string[] {
+  const w = s.lastWeek;
+  const prev = s.trend.length >= 2 ? s.trend[s.trend.length - 2]! : null;
+  const pct = (cur: number, was: number): string | null => {
+    if (!was) return null;
+    const d = ((cur - was) / was) * 100;
+    if (Math.abs(d) < 0.5) return 'flat';
+    return `${d > 0 ? 'up' : 'down'} ${Math.abs(d).toFixed(0)}%`;
+  };
+  const out: string[] = [];
+
+  const hoursMove = prev ? pct(w.workedHours, prev.workedHours) : null;
+  out.push(
+    `Last week the workforce worked ${w.workedHours.toFixed(0)} hours across ${w.headsWorked} associates` +
+      (hoursMove ? `, ${hoursMove} on the week before` : '') +
+      `, with ${w.otHours.toFixed(0)} hours of overtime` +
+      (prev ? ` (${prev.otHours.toFixed(0)} the week before)` : '') +
+      '.',
+  );
+
+  const marginMove = prev ? pct(w.estMargin, prev.estMargin) : null;
+  out.push(
+    `At standard rates that is ${money(w.estBilled)} billed against ${money(w.estLaborCost)} of labor — an estimated margin of ${money(w.estMargin)}` +
+      (marginMove ? `, ${marginMove}` : '') +
+      '.',
+  );
+
+  const net = s.workforce.hires30d - s.workforce.separations30d;
+  out.push(
+    `Headcount stands at ${s.workforce.active} active associates; the last 30 days brought ${s.workforce.hires30d} hires and ${s.workforce.separations30d} separations` +
+      (net !== 0 ? ` (net ${net > 0 ? '+' : ''}${net})` : '') +
+      `, with ${s.workforce.onboardingInFlight} still onboarding.`,
+  );
+
+  const unexcused = s.attendance30d.reduce((n, a) => n + a.count, 0);
+  if (unexcused > 0) {
+    const top = [...s.attendance30d].sort((a, b) => b.count - a.count)[0]!;
+    out.push(
+      `Attendance logged ${unexcused} unexcused events in 30 days, most of them ${top.kind.toLowerCase().replace(/_/g, ' ')} (${top.count}).`,
+    );
+  }
+
+  if (s.clients.length > 0) {
+    const total = s.clients.reduce((n, c) => n + c.activeAssociates, 0);
+    const lead = s.clients[0]!;
+    const share = total > 0 ? Math.round((lead.activeAssociates / total) * 100) : 0;
+    out.push(
+      `${lead.clientName} carries ${lead.activeAssociates} of ${total} placed associates (${share}%)` +
+        (share >= 50 ? ' — concentration worth watching.' : '.'),
+    );
+  }
+  return out;
+}

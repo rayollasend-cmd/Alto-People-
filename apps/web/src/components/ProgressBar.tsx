@@ -7,9 +7,11 @@ interface ProgressBarProps {
   /** Travel duration in ms — pages that choreograph a "progress moment"
    *  (onboarding checklist) pass a longer ride than the 300ms default. */
   travelMs?: number;
+  /** What is progressing — the bar's accessible name ("Onboarding checklist"). */
+  label?: string;
 }
 
-export function ProgressBar({ percent, className, hideLabel, travelMs = 300 }: ProgressBarProps) {
+export function ProgressBar({ percent, className, hideLabel, travelMs = 300, label }: ProgressBarProps) {
   const pct = Math.max(0, Math.min(100, Math.round(percent)));
   return (
     <div className={cn('w-full', className)}>
@@ -21,6 +23,7 @@ export function ProgressBar({ percent, className, hideLabel, travelMs = 300 }: P
           className="h-full w-full origin-left bg-gold transition-transform ease-out"
           style={{ transform: `scaleX(${pct / 100})`, transitionDuration: `${travelMs}ms` }}
           role="progressbar"
+          aria-label={label ?? `${pct}% complete`}
           aria-valuenow={pct}
           aria-valuemin={0}
           aria-valuemax={100}

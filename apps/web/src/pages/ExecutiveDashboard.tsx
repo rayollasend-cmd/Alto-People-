@@ -52,6 +52,8 @@ interface ExecWeek {
 }
 interface ExecSummary {
   generatedAt: string;
+  /** The week in a few sentences — the same words the digest and board pack carry. */
+  narrative: string[];
   workforce: {
     active: number;
     deactivated: number;
@@ -827,6 +829,16 @@ export function ExecutiveDashboard() {
           Download board pack
         </Button>
       </div>
+
+      {summary && summary.narrative.length > 0 && (
+        <section
+          aria-label="The week in brief"
+          className="rounded-lg border border-gold/30 bg-gold/5 px-4 py-3 text-sm leading-relaxed text-silver"
+        >
+          <div className="text-2xs uppercase tracking-widest text-gold">The week in brief</div>
+          <p className="mt-1 max-w-prose text-white/90">{summary.narrative.join(' ')}</p>
+        </section>
+      )}
 
       {error && (
         <ErrorBanner

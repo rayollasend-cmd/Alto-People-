@@ -47,7 +47,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeDelegationsFrom } from './delegations.js';
-import { EmailSuppressedError, send } from './notifications.js';
+import { EmailSuppressedError, send, type SendAttachment } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
 import {
@@ -184,6 +184,8 @@ export interface NotifyOpts {
    * builds its own absolute link separately.
    */
   linkUrl?: string;
+  /** EMAIL only — a packet that belongs with the message (the bell shows the text). */
+  attachments?: SendAttachment[];
   /**
    * Bell-only delivery: skip the email AND the push. For routine-positive
    * confirmations ("hours approved") where the event is self-evident and
@@ -242,6 +244,7 @@ function sendEmailNotification(
           // unsubscribe headers. Everything else routed through here is
           // transactional and must NOT advertise an unsubscribe.
           includeUnsubscribe: bucketForRawCategory(opts.category) === 'broadcast',
+          attachments: opts.attachments,
         });
         externalRef = r.externalRef;
         providerMessageId = r.providerMessageId;

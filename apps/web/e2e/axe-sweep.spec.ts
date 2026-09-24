@@ -46,6 +46,8 @@ async function auditRoute(page: Page, route: string): Promise<Finding[]> {
 
 for (const persona of PERSONAS) {
   test(`no serious or critical accessibility violations (${persona.name})`, async ({ page }, testInfo) => {
+    // A dozen routes, each settled and audited: minutes, not the default 30s.
+    test.setTimeout(240_000);
     await signIn(page, persona);
     const findings: Finding[] = [];
     for (const route of [...persona.routes, ...persona.axeRoutes]) {

@@ -12,7 +12,9 @@ import { prisma as defaultPrisma } from '../db.js';
 import type { PrismaClient } from '@prisma/client';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveDecisions } from './executiveDecisions.js';
-import { computeExecutiveSummary, executiveDigestBody } from './executiveSummary.js';
+import { computeExecutiveSummary, executiveDigestBody, executiveNarrative } from './executiveSummary.js';
+import { buildBoardPack } from './executiveBoardPack.js';
+import { formatRef } from './emailTemplates.js';
 import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 
@@ -64,7 +66,12 @@ export async function runExecutiveDigestSweep(
   if (pending.length === 0) return { sent: 0, skipped: 'already_sent' };
 
   const summary = await computeExecutiveSummary(prisma, now);
-  let body = executiveDigestBody(summary);
+  // The week in sentences first, the figures after — and the board pack
+  // rides along as the packet, so the digest is the weekly briefing rather
+  // than a pointer to one.
+  let body = `${executiveNarrative(summary).join(' ')}\n\n${executiveDigestBody(summary)}`;
+  const packet = await buildBoardPack(summary, formatRef());
+  const packetName = `board-pack-${now.toISOString().slice(0, 10)}.pdf`;
   // The follow-through line: the digest never lets the queue die quietly.
   const decisions = await computeExecutiveDecisions(prisma, now);
   const open = decisions.filter((d) => d.status === 'open');
@@ -79,6 +86,7 @@ export async function runExecutiveDigestSweep(
       body,
       category: DIGEST_CATEGORY,
       linkUrl: '/',
+      attachments: [{ filename: packetName, content: packet, contentType: 'application/pdf' }],
     });
   }
   return { sent: pending.length };
