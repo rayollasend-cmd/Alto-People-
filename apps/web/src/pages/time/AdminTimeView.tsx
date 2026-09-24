@@ -3,6 +3,7 @@ import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-d
 import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -335,17 +336,6 @@ function periodLabel(p: PayPeriod): string {
   return `${fmtDateTz(p.start, 'UTC')} – ${fmtDateTz(p.end, 'UTC')}`;
 }
 
-// Pay periods are static config for the tenant — cache them at module level
-// so remounting this view (tab hops, route changes) doesn't refetch.
-// Failures are NOT cached, so the next mount retries.
-let payPeriodsCache: PayPeriod[] | null = null;
-
-/** Tests mock listPayPeriods per-case; the module cache would otherwise
- *  leak the first case's periods into the rest of the file's tests. */
-export function __resetPayPeriodsCacheForTests(): void {
-  payPeriodsCache = null;
-}
-
 interface AdminTimeViewProps {
   canManage: boolean;
   /** Watch-only mode (FLOOR_SUPERVISOR): live board only — the approval
@@ -612,25 +602,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     'COMPLETED',
     (v): v is TimeEntryStatus | 'ALL' => STATUS_FILTERS.some((f) => f.value === v),
   );
-  const [entries, setEntries] = useState<TimeEntry[] | null>(null);
-  const [activeAll, setActive] = useState<ActiveDashboardEntry[] | null>(null);
   // A shift supervisor's board opens on their shift (focus, not a lock —
   // "Whole store" is one tap away): whoever's shift starts in a window they
   // lead, or, with no shift, clocked in for it. Every lens below reads
   // `active`, so the counts, shift picker and table all follow the focus.
   const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
-  const active = useMemo(() => {
-    if (!activeAll || !mine) return activeAll;
-    return activeAll.filter((e) =>
-      e.shiftStartsAt
-        ? inWindows(
-            { locationId: e.locationId, startsAt: e.shiftStartsAt, timezone: e.locationTimezone ?? '' },
-            myWindows,
-          )
-        : clockInInWindows(e.clockInAt, myWindows),
-    );
-  }, [activeAll, mine, myWindows]);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [liveSearch, setLiveSearch] = useState('');
@@ -645,7 +621,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   const [activePreset, setActivePreset] = useState<RangePreset | null>('LAST14');
   // Pay-period picker: choosing a period drives From/To; hand-editing
   // either date drops back to "Custom range" (stateful-chip pattern).
-  const [payPeriods, setPayPeriods] = useState<PayPeriod[] | null>(null);
   const [periodKey, setPeriodKey] = useState('');
   // Triage lens: show only flagged entries (client-side over the loaded
   // window — same scope as everything else on this tab). Persisted — the
@@ -677,8 +652,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   );
   // Bulk apply-break length — the button next to the picker reads it.
   const [bulkBreakMinutes, setBulkBreakMinutes] = useState<15 | 30 | 60>(60);
-  // Server hit its row cap — the window has MORE rows than shown.
-  const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [payrollOpen, setPayrollOpen] = useState(false);
@@ -736,27 +709,20 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     [storeScope],
   );
   const [locationFilter, setLocationFilter] = useState('');
-  const [locationOptions, setLocationOptions] = useState<Array<{ id: string; name: string }>>([]);
+  // Bounded roles lack view:clients — the read 403s, the site list stays
+  // empty, and the Location select stays disabled. Same graceful
+  // degradation as the export dialogs below.
+  const sitesQuery = useQuery({
+    queryKey: ['clients', clientFilter, 'locations'],
+    queryFn: () => listClientLocations(clientFilter),
+    enabled: Boolean(clientFilter),
+  });
+  const locationOptions = useMemo(
+    () => (clientFilter ? (sitesQuery.data?.locations ?? []).map((l) => ({ id: l.id, name: l.name })) : []),
+    [clientFilter, sitesQuery.data],
+  );
   useEffect(() => {
     setLocationFilter('');
-    if (!clientFilter) {
-      setLocationOptions([]);
-      return;
-    }
-    let cancelled = false;
-    // Bounded roles lack view:clients — the fetch 403s, the catch leaves
-    // the site list empty, and the Location select stays disabled. Same
-    // graceful degradation as the export dialogs below.
-    listClientLocations(clientFilter)
-      .then((r) => {
-        if (!cancelled) setLocationOptions(r.locations.map((l) => ({ id: l.id, name: l.name })));
-      })
-      .catch(() => {
-        if (!cancelled) setLocationOptions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [clientFilter]);
   const [bulkBusy, setBulkBusy] = useState(false);
   // advanceOnDone: the reject came from the detail drawer mid-triage —
@@ -781,6 +747,107 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     id: string;
     name: string;
   } | null>(null);
+
+  // The queue, keyed on everything that narrows it: a filter change is a
+  // new question, an answer to an old one can never land last (the
+  // sequence guard this replaces), and the previous rows stay on screen
+  // until the new ones arrive.
+  const entriesQuery = useQuery({
+    queryKey: [
+      'time',
+      'entries',
+      {
+        status: filter,
+        from: fromYmd,
+        to: toYmd,
+        search: appliedSearch,
+        associateId: focusAssociate?.id ?? null,
+        clientId: clientFilter,
+        locationId: locationFilter,
+      },
+    ],
+    queryFn: () =>
+      listAdminTimeEntries({
+        ...(filter !== 'ALL' ? { status: filter } : {}),
+        from: ymdToIsoStart(fromYmd),
+        to: ymdToIsoEndExclusive(toYmd),
+        ...(appliedSearch ? { search: appliedSearch } : {}),
+        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      }),
+    enabled: tab === 'queue',
+    placeholderData: keepPreviousData,
+  });
+  const entries: TimeEntry[] | null = entriesQuery.data?.entries ?? null;
+  // Server hit its row cap — the window has MORE rows than shown.
+  const truncated = Boolean(entriesQuery.data?.truncated);
+
+  // The live board: polled every 30s while its tab is open and the page
+  // is visible (no point polling a dashboard nobody can see), and re-read
+  // the moment the page comes back.
+  const activeQuery = useQuery({
+    queryKey: ['time', 'active', { clientId: clientFilter, locationId: locationFilter }],
+    queryFn: () =>
+      getActiveDashboard({
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      }),
+    enabled: tab === 'live',
+    staleTime: 0,
+    refetchInterval: tab === 'live' ? 30_000 : false,
+    refetchOnWindowFocus: true,
+  });
+  const activeAll: ActiveDashboardEntry[] | null = activeQuery.data?.entries ?? null;
+  const active = useMemo(() => {
+    if (!activeAll || !mine) return activeAll;
+    return activeAll.filter((e) =>
+      e.shiftStartsAt
+        ? inWindows(
+            { locationId: e.locationId, startsAt: e.shiftStartsAt, timezone: e.locationTimezone ?? '' },
+            myWindows,
+          )
+        : clockInInWindows(e.clockInAt, myWindows),
+    );
+  }, [activeAll, mine, myWindows]);
+
+  // KPI: the pending backlog — all-time, following the client/site filter
+  // so the badge and the queue agree. Best-effort: the last value stays up
+  // while a re-read fails. Watch-only mode has no queue and no manage:time;
+  // the count endpoint would only 403, so it is not read.
+  const pendingQuery = useQuery({
+    queryKey: ['time', 'pending-count', { clientId: clientFilter, locationId: locationFilter }],
+    queryFn: () =>
+      countAdminTimeEntries('COMPLETED', {
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      }),
+    enabled: !liveOnly,
+    placeholderData: keepPreviousData,
+  });
+  const pendingCount: number | null = pendingQuery.data?.count ?? null;
+
+  // Pay periods are static config for the tenant — one read per session.
+  // On failure the picker simply stays hidden and the manual From/To range
+  // keeps working.
+  const payPeriodsQuery = useQuery({
+    queryKey: ['time', 'pay-periods'],
+    queryFn: () => listPayPeriods(),
+    staleTime: Infinity,
+  });
+  const payPeriods: PayPeriod[] | null = payPeriodsQuery.isError
+    ? []
+    : (payPeriodsQuery.data?.periods ?? null);
+
+  const loadError = entriesQuery.error
+    ? entriesQuery.error instanceof ApiError
+      ? entriesQuery.error.message
+      : 'Failed to load.'
+    : activeQuery.error
+      ? activeQuery.error instanceof ApiError
+        ? activeQuery.error.message
+        : 'Failed to load active dashboard.'
+      : null;
 
   // Ref mirrors so the stable focus callbacks can read the CURRENT filter
   // and focus without carrying them as deps (which would re-render the
@@ -863,18 +930,18 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // is consumed once so refreshes/back don't re-trigger.
   const [flashEntryId, setFlashEntryId] = useState<string | null>(null);
   const entryParam = tabParams.get('entry');
+  // The entry is read through the cache; the effect consumes the param
+  // once that read has settled — found, missing, or failed.
+  const entryJump = useQuery({
+    queryKey: ['time', 'entries', 'jump', entryParam],
+    queryFn: () => listAdminTimeEntries({ entryId: entryParam! }),
+    enabled: Boolean(entryParam) && !liveOnly,
+    retry: false,
+  });
   useEffect(() => {
-    if (!entryParam || liveOnly) return;
-    let cancelled = false;
-    (async () => {
-      let target: TimeEntry | null = null;
-      try {
-        const res = await listAdminTimeEntries({ entryId: entryParam });
-        target = res.entries[0] ?? null;
-      } catch {
-        // Fall through — consume the param and explain below.
-      }
-      if (cancelled) return;
+    if (!entryParam || liveOnly || entryJump.isPending) return;
+    {
+      const target: TimeEntry | null = entryJump.data?.entries[0] ?? null;
       const params = new URLSearchParams(tabParams);
       params.delete('entry');
       // This write happens async off a mount-time snapshot — drop the
@@ -902,14 +969,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
       setPeriodKey('');
       setDrawerTarget(target);
       setFlashEntryId(target.id);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    }
     // tabParams/setters change identity every render; entryParam going null
     // after the consume ends the cycle, so they're deliberately not deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryParam, liveOnly]);
+  }, [entryParam, liveOnly, entryJump.isPending, entryJump.data]);
 
   // Deep-link: ?associate=<id> (optionally &name=) opens that associate's
   // focused timesheet — the landing the profile drawer's "Timesheet" button
@@ -958,49 +1022,18 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     return () => window.clearTimeout(t);
   }, [flashEntryId, entries]);
 
-  // Sequence-guarded like the scheduling grid's refresh: filters, dates,
-  // and the search debounce all re-fire this, and without the guard a slow
-  // earlier response could land LAST and repaint stale rows (plus the wrong
-  // truncated flag) over the fresher result.
-  const queueReqSeq = useRef(0);
+  // The three re-reads the rest of the page asks for. `refetch` is
+  // identity-stable, so these are too, and the memoised rows keep their
+  // handlers.
+  const { refetch: refetchEntries } = entriesQuery;
+  const { refetch: refetchActive } = activeQuery;
+  const { refetch: refetchPending } = pendingQuery;
   const refresh = useCallback(async () => {
-    const seq = ++queueReqSeq.current;
-    try {
-      setError(null);
-      const res = await listAdminTimeEntries({
-        ...(filter !== 'ALL' ? { status: filter } : {}),
-        from: ymdToIsoStart(fromYmd),
-        to: ymdToIsoEndExclusive(toYmd),
-        ...(appliedSearch ? { search: appliedSearch } : {}),
-        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
-        ...(clientFilter ? { clientId: clientFilter } : {}),
-        ...(locationFilter ? { locationId: locationFilter } : {}),
-      });
-      if (seq !== queueReqSeq.current) return; // newer request in flight
-      setEntries(res.entries);
-      setTruncated(Boolean(res.truncated));
-      // Selection only valid on the COMPLETED filter; clear when refreshing.
-      // (clearSelection is a stable callback from useSelection, declared
-      // below — safe to call from this closure, deliberately not a dep.)
-      clearSelection();
-    } catch (err) {
-      if (seq !== queueReqSeq.current) return;
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate, clientFilter, locationFilter]);
-
+    await refetchEntries();
+  }, [refetchEntries]);
   const refreshActive = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await getActiveDashboard({
-        ...(clientFilter ? { clientId: clientFilter } : {}),
-        ...(locationFilter ? { locationId: locationFilter } : {}),
-      });
-      setActive(res.entries);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load active dashboard.');
-    }
-  }, [clientFilter, locationFilter]);
+    await refetchActive();
+  }, [refetchActive]);
 
   // Pull down at the top = re-fetch both the live board and the queue.
   const pullState = usePullToRefresh(() => Promise.all([refresh(), refreshActive()]));
@@ -1023,21 +1056,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   }, [active, boundedClient, canManage]);
 
   const refreshPendingCount = useCallback(async () => {
-    // Watch-only mode has no queue and no manage:time — the count endpoint
-    // would only 403, so the tile isn't rendered and nothing is fetched.
     if (liveOnly) return;
-    try {
-      // Follows the client/site filter so the badge and the queue agree;
-      // still all-time — it's the total backlog, not the date window.
-      const res = await countAdminTimeEntries('COMPLETED', {
-        ...(clientFilter ? { clientId: clientFilter } : {}),
-        ...(locationFilter ? { locationId: locationFilter } : {}),
-      });
-      setPendingCount(res.count);
-    } catch {
-      // KPI is best-effort; leave previous value.
-    }
-  }, [clientFilter, locationFilter, liveOnly]);
+    await refetchPending();
+  }, [liveOnly, refetchPending]);
 
   // Refresh after an admin create/edit/clock-out — only the visible tab's
   // data plus the pending-review KPI. The other tab refetches on switch.
@@ -1048,44 +1069,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     ]);
   }, [tab, refresh, refreshActive, refreshPendingCount]);
 
-  // Two effects, one per tab, each depending only on its own tab's inputs.
-  // A single combined effect used to re-run refreshActive() whenever a
-  // queue-only filter changed `refresh`'s identity while the live tab was
-  // open — a pointless dashboard refetch per keystroke/date change.
-  useEffect(() => {
-    if (tab === 'queue') refresh();
-  }, [tab, refresh]);
-
-  useEffect(() => {
-    if (tab === 'live') refreshActive();
-  }, [tab, refreshActive]);
-
-  // KPI: pending count loads independent of which tab is open.
-  useEffect(() => {
-    refreshPendingCount();
-  }, [refreshPendingCount]);
-
   // Debounce free-text search so we don't refetch on every keystroke.
   useEffect(() => {
     const id = setTimeout(() => setAppliedSearch(queueSearch.trim()), 300);
     return () => clearTimeout(id);
   }, [queueSearch]);
-
-  // Pay-period options load once per app session (module-level cache — they
-  // are static config); on failure the picker simply stays hidden and the
-  // manual From/To range keeps working.
-  useEffect(() => {
-    if (payPeriodsCache) {
-      setPayPeriods(payPeriodsCache);
-      return;
-    }
-    listPayPeriods()
-      .then((r) => {
-        payPeriodsCache = r.periods;
-        setPayPeriods(r.periods);
-      })
-      .catch(() => setPayPeriods([]));
-  }, []);
 
   const onPickPeriod = (key: string) => {
     setPeriodKey(key);
@@ -1119,29 +1107,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
       setToYmd(ymdLocal(lastEnd));
     }
   };
-
-  // Auto-refresh the live tab every 30s while it's open — paused while the
-  // browser tab is hidden (mirrors NotificationsBell): no point polling a
-  // dashboard nobody can see, and no backlog of throttled fires dumping at
-  // once on return. Coming back refetches immediately and restarts the timer.
-  useEffect(() => {
-    if (tab !== 'live') return;
-    let id = window.setInterval(refreshActive, 30_000);
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        window.clearInterval(id);
-        refreshActive();
-        id = window.setInterval(refreshActive, 30_000);
-      } else {
-        window.clearInterval(id);
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [tab, refreshActive]);
 
   // Ref-mirrored guard so this callback stays identity-stable across
   // pendingId flips — a stable handler is what lets the memoised queue rows
@@ -1581,6 +1546,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     replace: replaceSelection,
     clear: clearSelection,
   } = useSelection(selectableIds);
+  // Selection only valid on the COMPLETED filter; a fresh read of the
+  // queue drops it, as the loader used to.
+  useEffect(() => {
+    clearSelection();
+  }, [entries, clearSelection]);
 
   // The live board's columns. Client only for cross-client viewers, Job and
   // Geofence only when some row carries one (see liveCols).
@@ -1970,10 +1940,10 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         </Tabs>
       )}
 
-      {error && (
+      {(error ?? loadError) && (
         <ErrorBanner className="mb-4">
           <div className="flex items-start gap-2">
-            <span className="flex-1">{error}</span>
+            <span className="flex-1">{error ?? loadError}</span>
             {/* -my keeps the icon-sm hit target from inflating the banner. */}
             <Button
               variant="ghost"
@@ -3252,29 +3222,19 @@ function AssociateSearchField({
 }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const [all, setAll] = useState<
-    Array<{ id: string; name: string; email: string }> | null
-  >(null);
-  useEffect(() => {
-    let cancelled = false;
-    listSchedulingAssociates()
-      .then((r) => {
-        if (cancelled) return;
-        setAll(
-          r.associates.map((a) => ({
-            id: a.id,
-            name: `${a.firstName} ${a.lastName}`,
-            email: a.email,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setAll([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const associatesQuery = useQuery({
+    queryKey: ['scheduling', 'associates'],
+    queryFn: () => listSchedulingAssociates(),
+  });
+  const all = useMemo<Array<{ id: string; name: string; email: string }> | null>(() => {
+    if (associatesQuery.isError) return [];
+    if (!associatesQuery.data) return null;
+    return associatesQuery.data.associates.map((a) => ({
+      id: a.id,
+      name: `${a.firstName} ${a.lastName}`,
+      email: a.email,
+    }));
+  }, [associatesQuery.data, associatesQuery.isError]);
   const results = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (term.length < 2 || !all) return [];
@@ -3483,42 +3443,31 @@ function TimeEntryFormDrawer({
   // (where missing clock-outs get repaired) shows the same chip: the entry's
   // own linked shift times are already denormalized on the row (zero extra
   // fetch); unlinked entries fall back to the create-mode schedule lookup.
-  const [schedShift, setSchedShift] = useState<{
-    startsAt: string;
-    endsAt: string;
-  } | null>(null);
-  useEffect(() => {
-    if (mode === 'edit' && entry?.shiftStartsAt && entry?.shiftEndsAt) {
-      setSchedShift({ startsAt: entry.shiftStartsAt, endsAt: entry.shiftEndsAt });
-      return;
-    }
-    if (!assoc || !dateStr) {
-      setSchedShift(null);
-      return;
-    }
-    let cancelled = false;
-    listShifts({
-      from: combineWall(dateStr, '00:00').toISOString(),
-      to: combineWall(dateStr, '00:00', 1).toISOString(),
-    })
-      .then((r) => {
-        if (cancelled) return;
-        setSchedShift(
-          r.shifts.find(
-            (s) =>
-              s.assignedAssociateId === assoc.id &&
-              s.status !== 'CANCELLED' &&
-              s.status !== 'DRAFT',
-          ) ?? null,
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setSchedShift(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, entry, assoc, dateStr]);
+  const linkedShift =
+    mode === 'edit' && entry?.shiftStartsAt && entry?.shiftEndsAt
+      ? { startsAt: entry.shiftStartsAt, endsAt: entry.shiftEndsAt }
+      : null;
+  const dayShiftsQuery = useQuery({
+    queryKey: ['shifts', 'day', dateStr],
+    queryFn: () =>
+      listShifts({
+        from: combineWall(dateStr, '00:00').toISOString(),
+        to: combineWall(dateStr, '00:00', 1).toISOString(),
+      }),
+    enabled: !linkedShift && Boolean(assoc && dateStr),
+  });
+  const schedShift = useMemo<{ startsAt: string; endsAt: string } | null>(() => {
+    if (linkedShift) return linkedShift;
+    if (!assoc || !dateStr || !dayShiftsQuery.data) return null;
+    return (
+      dayShiftsQuery.data.shifts.find(
+        (s) =>
+          s.assignedAssociateId === assoc.id &&
+          s.status !== 'CANCELLED' &&
+          s.status !== 'DRAFT',
+      ) ?? null
+    );
+  }, [linkedShift, assoc, dateStr, dayShiftsQuery.data]);
 
   const applySchedule = () => {
     if (!schedShift) return;
@@ -4054,7 +4003,6 @@ function SummaryExportDialog({
   // and the viewer isn't pinned to a single client.
   const { clients } = useClients({ enabled: open && !boundedClient });
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
-  const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
   const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -4075,14 +4023,16 @@ function SummaryExportDialog({
   useEffect(() => {
     setLocationId(seedLocationRef.current);
     seedLocationRef.current = '';
-    if (!clientId) {
-      setLocations([]);
-      return;
-    }
-    listClientLocations(clientId)
-      .then((r) => setLocations(r.locations.map((l) => ({ id: l.id, name: l.name }))))
-      .catch(() => setLocations([]));
   }, [clientId]);
+  const locationsQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+    enabled: Boolean(clientId),
+  });
+  const locations = useMemo(
+    () => (clientId ? (locationsQuery.data?.locations ?? []).map((l) => ({ id: l.id, name: l.name })) : []),
+    [clientId, locationsQuery.data],
+  );
 
   const download = async () => {
     setBusy(true);
@@ -4211,13 +4161,15 @@ function RecordPayPeriodDialog({
 }) {
   const [fromYmd, setFromYmd] = useState(defaultFromYmd);
   const [toYmd, setToYmd] = useState(defaultToYmd);
-  const [rows, setRows] = useState<PeriodPrefillRow[] | null>(null);
+  // The period being read — set by the open effect and the Load button;
+  // the rows are whatever the cache holds for it.
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [grossById, setGrossById] = useState<Record<string, string>>({});
   const [payDate, setPayDate] = useState('');
   const [method, setMethod] = useState('DIRECT_DEPOSIT');
   const [reference, setReference] = useState('');
-  const [busy, setBusy] = useState<'load' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'save' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Last run's habits, remembered across visits: the gap between period end
   // and pay date, and the batch reference — both prefilled on open so a
@@ -4233,53 +4185,66 @@ function RecordPayPeriodDialog({
     (v): v is string => typeof v === 'string',
   );
 
-  const load = async (f = fromYmd, t = toYmd) => {
+  const prefillQuery = useQuery({
+    queryKey: ['time', 'period-prefill', range?.from ?? null, range?.to ?? null],
+    queryFn: () => getPeriodPrefill(range!.from, range!.to),
+    enabled: open && range !== null,
+    retry: false,
+  });
+  const rows: PeriodPrefillRow[] | null = range ? (prefillQuery.data?.rows ?? null) : null;
+  const loadErr = prefillQuery.error
+    ? prefillQuery.error instanceof ApiError
+      ? prefillQuery.error.message
+      : 'Could not load the period.'
+    : null;
+  // Each read seeds the sheet: everyone with hours is checked, already-
+  // recorded rows too (re-recording just refreshes them — idempotent
+  // server-side), and the suggested gross is the starting figure.
+  useEffect(() => {
+    const r = prefillQuery.data;
+    if (!r) return;
+    setChecked(new Set(r.rows.map((x) => x.associateId)));
+    setGrossById(
+      Object.fromEntries(
+        r.rows.map((x) => [
+          x.associateId,
+          x.suggestedGross != null ? String(x.suggestedGross) : '',
+        ]),
+      ),
+    );
+    if (r.truncated) {
+      toast.warning('The time scan hit its cap — narrow the range.');
+    }
+  }, [prefillQuery.data]);
+
+  const load = (f = fromYmd, t = toYmd) => {
     if (!f || !t || t < f) {
       setErr('Pick a valid pay period (end on or after start).');
       return;
     }
-    setBusy('load');
     setErr(null);
-    try {
-      const r = await getPeriodPrefill(f, t);
-      setRows(r.rows);
-      // Default: everyone with hours is checked; already-recorded rows too
-      // (re-recording just refreshes them — idempotent server-side).
-      setChecked(new Set(r.rows.map((x) => x.associateId)));
-      setGrossById(
-        Object.fromEntries(
-          r.rows.map((x) => [
-            x.associateId,
-            x.suggestedGross != null ? String(x.suggestedGross) : '',
-          ]),
-        ),
-      );
-      if (r.truncated) {
-        toast.warning('The time scan hit its cap — narrow the range.');
-      }
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Could not load the period.');
-    } finally {
-      setBusy(null);
-    }
+    if (range && range.from === f && range.to === t) void prefillQuery.refetch();
+    else setRange({ from: f, to: t });
   };
 
   useEffect(() => {
     if (!open) return;
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
-    setRows(null);
     setChecked(new Set());
     setGrossById({});
     setPayDate(defaultToYmd ? ymdAddDays(defaultToYmd, payOffsetDays) : '');
     setReference(suggestNextReference(lastReference));
     setErr(null);
-    // The period read is idempotent, so fire it on open when the prefilled
-    // dates are already valid; the button stays for hand-edited dates.
-    if (defaultFromYmd && defaultToYmd && defaultToYmd >= defaultFromYmd) {
-      void load(defaultFromYmd, defaultToYmd);
-    }
-    // payOffsetDays / lastReference / load: open-time snapshots only —
+    // The period read is idempotent, so it starts on open when the
+    // prefilled dates are already valid; the button stays for hand-edited
+    // dates.
+    setRange(
+      defaultFromYmd && defaultToYmd && defaultToYmd >= defaultFromYmd
+        ? { from: defaultFromYmd, to: defaultToYmd }
+        : null,
+    );
+    // payOffsetDays / lastReference: open-time snapshots only —
     // re-running mid-session would wipe the loaded rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultFromYmd, defaultToYmd]);
@@ -4365,7 +4330,7 @@ function RecordPayPeriodDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {err && <ErrorBanner>{err}</ErrorBanner>}
+          {(err ?? loadErr) && <ErrorBanner>{err ?? loadErr}</ErrorBanner>}
           <div className="flex flex-wrap items-end gap-2">
             <div>
               <Label className="text-xs">Period start</Label>
@@ -4375,7 +4340,7 @@ function RecordPayPeriodDialog({
               <Label className="text-xs">Period end</Label>
               <Input type="date" value={toYmd} onChange={(e) => setToYmd(e.target.value)} />
             </div>
-            <Button onClick={() => void load()} loading={busy === 'load'} disabled={busy !== null}>
+            <Button onClick={() => load()} loading={prefillQuery.isFetching} disabled={busy !== null || prefillQuery.isFetching}>
               Load period
             </Button>
           </div>

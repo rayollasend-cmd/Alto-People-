@@ -52,7 +52,7 @@ import {
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
 import { listSchedulingAssociates, listShifts } from '@/lib/schedulingApi';
-import { AdminTimeView, __resetPayPeriodsCacheForTests } from '@/pages/time/AdminTimeView';
+import { AdminTimeView } from '@/pages/time/AdminTimeView';
 import { AuthContext } from '@/lib/auth';
 
 // Fixed windows from the MOCKED endpoint — the component only displays
@@ -109,9 +109,6 @@ function renderQueueTab() {
 beforeEach(() => {
   // The status filter persists; a leaked value would change which chips render.
   localStorage.clear();
-  // Pay periods are module-cached in the component; reset so each test's
-  // mock actually takes effect.
-  __resetPayPeriodsCacheForTests();
   vi.mocked(listPayPeriods).mockResolvedValue({ periods: PERIODS });
   vi.mocked(listAdminTimeEntries).mockClear();
   vi.mocked(exportTimeEntries).mockClear();
