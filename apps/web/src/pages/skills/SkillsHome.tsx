@@ -90,18 +90,16 @@ function SearchTab({ canManage }: { canManage: boolean }) {
   const [loading, setLoading] = useState(false);
   // Catalog powering the combobox. null = not loaded (or failed) — the
   // input silently degrades to free text, which still searches fine.
-  const [catalog, setCatalog] = useState<SkillCatalogEntry[] | null>(null);
   const [matches, setMatches] = useState<SkillCatalogEntry[]>([]);
   const [dropOpen, setDropOpen] = useState(false);
   const [showAddSkill, setShowAddSkill] = useState(false);
 
-  const loadCatalog = () =>
-    listSkills()
-      .then((r) => setCatalog(r.skills))
-      .catch(() => setCatalog(null));
-  useEffect(() => {
-    void loadCatalog();
-  }, []);
+  const loadCatalogQuery = useQuery({
+    queryKey: ['SearchTab', 'catalog'],
+    queryFn: () => listSkills(),
+  });
+  const catalog: SkillCatalogEntry[] | null = loadCatalogQuery.isError ? null : (loadCatalogQuery.data?.skills ?? null);
+  const loadCatalog = () => void loadCatalogQuery.refetch();
 
   // Debounced catalog match for the combobox dropdown.
   useEffect(() => {

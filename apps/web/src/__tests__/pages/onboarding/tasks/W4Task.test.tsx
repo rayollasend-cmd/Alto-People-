@@ -98,6 +98,9 @@ describe('<W4Task>', () => {
   it('submits with default filing status (SINGLE) and zero amounts', async () => {
     const user = userEvent.setup();
     renderTask();
+    // The saved elections arrive through the query cache; submit only once
+    // the form has hydrated (SSN on file → no SSN input to fail on).
+    await screen.findByText(/•••-••-6789/);
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
 
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));

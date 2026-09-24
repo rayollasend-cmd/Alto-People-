@@ -496,7 +496,6 @@ function W4Card() {
 // "switch to paper check" affordance here until the server grows one.
 function PayoutMethodCard() {
   const { t } = useI18n();
-  const [method, setMethod] = useState<MyPayoutMethod | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [routing, setRouting] = useState('');
   const [account, setAccount] = useState('');
@@ -504,22 +503,13 @@ function PayoutMethodCard() {
   const [type, setType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
   const [busy, setBusy] = useState(false);
 
-  const [loadFailed, setLoadFailed] = useState(false);
-  const load = () =>
-    getMyPayoutMethod()
-      .then((r) => {
-        setMethod(r.method);
-        setLoadFailed(false);
-      })
-      .catch(() => {
-        // A failed fetch must NEVER render as "no direct deposit on file" —
-        // for an hourly worker that reads as "my bank account vanished".
-        setLoadFailed(true);
-      });
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const loadQuery = useQuery({
+    queryKey: ['PayoutMethodCard', 'method'],
+    queryFn: () => getMyPayoutMethod(),
+  });
+  const method: MyPayoutMethod | null | undefined = loadQuery.data?.method ?? undefined;
+  const loadFailed = loadQuery.isError ? true : (loadQuery.data ? false : false);
+  const load = () => void loadQuery.refetch();
 
   const mismatch = confirmAccount.length > 0 && confirmAccount !== account;
   const accountsMatch = account.length > 0 && confirmAccount === account;

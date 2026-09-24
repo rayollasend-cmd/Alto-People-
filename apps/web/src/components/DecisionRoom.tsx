@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ExternalLink, Flag, Send } from 'lucide-react';
 import { toast } from 'sonner';
@@ -89,9 +90,6 @@ export function DecisionRoom({
    *  tag/postpone/plan/escalate live HERE, next to the context. */
   actions?: React.ReactNode;
 }) {
-  const [room, setRoom] = useState<RoomData | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [colleagues, setColleagues] = useState<Colleague[] | null>(null);
   const [body, setBody] = useState('');
   const [mention, setMention] = useState('');
   const [sending, setSending] = useState(false);
@@ -101,25 +99,25 @@ export function DecisionRoom({
   const [stepDue, setStepDue] = useState('');
   const [savingStep, setSavingStep] = useState(false);
 
-  const load = useCallback(() => {
-    if (!itemKey) return;
-    setFailed(false);
-    apiFetch<RoomData>(`/me/decisions/item?key=${encodeURIComponent(itemKey)}`)
-      .then(setRoom)
-      .catch(() => setFailed(true));
-  }, [itemKey]);
+  const loadQuery = useQuery({
+    queryKey: ['DecisionRoom', 'room', itemKey],
+    queryFn: () => apiFetch<RoomData>(`/me/decisions/item?key=${encodeURIComponent(itemKey!)}`),
+    enabled: Boolean(itemKey),
+  });
+  const room: RoomData | null = loadQuery.data ?? null;
+  const failed = loadQuery.isError;
   useEffect(() => {
-    setRoom(null);
     setBody('');
     setMention('');
     setEditingStep(false);
-    load();
-    if (itemKey) {
-      apiFetch<{ colleagues: Colleague[] }>('/me/colleagues')
-        .then((r) => setColleagues(r.colleagues))
-        .catch(() => setColleagues([]));
-    }
-  }, [itemKey, load]);
+  }, [itemKey]);
+  const load2Query = useQuery({
+    queryKey: ['DecisionRoom', 'colleagues', itemKey],
+    queryFn: () => apiFetch<{ colleagues: Colleague[] }>('/me/colleagues'),
+    enabled: Boolean(itemKey) && Boolean(itemKey),
+  });
+  const colleagues: Colleague[] | null = load2Query.isError ? [] : (load2Query.data?.colleagues ?? null);
+  const load = () => void Promise.all([loadQuery.refetch(), (itemKey ? load2Query.refetch() : Promise.resolve())]);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
