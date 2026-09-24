@@ -1,3 +1,6 @@
 ﻿
 # One-off operational/incident diagnostic scripts (run via railway run)
 *.mjs
+
+# The lint config is source, not build output.
+!eslint.config.mjs
