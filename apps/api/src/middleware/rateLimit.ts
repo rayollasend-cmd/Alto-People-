@@ -1,5 +1,10 @@
-import rateLimit from 'express-rate-limit';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import type { Request } from 'express';
+
+// express-rate-limit 8: an IP fallback must go through ipKeyGenerator so an
+// IPv6 client is keyed by its /56 subnet (one device with rotating addresses
+// counts once) and the library's ERR_ERL_KEY_GEN_IPV6 validation passes.
+const ipKey = (req: Request): string => `ip:${req.ip ? ipKeyGenerator(req.ip) : 'unknown'}`;
 
 // In test runs the entire suite shares 127.0.0.1, which would trip the
 // IP limiter across unrelated tests. The per-email limiter still enforces
@@ -61,7 +66,7 @@ export const mfaChallengeUserLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const sub = (req as Request & { mfaPendingSub?: string }).mfaPendingSub;
-    return sub ? `mfa:${sub}` : `ip:${req.ip ?? 'unknown'}`;
+    return sub ? `mfa:${sub}` : ipKey(req);
   },
   message: {
     error: {
@@ -83,7 +88,7 @@ export const loginEmailLimiter = rateLimit({
     // Fall back to IP if body parsing failed. The IP-based limiter is the
     // primary defense for unauthenticated/garbage requests; this fallback
     // just keeps the per-email limiter from crashing on bad input.
-    return `ip:${req.ip ?? 'unknown'}`;
+    return ipKey(req);
   },
   message: {
     error: {
@@ -109,7 +114,7 @@ export const changePasswordLimiter = rateLimit({
     // requireAuth runs before this limiter, so req.user is set. Falling back
     // to IP for safety if it isn't (e.g., misconfigured route).
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+    return userId ? `user:${userId}` : ipKey(req);
   },
   message: {
     error: {
@@ -152,7 +157,7 @@ export const forgotPasswordEmailLimiter = rateLimit({
   keyGenerator: (req: Request) => {
     const email = (req.body?.email ?? '').toString().trim().toLowerCase();
     if (email) return `email:${email}`;
-    return `ip:${req.ip ?? 'unknown'}`;
+    return ipKey(req);
   },
   message: {
     error: {
@@ -215,7 +220,7 @@ export const mfaEnrollConfirmLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+    return userId ? `user:${userId}` : ipKey(req);
   },
   message: {
     error: {
@@ -256,7 +261,7 @@ export const careersApplyEmailLimiter = rateLimit({
   keyGenerator: (req: Request) => {
     const email = (req.body?.email ?? '').toString().trim().toLowerCase();
     if (email) return `email:${email}`;
-    return `ip:${req.ip ?? 'unknown'}`;
+    return ipKey(req);
   },
   message: {
     error: {
@@ -285,7 +290,7 @@ export const adminForcePasswordResetLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+    return userId ? `user:${userId}` : ipKey(req);
   },
   message: {
     error: {
@@ -313,7 +318,7 @@ export const integrationsApiKeyLimiter = rateLimit({
     // Falling back to IP for safety if the limiter is somehow mounted
     // before the auth middleware (misconfiguration).
     const id = req.apiKey?.id;
-    return id ? `apiKey:${id}` : `ip:${req.ip ?? 'unknown'}`;
+    return id ? `apiKey:${id}` : ipKey(req);
   },
   message: {
     error: {
@@ -344,7 +349,7 @@ const BULK_EXPORT_LIMIT =
     : Number(process.env.BULK_PII_EXPORTS_PER_HOUR ?? '') || 5;
 
 const perActorKey = (req: Request) =>
-  req.user?.id ? `user:${req.user.id}` : `ip:${req.ip ?? 'unknown'}`;
+  req.user?.id ? `user:${req.user.id}` : ipKey(req);
 
 /**
  * 30 single-record PII reveals / hour / actor. Covers the decrypted-SSN
