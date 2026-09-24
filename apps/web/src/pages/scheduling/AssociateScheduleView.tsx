@@ -52,7 +52,7 @@ import {
   ScheduleMonthView,
   ScheduleWeekView,
 } from './AssociateScheduleCalendar';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { MyShiftHero } from '@/pages/associate/MyShiftHero';
 import { workweekStart } from '@/lib/workweek';
@@ -79,6 +79,15 @@ function initialViewMode(): ScheduleViewMode {
 }
 
 
+/** What the schedule read yields — the rows, the server's flags, and the
+ *  timestamp of the saved copy when that is what is being shown. */
+interface ScheduleRead {
+  shifts: Shift[];
+  truncated: boolean;
+  unlinked: boolean;
+  offlineAt: number | null;
+}
+
 export function AssociateScheduleView() {
   // Read the context directly rather than useAuth(): this view is also
   // rendered in isolation (tests, storybook-style harnesses) where no
@@ -86,15 +95,6 @@ export function AssociateScheduleView() {
   // the sign-out sweep — not worth throwing over.
   const cacheKey = cacheKeyFor(useContext(AuthContext)?.user?.id);
   const { t } = useI18n();
-  const [shifts, setShifts] = useState<Shift[] | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  // The login has no linked employee record — a provisioning fault, not an
-  // empty schedule. Rendered as a warning instead of the normal empty state.
-  const [unlinked, setUnlinked] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /** Set when rendering the cached copy because the network is down —
-   *  the timestamp of that copy, shown in the offline banner. */
-  const [offlineAt, setOfflineAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showPast, setShowPast] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -135,48 +135,65 @@ export function AssociateScheduleView() {
     }
   };
 
-  const load = async () => {
-    try {
-      setError(null);
-      const res = await listMyShifts();
-      setShifts(res.shifts);
-      setTruncated(res.truncated === true);
-      setUnlinked(res.unlinked === true);
-      setOfflineAt(null);
+  // The schedule, with the offline fallback inside the read. An ApiError
+  // means the server ANSWERED (auth expired, 500…) and is shown; anything
+  // else is the network being down, and the copy this device last saved is
+  // served read-only with an offline banner instead of an error screen.
+  // Not under ['me', 'shifts']: the hero invalidates that prefix after a
+  // confirmation, and this page keeps its own copy patched in place.
+  const scheduleKey = ['me', 'schedule', cacheKey] as const;
+  const scheduleQuery = useQuery({
+    queryKey: scheduleKey,
+    queryFn: async (): Promise<ScheduleRead> => {
       try {
-        localStorage.setItem(
-          cacheKey,
-          JSON.stringify({ shifts: res.shifts, at: Date.now() }),
-        );
-      } catch {
-        // Quota/private mode — offline fallback just won't be available.
-      }
-    } catch (err) {
-      // An ApiError means the server ANSWERED (auth expired, 500…) — show
-      // it. Anything else is the network being down: serve the cached copy
-      // read-only with an offline banner instead of an error screen.
-      if (!(err instanceof ApiError)) {
+        const res = await listMyShifts();
         try {
-          const raw = localStorage.getItem(cacheKey);
-          if (raw) {
-            const cached = JSON.parse(raw) as { shifts: Shift[]; at: number };
-            if (Array.isArray(cached.shifts) && typeof cached.at === 'number') {
-              setShifts(cached.shifts);
-              setOfflineAt(cached.at);
-              return;
-            }
-          }
+          localStorage.setItem(cacheKey, JSON.stringify({ shifts: res.shifts, at: Date.now() }));
         } catch {
-          // Corrupt cache — fall through to the plain error state.
+          // Quota/private mode — offline fallback just won't be available.
         }
+        return {
+          shifts: res.shifts,
+          truncated: res.truncated === true,
+          unlinked: res.unlinked === true,
+          offlineAt: null,
+        };
+      } catch (err) {
+        if (!(err instanceof ApiError)) {
+          try {
+            const raw = localStorage.getItem(cacheKey);
+            if (raw) {
+              const cached = JSON.parse(raw) as { shifts: Shift[]; at: number };
+              if (Array.isArray(cached.shifts) && typeof cached.at === 'number') {
+                return { shifts: cached.shifts, truncated: false, unlinked: false, offlineAt: cached.at };
+              }
+            }
+          } catch {
+            // Corrupt cache — fall through to the plain error state.
+          }
+        }
+        throw err;
       }
-      setError(err instanceof ApiError ? err.message : t('sched.loadFailed'));
-    }
+    },
+  });
+  const shifts: Shift[] | null = scheduleQuery.data?.shifts ?? null;
+  const truncated = scheduleQuery.data?.truncated ?? false;
+  // The login has no linked employee record — a provisioning fault, not an
+  // empty schedule. Rendered as a warning instead of the normal empty state.
+  const unlinked = scheduleQuery.data?.unlinked ?? false;
+  /** Set when rendering the cached copy because the network is down —
+   *  the timestamp of that copy, shown in the offline banner. */
+  const offlineAt = scheduleQuery.data?.offlineAt ?? null;
+  const error = scheduleQuery.error
+    ? scheduleQuery.error instanceof ApiError
+      ? scheduleQuery.error.message
+      : t('sched.loadFailed')
+    : null;
+  const { refetch: refetchSchedule } = scheduleQuery;
+  const load = async () => {
+    await refetchSchedule();
   };
-
-  useEffect(() => {
-    load();
-  }, []);
+  const queryCache = useQueryClient();
 
   // Tick "now" each minute so the upcoming/past divide and the
   // Today/Tomorrow headings don't go stale while the tab sits open —
@@ -190,38 +207,31 @@ export function AssociateScheduleView() {
   // Days the associate can't work (one-off days off + approved time off) —
   // painted on the calendar views. Decorative: a failed fetch just leaves
   // the calendar unpainted.
-  const [blockedDays, setBlockedDays] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [ex, pto] = await Promise.all([
-          listMyAvailabilityExceptions(),
-          listMyRequests(),
-        ]);
-        if (cancelled) return;
-        const keys = new Set<string>();
-        for (const x of ex.exceptions) keys.add(x.date);
-        for (const r of pto.requests) {
-          if (r.status !== 'APPROVED') continue;
-          // Expand the inclusive range via LOCAL-midnight dates so keys
-          // match the calendar's browser-local grid; bounded so a typo'd
-          // multi-year range can't spin.
-          const end = new Date(`${r.endDate}T00:00:00`);
-          const d = new Date(`${r.startDate}T00:00:00`);
-          for (let i = 0; d <= end && i < 180; i++, d.setDate(d.getDate() + 1)) {
-            keys.add(zonedDayKey(d));
-          }
-        }
-        setBlockedDays(keys);
-      } catch {
-        // Non-essential decoration.
+  const blockedQuery = useQuery({
+    queryKey: ['me', 'blocked-days', refreshNonce],
+    queryFn: async () => {
+      const [ex, pto] = await Promise.all([listMyAvailabilityExceptions(), listMyRequests()]);
+      return { exceptions: ex.exceptions, requests: pto.requests };
+    },
+  });
+  const blockedDays = useMemo(() => {
+    const keys = new Set<string>();
+    // Non-essential decoration: a failed read leaves the calendar unpainted.
+    if (!blockedQuery.data) return keys;
+    for (const x of blockedQuery.data.exceptions) keys.add(x.date);
+    for (const r of blockedQuery.data.requests) {
+      if (r.status !== 'APPROVED') continue;
+      // Expand the inclusive range via LOCAL-midnight dates so keys
+      // match the calendar's browser-local grid; bounded so a typo'd
+      // multi-year range can't spin.
+      const end = new Date(`${r.endDate}T00:00:00`);
+      const d = new Date(`${r.startDate}T00:00:00`);
+      for (let i = 0; d <= end && i < 180; i++, d.setDate(d.getDate() + 1)) {
+        keys.add(zonedDayKey(d));
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshNonce]);
+    }
+    return keys;
+  }, [blockedQuery.data]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -234,40 +244,35 @@ export function AssociateScheduleView() {
   // The associate's hourly rate (comp record or org default, from the same
   // endpoint that powers the earnings card) — prices every "~$" on this
   // page. Decorative: a failed fetch just leaves the money off.
-  const [estRate, setEstRate] = useState<number | null>(null);
+  const rateQuery = useQuery({
+    queryKey: ['me', 'earnings-rate', refreshNonce],
+    queryFn: () => apiFetch<{ hourlyRate: number }>('/time/me/earnings'),
+  });
+  // No rate → no estimates; the schedule still works.
+  const estRate =
+    rateQuery.data && Number.isFinite(rateQuery.data.hourlyRate) && rateQuery.data.hourlyRate > 0
+      ? rateQuery.data.hourlyRate
+      : null;
   // Their punch, from the kiosk — the shift card reads on / late / coming up
   // off it (same cache as the home's).
   const activeQuery = useQuery({
     queryKey: ['me', 'activeEntry'],
     queryFn: () => getActiveTimeEntry().catch(() => null),
   });
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch<{ hourlyRate: number }>('/time/me/earnings')
-      .then((d) => {
-        if (!cancelled && Number.isFinite(d.hourlyRate) && d.hourlyRate > 0) {
-          setEstRate(d.hourlyRate);
-        }
-      })
-      .catch(() => {
-        // No rate → no estimates; the schedule still works.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshNonce]);
 
   // Confirming attendance — from the hero OR a list card — lands in the
   // page's copy of the shift, so the two surfaces can never disagree.
   const markAcknowledged = useCallback(
     (shiftId: string, acknowledgedAt: string) => {
-      setShifts((prev) =>
+      queryCache.setQueryData<ScheduleRead>(scheduleKey, (prev) =>
         prev
-          ? prev.map((s) => (s.id === shiftId ? { ...s, acknowledgedAt } : s))
+          ? { ...prev, shifts: prev.shifts.map((s) => (s.id === shiftId ? { ...s, acknowledgedAt } : s)) }
           : prev,
       );
     },
-    [],
+    // scheduleKey is a fresh tuple each render; cacheKey is its moving part.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryCache, cacheKey],
   );
 
   // Split at "now" (ticks once a minute) into upcoming (ascending) and past
@@ -615,8 +620,6 @@ export function AssociateScheduleView() {
  */
 function OpenShiftsSection({ estRate }: { estRate: number | null }) {
   const { t } = useI18n();
-  const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
-  const [failed, setFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   // The row that just got claimed — plays the success flash once.
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -624,20 +627,20 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
     null,
   );
 
+  // These rows are pickup MONEY — a failed read must say so quietly and
+  // offer a retry, never silently pretend nothing is available.
+  const openQuery = useQuery({ queryKey: ['me', 'open-shifts'], queryFn: () => listMyOpenShifts() });
+  const items: OpenShiftsResponse['shifts'] | null = openQuery.data?.shifts ?? null;
+  const failed = openQuery.isError;
+  const { refetch: refetchOpen } = openQuery;
   const load = useCallback(async () => {
-    setFailed(false);
-    try {
-      const res = await listMyOpenShifts();
-      setItems(res.shifts);
-    } catch {
-      // These rows are pickup MONEY — a failed fetch must say so quietly
-      // and offer a retry, never silently pretend nothing is available.
-      setFailed(true);
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
+    await refetchOpen();
+  }, [refetchOpen]);
+  const queryCache = useQueryClient();
+  const patchItems = (update: (prev: OpenShiftsResponse['shifts']) => OpenShiftsResponse['shifts']) =>
+    queryCache.setQueryData<OpenShiftsResponse>(['me', 'open-shifts'], (prev) =>
+      prev ? { ...prev, shifts: update(prev.shifts) } : prev,
+    );
 
   if (failed) {
     return (
@@ -661,13 +664,10 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
     setBusyId(shift.id);
     try {
       const claim = await claimOpenShift(shift.id);
-      setItems(
-        (prev) =>
-          prev?.map((s) =>
-            s.id === shift.id
-              ? { ...s, myClaimStatus: claim.status, myClaimId: claim.id }
-              : s,
-          ) ?? null,
+      patchItems((prev) =>
+        prev.map((s) =>
+          s.id === shift.id ? { ...s, myClaimStatus: claim.status, myClaimId: claim.id } : s,
+        ),
       );
       setConfirmShift(null);
       hapticConfirm();
@@ -688,11 +688,8 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
     setBusyId(shift.id);
     try {
       await withdrawOpenShiftClaim(shift.myClaimId);
-      setItems(
-        (prev) =>
-          prev?.map((s) =>
-            s.id === shift.id ? { ...s, myClaimStatus: null, myClaimId: null } : s,
-          ) ?? null,
+      patchItems((prev) =>
+        prev.map((s) => (s.id === shift.id ? { ...s, myClaimStatus: null, myClaimId: null } : s)),
       );
     } catch (err) {
       toast.error(
@@ -816,28 +813,17 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
 
 function CalendarSubscribeCard() {
   const { t } = useI18n();
-  const [feed, setFeed] = useState<CalendarFeedUrlResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await getMyCalendarUrl();
-        if (!cancelled) setFeed(res);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : t('sched.calLoadFailed'));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const queryCache = useQueryClient();
+  const feedQuery = useQuery({ queryKey: ['me', 'calendar-feed'], queryFn: () => getMyCalendarUrl() });
+  const feed: CalendarFeedUrlResponse | null = feedQuery.data ?? null;
+  const error = feedQuery.error
+    ? feedQuery.error instanceof ApiError
+      ? feedQuery.error.message
+      : t('sched.calLoadFailed')
+    : null;
 
   if (error) {
     return (
@@ -872,7 +858,7 @@ function CalendarSubscribeCard() {
     setResetting(true);
     try {
       const res = await rotateMyCalendarUrl();
-      setFeed(res);
+      queryCache.setQueryData<CalendarFeedUrlResponse>(['me', 'calendar-feed'], res);
       setConfirmReset(false);
       toast.success(t('sched.calResetToast'));
     } catch (err) {

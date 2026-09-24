@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -175,7 +176,6 @@ function expectedVoidConfirmation(periodStartYmd: string, periodEndYmd: string):
 export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps) {
   const [tab, setTab] = useState<'runs' | 'schedules' | 'garnishments'>('runs');
   const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
-  const [runs, setRuns] = useState<PayrollRunSummary[] | null>(null);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   // Hero-CTA prefill for the wizard; null = generic "New run" (full flow).
@@ -190,7 +190,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [voidReasonInput, setVoidReasonInput] = useState('');
   const [amendOpen, setAmendOpen] = useState(false);
   const [confirmFinalize, setConfirmFinalize] = useState(false);
-  const [wcReport, setWcReport] = useState<WcPremiumReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
   // Stable identity so the memoized PaystubAdminCards don't all re-render
@@ -203,35 +202,31 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // Paystub list pagination — show the first PAYSTUB_PAGE cards, with an
   // explicit opt-in to mount the rest. Reset per run.
   const [showAllPaystubs, setShowAllPaystubs] = useState(false);
-  // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
-  const [upcoming, setUpcoming] = useState<PayrollUpcomingSummary | null>(null);
-  const [upcomingLoading, setUpcomingLoading] = useState(true);
   // Four-eyes config flag — when true, Disburse is gated on approvedAt.
-  // Fetched once; a fetch failure just leaves the gate off (server still
+  // Read once; a failed read just leaves the gate off (server still
   // enforces it with a 409).
-  const [requireSecondApproval, setRequireSecondApproval] = useState(false);
+  const configQuery = useQuery({ queryKey: ['payroll', 'config'], queryFn: () => getPayrollConfig() });
+  const requireSecondApproval = Boolean(configQuery.data?.requireSecondApproval);
   // Bulk actions over the runs table.
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const confirm = useConfirm();
   const prompt = usePrompt();
 
-  useEffect(() => {
-    getPayrollConfig()
-      .then((cfg) => setRequireSecondApproval(!!cfg.requireSecondApproval))
-      .catch(() => {
-        // Non-fatal — the UI gate stays off; the server still refuses.
-      });
-  }, []);
-
+  const runsQuery = useQuery({
+    queryKey: ['payroll', 'runs', filter],
+    queryFn: () => listPayrollRuns(filter === 'ALL' ? {} : { status: filter }),
+    placeholderData: keepPreviousData,
+  });
+  const runs: PayrollRunSummary[] | null = runsQuery.data?.runs ?? null;
+  const { refetch: refetchRuns } = runsQuery;
   const refresh = useCallback(async () => {
-    try {
-      const res = await listPayrollRuns(filter === 'ALL' ? {} : { status: filter });
-      setRuns(res.runs);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to load runs.');
-    }
-  }, [filter]);
+    await refetchRuns();
+  }, [refetchRuns]);
+  useEffect(() => {
+    if (!runsQuery.error) return;
+    toast.error(runsQuery.error instanceof ApiError ? runsQuery.error.message : 'Failed to load runs.');
+  }, [runsQuery.error]);
 
   // Bulk selection — clear when the status filter changes so the action
   // bar never advertises runs that are no longer visible.
@@ -302,36 +297,30 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     (failed > 0 ? toast.error : toast.success)(`${label}: ${parts.join(' · ')}.`);
   };
 
+  // Wave 8 — hero summary card, from /payroll/upcoming. Non-fatal: a
+  // failed read renders the hero empty rather than toasting on the landing
+  // page — the runs list is still useful when /upcoming 500s.
+  const upcomingQuery = useQuery({ queryKey: ['payroll', 'upcoming'], queryFn: () => getPayrollUpcoming() });
+  const upcoming: PayrollUpcomingSummary | null = upcomingQuery.isError
+    ? { nextRun: null, lastRun: null }
+    : (upcomingQuery.data ?? null);
+  const upcomingLoading = upcomingQuery.isPending;
+  const { refetch: refetchUpcoming } = upcomingQuery;
   const refreshUpcoming = useCallback(async () => {
-    setUpcomingLoading(true);
-    try {
-      const res = await getPayrollUpcoming();
-      setUpcoming(res);
-    } catch (err) {
-      // Non-fatal — the hero just won't render. Don't toast on the landing
-      // page; the runs list is still useful even when /upcoming 500s.
-      console.warn('payroll upcoming fetch failed:', err);
-      setUpcoming({ nextRun: null, lastRun: null });
-    } finally {
-      setUpcomingLoading(false);
-    }
-  }, []);
-
+    await refetchUpcoming();
+  }, [refetchUpcoming]);
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (upcomingQuery.error) console.warn('payroll upcoming fetch failed:', upcomingQuery.error);
+  }, [upcomingQuery.error]);
 
-  useEffect(() => {
-    refreshUpcoming();
-  }, [refreshUpcoming]);
-
-  const loadWcReport = useCallback(async (runId: string) => {
-    try {
-      setWcReport(await getWcPremium(runId));
-    } catch {
-      setWcReport(null);
-    }
-  }, []);
+  // The WC premium report rides along with a DISBURSED run in the drawer.
+  const wcQuery = useQuery({
+    queryKey: ['payroll', 'wc-premium', selected?.id ?? ''],
+    queryFn: () => getWcPremium(selected!.id),
+    enabled: selected?.status === 'DISBURSED',
+  });
+  const wcReport: WcPremiumReport | null =
+    selected?.status === 'DISBURSED' && !wcQuery.isError ? (wcQuery.data ?? null) : null;
 
   // Deeplink + recoverability — ?run={id} lands HR on the run drawer
   // (e.g. payroll failure → /payroll?run=xxx) and STAYS in the URL while
@@ -341,36 +330,31 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // actually closes.
   const [searchParams, setSearchParams] = useSearchParams();
   const runParam = searchParams.get('run');
-  // One fetch per param value — without this, any searchParams identity
-  // change would re-fetch (and a failing id would retry forever).
-  const attemptedRunRef = useRef<string | null>(null);
   // True once the drawer has actually been open — distinguishes "user
-  // closed it" (strip ?run) from "initial deep-link fetch still in
+  // closed it" (strip ?run) from "initial deep-link read still in
   // flight" (keep ?run).
   const drawerWasOpenRef = useRef(false);
+  // One read per param value, through the cache; a failing id is stripped
+  // from the URL rather than retried forever.
+  const runJump = useQuery({
+    queryKey: ['payroll', 'run', runParam ?? ''],
+    queryFn: () => getPayrollRun(runParam!),
+    enabled: Boolean(runParam) && runParam !== selected?.id,
+    retry: false,
+  });
   useEffect(() => {
-    if (!runParam) {
-      attemptedRunRef.current = null;
-      return;
-    }
-    if (runParam === selected?.id) return;
-    if (attemptedRunRef.current === runParam) return;
-    attemptedRunRef.current = runParam;
-    getPayrollRun(runParam)
-      .then((detail) => {
-        setSelected(detail);
-        setWcReport(null);
-        if (detail.status === 'DISBURSED') void loadWcReport(detail.id);
-      })
-      .catch((err) => {
-        toast.error(err instanceof ApiError ? err.message : 'Failed to open run.');
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete('run');
-          return next;
-        }, { replace: true });
-      });
-  }, [runParam, selected?.id, setSearchParams, loadWcReport]);
+    if (!runParam || runParam === selected?.id) return;
+    if (runJump.data && runJump.data.id === runParam) setSelected(runJump.data);
+  }, [runParam, selected?.id, runJump.data]);
+  useEffect(() => {
+    if (!runParam || !runJump.isError) return;
+    toast.error(runJump.error instanceof ApiError ? runJump.error.message : 'Failed to open run.');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('run');
+      return next;
+    }, { replace: true });
+  }, [runParam, runJump.isError, runJump.error, setSearchParams]);
 
   // URL ↔ drawer sync: reflect the open run in ?run=, drop it on close.
   // Both writes replace — history keeps one /payroll entry, with the param
@@ -378,7 +362,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   useEffect(() => {
     if (selected) {
       drawerWasOpenRef.current = true;
-      attemptedRunRef.current = selected.id;
       if (runParam !== selected.id) {
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
@@ -402,8 +385,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     try {
       const detail = await getPayrollRun(id);
       setSelected(detail);
-      setWcReport(null);
-      if (detail.status === 'DISBURSED') void loadWcReport(detail.id);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to load run.');
     }
