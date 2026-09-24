@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { Capability } from '@alto-people/shared';
@@ -43,6 +45,17 @@ vi.mock('@/lib/i9Api', () => ({
 import { submitW4, getW4 } from '@/lib/onboardingApi';
 import { uploadI9Document } from '@/lib/i9Api';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
+
+// The page reads through the query layer; every render gets a client.
+function withQueryClient({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+const render = (ui: Parameters<typeof rtlRender>[0], options?: Parameters<typeof rtlRender>[1]) =>
+  rtlRender(ui, { wrapper: withQueryClient, ...options });
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
 

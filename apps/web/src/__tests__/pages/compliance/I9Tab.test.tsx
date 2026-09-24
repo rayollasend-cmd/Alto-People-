@@ -5,7 +5,14 @@ import type { ReactElement } from 'react';
 
 // The drawer header links to the associate's profile, so renders need a
 // Router context.
-const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// The tab reads through the query layer; every render gets a client.
+const render = (ui: ReactElement) =>
+  rtlRender(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 import userEvent from '@testing-library/user-event';
 import type { I9Verification } from '@alto-people/shared';
 
@@ -377,12 +384,14 @@ describe('<I9Tab> ?return= round-trip from the application drawer', () => {
   // Routes so the tab can actually navigate somewhere assertable.
   const renderAt = (entry: string) =>
     rtlRender(
-      <MemoryRouter initialEntries={[entry]}>
-        <Routes>
-          <Route path="/compliance" element={<I9Tab canManage={true} />} />
-          <Route path="/onboarding" element={<div>Onboarding return probe</div>} />
-        </Routes>
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[entry]}>
+          <Routes>
+            <Route path="/compliance" element={<I9Tab canManage={true} />} />
+            <Route path="/onboarding" element={<div>Onboarding return probe</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
   const passportDoc = {

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -27,6 +29,17 @@ import { advanceCandidate, listCandidates } from '@/lib/recruitingApi';
 import { listInterviews, listOffers } from '@/lib/recruiting90Api';
 import { RecruitingHome } from '@/pages/recruiting/RecruitingHome';
 import { TooltipProvider } from '@/components/ui/Tooltip';
+
+// The page reads through the query layer; every render gets a client.
+function withQueryClient({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+const render = (ui: Parameters<typeof rtlRender>[0], options?: Parameters<typeof rtlRender>[1]) =>
+  rtlRender(ui, { wrapper: withQueryClient, ...options });
 
 const MARIA = {
   id: 'cand-1',
