@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { listClientLocations } from '@/lib/clientsApi';
@@ -140,35 +141,35 @@ const OSHA_STATUS_LABELS: Record<OshaStatus, string> = {
 };
 
 function OshaTab({ clientId }: { clientId: string }) {
-  const [rows, setRows] = useState<OshaIncident[] | null>(null);
-  const [rowsError, setRowsError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<OshaIncident | null>(null);
   const [year, setYear] = useState(new Date().getFullYear());
-  const [summary, setSummary] = useState<Awaited<ReturnType<typeof get300A>> | null>(null);
-  // Bumped after create/edit so both the incident list AND the 300A
-  // summary refetch (status/days/recordable edits move the 300A numbers).
-  const [reloadTick, setReloadTick] = useState(0);
 
-  const refresh = () => setReloadTick((t) => t + 1);
-  useEffect(() => {
-    setRows(null);
-    setRowsError(null);
-    listOshaIncidents(clientId)
-      .then((r) => setRows(r.incidents))
-      .catch((err) => {
-        setRowsError(
-          err instanceof ApiError ? err.message : 'Could not load incidents.',
-        );
-      });
-    get300A(clientId, year)
-      .then(setSummary)
-      .catch(() => {
-        // Summary is decorative — the incident list above is what HR
-        // acts on. Drop to em-dashes silently rather than double-toast.
-        setSummary(null);
-      });
-  }, [clientId, year, reloadTick]);
+  const incidentsQuery = useQuery({
+    queryKey: ['compliance', 'osha', clientId],
+    queryFn: () => listOshaIncidents(clientId),
+  });
+  const rows: OshaIncident[] | null = incidentsQuery.data?.incidents ?? null;
+  const rowsError = incidentsQuery.error
+    ? incidentsQuery.error instanceof ApiError
+      ? incidentsQuery.error.message
+      : 'Could not load incidents.'
+    : null;
+  // Summary is decorative — the incident list above is what HR acts on.
+  // A failed read drops to em-dashes silently rather than double-toasting.
+  const summaryQuery = useQuery({
+    queryKey: ['compliance', 'osha-300a', clientId, year],
+    queryFn: () => get300A(clientId, year),
+  });
+  const summary: Awaited<ReturnType<typeof get300A>> | null = summaryQuery.isError
+    ? null
+    : (summaryQuery.data ?? null);
+  // After create/edit both the incident list AND the 300A summary re-read
+  // (status/days/recordable edits move the 300A numbers).
+  const refresh = () => {
+    void incidentsQuery.refetch();
+    void summaryQuery.refetch();
+  };
 
   const download300aCsv = () => {
     if (!summary) return;
@@ -321,28 +322,21 @@ function NewIncidentDrawer({
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   });
   const [location, setLocation] = useState('');
-  // Client's site list for the Location select; null while loading, [] when
-  // the client has none (falls back to free text).
-  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [description, setDescription] = useState('');
   const [bodyPart, setBodyPart] = useState('');
   const [severity, setSeverity] = useState<OshaSeverity>('FIRST_AID');
   const [daysAway, setDaysAway] = useState('0');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    listClientLocations(clientId)
-      .then((r) => {
-        if (!cancelled) setLocations(r.locations);
-      })
-      .catch(() => {
-        if (!cancelled) setLocations([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
+  // Client's site list for the Location select; null while loading, [] when
+  // the client has none (falls back to free text).
+  const locationsQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+  });
+  const locations: LocationSummary[] | null = locationsQuery.isError
+    ? []
+    : (locationsQuery.data?.locations ?? null);
 
   const onSubmit = async () => {
     if (!description.trim()) {
@@ -621,24 +615,16 @@ function EditIncidentDrawer({
 // ============ Workers' Comp ============
 
 function WcTab() {
-  const [rows, setRows] = useState<WcClassCode[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listWcClassCodes()
-      .then((r) => setRows(r.codes))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load class codes.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const codesQuery = useQuery({ queryKey: ['compliance', 'wc-codes'], queryFn: () => listWcClassCodes() });
+  const rows: WcClassCode[] | null = codesQuery.data?.codes ?? null;
+  const error = codesQuery.error
+    ? codesQuery.error instanceof ApiError
+      ? codesQuery.error.message
+      : 'Could not load class codes.'
+    : null;
+  const refresh = () => void codesQuery.refetch();
 
   return (
     <div className="space-y-4">
@@ -838,20 +824,16 @@ const EEO_GENDER_LABELS: Record<string, string> = {
 };
 
 function EeoTab({ clientId }: { clientId: string }) {
-  const [data, setData] = useState<Awaited<ReturnType<typeof getEeoReport>> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-  useEffect(() => {
-    setData(null);
-    setError(null);
-    getEeoReport(clientId)
-      .then(setData)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load the EEO report.',
-        ),
-      );
-  }, [clientId, reloadTick]);
+  const reportQuery = useQuery({
+    queryKey: ['compliance', 'eeo', clientId],
+    queryFn: () => getEeoReport(clientId),
+  });
+  const data: Awaited<ReturnType<typeof getEeoReport>> | null = reportQuery.data ?? null;
+  const error = reportQuery.error
+    ? reportQuery.error instanceof ApiError
+      ? reportQuery.error.message
+      : 'Could not load the EEO report.'
+    : null;
 
   const downloadEeoCsv = () => {
     if (!data) return;
@@ -875,7 +857,7 @@ function EeoTab({ clientId }: { clientId: string }) {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => setReloadTick((t) => t + 1)}
+                onClick={() => void reportQuery.refetch()}
               >
                 Retry
               </Button>
@@ -911,7 +893,7 @@ function EeoTab({ clientId }: { clientId: string }) {
           </Button>
         </CardContent>
       </Card>
-      <EeoCapturePanel onSaved={() => setReloadTick((t) => t + 1)} />
+      <EeoCapturePanel onSaved={() => void reportQuery.refetch()} />
       <Card>
         <CardContent className="p-0">
           {data.buckets.length === 0 ? (

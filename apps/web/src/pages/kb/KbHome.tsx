@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft,
   BookOpen,
@@ -104,12 +105,6 @@ export function KbHome() {
   }, [qInput]);
 
   const [category, setCategory] = useState<string>('');
-  const [articles, setArticles] = useState<KbArticleSummary[] | null>(null);
-  const [articlesError, setArticlesError] = useState<string | null>(null);
-  const [categories, setCategories] = useState<KbCategoryRow[]>([]);
-  const [categoriesError, setCategoriesError] = useState<string | null>(null);
-  const [adminRows, setAdminRows] = useState<KbAdminRow[] | null>(null);
-  const [adminError, setAdminError] = useState<string | null>(null);
   const [adminStatus, setAdminStatus] = useState<KbStatus | ''>('');
   const [adminSearch, setAdminSearch] = useState('');
   const [openSlug, setOpenSlug] = useState<string | null>(null);
@@ -133,56 +128,45 @@ export function KbHome() {
     }
   };
 
-  const loadCategories = () => {
-    setCategoriesError(null);
-    getKbCategories()
-      .then((r) => setCategories(r.categories))
-      .catch((err) =>
-        setCategoriesError(
-          err instanceof ApiError ? err.message : t('kb.categoriesFailed'),
-        ),
-      );
-  };
+  const categoriesQuery = useQuery({ queryKey: ['kb', 'categories'], queryFn: () => getKbCategories() });
+  const categories: KbCategoryRow[] = categoriesQuery.data?.categories ?? [];
+  const categoriesError = categoriesQuery.error
+    ? categoriesQuery.error instanceof ApiError
+      ? categoriesQuery.error.message
+      : t('kb.categoriesFailed')
+    : null;
+  const loadCategories = () => void categoriesQuery.refetch();
 
-  const loadBrowse = () => {
-    setArticles(null);
-    setArticlesError(null);
-    searchKb({ q: q.trim() || undefined, category: category || undefined })
-      .then((r) => setArticles(r.articles))
-      .catch((err) =>
-        setArticlesError(
-          err instanceof ApiError ? err.message : t('kb.articlesFailed'),
-        ),
-      );
-  };
+  const browseQuery = useQuery({
+    queryKey: ['kb', 'browse', q.trim(), category],
+    queryFn: () => searchKb({ q: q.trim() || undefined, category: category || undefined }),
+    enabled: tab === 'browse',
+  });
+  const articles: KbArticleSummary[] | null = browseQuery.data?.articles ?? null;
+  const articlesError = browseQuery.error
+    ? browseQuery.error instanceof ApiError
+      ? browseQuery.error.message
+      : t('kb.articlesFailed')
+    : null;
 
-  const loadAdmin = () => {
-    setAdminRows(null);
-    setAdminError(null);
-    adminListKb(adminStatus || undefined)
-      .then((r) => setAdminRows(r.articles))
-      .catch((err) =>
-        setAdminError(
-          err instanceof ApiError ? err.message : t('kb.articlesFailed'),
-        ),
-      );
-  };
+  const adminQuery = useQuery({
+    queryKey: ['kb', 'admin', adminStatus],
+    queryFn: () => adminListKb(adminStatus || undefined),
+    enabled: tab !== 'browse',
+  });
+  const adminRows: KbAdminRow[] | null = adminQuery.data?.articles ?? null;
+  const adminError = adminQuery.error
+    ? adminQuery.error instanceof ApiError
+      ? adminQuery.error.message
+      : t('kb.articlesFailed')
+    : null;
 
+  const loadBrowse = () => void browseQuery.refetch();
+  const loadAdmin = () => void adminQuery.refetch();
   const refresh = () => {
-    if (tab === 'browse') {
-      loadBrowse();
-    } else {
-      loadAdmin();
-    }
+    if (tab === 'browse') loadBrowse();
+    else loadAdmin();
   };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, q, category, adminStatus]);
-  useEffect(() => {
-    loadCategories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Client-side search over the (server-filtered) admin slice.
   const filteredAdmin = useMemo(() => {
@@ -503,25 +487,16 @@ function ArticleDrawer({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [data, setData] = useState<KbArticleDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const refresh = () => {
-    setData(null);
-    setError(null);
-    getKbArticle(slug)
-      .then(setData)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : t('kb.articleFailed'),
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
+  const articleQuery = useQuery({ queryKey: ['kb', 'article', slug], queryFn: () => getKbArticle(slug) });
+  const data: KbArticleDetail | null = articleQuery.data ?? null;
+  const error = articleQuery.error
+    ? articleQuery.error instanceof ApiError
+      ? articleQuery.error.message
+      : t('kb.articleFailed')
+    : null;
+  const refresh = () => void articleQuery.refetch();
 
   const vote = async (helpful: boolean) => {
     if (!data) return;
@@ -616,32 +591,27 @@ function EditDrawer({
   const [category, setCategory] = useState(article?.category ?? 'General');
   const [tags, setTags] = useState<string>((article?.tags ?? []).join(', '));
   const [body, setBody] = useState('');
-  const [bodyLoading, setBodyLoading] = useState(!isNew);
-  const [bodyError, setBodyError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Load the body through the admin endpoint so DRAFT and ARCHIVED
-  // articles hydrate too — the public slug fetch only serves PUBLISHED
-  // and silently produced an empty editor (data loss on save).
-  const loadBody = () => {
-    if (!article) return;
-    setBodyLoading(true);
-    setBodyError(null);
-    adminGetKbArticle(article.id)
-      .then((r) => setBody(r.article.body))
-      .catch((err) =>
-        setBodyError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load the article body.',
-        ),
-      )
-      .finally(() => setBodyLoading(false));
-  };
+  // The body is read through the admin endpoint so DRAFT and ARCHIVED
+  // articles hydrate too — the public slug read only serves PUBLISHED and
+  // silently produced an empty editor (data loss on save). The editor
+  // seeds itself from the read once; typing is local from then on.
+  const bodyQuery = useQuery({
+    queryKey: ['kb', 'admin-article', article?.id ?? ''],
+    queryFn: () => adminGetKbArticle(article!.id),
+    enabled: !isNew,
+  });
   useEffect(() => {
-    loadBody();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article]);
+    if (bodyQuery.data) setBody(bodyQuery.data.article.body);
+  }, [bodyQuery.data]);
+  const bodyLoading = !isNew && bodyQuery.isPending;
+  const loadBody = () => void bodyQuery.refetch();
+  const bodyError = bodyQuery.error
+    ? bodyQuery.error instanceof ApiError
+      ? bodyQuery.error.message
+      : 'Could not load the article body.'
+    : null;
 
   const tagList = useMemo(
     () =>

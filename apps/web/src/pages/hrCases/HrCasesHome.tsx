@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
@@ -122,9 +123,6 @@ export function HrCasesHome() {
   const [tab, setTab] = useState<'mine' | 'queue'>(
     canManage && !user?.associateId ? 'queue' : 'mine',
   );
-  const [mine, setMine] = useState<MyCaseRow[] | null>(null);
-  const [queue, setQueue] = useState<QueueCaseRow[] | null>(null);
-  const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>('OPEN');
@@ -133,8 +131,6 @@ export function HrCasesHome() {
   );
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [search, setSearch] = useState('');
-  const [mineError, setMineError] = useState<string | null>(null);
-  const [queueError, setQueueError] = useState<string | null>(null);
 
   // Notification deep-link: ?case=<id> opens that case's drawer directly
   // (the drawer fetches by id, so no list lookup is needed and the server
@@ -150,52 +146,50 @@ export function HrCasesHome() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  // `soft` refetches WITHOUT nulling the current rows — used after
-  // mutations (drawer close, new case) so the list doesn't collapse to a
-  // skeleton and throw away the reader's scroll position; the fresh rows
-  // reconcile in place when they land. Hard refresh (initial load, tab or
-  // filter changes, Retry) still shows the skeleton.
-  const refresh = (opts?: { soft?: boolean }) => {
-    const soft = opts?.soft === true;
-    if (tab === 'mine') {
-      if (!soft) setMine(null);
-      setMineError(null);
-      listMyCases()
-        .then((r) => setMine(r.cases))
-        .catch((err) =>
-          setMineError(
-            err instanceof ApiError ? err.message : t('hrc.loadMineFailed'),
-          ),
-        );
-    } else {
-      if (!soft) setQueue(null);
-      setQueueError(null);
+  // Each tab reads its own list; a tab or filter change is a new key and
+  // shows the skeleton, while a refetch after a mutation (drawer close,
+  // new case) keeps the current rows on screen so the list never
+  // collapses and throws away the reader's scroll position.
+  const mineQuery = useQuery({
+    queryKey: ['hrCases', 'mine'],
+    queryFn: () => listMyCases(),
+    enabled: tab === 'mine',
+  });
+  const queueQuery = useQuery({
+    queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe }],
+    queryFn: () =>
       listCaseQueue({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
         category: categoryFilter === 'ALL' ? undefined : categoryFilter,
         assignedToMe: assignedToMe || undefined,
-      })
-        .then((r) => setQueue(r.cases))
-        .catch((err) =>
-          setQueueError(
-            err instanceof ApiError ? err.message : 'Failed to load the queue.',
-          ),
-        );
-    }
+      }),
+    enabled: tab !== 'mine',
+  });
+  const mine: MyCaseRow[] | null = mineQuery.data?.cases ?? null;
+  const queue: QueueCaseRow[] | null = queueQuery.data?.cases ?? null;
+  const mineError = mineQuery.error
+    ? mineQuery.error instanceof ApiError
+      ? mineQuery.error.message
+      : t('hrc.loadMineFailed')
+    : null;
+  const queueError = queueQuery.error
+    ? queueQuery.error instanceof ApiError
+      ? queueQuery.error.message
+      : 'Failed to load the queue.'
+    : null;
+  const refresh = (_opts?: { soft?: boolean }) => {
+    void (tab === 'mine' ? mineQuery.refetch() : queueQuery.refetch());
   };
-  // Filter-independent KPI summary — fetched once on mount and re-fetched
-  // explicitly after mutations, never on tab/filter clicks.
-  const refreshSummary = () => {
-    getCaseSummary()
-      .then(setSummary)
-      .catch(() => setSummary(null));
-  };
-  useEffect(() => {
-    refresh();
-  }, [tab, statusFilter, categoryFilter, assignedToMe]);
-  useEffect(() => {
-    if (canManage) refreshSummary();
-  }, [canManage]);
+  // Filter-independent KPI summary — read once and re-read explicitly
+  // after mutations, never on tab/filter clicks.
+  const summaryQuery = useQuery({
+    queryKey: ['hrCases', 'summary'],
+    queryFn: () => getCaseSummary(),
+    enabled: canManage,
+  });
+  const summary: CaseSummary | null =
+    canManage && !summaryQuery.isError ? (summaryQuery.data ?? null) : null;
+  const refreshSummary = () => void summaryQuery.refetch();
 
   const visibleQueue = useMemo(() => {
     const rows = queue ?? [];
@@ -678,8 +672,6 @@ function CaseDetailDrawer({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [data, setData] = useState<CaseDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -687,21 +679,17 @@ function CaseDetailDrawer({
   // Keeps the current case rendered while refetching — refresh fires after
   // every reply/triage action, and blanking to a skeleton each time lost
   // the reader's place (and flashed the whole drawer).
-  const refresh = () => {
-    setLoadError(null);
-    getCase(caseId)
-      .then(setData)
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : t('hrc.loadCaseFailed'),
-        ),
-      );
-  };
-  useEffect(() => {
-    setData(null);
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [caseId]);
+  const caseQuery = useQuery({
+    queryKey: ['hrCases', 'case', caseId],
+    queryFn: () => getCase(caseId),
+  });
+  const data: CaseDetail | null = caseQuery.data ?? null;
+  const loadError = caseQuery.error
+    ? caseQuery.error instanceof ApiError
+      ? caseQuery.error.message
+      : t('hrc.loadCaseFailed')
+    : null;
+  const refresh = () => void caseQuery.refetch();
 
   // Posts the typed reply without refreshing — shared by the Reply button
   // and TriageBlock's "Send & close" path (which triages before refetching).
@@ -877,12 +865,8 @@ function TriageBlock({
   const [claiming, setClaiming] = useState(false);
   // Cross-department routing: everyone who can work a desk. Finance can
   // only take PAYROLL cases, so they're hidden as targets on the rest.
-  const [staff, setStaff] = useState<CaseStaffRow[]>([]);
-  useEffect(() => {
-    listCaseStaff()
-      .then((r) => setStaff(r.staff))
-      .catch(() => setStaff([]));
-  }, []);
+  const staffQuery = useQuery({ queryKey: ['hrCases', 'staff'], queryFn: () => listCaseStaff() });
+  const staff: CaseStaffRow[] = staffQuery.data?.staff ?? [];
   const routable = staff.filter(
     (s) => detail.category === 'PAYROLL' || s.desk === 'all',
   );

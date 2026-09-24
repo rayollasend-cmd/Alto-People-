@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
@@ -108,21 +109,14 @@ export function LearningHome() {
  */
 function MyTraining() {
   const { t } = useI18n();
-  const [rows, setRows] = useState<MyTrainingEnrollment[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = () => {
-    setError(null);
-    getMyTraining()
-      .then((r) => setRows(r.enrollments))
-      .catch((e) =>
-        setError(e instanceof ApiError ? e.message : t('lrn.loadFailed')),
-      );
-  };
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const trainingQuery = useQuery({ queryKey: ['learning', 'mine'], queryFn: () => getMyTraining() });
+  const rows: MyTrainingEnrollment[] | null = trainingQuery.data?.enrollments ?? null;
+  const error = trainingQuery.error
+    ? trainingQuery.error instanceof ApiError
+      ? trainingQuery.error.message
+      : t('lrn.loadFailed')
+    : null;
+  const load = () => void trainingQuery.refetch();
 
   const open = (rows ?? []).filter(
     (r) => r.status === 'ASSIGNED' || r.status === 'IN_PROGRESS' || r.status === 'EXPIRED',
@@ -246,8 +240,6 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Course[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<CourseStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
@@ -265,18 +257,14 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
     }
   };
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listCourses()
-      .then((r) => setRows(r.courses))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load courses.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const coursesQuery = useQuery({ queryKey: ['learning', 'courses'], queryFn: () => listCourses() });
+  const rows: Course[] | null = coursesQuery.data?.courses ?? null;
+  const error = coursesQuery.error
+    ? coursesQuery.error instanceof ApiError
+      ? coursesQuery.error.message
+      : 'Failed to load courses.'
+    : null;
+  const refresh = () => void coursesQuery.refetch();
 
   const q = search.trim().toLowerCase();
   const filtered = (rows ?? []).filter(
@@ -665,8 +653,6 @@ function EnrollDrawer({
 const ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
-  const [rows, setRows] = useState<Enrollment[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
   const [completeId, setCompleteId] = useState<string | null>(null);
@@ -674,18 +660,14 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [waiveId, setWaiveId] = useState<string | null>(null);
   const [waiving, setWaiving] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listEnrollments()
-      .then((r) => setRows(r.enrollments))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load enrollments.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const enrollmentsQuery = useQuery({ queryKey: ['learning', 'enrollments'], queryFn: () => listEnrollments() });
+  const rows: Enrollment[] | null = enrollmentsQuery.data?.enrollments ?? null;
+  const error = enrollmentsQuery.error
+    ? enrollmentsQuery.error instanceof ApiError
+      ? enrollmentsQuery.error.message
+      : 'Failed to load enrollments.'
+    : null;
+  const refresh = () => void enrollmentsQuery.refetch();
 
   const onComplete = (id: string) => setCompleteId(id);
   const onWaive = (id: string) => setWaiveId(id);
@@ -876,25 +858,20 @@ const EXPIRING_WINDOWS = [30, 60, 90] as const;
 
 function ExpiringTab() {
   const [days, setDays] = useState<number>(30);
-  const [rows, setRows] = useState<ExpiringEnrollment[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
+  const expiringQuery = useQuery({
+    queryKey: ['learning', 'expiring', days],
+    queryFn: () => listExpiring(days),
+  });
+  const rows: ExpiringEnrollment[] | null = expiringQuery.data?.expiring ?? null;
+  const error = expiringQuery.error
+    ? expiringQuery.error instanceof ApiError
+      ? expiringQuery.error.message
+      : 'Failed to load expiring enrollments.'
+    : null;
   const refresh = async () => {
-    setRows(null);
-    setError(null);
-    try {
-      const r = await listExpiring(days);
-      setRows(r.expiring);
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Failed to load expiring enrollments.',
-      );
-    }
+    await expiringQuery.refetch();
   };
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days]);
 
   const exportCsv = () => {
     downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
