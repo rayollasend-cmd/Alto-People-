@@ -35,6 +35,7 @@ import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { telemetryRouter } from './routes/telemetry.js';
+import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
@@ -411,6 +412,8 @@ export function createApp() {
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);
+  // "What's new" — readable by anyone signed in, written under manage:org.
+  app.use('/release-notes', releaseNotesRouter);
   // One-click unsubscribe: mailbox providers POST this with no session, so
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.

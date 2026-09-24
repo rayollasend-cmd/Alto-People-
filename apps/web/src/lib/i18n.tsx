@@ -53,6 +53,11 @@ const en = {
   'whatsnew.weekAhead':
     "You'll get “Your week ahead” the evening before your work week starts.",
   'whatsnew.espanol': 'La aplicación ahora habla español — cámbialo en el menú.',
+  'whatsnew.seeAll': 'See everything new',
+  'whatsnew.pageTitle': "What's new",
+  'whatsnew.pageSubtitle': 'Every release, newest first.',
+  'whatsnew.empty': 'Nothing announced yet.',
+  'whatsnew.draft': 'Draft',
 
   // Associate dashboard
   'dash.greeting': 'Hey {name} 👋',
@@ -2651,6 +2656,11 @@ const es: Record<MessageKey, string> = {
   'whatsnew.weekAhead':
     'Recibirás “Tu semana” la noche antes de que empiece tu semana laboral.',
   'whatsnew.espanol': 'La aplicación ahora habla español — cámbialo en el menú.',
+  'whatsnew.seeAll': 'Ver todas las novedades',
+  'whatsnew.pageTitle': 'Novedades',
+  'whatsnew.pageSubtitle': 'Cada versión, la más reciente primero.',
+  'whatsnew.empty': 'Todavía no hay novedades.',
+  'whatsnew.draft': 'Borrador',
   'nav.pinned': 'Fijados',
 
   'dash.greeting': 'Hola {name} 👋',

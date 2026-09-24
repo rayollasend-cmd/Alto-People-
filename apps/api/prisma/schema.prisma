@@ -7944,6 +7944,23 @@ model WebVitalDaily {
   @@index([day])
 }
 
+/// "What's new" — one note per release, written by an admin and served to
+/// the app, so a release note ships without a deploy. `items` is a list of
+/// { audience, en, es } bullets (routes/releaseNotes.ts validates it);
+/// each reader sees only the bullets for their audience, in their
+/// language. A note with no publishedAt is a draft only admins can see.
+model ReleaseNote {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day         DateTime  @db.Date
+  items       Json
+  publishedAt DateTime? @db.Timestamptz(6)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([publishedAt, day])
+}
+
 /// Every IP an account has successfully signed in from. Small by nature —
 /// people have few networks — and it exists so "is this sign-in from
 /// somewhere new?" is an indexed lookup instead of a scan of the audit log.

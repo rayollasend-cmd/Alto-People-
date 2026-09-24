@@ -1,15 +1,19 @@
 import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Sparkles, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { useI18n, type MessageKey } from '@/lib/i18n';
+import { useI18n } from '@/lib/i18n';
+import { getLatestReleaseNote } from '@/lib/releaseNotesApi';
 import { Button } from '@/components/ui/Button';
 
 /**
- * "What's new" card — one entry per release, shown once per version
+ * "What's new" card — the newest release note, shown once per note
  * (bottom-right, above the tab bar on phones), dismissed state in
- * localStorage. Newest entry first; bump `id` when adding one, and the
- * card resurfaces for everyone exactly once.
+ * localStorage. The note itself comes from the API: an admin writes it
+ * on /whats-new and it is on every phone at the next open, no deploy.
+ * The server has already filtered the bullets to this reader's audience;
+ * the card only picks the language.
  *
  * Only rendered on the home dashboard: it's a "since you were last here"
  * greeting, not page chrome, so it shouldn't trail the user onto every
@@ -18,98 +22,61 @@ import { Button } from '@/components/ui/Button';
  * Deliberately not a modal: release notes should never block work.
  */
 
-const SEEN_KEY = 'alto.whatsnew.seen.v1';
+const SEEN_KEY = 'alto.whatsnew.seen.v2';
+/** The bundle-era card keyed its seen state by release day. */
+const LEGACY_SEEN_KEY = 'alto.whatsnew.seen.v1';
 
-interface ChangelogBullet {
-  /** Literal English copy — admin-only bullets (admin UI is English). */
-  text?: string;
-  /** i18n key — associate-visible bullets translate through the dictionary. */
-  key?: MessageKey;
-  /** Only shown to users who can manage scheduling — an associate on a
-   *  phone has no sidebar to hover or ⌘K to press, and reading about
-   *  admin features they can't touch is noise, not news. Admin-facing
-   *  copy stays English by the app's i18n boundary. */
-  adminOnly?: boolean;
-}
-
-interface ChangelogEntry {
-  id: string;
-  bullets: ChangelogBullet[];
-}
-
-const CHANGELOG: ChangelogEntry[] = [
-  {
-    id: '2026-09-03',
-    bullets: [
-      { key: 'whatsnew.photoCrop' },
-      { key: 'whatsnew.confirmTap' },
-      { key: 'whatsnew.clockNumber' },
-      {
-        text: 'Cross-client transfers, kiosk PIN tools on the People profile, tiered admin email, and a bell that clears when you open it.',
-        adminOnly: true,
-      },
-    ],
-  },
-  {
-    id: '2026-07-02',
-    bullets: [
-      {
-        text: 'Pin your most-used pages — hover a sidebar item and tap the star.',
-        adminOnly: true,
-      },
-      {
-        text: 'Press ⌘K to search people and clients, not just pages.',
-        adminOnly: true,
-      },
-      {
-        text: 'Approvals now show a live count badge and update instantly.',
-        adminOnly: true,
-      },
-      { key: 'whatsnew.weekAhead' },
-      { key: 'whatsnew.espanol' },
-    ],
-  },
-];
-
-function latestUnseen(): ChangelogEntry | null {
-  const latest = CHANGELOG[0];
-  if (!latest) return null;
+function readSeen(key: string): string | null {
   try {
-    if (window.localStorage.getItem(SEEN_KEY) === latest.id) return null;
+    return window.localStorage.getItem(key);
   } catch {
-    return null; // storage unavailable → never nag repeatedly
+    return null;
   }
-  return latest;
 }
 
 export function WhatsNew() {
-  const { can } = useAuth();
-  const { t } = useI18n();
+  const { user } = useAuth();
+  const { t, lang } = useI18n();
   const location = useLocation();
-  const [entry, setEntry] = useState<ChangelogEntry | null>(() => latestUnseen());
+  const [dismissed, setDismissed] = useState<string | null>(() => readSeen(SEEN_KEY));
+  const onHome = location.pathname === '/';
+
+  const latest = useQuery({
+    queryKey: ['release-notes', 'latest'],
+    queryFn: getLatestReleaseNote,
+    enabled: onHome && Boolean(user),
+    staleTime: 60 * 60 * 1000,
+  });
 
   // Home only — this is a "welcome back" note, not something that should
   // shadow the user onto Payroll, Scheduling, etc.
-  if (location.pathname !== '/') return null;
-  if (!entry) return null;
-
-  const isAdmin = can('manage:scheduling');
-  const bullets = entry.bullets.filter((b) => isAdmin || !b.adminOnly);
-  if (bullets.length === 0) return null;
+  if (!onHome) return null;
+  const note = latest.data?.note ?? null;
+  if (!note || note.items.length === 0) return null;
+  // Storage unavailable → the seen state can't stick, so never nag.
+  if (readSeen(SEEN_KEY) === null && dismissed === null) {
+    try {
+      window.localStorage.setItem(`${SEEN_KEY}.probe`, '1');
+      window.localStorage.removeItem(`${SEEN_KEY}.probe`);
+    } catch {
+      return null;
+    }
+  }
+  if (dismissed === note.id || readSeen(LEGACY_SEEN_KEY) === note.day) return null;
 
   const dismiss = () => {
     try {
-      window.localStorage.setItem(SEEN_KEY, entry.id);
+      window.localStorage.setItem(SEEN_KEY, note.id);
     } catch {
       /* best-effort */
     }
-    setEntry(null);
+    setDismissed(note.id);
   };
 
   return (
     <div
       role="status"
-      aria-label="What's new"
+      aria-label={t('whatsnew.title')}
       // Phones: full-width, clear of the tab bar AND the home indicator
       // (bottom-20 alone sat on the tab bar on notched iPhones), the list
       // capped so the card never covers half the screen. The supervisor's
@@ -133,21 +100,25 @@ export function WhatsNew() {
         </Button>
       </div>
       <ul className="mt-2 max-h-[32dvh] space-y-1.5 overflow-y-auto overscroll-contain text-sm text-silver sm:max-h-none">
-        {bullets.map((b) => {
-          const label = b.key ? t(b.key) : b.text ?? '';
-          return (
-            <li key={b.key ?? b.text} className="flex gap-2">
-              <span className="text-gold" aria-hidden="true">
-                ·
-              </span>
-              <span>{label}</span>
-            </li>
-          );
-        })}
+        {note.items.map((item, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="text-gold" aria-hidden="true">
+              ·
+            </span>
+            <span>{lang === 'es' && item.es ? item.es : item.en}</span>
+          </li>
+        ))}
       </ul>
-      <Button size="sm" variant="secondary" className="mt-3 w-full" onClick={dismiss}>
-        {t('common.gotIt')}
-      </Button>
+      <div className="mt-3 flex items-center gap-2">
+        <Button size="sm" variant="secondary" className="flex-1" onClick={dismiss}>
+          {t('common.gotIt')}
+        </Button>
+        <Button size="sm" variant="ghost" asChild>
+          <Link to="/whats-new" onClick={dismiss}>
+            {t('whatsnew.seeAll')}
+          </Link>
+        </Button>
+      </div>
     </div>
   );
 }

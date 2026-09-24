@@ -183,6 +183,7 @@ const VtoHome = lazyNamed(() => import('@/pages/vto/VtoHome'), 'VtoHome');
 
 // Misc / admin / me
 const Settings = lazyNamed(() => import('@/pages/Settings'), 'Settings');
+const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPage');
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
@@ -411,6 +412,8 @@ const LAYOUT_ROUTES = [
   // `settings` is universal — every authenticated user manages their own
   // profile / password / preferences here. RequireAuth above is enough.
   { path: 'settings', element: <Settings /> },
+  // Release notes are for everyone who can sign in; editing is gated inside.
+  { path: 'whats-new', element: <WhatsNewPage /> },
   { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
   { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },

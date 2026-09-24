@@ -6608,6 +6608,42 @@ export interface WebVitalsResponse {
   routes: WebVitalRouteRow[];
 }
 
+/**
+ * Who a release-note bullet is for. ALL reaches everyone; the rest map
+ * from the reader's role on the server (associates, drivers, shift
+ * supervisors, store-portal users, and everyone else as ADMIN).
+ */
+export type ReleaseNoteAudience = 'ALL' | 'ADMIN' | 'ASSOCIATE' | 'SUPERVISOR' | 'DRIVER' | 'CLIENT';
+export const RELEASE_NOTE_AUDIENCES: readonly ReleaseNoteAudience[] = ['ALL', 'ADMIN', 'ASSOCIATE', 'SUPERVISOR', 'DRIVER', 'CLIENT'];
+
+export interface ReleaseNoteItem {
+  audience: ReleaseNoteAudience;
+  en: string;
+  /** Spanish copy; null falls back to English in the app. */
+  es: string | null;
+}
+
+export interface ReleaseNote {
+  id: string;
+  /** YYYY-MM-DD — the release day, which is also the card's "version". */
+  day: string;
+  /** Already filtered to the reader's audience, except for editors. */
+  items: ReleaseNoteItem[];
+  publishedAt: string | null;
+}
+
+export interface ReleaseNotesResponse {
+  notes: ReleaseNote[];
+  /** Whether the caller may write notes (drives the editor). */
+  canEdit: boolean;
+}
+
+export interface ReleaseNoteInput {
+  day: string;
+  items: ReleaseNoteItem[];
+  published: boolean;
+}
+
 export interface AdoptionResponse {
   signups: { day: string; accounts: number }[];
   funnel: {
