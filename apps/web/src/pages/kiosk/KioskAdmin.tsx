@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useQuery } from '@tanstack/react-query';
@@ -73,17 +73,12 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -492,133 +487,123 @@ function DevicesTab({
               </Button>
             </div>
           ) : (
-            <Table caption="Kiosk devices">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead className="hidden lg:table-cell">Location</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden sm:table-cell">Last seen</TableHead>
-                  <TableHead className="hidden md:table-cell">Token</TableHead>
-                  <TableHead className="hidden lg:table-cell">Punches</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(visibleRows ?? []).map((d) => (
-                  <TableRow key={d.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">{d.name}</div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {d.clientName}
-                          <span className="sm:hidden">
-                            {' · '}
-                            {d.lastSeenAt ? fmtDateTime(d.lastSeenAt) : 'never used'}
-                          </span>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{d.clientName}</TableCell>
-                    <TableCell className="text-silver hidden lg:table-cell">
-                      {d.locationName ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      {d.isActive ? (
-                        <Badge variant="success">Active</Badge>
-                      ) : (
-                        <Badge variant="destructive">Revoked</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {d.lastSeenAt ? (
-                        <span
-                          className={
-                            isDeviceOffline(d) ? 'text-warning' : undefined
-                          }
-                        >
-                          {fmtDateTime(d.lastSeenAt)}
-                          {isDeviceOffline(d) && (
-                            <Badge variant="pending" className="ml-2">
-                              Offline
-                            </Badge>
-                          )}
-                        </span>
-                      ) : d.isActive ? (
-                        <Badge variant="outline">Never used</Badge>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{renderTokenStatus(d.tokenExpiresAt)}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{d.punchCount}</TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && d.isActive && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={async () => {
-                            if (!(await confirm({
-                              title: 'Rotate device token?',
-                              description: 'The tablet will stop accepting punches until you paste the new token into it. The new token is shown ONCE.',
-                              destructive: true,
-                            }))) return;
-                            try {
-                              const r = await rotateKioskDevice(d.id);
-                              setShowToken(r.deviceToken);
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
-                        >
-                          Rotate
-                        </Button>
-                      )}
-                      {canManage && d.isActive && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={async () => {
-                            if (!(await confirm({ title: 'Revoke this kiosk?', description: 'It will stop accepting punches.', destructive: true })))
-                              return;
-                            try {
-                              await revokeKioskDevice(d.id);
-                              toast.success('Kiosk revoked.');
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
-                        >
-                          Revoke
-                        </Button>
-                      )}
-                      {canManage && (
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          onClick={async () => {
-                            if (!(await confirm({ title: 'Permanently delete?', destructive: true }))) return;
-                            try {
-                              await deleteKioskDevice(d.id);
-                              toast.success('Kiosk deleted.');
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
-                        >
-                          Delete
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<NonNullable<typeof visibleRows>[number]>
+              id="kiosk-devices"
+              caption="Kiosk devices"
+              rows={visibleRows ?? []}
+              rowKey={(d) => d.id}
+              search={{ placeholder: 'Device, client, location…' }}
+              urlState={false}
+              exportCsv={{ filename: 'kiosk-devices' }}
+              columns={[
+                { key: 'name', header: 'Name', accessor: (d) => d.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'client', header: 'Client', accessor: (d) => d.clientName, sortable: true, cardMeta: true },
+                { key: 'location', header: 'Location', accessor: (d) => d.locationName, sortable: true, className: 'text-silver', cell: (d) => d.locationName ?? '—' },
+                { key: 'status', header: 'Status', accessor: (d) => (d.isActive ? 'Active' : 'Revoked'), sortable: true, searchable: false, cell: (d) => (d.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Revoked</Badge>) },
+                {
+                  key: 'lastSeen',
+                  header: 'Last seen',
+                  accessor: (d) => d.lastSeenAt,
+                  csv: (d) => (d.lastSeenAt ? `${fmtDateTime(d.lastSeenAt)}${isDeviceOffline(d) ? ' (offline)' : ''}` : d.isActive ? 'Never used' : ''),
+                  sortable: true,
+                  searchable: false,
+                  cardMeta: true,
+                  cell: (d) =>
+                    d.lastSeenAt ? (
+                      <span className={isDeviceOffline(d) ? 'text-warning' : undefined}>
+                        {fmtDateTime(d.lastSeenAt)}
+                        {isDeviceOffline(d) && (
+                          <Badge variant="pending" className="ml-2">
+                            Offline
+                          </Badge>
+                        )}
+                      </span>
+                    ) : d.isActive ? (
+                      <Badge variant="outline">Never used</Badge>
+                    ) : (
+                      '—'
+                    ),
+                },
+                { key: 'token', header: 'Token', accessor: (d) => d.tokenExpiresAt, sortable: true, searchable: false, cell: (d) => renderTokenStatus(d.tokenExpiresAt) },
+                { key: 'punches', header: 'Punches', accessor: (d) => d.punchCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (d: NonNullable<typeof visibleRows>[number]) => (
+                          <>
+                            {d.isActive && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={async () => {
+                                  if (!(await confirm({
+                                    title: 'Rotate device token?',
+                                    description: 'The tablet will stop accepting punches until you paste the new token into it. The new token is shown ONCE.',
+                                    destructive: true,
+                                  }))) return;
+                                  try {
+                                    const r = await rotateKioskDevice(d.id);
+                                    setShowToken(r.deviceToken);
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  }
+                                }}
+                              >
+                                Rotate
+                              </Button>
+                            )}
+                            {d.isActive && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={async () => {
+                                  if (!(await confirm({ title: 'Revoke this kiosk?', description: 'It will stop accepting punches.', destructive: true })))
+                                    return;
+                                  try {
+                                    await revokeKioskDevice(d.id);
+                                    toast.success('Kiosk revoked.');
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  }
+                                }}
+                              >
+                                Revoke
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="text-silver hover:text-alert"
+                              onClick={async () => {
+                                if (!(await confirm({ title: 'Permanently delete?', destructive: true }))) return;
+                                try {
+                                  await deleteKioskDevice(d.id);
+                                  toast.success('Kiosk deleted.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1566,39 +1551,44 @@ function PinsTab({
                 description="Every PIN-eligible associate at this client already has an employee number."
               />
             ) : (
-              <Table caption="Associates missing employee numbers">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {missing.map((a) => (
-                    <TableRow key={a.id} className="group">
-                      <TableCell className="font-medium text-white">
-                        {a.name}
-                      </TableCell>
-                      <TableCell className="text-silver">{a.email}</TableCell>
-                      <TableCell className="text-right">
-                        {canManage && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setIssueFor(a.id);
-                              setShowNew(true);
-                            }}
-                          >
-                            <Plus className="mr-1 h-3.5 w-3.5" /> Issue number
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid<(typeof missing)[number]>
+                id="kiosk-missing-numbers"
+                caption="Associates missing employee numbers"
+                rows={missing}
+                rowKey={(a) => a.id}
+                search={{ placeholder: 'Name, email…' }}
+                urlState={false}
+                exportCsv={{ filename: 'missing-employee-numbers' }}
+                columns={[
+                  { key: 'associate', header: 'Associate', accessor: (a) => a.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'email', header: 'Email', accessor: (a) => a.email, sortable: true, cardMeta: true, className: 'text-silver' },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'action',
+                          header: 'Action',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          cell: (a: (typeof missing)[number]) => (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setIssueFor(a.id);
+                                setShowNew(true);
+                              }}
+                            >
+                              <Plus className="mr-1 h-3.5 w-3.5" /> Issue number
+                            </Button>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
             )
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -1613,176 +1603,157 @@ function PinsTab({
               No associates match “{q}”.
             </div>
           ) : (
-            <Table caption="Kiosk employee numbers">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Associate</TableHead>
-                  {clientId === ALL_CLIENTS && (
-                    <TableHead className="hidden lg:table-cell">Client</TableHead>
-                  )}
-                  <TableHead className="hidden lg:table-cell">Location</TableHead>
-                  <TableHead className="hidden lg:table-cell">Email</TableHead>
-                  <TableHead>Employee #</TableHead>
-                  <TableHead className="hidden md:table-cell">Face consent</TableHead>
-                  <TableHead className="hidden lg:table-cell">Issued</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* Render cap — the fetch can return 500 rows × 8 columns;
-                    painting all of it froze the tab. Search narrows to the
-                    rest; the count line above says what's hidden. */}
-                {filteredRows.slice(0, 150).map((p) => (
-                  <TableRow key={p.id} className="group">
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="truncate">
-                            <AssociateLink associateId={p.associateId}>
-                              {p.associateName}
-                            </AssociateLink>
-                          </span>
-                          {!p.active && (
-                            <Badge
-                              variant="outline"
-                              title="Separated or deactivated — their number stays on file for history but can't open a new shift, and Email all skips them."
-                            >
-                              Inactive
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="lg:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {p.clientName}
-                          {p.locationName ? ` · ${p.locationName}` : ''}
-                        </div>
-                      </div>
-                    </TableCell>
-                    {clientId === ALL_CLIENTS && (
-                      <TableCell className="text-silver hidden lg:table-cell">{p.clientName}</TableCell>
-                    )}
-                    <TableCell className="text-silver hidden lg:table-cell">
-                      {p.locationName ?? '—'}
-                    </TableCell>
-                    <TableCell className="text-silver hidden lg:table-cell">{p.associateEmail}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <EmployeeNumberCell value={p.employeeNumber} />
-                        {p.wontClockIn && (
-                          <Badge
-                            variant="destructive"
-                            title="The stored hash no longer matches the current PIN secret — this number fails at every kiosk. Rotate to fix."
-                          >
-                            won&rsquo;t clock in
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      <FaceConsentCell pin={p} canManage={canManage} onChanged={refresh} />
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">{fmtDate(p.createdAt)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        {canManage && p.employeeNumber && (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={async () => {
-                              if (
-                                !(await confirm({
-                                  title: `Email ${p.associateName} their clock-in number?`,
-                                  description: `It will be sent to ${p.associateEmail}.`,
-                                }))
-                              )
-                                return;
-                              try {
-                                await emailKioskPin(p.id);
-                                toast.success(`Emailed ${p.associateEmail}.`);
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError ? err.message : 'Failed to email.',
-                                );
-                              }
-                            }}
-                            className="gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
-                          >
-                            <Mail className="h-3.5 w-3.5" /> Email
-                          </Button>
-                        )}
-                        {canManage && (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={async () => {
-                              if (
-                                !(await confirm({
-                                  title: `Rotate ${p.associateName}'s clock-in number?`,
-                                  description: p.associateEmail
-                                    ? `Issues a NEW 4-digit number — their current one stops working immediately — and emails it to ${p.associateEmail}. Use this for a code showing “—” (unreadable) or a forgotten number.`
-                                    : `Issues a NEW 4-digit number — their current one stops working immediately. No email on file, so share the number shown after.`,
-                                  destructive: true,
-                                }))
-                              )
-                                return;
-                              try {
-                                const r = await assignKioskPin({
-                                  clientId: p.clientId,
-                                  associateId: p.associateId,
-                                });
-                                // Show the fresh number so HR has it even if
-                                // the email can't be delivered.
-                                setShowPin({
-                                  associateName: p.associateName,
-                                  employeeNumber: r.employeeNumber,
-                                });
-                                if (p.associateEmail) {
-                                  void emailKioskPin(r.id)
-                                    .then(() =>
-                                      toast.success(`Emailed ${p.associateEmail}.`),
-                                    )
-                                    .catch(() =>
-                                      toast.error('Rotated, but the email didn’t send.'),
-                                    );
+            // Render cap — the fetch can return 500 rows × 8 columns;
+            // search narrows to the rest and the count line below says
+            // what's hidden.
+            <DataGrid<(typeof filteredRows)[number]>
+              id="kiosk-employee-numbers"
+              caption="Kiosk employee numbers"
+              rows={filteredRows.slice(0, 150)}
+              rowKey={(pn) => pn.id}
+              search={false}
+              urlState={false}
+              exportCsv={false}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (pn) => pn.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (pn) => (
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="truncate">
+                        <AssociateLink associateId={pn.associateId}>{pn.associateName}</AssociateLink>
+                      </span>
+                      {!pn.active && (
+                        <Badge variant="outline" title="Separated or deactivated — their number stays on file for history but can't open a new shift, and Email all skips them.">
+                          Inactive
+                        </Badge>
+                      )}
+                    </div>
+                  ),
+                },
+                ...(clientId === ALL_CLIENTS
+                  ? [{ key: 'client', header: 'Client', accessor: (pn: (typeof filteredRows)[number]) => pn.clientName, sortable: true, cardMeta: true, className: 'text-silver' }]
+                  : []),
+                { key: 'location', header: 'Location', accessor: (pn) => pn.locationName, sortable: true, cardMeta: true, className: 'text-silver', cell: (pn) => pn.locationName ?? '—' },
+                { key: 'email', header: 'Email', accessor: (pn) => pn.associateEmail, sortable: true, className: 'text-silver' },
+                {
+                  key: 'number',
+                  header: 'Employee #',
+                  accessor: (pn) => pn.employeeNumber,
+                  searchable: false,
+                  stopRowClick: true,
+                  cell: (pn) => (
+                    <div className="flex items-center gap-2">
+                      <EmployeeNumberCell value={pn.employeeNumber} />
+                      {pn.wontClockIn && (
+                        <Badge variant="destructive" title="The stored hash no longer matches the current PIN secret — this number fails at every kiosk. Rotate to fix.">
+                          won&rsquo;t clock in
+                        </Badge>
+                      )}
+                    </div>
+                  ),
+                },
+                { key: 'face', header: 'Face consent', accessor: () => null, searchable: false, csv: () => '', stopRowClick: true, cell: (pn) => <FaceConsentCell pin={pn} canManage={canManage} onChanged={refresh} /> },
+                { key: 'issued', header: 'Issued', accessor: (pn) => pn.createdAt, sortable: true, searchable: false, cell: (pn) => fmtDate(pn.createdAt) },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'actions',
+                        header: 'Actions',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        cell: (pn: (typeof filteredRows)[number]) => (
+                          <div className="flex items-center justify-end gap-3">
+                            {pn.employeeNumber && (
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                onClick={async () => {
+                                  if (
+                                    !(await confirm({
+                                      title: `Email ${pn.associateName} their clock-in number?`,
+                                      description: `It will be sent to ${pn.associateEmail}.`,
+                                    }))
+                                  )
+                                    return;
+                                  try {
+                                    await emailKioskPin(pn.id);
+                                    toast.success(`Emailed ${pn.associateEmail}.`);
+                                  } catch (err) {
+                                    toast.error(err instanceof ApiError ? err.message : 'Failed to email.');
+                                  }
+                                }}
+                                className="gap-1"
+                              >
+                                <Mail className="h-3.5 w-3.5" /> Email
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={async () => {
+                                if (
+                                  !(await confirm({
+                                    title: `Rotate ${pn.associateName}'s clock-in number?`,
+                                    description: pn.associateEmail
+                                      ? `Issues a NEW 4-digit number — their current one stops working immediately — and emails it to ${pn.associateEmail}. Use this for a code showing “—” (unreadable) or a forgotten number.`
+                                      : `Issues a NEW 4-digit number — their current one stops working immediately. No email on file, so share the number shown after.`,
+                                    destructive: true,
+                                  }))
+                                )
+                                  return;
+                                try {
+                                  const r = await assignKioskPin({ clientId: pn.clientId, associateId: pn.associateId });
+                                  // Show the fresh number so HR has it even if
+                                  // the email can't be delivered.
+                                  setShowPin({ associateName: pn.associateName, employeeNumber: r.employeeNumber });
+                                  if (pn.associateEmail) {
+                                    void emailKioskPin(r.id)
+                                      .then(() => toast.success(`Emailed ${pn.associateEmail}.`))
+                                      .catch(() => toast.error('Rotated, but the email didn’t send.'));
+                                  }
+                                  refresh();
+                                  onChanged?.();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Rotate failed.');
                                 }
-                                refresh();
-                                onChanged?.();
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError ? err.message : 'Rotate failed.',
-                                );
-                              }
-                            }}
-                            className="gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
-                          >
-                            <RotateCw className="h-3.5 w-3.5" /> Rotate
-                          </Button>
-                        )}
-                        {canManage && (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={async () => {
-                              if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
-                              try {
-                                await deleteKioskPin(p.id);
-                                toast.success('Code revoked.');
-                                refresh();
-                                onChanged?.();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
-                            }}
-                            className="opacity-60 hover:text-alert group-hover:opacity-100 group-focus-within:opacity-100"
-                          >
-                            Revoke
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                              }}
+                              className="gap-1"
+                            >
+                              <RotateCw className="h-3.5 w-3.5" /> Rotate
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="text-silver hover:text-alert"
+                              onClick={async () => {
+                                if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
+                                try {
+                                  await deleteKioskPin(pn.id);
+                                  toast.success('Code revoked.');
+                                  refresh();
+                                  onChanged?.();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              }}
+                            >
+                              Revoke
+                            </Button>
+                          </div>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           )}
           {filteredRows.length > 150 && (
             <div className="border-t border-navy-secondary px-4 py-2.5 text-xs text-silver">
@@ -2295,104 +2266,6 @@ function humanRejectReason(reason: string | null): string | null {
 // One punch-log row, memoized: "Load more" appends to an accumulating
 // list, and without this every already-rendered row re-renders on each
 // page (and on every unrelated state change in the tab).
-const PunchLogRow = memo(function PunchLogRow({
-  p,
-  onDiagnose,
-}: {
-  p: KioskPunchSummary;
-  onDiagnose: (associateName: string) => void;
-}) {
-  return (
-    <TableRow>
-      <TableCell>
-        <div className="min-w-0">
-          <div>{fmtDateTime(p.createdAt)}</div>
-          <div className="md:hidden text-xs2 text-silver/70 truncate">
-            {p.deviceName}
-          </div>
-        </div>
-      </TableCell>
-      <TableCell className="font-mono text-xs hidden md:table-cell">{p.deviceName}</TableCell>
-      <TableCell>
-        {p.associateId && p.associateName ? (
-          <AssociateLink associateId={p.associateId}>
-            {p.associateName}
-          </AssociateLink>
-        ) : (
-          p.associateName ?? '—'
-        )}
-      </TableCell>
-      <TableCell>
-        <Badge
-          variant={
-            p.action === 'CLOCK_IN'
-              ? 'success'
-              : p.action === 'CLOCK_OUT'
-                ? 'accent'
-                : p.action === 'BREAK_START' || p.action === 'BREAK_END'
-                  ? 'pending'
-                  : 'destructive'
-          }
-        >
-          {p.action}
-        </Badge>
-      </TableCell>
-      <TableCell className="text-xs hidden lg:table-cell">
-        {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
-      </TableCell>
-      <TableCell className="text-xs hidden md:table-cell">
-        {p.faceDistance == null ? (
-          '—'
-        ) : p.faceMismatch ? (
-          <Badge variant="destructive">
-            Mismatch ({p.faceDistance.toFixed(2)})
-          </Badge>
-        ) : (
-          <Badge variant="success">
-            Match ({p.faceDistance.toFixed(2)})
-          </Badge>
-        )}
-      </TableCell>
-      <TableCell className="hidden lg:table-cell">
-        {p.hasSelfie ? (
-          <a
-            href={`/api/kiosk-punches/${p.id}/selfie`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
-          >
-            view
-          </a>
-        ) : (
-          '—'
-        )}
-      </TableCell>
-      <TableCell className="text-xs text-silver hidden md:table-cell">
-        {p.action === 'REJECTED' ? (
-          <div className="flex items-center gap-2">
-            <span className={p.rejectReason ? 'text-warning' : ''}>
-              {humanRejectReason(p.rejectReason) ?? '—'}
-            </span>
-            {p.associateName && (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="gap-1 text-silver hover:text-white"
-                onClick={() => onDiagnose(p.associateName!)}
-                title="Look up this associate's PIN and where it's filed"
-              >
-                <Stethoscope className="h-3 w-3" /> Diagnose
-              </Button>
-            )}
-          </div>
-        ) : (
-          (p.rejectReason ?? '')
-        )}
-      </TableCell>
-    </TableRow>
-  );
-});
-
 // "Load more" accumulates rows in memory with no upper bound; past this
 // many the DOM (not the network) is the bottleneck. CSV export walks the
 // cursor server-side for anything older.
@@ -2783,25 +2656,85 @@ function LogTab() {
               />
             )
           ) : (
-            <Table caption="Kiosk punch log">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead className="hidden md:table-cell">Device</TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead className="hidden lg:table-cell">Distance</TableHead>
-                  <TableHead className="hidden md:table-cell">Face</TableHead>
-                  <TableHead className="hidden lg:table-cell">Selfie</TableHead>
-                  <TableHead className="hidden md:table-cell">Reason</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((p) => (
-                  <PunchLogRow key={p.id} p={p} onDiagnose={setDiagnoseFor} />
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof rows)[number]>
+              id="kiosk-punch-log"
+              caption="Kiosk punch log"
+              rows={rows}
+              rowKey={(pu) => pu.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'kiosk-punches' }}
+              columns={[
+                { key: 'when', header: 'When', accessor: (pu) => pu.createdAt, sortable: true, searchable: false, primary: true, cell: (pu) => fmtDateTime(pu.createdAt) },
+                { key: 'device', header: 'Device', accessor: (pu) => pu.deviceName, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (pu) => pu.associateName,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (pu) => (pu.associateId && pu.associateName ? <AssociateLink associateId={pu.associateId}>{pu.associateName}</AssociateLink> : (pu.associateName ?? '—')),
+                },
+                {
+                  key: 'action',
+                  header: 'Action',
+                  accessor: (pu) => pu.action,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (pu) => (
+                    <Badge variant={pu.action === 'CLOCK_IN' ? 'success' : pu.action === 'CLOCK_OUT' ? 'accent' : pu.action === 'BREAK_START' || pu.action === 'BREAK_END' ? 'pending' : 'destructive'}>
+                      {pu.action}
+                    </Badge>
+                  ),
+                },
+                { key: 'distance', header: 'Distance', accessor: (pu) => pu.distanceMeters, csv: (pu) => (pu.distanceMeters != null ? `${pu.distanceMeters}m` : ''), sortable: true, searchable: false, className: 'text-xs', cell: (pu) => (pu.distanceMeters != null ? `${pu.distanceMeters}m` : '—') },
+                {
+                  key: 'face',
+                  header: 'Face',
+                  accessor: (pu) => (pu.faceDistance == null ? null : pu.faceMismatch ? `Mismatch (${pu.faceDistance.toFixed(2)})` : `Match (${pu.faceDistance.toFixed(2)})`),
+                  sortable: true,
+                  searchable: false,
+                  className: 'text-xs',
+                  cell: (pu) =>
+                    pu.faceDistance == null ? '—' : pu.faceMismatch ? <Badge variant="destructive">Mismatch ({pu.faceDistance.toFixed(2)})</Badge> : <Badge variant="success">Match ({pu.faceDistance.toFixed(2)})</Badge>,
+                },
+                {
+                  key: 'selfie',
+                  header: 'Selfie',
+                  accessor: (pu) => (pu.hasSelfie ? 'yes' : null),
+                  searchable: false,
+                  stopRowClick: true,
+                  cell: (pu) =>
+                    pu.hasSelfie ? (
+                      <a href={`/api/kiosk-punches/${pu.id}/selfie`} target="_blank" rel="noreferrer" className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs">
+                        view
+                      </a>
+                    ) : (
+                      '—'
+                    ),
+                },
+                {
+                  key: 'reason',
+                  header: 'Reason',
+                  accessor: (pu) => (pu.action === 'REJECTED' ? (humanRejectReason(pu.rejectReason) ?? null) : pu.rejectReason),
+                  className: 'text-xs text-silver',
+                  stopRowClick: true,
+                  cell: (pu) =>
+                    pu.action === 'REJECTED' ? (
+                      <div className="flex items-center gap-2">
+                        <span className={pu.rejectReason ? 'text-warning' : ''}>{humanRejectReason(pu.rejectReason) ?? '—'}</span>
+                        {pu.associateName && (
+                          <Button variant="ghost" size="xs" className="gap-1 text-silver hover:text-white" onClick={() => setDiagnoseFor(pu.associateName!)} title="Look up this associate's PIN and where it's filed">
+                            <Stethoscope className="h-3 w-3" /> Diagnose
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      (pu.rejectReason ?? '')
+                    ),
+                },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -2868,66 +2801,60 @@ function FacesTab({ canManage }: { canManage: boolean }) {
             description="The first kiosk punch with face matching enabled enrolls each associate automatically."
           />
         ) : (
-          <Table caption="Enrolled face templates">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Associate</TableHead>
-                <TableHead className="hidden md:table-cell">Email</TableHead>
-                <TableHead>Enrolled</TableHead>
-                <TableHead className="hidden md:table-cell">Updated</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.id} className="group">
-                  <TableCell className="font-medium text-white">
-                    <div className="min-w-0">
-                      <div className="truncate">{r.associateName}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                        {r.associateEmail}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-silver hidden md:table-cell">{r.associateEmail}</TableCell>
-                  <TableCell className="text-xs">
-                    {fmtDateTime(r.enrolledAt)}
-                  </TableCell>
-                  <TableCell className="text-xs text-silver hidden md:table-cell">
-                    {fmtDate(r.updatedAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={async () => {
-                          if (
-                            !(await confirm({
-                              title: 'Reset this face reference?',
-                              description: 'The next kiosk punch will re-enroll.',
-                              destructive: true,
-                            }))
-                          )
-                            return;
-                          try {
-                            await resetKioskFaceReference(r.associateId);
-                            refresh();
-                            toast.success('Reference cleared.');
-                          } catch (err) {
-                            toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                          }
-                        }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
-                      >
-                        Reset
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid<NonNullable<typeof rows>[number]>
+            id="kiosk-face-templates"
+            caption="Enrolled face templates"
+            rows={rows}
+            rowKey={(r) => r.id}
+            search={{ placeholder: 'Name, email…' }}
+            urlState={false}
+            exportCsv={{ filename: 'face-templates' }}
+            columns={[
+              { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+              { key: 'email', header: 'Email', accessor: (r) => r.associateEmail, sortable: true, cardMeta: true, className: 'text-silver' },
+              { key: 'enrolled', header: 'Enrolled', accessor: (r) => r.enrolledAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs', cell: (r) => fmtDateTime(r.enrolledAt) },
+              { key: 'updated', header: 'Updated', accessor: (r) => r.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (r) => fmtDate(r.updatedAt) },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      cell: (r: NonNullable<typeof rows>[number]) => (
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-silver hover:text-alert"
+                          onClick={async () => {
+                            if (
+                              !(await confirm({
+                                title: 'Reset this face reference?',
+                                description: 'The next kiosk punch will re-enroll.',
+                                destructive: true,
+                              }))
+                            )
+                              return;
+                            try {
+                              await resetKioskFaceReference(r.associateId);
+                              refresh();
+                              toast.success('Reference cleared.');
+                            } catch (err) {
+                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                            }
+                          }}
+                        >
+                          Reset
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </CardContent>
     </Card>
@@ -3020,22 +2947,6 @@ function ReviewTab({
     }
   };
 
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const toggleAll = () => {
-    if (!rows) return;
-    if (selected.size === rows.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(rows.map((p) => p.id)));
-    }
-  };
 
   const decideBulk = async (decision: 'APPROVED' | 'REJECTED') => {
     const ids = Array.from(selected);
@@ -3121,130 +3032,87 @@ function ReviewTab({
                 </div>
               </div>
             )}
-            <Table caption="Punches flagged for review">
-              <TableHeader>
-                <TableRow>
-                  {canManage && (
-                    <TableHead className="w-10">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all flagged punches"
-                        checked={
-                          rows.length > 0 && selected.size === rows.length
-                        }
-                        onChange={toggleAll}
-                      />
-                    </TableHead>
-                  )}
-                  <TableHead className="hidden md:table-cell">When</TableHead>
-                  <TableHead>Aging</TableHead>
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="hidden lg:table-cell">Device</TableHead>
-                  <TableHead className="hidden sm:table-cell">Action</TableHead>
-                  <TableHead>Reason</TableHead>
-                  <TableHead className="hidden lg:table-cell">Selfie</TableHead>
-                  <TableHead className="text-right">Decision</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((p) => (
-                  <TableRow key={p.id}>
-                    {canManage && (
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select punch ${p.id}`}
-                          checked={selected.has(p.id)}
-                          onChange={() => toggle(p.id)}
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell className="text-xs hidden md:table-cell">
-                      {fmtDateTime(p.createdAt)}
-                    </TableCell>
-                    <TableCell>{renderPendingBadge(p.createdAt)}</TableCell>
-                    <TableCell className="font-medium text-white">
-                      <div className="min-w-0">
-                        <div className="truncate">
-                          {p.associateId && p.associateName ? (
-                            <AssociateLink associateId={p.associateId}>
-                              {p.associateName}
-                            </AssociateLink>
-                          ) : (
-                            p.associateName ?? '—'
-                          )}
-                        </div>
-                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
-                          {fmtDateTime(p.createdAt)}
-                          <span className="sm:hidden">{` · ${p.action}`}</span>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs hidden lg:table-cell">{p.deviceName}</TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant={p.action === 'CLOCK_IN' ? 'success' : 'accent'}>
-                        {p.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-warning">
+            <DataGrid<(typeof rows)[number]>
+              id="kiosk-flagged-punches"
+              caption="Punches flagged for review"
+              rows={rows}
+              rowKey={(pu) => pu.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'flagged-punches' }}
+              selectable={canManage ? { selectAllLabel: 'Select all flagged punches', selection: { selected, onChange: setSelected } } : undefined}
+              columns={[
+                { key: 'when', header: 'When', accessor: (pu) => pu.createdAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs', cell: (pu) => fmtDateTime(pu.createdAt) },
+                { key: 'aging', header: 'Aging', accessor: (pu) => pu.createdAt, sortable: true, searchable: false, cell: (pu) => renderPendingBadge(pu.createdAt) },
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (pu) => pu.associateName,
+                  sortable: true,
+                  primary: true,
+                  className: 'font-medium text-white',
+                  cell: (pu) => (pu.associateId && pu.associateName ? <AssociateLink associateId={pu.associateId}>{pu.associateName}</AssociateLink> : (pu.associateName ?? '—')),
+                },
+                { key: 'device', header: 'Device', accessor: (pu) => pu.deviceName, sortable: true, className: 'text-xs' },
+                { key: 'action', header: 'Action', accessor: (pu) => pu.action, sortable: true, cardMeta: true, cell: (pu) => <Badge variant={pu.action === 'CLOCK_IN' ? 'success' : 'accent'}>{pu.action}</Badge> },
+                {
+                  key: 'reason',
+                  header: 'Reason',
+                  accessor: (pu) =>
+                    pu.anomalyKind === 'IMPOSSIBLE_TRAVEL' ? 'Impossible travel' : pu.anomalyKind === 'FACE_MISMATCH' ? 'Face mismatch' : pu.anomalyKind === 'GEOFENCE' ? 'Outside geofence' : pu.anomalyKind === 'FACE_ENROLLMENT' ? 'New face enrolled' : (pu.rejectReason ?? 'Anomaly'),
+                  sortable: true,
+                  cardMeta: true,
+                  className: 'text-xs text-warning',
+                  cell: (pu) => (
+                    <>
                       <div className="font-medium">
-                        {p.anomalyKind === 'IMPOSSIBLE_TRAVEL'
-                          ? 'Impossible travel'
-                          : p.anomalyKind === 'FACE_MISMATCH'
-                            ? 'Face mismatch'
-                            : p.anomalyKind === 'GEOFENCE'
-                              ? 'Outside geofence'
-                              : p.anomalyKind === 'FACE_ENROLLMENT'
-                                ? 'New face enrolled'
-                                : (p.rejectReason ?? 'Anomaly')}
+                        {pu.anomalyKind === 'IMPOSSIBLE_TRAVEL' ? 'Impossible travel' : pu.anomalyKind === 'FACE_MISMATCH' ? 'Face mismatch' : pu.anomalyKind === 'GEOFENCE' ? 'Outside geofence' : pu.anomalyKind === 'FACE_ENROLLMENT' ? 'New face enrolled' : (pu.rejectReason ?? 'Anomaly')}
                       </div>
-                      {p.anomalyDetail && (
-                        <div className="text-silver">{p.anomalyDetail}</div>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {p.hasSelfie ? (
-                        <a
-                          href={`/api/kiosk-punches/${p.id}/selfie`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <img
-                            src={`/api/kiosk-punches/${p.id}/selfie`}
-                            alt="selfie"
-                            className="w-12 h-12 rounded object-cover border border-navy-secondary"
-                          />
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {canManage && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy === p.id || bulkBusy}
-                            onClick={() => void decide(p.id, 'APPROVED')}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            disabled={busy === p.id || bulkBusy}
-                            onClick={() => void decide(p.id, 'REJECTED')}
-                          >
-                            Reject
-                          </Button>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      {pu.anomalyDetail && <div className="text-silver">{pu.anomalyDetail}</div>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'selfie',
+                  header: 'Selfie',
+                  accessor: (pu) => (pu.hasSelfie ? 'yes' : null),
+                  searchable: false,
+                  stopRowClick: true,
+                  cell: (pu) =>
+                    pu.hasSelfie ? (
+                      <a href={`/api/kiosk-punches/${pu.id}/selfie`} target="_blank" rel="noreferrer">
+                        <img src={`/api/kiosk-punches/${pu.id}/selfie`} alt="selfie" className="w-12 h-12 rounded object-cover border border-navy-secondary" />
+                      </a>
+                    ) : (
+                      '—'
+                    ),
+                },
+                ...(canManage
+                  ? [
+                      {
+                        key: 'decision',
+                        header: 'Decision',
+                        accessor: () => null,
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        className: 'space-x-2',
+                        cell: (pu: (typeof rows)[number]) => (
+                          <>
+                            <Button size="sm" variant="ghost" disabled={busy === pu.id || bulkBusy} onClick={() => void decide(pu.id, 'APPROVED')}>
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="destructive" disabled={busy === pu.id || bulkBusy} onClick={() => void decide(pu.id, 'REJECTED')}>
+                              Reject
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </>
         )}
       </CardContent>

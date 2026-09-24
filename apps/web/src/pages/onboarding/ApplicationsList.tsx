@@ -60,14 +60,7 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
@@ -368,6 +361,15 @@ export function ApplicationsList() {
   // to the *currently visible* (filtered) rows so it never spans pages
   // worth of work the user can't see.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The card view keeps its own checkboxes; the table's are the grid's.
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // Single-row nudge dialog. Bulk nudge exists too ("Nudge all stale") —
   // bodies are personalized per recipient via nudgeContentFor.
@@ -571,31 +573,6 @@ export function ApplicationsList() {
     });
   }, [items]);
 
-  const toggleOne = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const allVisibleSelected =
-    !!items && items.length > 0 && items.every((a) => selected.has(a.id));
-
-  const toggleAllVisible = () => {
-    if (!items) return;
-    setSelected((prev) => {
-      if (allVisibleSelected) {
-        const next = new Set(prev);
-        for (const a of items) next.delete(a.id);
-        return next;
-      }
-      const next = new Set(prev);
-      for (const a of items) next.add(a.id);
-      return next;
-    });
-  };
 
   const onBulkResend = async () => {
     if (selected.size === 0 || bulkResending) return;
@@ -1151,179 +1128,126 @@ export function ApplicationsList() {
       )}
 
       {items && items.length > 0 && view === 'table' && (
-        <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                {canInvite && (
-                  <TableHead className="w-8 px-3 no-print">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleAllVisible}
-                      aria-label={
-                        allVisibleSelected ? 'Deselect all' : 'Select all visible'
-                      }
-                      className="h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
-                    />
-                  </TableHead>
-                )}
-                <TableHead>Applicant</TableHead>
-                <TableHead className="hidden md:table-cell">Client</TableHead>
-                <TableHead className="hidden lg:table-cell">Track</TableHead>
-                <TableHead className="hidden md:table-cell">Invited</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-56">Progress</TableHead>
-                <TableHead className="hidden lg:table-cell">Blocked on</TableHead>
-                <TableHead className="hidden md:table-cell">Start</TableHead>
-                {canInvite && <TableHead className="w-24" aria-label="Actions" />}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((a) => {
-                const stale = isStale(a, now);
-                const isSelected = selected.has(a.id);
-                const idleDays = daysSince(lastActivityIso(a), now);
-                const risk = startRisk(a, now);
-                return (
-                  <TableRow
-                    key={a.id}
-                    onClick={(e) => {
-                      // Don't intercept clicks on the inner controls (checkbox,
-                      // links, action buttons). Ignore selection drags too.
-                      const target = e.target as HTMLElement;
-                      if (target.closest('button, a, input, [data-no-row-click]')) return;
-                      if (window.getSelection()?.toString()) return;
-                      setDrawerTarget(a);
-                    }}
-                    className={cn(
-                      'group cursor-pointer',
-                      isSelected && 'bg-gold/[0.04]'
-                    )}
-                  >
-                    {canInvite && (
-                      <TableCell className="px-3 no-print">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleOne(a.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={
-                            isSelected
-                              ? `Deselect ${a.associateName}`
-                              : `Select ${a.associateName}`
-                          }
-                          className="h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell>
-                      <div className="flex items-center gap-2.5">
-                        <div className="relative">
-                          <Avatar name={a.associateName} size="sm" />
-                          {(a.lastInviteDelivery?.status === 'FAILED' || stale) && (
-                            <span
-                              className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-alert border-2 border-navy grid place-items-center"
-                              aria-label={
-                                a.lastInviteDelivery?.status === 'FAILED'
-                                  ? 'Email bounced'
-                                  : 'Stuck'
-                              }
-                              title={
-                                a.lastInviteDelivery?.status === 'FAILED'
-                                  ? a.lastInviteDelivery.failureReason ?? 'Email bounced'
-                                  : 'Stuck'
-                              }
-                            >
-                              {a.lastInviteDelivery?.status === 'FAILED' ? (
-                                <MailWarning className="h-2 w-2 text-white" aria-hidden="true" />
-                              ) : (
-                                <AlertTriangle className="h-2 w-2 text-white" aria-hidden="true" />
-                              )}
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-white group-hover:text-gold-bright font-medium transition-colors">
-                            {a.associateName}
-                          </span>
-                          {a.position && (
-                            <div className="text-xs text-silver mt-0.5 truncate">
-                              {a.position}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-silver">
-                      {a.clientName}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-silver">
-                      {TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs tabular-nums">
-                      <span
-                        className={cn(
-                          invitedLabel(a.invitedAt, now) === 'Today'
-                            ? 'text-gold font-medium'
-                            : 'text-silver',
-                        )}
-                      >
-                        {invitedLabel(a.invitedAt, now)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={a.status} data-status={a.status} />
-                      {a.updatedAfterSubmitAt &&
-                        (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && (
-                          <Badge
-                            variant="pending"
-                            className="ml-1.5"
-                            title={`The applicant changed their information on ${fmtDate(a.updatedAfterSubmitAt)} — re-check before approving.`}
+        <Card className="p-3">
+          <DataGrid<(typeof items)[number]>
+            id="applications"
+            caption="Onboarding applications"
+            rows={items}
+            rowKey={(a) => a.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'applications' }}
+            onRowClick={(a) => setDrawerTarget(a)}
+            rowActionLabel={(a) => `Open ${a.associateName}`}
+            selectable={canInvite ? { selectAllLabel: 'Select all visible', selection: { selected, onChange: setSelected } } : undefined}
+            columns={[
+              {
+                key: 'applicant',
+                header: 'Applicant',
+                accessor: (a) => a.associateName,
+                sortable: true,
+                primary: true,
+                cell: (a) => {
+                  const stale = isStale(a, now);
+                  return (
+                    <div className="flex items-center gap-2.5">
+                      <div className="relative">
+                        <Avatar name={a.associateName} size="sm" />
+                        {(a.lastInviteDelivery?.status === 'FAILED' || stale) && (
+                          <span
+                            className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-alert border-2 border-navy grid place-items-center"
+                            aria-label={a.lastInviteDelivery?.status === 'FAILED' ? 'Email bounced' : 'Stuck'}
+                            title={a.lastInviteDelivery?.status === 'FAILED' ? (a.lastInviteDelivery.failureReason ?? 'Email bounced') : 'Stuck'}
                           >
-                            updated
-                          </Badge>
-                        )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <ProgressBar
-                          percent={a.percentComplete}
-                          hideLabel
-                          className="flex-1"
-                        />
-                        <span
-                          className={cn(
-                            'text-xs tabular-nums w-9 text-right',
-                            a.percentComplete === 100
-                              ? 'text-success font-medium'
-                              : a.percentComplete >= 50
-                                ? 'text-gold'
-                                : 'text-silver'
-                          )}
-                        >
-                          {a.percentComplete}%
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs">
-                      {isTerminal(a) ||
-                      a.percentComplete === 100 ||
-                      !a.blockedOnTitle ? (
-                        <span className="text-silver/50">—</span>
-                      ) : (
-                        <span className="text-silver">
-                          {a.blockedOnTitle}
-                          <span className={cn('tabular-nums', idleTone(idleDays))}>
-                            {' '}· {idleDays}d idle
+                            {a.lastInviteDelivery?.status === 'FAILED' ? <MailWarning className="h-2 w-2 text-white" aria-hidden="true" /> : <AlertTriangle className="h-2 w-2 text-white" aria-hidden="true" />}
                           </span>
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs whitespace-nowrap">
-                      <span className="text-silver tabular-nums">
-                        {fmtDate(a.startDate)}
-                      </span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-white font-medium">{a.associateName}</span>
+                        {a.position && <div className="text-xs text-silver mt-0.5 truncate">{a.position}</div>}
+                      </div>
+                    </div>
+                  );
+                },
+              },
+              { key: 'client', header: 'Client', accessor: (a) => a.clientName, sortable: true, cardMeta: true, className: 'text-silver' },
+              { key: 'track', header: 'Track', accessor: (a) => TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack, sortable: true, className: 'text-silver' },
+              {
+                key: 'invited',
+                header: 'Invited',
+                accessor: (a) => a.invitedAt,
+                csv: (a) => invitedLabel(a.invitedAt, now),
+                sortable: true,
+                searchable: false,
+                className: 'text-xs tabular-nums',
+                cell: (a) => <span className={cn(invitedLabel(a.invitedAt, now) === 'Today' ? 'text-gold font-medium' : 'text-silver')}>{invitedLabel(a.invitedAt, now)}</span>,
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (a) => a.status,
+                sortable: true,
+                cardMeta: true,
+                cell: (a) => (
+                  <>
+                    <StatusBadge status={a.status} data-status={a.status} />
+                    {a.updatedAfterSubmitAt && (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && (
+                      <Badge variant="pending" className="ml-1.5" title={`The applicant changed their information on ${fmtDate(a.updatedAfterSubmitAt)} — re-check before approving.`}>
+                        updated
+                      </Badge>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: 'progress',
+                header: 'Progress',
+                accessor: (a) => a.percentComplete,
+                csv: (a) => `${a.percentComplete}%`,
+                sortable: true,
+                searchable: false,
+                width: '14rem',
+                cell: (a) => (
+                  <div className="flex items-center gap-2">
+                    <ProgressBar percent={a.percentComplete} hideLabel className="flex-1" />
+                    <span className={cn('text-xs tabular-nums w-9 text-right', a.percentComplete === 100 ? 'text-success font-medium' : a.percentComplete >= 50 ? 'text-gold' : 'text-silver')}>
+                      {a.percentComplete}%
+                    </span>
+                  </div>
+                ),
+              },
+              {
+                key: 'blocked',
+                header: 'Blocked on',
+                accessor: (a) => (isTerminal(a) || a.percentComplete === 100 || !a.blockedOnTitle ? null : a.blockedOnTitle),
+                sortable: true,
+                className: 'text-xs',
+                cell: (a) => {
+                  const idleDays = daysSince(lastActivityIso(a), now);
+                  return isTerminal(a) || a.percentComplete === 100 || !a.blockedOnTitle ? (
+                    <span className="text-silver/50">—</span>
+                  ) : (
+                    <span className="text-silver">
+                      {a.blockedOnTitle}
+                      <span className={cn('tabular-nums', idleTone(idleDays))}> · {idleDays}d idle</span>
+                    </span>
+                  );
+                },
+              },
+              {
+                key: 'start',
+                header: 'Start',
+                accessor: (a) => a.startDate,
+                sortable: true,
+                searchable: false,
+                cardMeta: true,
+                className: 'text-xs whitespace-nowrap',
+                cell: (a) => {
+                  const risk = startRisk(a, now);
+                  return (
+                    <>
+                      <span className="text-silver tabular-nums">{fmtDate(a.startDate)}</span>
                       {risk === 'past' && (
                         <Badge variant="destructive" className="ml-1.5">
                           past start
@@ -1334,60 +1258,43 @@ export function ApplicationsList() {
                           at risk
                         </Badge>
                       )}
-                    </TableCell>
-                    {canInvite && (
-                      <TableCell className="text-right whitespace-nowrap no-print">
-                        <div
-                          className="flex items-center justify-end gap-0.5 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
-                          data-no-row-click
-                        >
+                    </>
+                  );
+                },
+              },
+              ...(canInvite
+                ? [
+                    {
+                      key: 'actions',
+                      header: '',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      className: 'whitespace-nowrap no-print',
+                      cell: (a: (typeof items)[number]) => (
+                        <div className="flex items-center justify-end gap-0.5">
                           {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
-                            <Button
-                              asChild
-                              variant="ghost"
-                              size="sm"
-                              title="Onboard in person — open the walk-in workspace"
-                            >
-                              <Link
-                                to={`/onboarding/in-person/${a.id}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                            <Button asChild variant="ghost" size="sm" title="Onboard in person — open the walk-in workspace">
+                              <Link to={`/onboarding/in-person/${a.id}`}>
                                 <UserCheck className="h-3.5 w-3.5" />
                               </Link>
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setNudgeTarget(a);
-                            }}
-                            title="Send nudge email"
-                            disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}
-                          >
+                          <Button variant="ghost" size="sm" onClick={() => setNudgeTarget(a)} title="Send nudge email" disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}>
                             <MessageCircle className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onResend(a);
-                            }}
-                            loading={resendingIds.has(a.id)}
-                            title="Resend invite"
-                          >
+                          <Button variant="ghost" size="sm" onClick={() => onResend(a)} loading={resendingIds.has(a.id)} title="Resend invite">
                             <Send className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         </Card>
       )}
 

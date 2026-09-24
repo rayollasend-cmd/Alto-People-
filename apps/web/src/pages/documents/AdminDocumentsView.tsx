@@ -8,7 +8,6 @@ import {
   useState,
 } from 'react';
 import {
-  ChevronRight,
   Download,
   FileText,
   Folder,
@@ -86,6 +85,7 @@ import {
   TableRow,
   type TableSortState,
 } from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
@@ -1409,77 +1409,42 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         visibleAssociateGroups &&
         visibleAssociateGroups.length > 0 && (
           <Card className="overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="w-20 text-right">Total</TableHead>
-                  <TableHead className="w-28">Awaiting</TableHead>
-                  <TableHead className="w-28 hidden md:table-cell">Verified</TableHead>
-                  <TableHead className="w-28 hidden md:table-cell">Rejected</TableHead>
-                  <TableHead className="w-28 hidden lg:table-cell">Expired</TableHead>
-                  <TableHead className="w-28 hidden lg:table-cell">Last activity</TableHead>
-                  <TableHead className="w-8" aria-label="Open" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleAssociateGroups.map((g) => (
-                  <TableRow
-                    key={g.associateId}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedAssociateId(g.associateId)}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-2.5">
-                        <Avatar name={g.associateName} size="sm" />
-                        <span className="text-white font-medium truncate">
-                          <AssociateLink associateId={g.associateId} tab="documents">
-                            {g.associateName}
-                          </AssociateLink>
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">
-                      {g.total}
-                    </TableCell>
-                    <TableCell>
-                      {g.uploaded > 0 ? (
-                        <Badge variant="pending">{g.uploaded}</Badge>
-                      ) : (
-                        <span className="text-silver/70 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {g.verified > 0 ? (
-                        <Badge variant="success">{g.verified}</Badge>
-                      ) : (
-                        <span className="text-silver/70 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {g.rejected > 0 ? (
-                        <Badge variant="destructive">{g.rejected}</Badge>
-                      ) : (
-                        <span className="text-silver/70 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {g.expired > 0 ? (
-                        <Badge variant="destructive">{g.expired}</Badge>
-                      ) : (
-                        <span className="text-silver/70 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-silver text-xs tabular-nums">
-                      {fmtAge(new Date(g.lastActivity).toISOString(), now)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <ChevronRight className="h-4 w-4 text-silver/70" />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid<(typeof visibleAssociateGroups)[number]>
+              id="documents-by-associate"
+              caption="Documents by associate"
+              rows={visibleAssociateGroups}
+              rowKey={(g) => g.associateId}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'documents-by-associate' }}
+              onRowClick={(g) => setSelectedAssociateId(g.associateId)}
+              rowActionLabel={(g) => `Open documents for ${g.associateName}`}
+              columns={[
+                {
+                  key: 'associate',
+                  header: 'Associate',
+                  accessor: (g) => g.associateName,
+                  sortable: true,
+                  primary: true,
+                  cell: (g) => (
+                    <div className="flex items-center gap-2.5">
+                      <Avatar name={g.associateName} size="sm" />
+                      <span className="text-white font-medium truncate">
+                        <AssociateLink associateId={g.associateId} tab="documents">
+                          {g.associateName}
+                        </AssociateLink>
+                      </span>
+                    </div>
+                  ),
+                },
+                { key: 'total', header: 'Total', accessor: (g) => g.total, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver' },
+                { key: 'awaiting', header: 'Awaiting', accessor: (g) => g.uploaded, sortable: true, searchable: false, cardMeta: true, cell: (g) => (g.uploaded > 0 ? <Badge variant="pending">{g.uploaded}</Badge> : <span className="text-silver/70 text-xs">—</span>) },
+                { key: 'verified', header: 'Verified', accessor: (g) => g.verified, sortable: true, searchable: false, cell: (g) => (g.verified > 0 ? <Badge variant="success">{g.verified}</Badge> : <span className="text-silver/70 text-xs">—</span>) },
+                { key: 'rejected', header: 'Rejected', accessor: (g) => g.rejected, sortable: true, searchable: false, cell: (g) => (g.rejected > 0 ? <Badge variant="destructive">{g.rejected}</Badge> : <span className="text-silver/70 text-xs">—</span>) },
+                { key: 'expired', header: 'Expired', accessor: (g) => g.expired, sortable: true, searchable: false, cell: (g) => (g.expired > 0 ? <Badge variant="destructive">{g.expired}</Badge> : <span className="text-silver/70 text-xs">—</span>) },
+                { key: 'lastActivity', header: 'Last activity', accessor: (g) => g.lastActivity, csv: (g) => fmtAge(new Date(g.lastActivity).toISOString(), now), sortable: true, searchable: false, className: 'text-silver text-xs tabular-nums', cell: (g) => fmtAge(new Date(g.lastActivity).toISOString(), now) },
+              ]}
+            />
           </Card>
         )}
 
@@ -1591,129 +1556,101 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               )}
 
               {folder.docs.length > 0 && folderView === 'list' && (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>File</TableHead>
-                    <TableHead className="hidden md:table-cell">Kind</TableHead>
-                    <TableHead className="w-24">Uploaded</TableHead>
-                    <TableHead className="w-28">Status</TableHead>
-                    {canManage && (
-                      <TableHead className="w-32 text-right" aria-label="Actions" />
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {folder.docs.map((d) => (
-                    <TableRow key={d.id} className="group">
-                      <TableCell>
-                        <button
-                          type="button"
-                          onClick={() => setPreviewDoc(d)}
-                          className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
-                          title={`Preview ${d.filename}`}
-                        >
-                          <FileText className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{d.filename}</span>
-                        </button>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
-                        {d.kind.replace(/_/g, ' ')}
-                      </TableCell>
-                      <TableCell className="text-silver text-xs tabular-nums">
-                        {fmtAge(d.createdAt, now)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={statusTone(d.status)}
-                          data-status={d.status}
-                        >
+              <DataGrid<(typeof folder.docs)[number]>
+                id="folder-documents"
+                caption="Documents in this folder"
+                rows={folder.docs}
+                rowKey={(d) => d.id}
+                search={false}
+                urlState={false}
+                exportCsv={false}
+                columnChooser={false}
+                columns={[
+                  {
+                    key: 'file',
+                    header: 'File',
+                    accessor: (d) => d.filename,
+                    sortable: true,
+                    primary: true,
+                    stopRowClick: true,
+                    cell: (d) => (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewDoc(d)}
+                        className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
+                        title={`Preview ${d.filename}`}
+                      >
+                        <FileText className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{d.filename}</span>
+                      </button>
+                    ),
+                  },
+                  { key: 'kind', header: 'Kind', accessor: (d) => d.kind.replace(/_/g, ' '), sortable: true, cardMeta: true, className: 'text-xs text-silver uppercase tracking-wider' },
+                  { key: 'uploaded', header: 'Uploaded', accessor: (d) => d.createdAt, csv: (d) => fmtAge(d.createdAt, now), sortable: true, searchable: false, cardMeta: true, className: 'text-silver text-xs tabular-nums', cell: (d) => fmtAge(d.createdAt, now) },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (d) => STATUS_LABELS[d.status],
+                    sortable: true,
+                    cardMeta: true,
+                    cell: (d) => (
+                      <>
+                        <Badge variant={statusTone(d.status)} data-status={d.status}>
                           {STATUS_LABELS[d.status]}
                         </Badge>
                         {d.rejectionReason && (
-                          <div
-                            className="text-alert text-2xs mt-1 max-w-[160px] truncate"
-                            title={d.rejectionReason}
-                          >
+                          <div className="text-alert text-2xs mt-1 max-w-[160px] truncate" title={d.rejectionReason}>
                             {d.rejectionReason}
                           </div>
                         )}
                         {d.expiresAt && (
-                          <div
-                            className={cn(
-                              'text-2xs mt-1 tabular-nums',
-                              d.status === 'EXPIRED'
-                                ? 'text-alert'
-                                : 'text-silver/70',
-                            )}
-                          >
-                            {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
-                            {fmtDate(d.expiresAt)}
+                          <div className={cn('text-2xs mt-1 tabular-nums', d.status === 'EXPIRED' ? 'text-alert' : 'text-silver/70')}>
+                            {d.status === 'EXPIRED' ? 'Expired' : 'Expires'} {fmtDate(d.expiresAt)}
                           </div>
                         )}
-                      </TableCell>
-                      {canManage && (
-                        <TableCell className="text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1">
-                            {(d.status === 'UPLOADED' ||
-                              d.status === 'REJECTED') && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => onVerify(d)}
-                                loading={pendingId === d.id}
-                                title="Mark verified"
-                                className="text-success hover:text-success"
-                              >
-                                <ShieldCheck className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            {(d.status === 'UPLOADED' ||
-                              d.status === 'VERIFIED') && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setRejectTarget(d);
-                                }}
-                                disabled={pendingId === d.id}
-                                title="Reject with reason"
-                                className="text-alert hover:text-alert"
-                              >
-                                <ShieldAlert className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            {d.status === 'EXPIRED' && (
-                              <>
-                                {reuploadRequestedAt[d.id] !== undefined && (
-                                  <span className="text-2xs text-silver/70 tabular-nums whitespace-nowrap">
-                                    requested{' '}
-                                    {fmtRelativeDate(
-                                      new Date(
-                                        reuploadRequestedAt[d.id],
-                                      ).toISOString(),
-                                    )}
-                                  </span>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => onRequestReupload(d)}
-                                  loading={pendingId === d.id}
-                                  title="Ask the associate to upload a current copy"
-                                  className="text-gold hover:text-gold"
-                                >
-                                  <RefreshCw className="h-3.5 w-3.5" />
+                      </>
+                    ),
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: '',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          className: 'whitespace-nowrap',
+                          cell: (d: (typeof folder.docs)[number]) => (
+                            <div className="flex items-center justify-end gap-1">
+                              {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
+                                <Button size="sm" variant="ghost" onClick={() => onVerify(d)} loading={pendingId === d.id} title="Mark verified" className="text-success hover:text-success">
+                                  <ShieldCheck className="h-3.5 w-3.5" />
                                 </Button>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                              )}
+                              {(d.status === 'UPLOADED' || d.status === 'VERIFIED') && (
+                                <Button size="sm" variant="ghost" onClick={() => setRejectTarget(d)} disabled={pendingId === d.id} title="Reject with reason" className="text-alert hover:text-alert">
+                                  <ShieldAlert className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {d.status === 'EXPIRED' && (
+                                <>
+                                  {reuploadRequestedAt[d.id] !== undefined && (
+                                    <span className="text-2xs text-silver/70 tabular-nums whitespace-nowrap">requested {fmtRelativeDate(new Date(reuploadRequestedAt[d.id]).toISOString())}</span>
+                                  )}
+                                  <Button size="sm" variant="ghost" onClick={() => onRequestReupload(d)} loading={pendingId === d.id} title="Ask the associate to upload a current copy" className="text-gold hover:text-gold">
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
               )}
             </DrawerBody>
             <DrawerFooter>

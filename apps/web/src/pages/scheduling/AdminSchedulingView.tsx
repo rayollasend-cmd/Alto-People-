@@ -125,14 +125,7 @@ import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -3274,124 +3267,115 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {filteredShifts && view === 'list' && filteredShifts.length > 0 && (
-        <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Position</TableHead>
-                {!boundedClient && <TableHead className="hidden lg:table-cell">Client</TableHead>}
-                <TableHead>When</TableHead>
-                <TableHead className="hidden md:table-cell">Assigned</TableHead>
-                <TableHead>Status</TableHead>
-                {canManage && <TableHead className="text-right no-print">Actions</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredShifts.slice(0, listVisibleCount).map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-medium">
-                    <div className="min-w-0">
-                      <div className="truncate">{s.position}</div>
-                      <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        {s.assignedAssociateName ?? 'Unassigned'}
-                        {!boundedClient && s.clientName ? ` · ${s.clientName}` : ''}
-                      </div>
-                    </div>
-                  </TableCell>
-                  {!boundedClient && (
-                    <TableCell className="hidden lg:table-cell text-silver">{s.clientName ?? '—'}</TableCell>
-                  )}
-                  {/* One line, the way a floor reads a shift: the day, then
-                      the hours — "Today · 2:00 PM – 10:00 PM". */}
-                  <TableCell className="whitespace-nowrap tabular-nums">
-                    <span className="text-silver">{fmtRelativeDayTz(s.startsAt, s.timezone)}</span>
+        <Card className="overflow-hidden p-3">
+          <DataGrid<NonNullable<typeof filteredShifts>[number]>
+            id="shift-list"
+            caption="Shifts"
+            rows={filteredShifts.slice(0, listVisibleCount)}
+            rowKey={(sh) => sh.id}
+            search={false}
+            urlState={false}
+            exportCsv={{ filename: 'shifts' }}
+            columns={[
+              { key: 'position', header: 'Position', accessor: (sh) => sh.position, sortable: true, primary: true, className: 'font-medium' },
+              ...(!boundedClient
+                ? [{ key: 'client', header: 'Client', accessor: (sh: NonNullable<typeof filteredShifts>[number]) => sh.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (sh: NonNullable<typeof filteredShifts>[number]) => sh.clientName ?? '—' }]
+                : []),
+              {
+                key: 'when',
+                header: 'When',
+                accessor: (sh) => sh.startsAt,
+                csv: (sh) => `${fmtRelativeDayTz(sh.startsAt, sh.timezone)} · ${fmtShiftRangeTz(sh.startsAt, sh.endsAt, sh.timezone)}`,
+                sortable: true,
+                searchable: false,
+                cardMeta: true,
+                className: 'whitespace-nowrap tabular-nums',
+                // One line, the way a floor reads a shift: the day, then
+                // the hours — "Today · 2:00 PM – 10:00 PM".
+                cell: (sh) => (
+                  <>
+                    <span className="text-silver">{fmtRelativeDayTz(sh.startsAt, sh.timezone)}</span>
                     <span className="text-silver/50"> · </span>
-                    {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver">
-                    {s.assignedAssociateId && s.assignedAssociateName ? (
-                      <span className="flex items-center gap-2">
-                        <Avatar
-                          src={`/api/associates/${s.assignedAssociateId}/photo`}
-                          name={s.assignedAssociateName}
-                          email=""
-                          size="sm"
-                        />
-                        <span className="truncate text-white">{s.assignedAssociateName}</span>
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={STATUS_VARIANT[s.status] ?? 'default'}
-                      data-status={s.status}
-                    >
-                      {STATUS_LABELS[s.status] ?? s.status}
+                    {fmtShiftRangeTz(sh.startsAt, sh.endsAt, sh.timezone)}
+                  </>
+                ),
+              },
+              {
+                key: 'assigned',
+                header: 'Assigned',
+                accessor: (sh) => sh.assignedAssociateName ?? 'Unassigned',
+                sortable: true,
+                cardMeta: true,
+                className: 'text-silver',
+                cell: (sh) =>
+                  sh.assignedAssociateId && sh.assignedAssociateName ? (
+                    <span className="flex items-center gap-2">
+                      <Avatar src={`/api/associates/${sh.assignedAssociateId}/photo`} name={sh.assignedAssociateName} email="" size="sm" />
+                      <span className="truncate text-white">{sh.assignedAssociateName}</span>
+                    </span>
+                  ) : (
+                    '—'
+                  ),
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (sh) => STATUS_LABELS[sh.status] ?? sh.status,
+                sortable: true,
+                cell: (sh) => (
+                  <>
+                    <Badge variant={STATUS_VARIANT[sh.status] ?? 'default'} data-status={sh.status}>
+                      {STATUS_LABELS[sh.status] ?? sh.status}
                     </Badge>
-                    {s.cancellationReason && (
-                      <div className="text-alert text-2xs mt-1">
-                        {s.cancellationReason}
-                      </div>
-                    )}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell className="text-right whitespace-nowrap no-print">
-                      <div className="inline-flex gap-1.5">
-                        {(s.status === 'OPEN' || s.status === 'DRAFT') && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => onAutoFill(s.id)}
-                              disabled={pendingId === s.id}
-                            >
-                              <Sparkles className="h-3.5 w-3.5" />
-                              Auto-fill
+                    {sh.cancellationReason && <div className="text-alert text-2xs mt-1">{sh.cancellationReason}</div>}
+                  </>
+                ),
+              },
+              ...(canManage
+                ? [
+                    {
+                      key: 'actions',
+                      header: 'Actions',
+                      accessor: () => null,
+                      searchable: false,
+                      csv: () => '',
+                      align: 'right' as const,
+                      stopRowClick: true,
+                      className: 'whitespace-nowrap no-print',
+                      cell: (sh: NonNullable<typeof filteredShifts>[number]) => (
+                        <div className="inline-flex gap-1.5">
+                          {(sh.status === 'OPEN' || sh.status === 'DRAFT') && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => onAutoFill(sh.id)} disabled={pendingId === sh.id}>
+                                <Sparkles className="h-3.5 w-3.5" />
+                                Auto-fill
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => setAssignTarget(sh)} disabled={pendingId === sh.id}>
+                                <UserPlus className="h-3.5 w-3.5" />
+                                Assign
+                              </Button>
+                            </>
+                          )}
+                          {sh.status === 'ASSIGNED' && (
+                            <Button size="sm" variant="secondary" onClick={() => onUnassign(sh)} disabled={pendingId === sh.id}>
+                              Unassign
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => setAssignTarget(s)}
-                              disabled={pendingId === s.id}
-                            >
-                              <UserPlus className="h-3.5 w-3.5" />
-                              Assign
+                          )}
+                          {sh.status !== 'COMPLETED' && sh.status !== 'CANCELLED' && (
+                            // Quiet until it's meant: a red block on every row
+                            // shouted louder than the work (the dialog confirms).
+                            <Button size="sm" variant="ghost" className="text-alert/80 hover:text-alert" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
+                              <X className="h-3.5 w-3.5" />
+                              Cancel
                             </Button>
-                          </>
-                        )}
-                        {s.status === 'ASSIGNED' && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => onUnassign(s)}
-                            disabled={pendingId === s.id}
-                          >
-                            Unassign
-                          </Button>
-                        )}
-                        {s.status !== 'COMPLETED' && s.status !== 'CANCELLED' && (
-                          // Quiet until it's meant: a red block on every row
-                          // shouted louder than the work (the dialog confirms).
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-alert/80 hover:text-alert"
-                            onClick={() => setCancelTarget(s)}
-                            disabled={pendingId === s.id}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                            Cancel
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
           {filteredShifts.length > listVisibleCount && (
             <div className="flex justify-center border-t border-navy-secondary p-3 no-print">
               <Button
