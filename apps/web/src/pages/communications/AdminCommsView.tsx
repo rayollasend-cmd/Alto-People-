@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
-import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
+import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import type {
   EmailSuppression,
@@ -40,23 +40,16 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   ErrorBanner,
   Field,
   Input,
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
   type PickedAssociate,
 } from '@/components/ui';
-import { DataGrid } from '@/components/ui/DataGrid';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 
 function statusVariant(
   s: Notification['status'],
@@ -85,6 +78,9 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   COMPLAINED: 'Marked as spam',
   SUPPRESSED: 'Suppressed',
 };
+
+const recipientOf = (n: Notification) =>
+  n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—';
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   IN_APP: 'In-app',
@@ -177,6 +173,96 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
     }
   };
 
+  const logColumns = useMemo<GridColumn<Notification>[]>(
+    () => [
+      {
+        key: 'time',
+        header: 'Time',
+        accessor: (n) => new Date(n.createdAt).getTime(),
+        csv: (n) => n.createdAt,
+        sortable: true,
+        searchable: false,
+        cardMeta: true,
+        width: '6rem',
+        className: 'tabular-nums text-silver whitespace-nowrap',
+        cell: (n) => <span title={fmtDateTime(n.createdAt)}>{fmtTimeOnly(n.createdAt)}</span>,
+      },
+      {
+        key: 'channel',
+        header: 'Channel',
+        accessor: (n) => CHANNEL_LABELS[n.channel],
+        sortable: true,
+        cardMeta: true,
+        cell: (n) => <Badge variant="outline">{CHANNEL_LABELS[n.channel]}</Badge>,
+      },
+      {
+        key: 'recipient',
+        header: 'Recipient',
+        accessor: (n) => recipientOf(n),
+        sortable: true,
+        primary: true,
+        className: 'text-silver',
+        cell: (n) => (
+          <span className="flex min-w-0 items-center gap-2.5">
+            <Avatar name={recipientOf(n)} email={n.recipientEmail ?? undefined} size="xs" />
+            <span className="min-w-0 break-words">{recipientOf(n)}</span>
+          </span>
+        ),
+      },
+      {
+        key: 'subject',
+        header: 'Subject / preview',
+        accessor: (n) => n.subject ?? '(no subject)',
+        sortable: true,
+        cell: (n) => (
+          <>
+            <div className="max-w-md truncate font-medium text-white">{n.subject ?? '(no subject)'}</div>
+            <div className="max-w-md truncate text-xs text-silver">{n.body}</div>
+          </>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        accessor: (n) => STATUS_LABELS[n.status],
+        sortable: true,
+        cell: (n) => (
+          <>
+            <Badge variant={statusVariant(n.status)}>{STATUS_LABELS[n.status]}</Badge>
+            {n.failureReason && <div className="mt-1 text-2xs text-alert">{n.failureReason}</div>}
+          </>
+        ),
+      },
+      ...(canManage
+        ? [
+            {
+              key: 'resend',
+              header: 'Resend',
+              accessor: () => null,
+              searchable: false,
+              stopRowClick: true,
+              align: 'right',
+              cell: (n) =>
+                n.status === 'FAILED' ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={resendingId === n.id}
+                    onClick={() => void resend(n)}
+                  >
+                    <RotateCw className="mr-1 h-3 w-3" />
+                    {resendingId === n.id ? 'Resending…' : 'Resend'}
+                  </Button>
+                ) : null,
+            } satisfies GridColumn<Notification>,
+          ]
+        : []),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canManage, resendingId],
+  );
+
+
   return (
     <div className="mx-auto">
       <PageHeader
@@ -264,149 +350,48 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
               {error}
             </ErrorBanner>
           )}
-          {!items && !error && <SkeletonRows count={5} rowHeight="h-12" />}
-          {items && items.length === 0 && (
-            <EmptyState
-              icon={Inbox}
-              title="No notifications yet"
-              description={
-                canManage
+          {!error && (
+            <DataGrid<Notification>
+              id="comms-log"
+              caption="Notification log"
+              rows={items}
+              loading={!items}
+              columns={logColumns}
+              rowKey={(n) => n.id}
+              urlState={false}
+              exportCsv={false}
+              search={{ placeholder: 'Search recipients and subjects' }}
+              onRowClick={(n) => setDrawerTarget(n)}
+              rowActionLabel={(n) => `Open message to ${recipientOf(n)}`}
+              // One table, a heading per day; only today starts open so
+              // the log is not an endless scroll.
+              groupBy={{
+                key: (n) => dayKey(n.createdAt),
+                header: (key, rows) => (
+                  <span className="flex items-center gap-2">
+                    <span>{dayHeading(key)}</span>
+                    <span className="text-xs font-normal text-silver/70">· {key}</span>
+                    <span className="ml-auto text-xs font-normal text-silver">
+                      {rows.length} {rows.length === 1 ? 'message' : 'messages'}
+                    </span>
+                  </span>
+                ),
+                collapsible: { defaultOpen: (_key, index) => index === 0 },
+              }}
+              empty={{
+                icon: Inbox,
+                title: 'No notifications yet',
+                description: canManage
                   ? 'Send your first message — it will show up here once delivered.'
-                  : 'Notifications you receive or that go out from the system will appear here.'
-              }
-              action={
-                canManage ? (
+                  : 'Notifications you receive or that go out from the system will appear here.',
+                action: canManage ? (
                   <Button onClick={() => setShowCompose(true)}>
                     <Send className="h-4 w-4" />
                     Send notification
                   </Button>
-                ) : undefined
-              }
+                ) : undefined,
+              }}
             />
-          )}
-          {items && items.length > 0 && (
-            <div className="divide-y divide-navy-secondary -mx-6">
-              {groupByDay(items).map((group, idx) => (
-                <details
-                  key={group.key}
-                  open={idx === 0}
-                  className="[&[open]>summary>svg.chev]:rotate-90"
-                >
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-6 py-2.5 text-sm hover:bg-navy-secondary/40">
-                    <ChevronRight className="chev h-4 w-4 text-silver transition-transform" />
-                    <span className="font-medium text-white">
-                      {dayHeading(group.key)}
-                    </span>
-                    <span className="text-xs text-silver/70">· {group.key}</span>
-                    <span className="ml-auto text-xs text-silver">
-                      {group.entries.length}{' '}
-                      {group.entries.length === 1 ? 'message' : 'messages'}
-                    </span>
-                  </summary>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="hidden md:table-cell w-24">
-                          Time
-                        </TableHead>
-                        <TableHead className="hidden sm:table-cell">Channel</TableHead>
-                        <TableHead>Recipient</TableHead>
-                        <TableHead className="hidden lg:table-cell">
-                          Subject / preview
-                        </TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {group.entries.map((n) => (
-                        <TableRow
-                          key={n.id}
-                          className="group cursor-pointer"
-                          onClick={(e) => {
-                            const target = e.target as HTMLElement;
-                            if (
-                              target.closest(
-                                'button, a, input, [data-no-row-click]',
-                              )
-                            )
-                              return;
-                            if (window.getSelection()?.toString()) return;
-                            setDrawerTarget(n);
-                          }}
-                        >
-                          <TableCell
-                            className="hidden md:table-cell text-silver tabular-nums whitespace-nowrap"
-                            title={fmtDateTime(n.createdAt)}
-                          >
-                            {fmtTimeOnly(n.createdAt)}
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell">
-                            <Badge variant="outline">{CHANNEL_LABELS[n.channel]}</Badge>
-                          </TableCell>
-                          <TableCell className="text-silver">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <Avatar
-                                name={
-                                  n.recipientEmail ??
-                                  n.recipientPhone ??
-                                  n.recipientUserId ??
-                                  '—'
-                                }
-                                email={n.recipientEmail ?? undefined}
-                                size="xs"
-                              />
-                              <span className="truncate">
-                                {n.recipientEmail ??
-                                  n.recipientPhone ??
-                                  n.recipientUserId ??
-                                  '—'}
-                              </span>
-                            </div>
-                            <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
-                              {n.subject ?? '(no subject)'}
-                            </div>
-                            <div className="md:hidden text-2xs text-silver/70 tabular-nums">
-                              {fmtTimeOnly(n.createdAt)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell">
-                            <div className="text-white truncate max-w-md font-medium">
-                              {n.subject ?? '(no subject)'}
-                            </div>
-                            <div className="text-xs text-silver truncate max-w-md">
-                              {n.body}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={statusVariant(n.status)}>
-                              {STATUS_LABELS[n.status]}
-                            </Badge>
-                            {n.failureReason && (
-                              <div className="text-2xs mt-1 text-alert">
-                                {n.failureReason}
-                              </div>
-                            )}
-                            {canManage && n.status === 'FAILED' && (
-                              <div className="mt-1">
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  disabled={resendingId === n.id}
-                                  onClick={() => void resend(n)}
-                                >
-                                  <RotateCw className="mr-1 h-3 w-3" />
-                                  {resendingId === n.id ? 'Resending…' : 'Resend'}
-                                </Button>
-                              </div>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </details>
-              ))}
-            </div>
           )}
         </CardContent>
       </Card>

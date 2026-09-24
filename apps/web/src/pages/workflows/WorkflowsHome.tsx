@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
 import {
   createWorkflow,
   deleteWorkflow,
@@ -36,19 +36,13 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
-import { DataGrid } from '@/components/ui/DataGrid';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 
 const TRIGGERS: WorkflowTrigger[] = [
@@ -333,7 +327,6 @@ function RunsTab() {
   const [runs, setRuns] = useState<WorkflowRunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'' | WorkflowRunSummary['status']>('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<
     Record<string, WorkflowRunDetail | 'loading' | 'error'>
   >({});
@@ -359,124 +352,117 @@ function RunsTab() {
       .catch(() => setDetails((d) => ({ ...d, [id]: 'error' })));
   };
 
-  const toggleExpand = (id: string) => {
-    const next = expandedId === id ? null : id;
-    setExpandedId(next);
-    if (next && details[id] === undefined) loadDetail(id);
-  };
+  const columns = useMemo<GridColumn<WorkflowRunSummary>[]>(
+    () => [
+      {
+        key: 'workflow',
+        header: 'Workflow',
+        accessor: (r) => r.definitionName,
+        sortable: true,
+        primary: true,
+        cell: (r) => <span className="font-medium">{r.definitionName}</span>,
+      },
+      {
+        key: 'trigger',
+        header: 'Trigger',
+        accessor: (r) => TRIGGER_LABELS[r.trigger],
+        sortable: true,
+        cardMeta: true,
+        cell: (r) => <Badge variant="outline">{TRIGGER_LABELS[r.trigger]}</Badge>,
+      },
+      {
+        key: 'started',
+        header: 'Started',
+        accessor: (r) => (r.startedAt ? new Date(r.startedAt).getTime() : null),
+        csv: (r) => r.startedAt ?? '',
+        sortable: true,
+        searchable: false,
+        className: 'tabular-nums text-silver',
+        cell: (r) => fmtDateTime(r.startedAt),
+      },
+      {
+        key: 'steps',
+        header: 'Steps',
+        accessor: (r) => `${r.stepsCompleted}/${r.stepCount}`,
+        searchable: false,
+        className: 'tabular-nums text-silver',
+        cell: (r) => (
+          <>
+            {r.stepsCompleted}/{r.stepCount}
+            {r.stepsFailed > 0 && <span className="text-alert"> ({r.stepsFailed} failed)</span>}
+          </>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        accessor: (r) => RUN_STATUS_LABELS[r.status] ?? r.status,
+        sortable: true,
+        cardMeta: true,
+        cell: (r) => (
+          <Badge variant={runStatusVariant(r.status)}>
+            {RUN_STATUS_LABELS[r.status] ?? r.status}
+          </Badge>
+        ),
+      },
+    ],
+    [],
+  );
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="w-44">
-          <Select
-            size="sm"
-            value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(e.target.value as '' | WorkflowRunSummary['status'])
-            }
-            aria-label="Filter runs by status"
-          >
-            <option value="">All statuses</option>
-            {RUN_STATUSES.map((s) => (
-              <option key={s} value={s}>{RUN_STATUS_LABELS[s]}</option>
-            ))}
-          </Select>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => load(statusFilter)}>
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
-      </div>
-
-      {error ? (
-        <ErrorBanner
-          action={
-            <Button
+    <DataGrid<WorkflowRunSummary>
+      id="workflow-runs"
+      caption="Workflow runs"
+      rows={runs}
+      loading={!runs && !error}
+      error={error}
+      onRetry={() => load(statusFilter)}
+      columns={columns}
+      rowKey={(r) => r.id}
+      urlState={false}
+      search={{ placeholder: 'Search runs' }}
+      filters={
+        <>
+          <div className="w-44">
+            <Select
               size="sm"
-              variant="secondary"
-              onClick={() => load(statusFilter)}
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as '' | WorkflowRunSummary['status'])
+              }
+              aria-label="Filter runs by status"
             >
-              Retry
-            </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
-      ) : !runs ? (
-        <SkeletonRows count={4} rowHeight="h-12" />
-      ) : runs.length === 0 ? (
-        <EmptyState
-          icon={Zap}
-          title="No runs yet"
-          description="Once a trigger fires and matches a definition, the run will appear here with its step-by-step result."
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Workflow</TableHead>
-              <TableHead className="hidden md:table-cell">Trigger</TableHead>
-              <TableHead>Started</TableHead>
-              <TableHead className="hidden md:table-cell">Steps</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {runs.map((r) => (
-              <Fragment key={r.id}>
-                <TableRow
-                  className="cursor-pointer"
-                  onClick={() => toggleExpand(r.id)}
-                  aria-expanded={expandedId === r.id}
-                >
-                  <TableCell className="font-medium">
-                    <span className="inline-flex items-center gap-1.5">
-                      {expandedId === r.id ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-silver shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-silver shrink-0" />
-                      )}
-                      {r.definitionName}
-                    </span>
-                    <div className="md:hidden text-xs2 text-silver/70 truncate">
-                      {TRIGGER_LABELS[r.trigger]} · <span className="tabular-nums">{r.stepsCompleted}/{r.stepCount}</span> steps
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <Badge variant="outline">{TRIGGER_LABELS[r.trigger]}</Badge>
-                  </TableCell>
-                  <TableCell className="text-silver tabular-nums">
-                    {fmtDateTime(r.startedAt)}
-                  </TableCell>
-                  <TableCell className="text-silver tabular-nums hidden md:table-cell">
-                    {r.stepsCompleted}/{r.stepCount}
-                    {r.stepsFailed > 0 && (
-                      <span className="text-alert"> ({r.stepsFailed} failed)</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={runStatusVariant(r.status)}>
-                      {RUN_STATUS_LABELS[r.status] ?? r.status}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-                {expandedId === r.id && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="bg-navy-secondary/20">
-                      <RunDetailPanel
-                        detail={details[r.id]}
-                        onRetry={() => loadDetail(r.id)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
+              <option value="">All statuses</option>
+              {RUN_STATUSES.map((s) => (
+                <option key={s} value={s}>{RUN_STATUS_LABELS[s]}</option>
+              ))}
+            </Select>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => load(statusFilter)}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </Button>
+        </>
+      }
+      // The steps live under the run: one open at a time, fetched on the
+      // first look.
+      expandable={{
+        single: true,
+        label: (r) => `Steps of ${r.definitionName}`,
+        onExpand: (r) => {
+          if (details[r.id] === undefined) loadDetail(r.id);
+        },
+        render: (r) => (
+          <RunDetailPanel detail={details[r.id]} onRetry={() => loadDetail(r.id)} />
+        ),
+      }}
+      empty={{
+        icon: Zap,
+        title: 'No runs yet',
+        description:
+          'Once a trigger fires and matches a definition, the run will appear here with its step-by-step result.',
+      }}
+    />
   );
 }
 

@@ -1,6 +1,5 @@
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
-  Fragment,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -76,16 +75,9 @@ import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
-  SortableTableHead,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   type TableSortState,
 } from '@/components/ui/Table';
-import { DataGrid } from '@/components/ui/DataGrid';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
@@ -480,11 +472,8 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   );
   const {
     selected: selectedDocs,
-    toggle: toggleDoc,
     clear: clearSelection,
-    allSelected: allVerifiableSelected,
-    someSelected: someVerifiableSelected,
-    toggleAll: toggleAllVerifiable,
+    replace: replaceSelection,
   } = useSelection(verifiableIds);
 
   // Drop any selection when the visible slice changes, so a bulk action
@@ -1017,234 +1006,130 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         // Grouping now happens only when the sort is by associate, where
         // it is what you asked for and the rows are contiguous anyway.
         const groupByPerson = docSort.key === 'associate';
-        const groups: Array<{
-          associateId: string;
-          associateName: string;
-          docs: DocumentRecord[];
-        }> = [];
-        const groupIndex = new Map<string, number>();
-        if (!groupByPerson) {
-          groups.push({ associateId: '', associateName: '', docs: [...sortedDocs] });
-        } else
-        for (const d of sortedDocs) {
-          const at = groupIndex.get(d.associateId);
-          if (at === undefined) {
-            groupIndex.set(d.associateId, groups.length);
-            groups.push({
-              associateId: d.associateId,
-              associateName: d.associateName ?? '—',
-              docs: [d],
-            });
-          } else {
-            groups[at].docs.push(d);
-          }
-        }
-        const colCount = canManage ? 8 : 6;
-        return (
-        <Card className="overflow-hidden">
-          {canManage && selectedDocs.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gold/30 bg-gold/[0.07] px-3 py-2">
-              <div className="text-sm text-gold">
-                <span className="font-medium tabular-nums">
-                  {selectedDocs.size}
-                </span>{' '}
-                selected
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={clearSelection}
-                  disabled={bulkBusy}
-                >
-                  Clear
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={onBulkVerify}
-                  loading={bulkBusy}
-                  className="text-success"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  Verify selected ({selectedDocs.size})
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setBulkRejectOpen(true)}
-                  disabled={bulkBusy || bulkRejectTargets.length === 0}
+        const columns: GridColumn<DocumentRecord>[] = [
+          {
+            key: 'file',
+            header: 'File',
+            accessor: (d) => d.filename,
+            sortable: true,
+            primary: true,
+            cell: (d) => (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDoc(d)}
+                  className="inline-flex max-w-xs items-center gap-1.5 truncate font-medium text-gold underline-offset-4 hover:text-gold-bright hover:underline"
                   title={
-                    bulkRejectTargets.length === 0
-                      ? 'Nothing in the selection can be rejected'
-                      : 'Reject the selected documents with one reason'
+                    d.fileAvailable
+                      ? `Preview ${d.filename}`
+                      : 'File missing on server — open for details'
                   }
-                  className="text-alert hover:text-alert"
                 >
-                  <ShieldAlert className="h-3.5 w-3.5" />
-                  Reject selected ({bulkRejectTargets.length})
-                </Button>
-              </div>
-            </div>
-          )}
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                {canManage && (
-                  <TableHead className="w-8">
-                    <input
-                      type="checkbox"
-                      className="accent-gold"
-                      aria-label="Select all verifiable"
-                      checked={allVerifiableSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someVerifiableSelected;
-                      }}
-                      disabled={verifiableIds.length === 0}
-                      onChange={toggleAllVerifiable}
-                    />
-                  </TableHead>
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{d.filename}</span>
+                </button>
+                {!d.fileAvailable && (
+                  <div className="mt-0.5 truncate text-xs2 text-alert">
+                    File missing on server — please re-upload
+                  </div>
                 )}
-                <SortableTableHead sortKey="file" state={docSort} onSort={toggleDocSort}>
-                  File
-                </SortableTableHead>
-                <SortableTableHead sortKey="kind" state={docSort} onSort={toggleDocSort} className="hidden md:table-cell">
-                  Kind
-                </SortableTableHead>
-                <SortableTableHead sortKey="associate" state={docSort} onSort={toggleDocSort} className="hidden sm:table-cell">
-                  Associate
-                </SortableTableHead>
-                <SortableTableHead sortKey="size" state={docSort} onSort={toggleDocSort} className="hidden md:table-cell w-20">
-                  Size
-                </SortableTableHead>
-                <SortableTableHead sortKey="uploaded" state={docSort} onSort={toggleDocSort} className="hidden lg:table-cell w-24">
-                  Uploaded
-                </SortableTableHead>
-                <SortableTableHead sortKey="status" state={docSort} onSort={toggleDocSort} className="w-32">
-                  Status
-                </SortableTableHead>
-                {/* Actions stay visible at EVERY width — hiding this column
-                    below md left phone admins able to see documents but
-                    unable to verify or reject a single one. The table's
-                    overflow-auto wrapper handles the narrow-screen width. */}
-                {canManage && <TableHead className="w-44 text-right" aria-label="Actions" />}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.map((g) => (
-                <Fragment key={g.associateId || 'flat'}>
-                  {/* Associate header row: name + doc count. Only when the
-                      rows are actually grouped by person. */}
-                  {groupByPerson && (
-                  <TableRow className="hover:bg-transparent bg-navy-secondary/40">
-                    <TableCell colSpan={colCount} className="py-1.5">
-                      <div className="flex items-center gap-2">
-                        <Avatar name={g.associateName} size="xs" />
-                        <span className="text-xs font-medium text-white truncate">
-                          <AssociateLink associateId={g.associateId} tab="documents">
-                            {g.associateName}
-                          </AssociateLink>
-                        </span>
-                        <span className="text-2xs tabular-nums text-silver/70">
-                          {g.docs.length} document{g.docs.length === 1 ? '' : 's'}
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  )}
-                  {g.docs.map((d) => {
-                    const selectable =
-                      d.status === 'UPLOADED' || d.status === 'REJECTED';
-                    return (
-                <TableRow key={d.id} className="group">
-                  {canManage && (
-                    <TableCell className="w-8">
-                      {selectable && (
-                        <input
-                          type="checkbox"
-                          className="accent-gold"
-                          aria-label={`Select ${d.filename}`}
-                          checked={selectedDocs.has(d.id)}
-                          onChange={() => toggleDoc(d.id)}
-                        />
-                      )}
-                    </TableCell>
-                  )}
-                  <TableCell>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewDoc(d)}
-                      className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
-                      title={
-                        d.fileAvailable
-                          ? `Preview ${d.filename}`
-                          : 'File missing on server — open for details'
-                      }
-                    >
-                      <FileText className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{d.filename}</span>
-                    </button>
-                    {!d.fileAvailable && (
-                      <div className="text-xs2 text-alert truncate mt-0.5">
-                        File missing on server — please re-upload
-                      </div>
+              </>
+            ),
+          },
+          {
+            key: 'kind',
+            header: 'Kind',
+            accessor: (d) => d.kind.replace(/_/g, ' '),
+            sortable: true,
+            cardMeta: true,
+            className: 'text-xs uppercase tracking-wider text-silver',
+          },
+          {
+            key: 'associate',
+            header: 'Associate',
+            accessor: (d) => d.associateName,
+            sortable: true,
+            cardMeta: true,
+            className: 'text-silver',
+            cell: (d) => (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedAssociateId(d.associateId);
+                }}
+                className="flex items-center gap-2.5 text-left transition-colors hover:text-white"
+                title="Open this associate's folder"
+              >
+                <Avatar name={d.associateName ?? '—'} size="xs" />
+                <span className="truncate">{d.associateName ?? '—'}</span>
+              </button>
+            ),
+          },
+          {
+            key: 'size',
+            header: 'Size',
+            accessor: (d) => d.size,
+            csv: (d) => fmtSize(d.size),
+            sortable: true,
+            searchable: false,
+            width: '5rem',
+            className: 'text-xs tabular-nums text-silver',
+            cell: (d) => fmtSize(d.size),
+          },
+          {
+            key: 'uploaded',
+            header: 'Uploaded',
+            accessor: (d) => new Date(d.createdAt).getTime(),
+            csv: (d) => d.createdAt,
+            sortable: true,
+            searchable: false,
+            width: '6rem',
+            className: 'text-xs tabular-nums text-silver',
+            cell: (d) => fmtAge(d.createdAt, now),
+          },
+          {
+            key: 'status',
+            header: 'Status',
+            accessor: (d) => STATUS_LABELS[d.status],
+            sortable: true,
+            width: '8rem',
+            cell: (d) => (
+              <>
+                <Badge variant={statusTone(d.status)} data-status={d.status}>
+                  {STATUS_LABELS[d.status]}
+                </Badge>
+                {d.rejectionReason && (
+                  <div
+                    className="mt-1 max-w-[140px] truncate text-2xs text-alert"
+                    title={d.rejectionReason}
+                  >
+                    {d.rejectionReason}
+                  </div>
+                )}
+                {d.expiresAt && (
+                  <div
+                    className={cn(
+                      'mt-1 text-2xs tabular-nums',
+                      d.status === 'EXPIRED' ? 'text-alert' : 'text-silver/70',
                     )}
-                    {/* Phone-only secondary line — associate name takes the
-                        place of its hidden column. Tap-target area still
-                        opens the preview via the file button above. */}
-                    <div className="sm:hidden text-xs2 text-silver/70 truncate mt-0.5">
-                      {d.associateName ?? '—'}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
-                    {d.kind.replace(/_/g, ' ')}
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell text-silver">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedAssociateId(d.associateId);
-                      }}
-                      className="flex items-center gap-2.5 text-left hover:text-white transition-colors"
-                      title="Open this associate's folder"
-                    >
-                      <Avatar name={d.associateName ?? '—'} size="xs" />
-                      <span className="truncate">{d.associateName ?? '—'}</span>
-                    </button>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver tabular-nums text-xs">
-                    {fmtSize(d.size)}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver text-xs tabular-nums">
-                    {fmtAge(d.createdAt, now)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={statusTone(d.status)} data-status={d.status}>
-                      {STATUS_LABELS[d.status]}
-                    </Badge>
-                    {d.rejectionReason && (
-                      <div
-                        className="text-alert text-2xs mt-1 max-w-[140px] truncate"
-                        title={d.rejectionReason}
-                      >
-                        {d.rejectionReason}
-                      </div>
-                    )}
-                    {d.expiresAt && (
-                      <div
-                        className={cn(
-                          'text-2xs mt-1 tabular-nums',
-                          d.status === 'EXPIRED'
-                            ? 'text-alert'
-                            : 'text-silver/70',
-                        )}
-                      >
-                        {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
-                        {fmtDate(d.expiresAt)}
-                      </div>
-                    )}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell className="text-right whitespace-nowrap">
+                  >
+                    {d.status === 'EXPIRED' ? 'Expired' : 'Expires'} {fmtDate(d.expiresAt)}
+                  </div>
+                )}
+              </>
+            ),
+          },
+          ...(canManage
+            ? [
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  stopRowClick: true,
+                  align: 'right',
+                  className: 'whitespace-nowrap',
+                  cell: (d) => (
                       <div className="flex items-center justify-end gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
                           <Button
@@ -1331,15 +1216,102 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           </>
                         )}
                       </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-                    );
-                  })}
-                </Fragment>
-              ))}
-            </TableBody>
-          </Table>
+                  ),
+                } satisfies GridColumn<DocumentRecord>,
+              ]
+            : []),
+        ];
+        return (
+        <Card className="overflow-hidden">
+          {canManage && selectedDocs.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gold/30 bg-gold/[0.07] px-3 py-2">
+              <div className="text-sm text-gold">
+                <span className="font-medium tabular-nums">
+                  {selectedDocs.size}
+                </span>{' '}
+                selected
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={clearSelection}
+                  disabled={bulkBusy}
+                >
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onBulkVerify}
+                  loading={bulkBusy}
+                  className="text-success"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Verify selected ({selectedDocs.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setBulkRejectOpen(true)}
+                  disabled={bulkBusy || bulkRejectTargets.length === 0}
+                  title={
+                    bulkRejectTargets.length === 0
+                      ? 'Nothing in the selection can be rejected'
+                      : 'Reject the selected documents with one reason'
+                  }
+                  className="text-alert hover:text-alert"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Reject selected ({bulkRejectTargets.length})
+                </Button>
+              </div>
+            </div>
+          )}
+          <DataGrid<DocumentRecord>
+            id="documents-queue"
+            caption="Document queue"
+            rows={sortedDocs}
+            columns={columns}
+            rowKey={(d) => d.id}
+            urlState={false}
+            search={false}
+            exportCsv={false}
+            rowClassName={() => 'group'}
+            // Sorting and paging are the SERVER's job (see sortParam): the
+            // grid shows the order and reports header clicks, and never
+            // re-sorts the page it was handed.
+            sort={{ state: docSort, onToggle: (key) => toggleDocSort(key as DocSortKey) }}
+            selectable={
+              canManage
+                ? {
+                    disabled: (d) => !(d.status === 'UPLOADED' || d.status === 'REJECTED'),
+                    selection: { selected: selectedDocs, onChange: replaceSelection },
+                    selectAllLabel: 'Select all verifiable',
+                  }
+                : undefined
+            }
+            groupBy={
+              groupByPerson
+                ? {
+                    key: (d) => d.associateId,
+                    header: (id, docs) => (
+                      <span className="flex items-center gap-2">
+                        <Avatar name={docs[0]?.associateName ?? '—'} size="xs" />
+                        <span className="truncate text-xs font-medium text-white">
+                          <AssociateLink associateId={id} tab="documents">
+                            {docs[0]?.associateName ?? '—'}
+                          </AssociateLink>
+                        </span>
+                        <span className="text-2xs font-normal tabular-nums text-silver/70">
+                          {docs.length} document{docs.length === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                    ),
+                  }
+                : undefined
+            }
+            className="p-3"
+          />
         </Card>
         );
       })()}

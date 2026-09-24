@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useInRouterContext, useSearchParams } from 'react-router-dom';
-import { Columns3, Download, Inbox, type LucideIcon } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { ChevronRight, Columns3, Download, Inbox, type LucideIcon } from 'lucide-react';
+import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { useDesktopTable } from '@/lib/useViewport';
@@ -56,9 +56,14 @@ import {
  *                viewport can show is mounted, never both
  *   virtualize   only the visible rows are in the DOM once a list is long
  *   states       skeleton, error, empty and "N of M" are not optional
+ *   groups       one table with heading rows, collapsible when asked
+ *   details      a panel under a row, and child rows that travel with
+ *                their parent
  *
  * Server-paged lists (audit, statements) keep their own loaders and hand
- * the loaded page to the grid; the grid never fetches.
+ * the loaded page to the grid; the grid never fetches. When the server
+ * also sorts, the page owns the sort state and the grid only reports
+ * header clicks.
  */
 
 export type GridAlign = 'left' | 'right' | 'center';
@@ -105,6 +110,13 @@ export interface DataGridProps<T> {
   search?: { placeholder?: string } | false;
   /** Column key to sort by initially. */
   defaultSort?: TableSortState<string>;
+  /**
+   * Controlled sort — the page owns the order because the server sorted
+   * a page of a larger set (the document vault) and re-sorting the page
+   * would order the wrong thing. The grid shows the state and reports
+   * header clicks; it never reorders the rows it is given.
+   */
+  sort?: { state: TableSortState<string>; onToggle: (key: string) => void };
   /** Keep sort/search in the URL so the view is shareable. Default true. */
   urlState?: boolean;
   /** CSV export of what is on screen. Default on; pass false to disable. */
@@ -135,6 +147,26 @@ export interface DataGridProps<T> {
   rowClassName?: (row: T) => string | undefined;
   /** A DOM id per row, for deep links that scroll to and flash one record. */
   rowId?: (row: T) => string;
+  /**
+   * A detail panel under a row — a workflow run's steps, an entry's
+   * punches. The row gains a chevron, and clicking the row toggles it
+   * when nothing else claims the click. `single` keeps one open at a
+   * time; `onExpand` fires as a row opens, for a lazy load.
+   */
+  expandable?: {
+    render: (row: T) => React.ReactNode;
+    single?: boolean;
+    onExpand?: (row: T) => void;
+    /** The toggle's screen-reader name. Default "Details for <primary>". */
+    label?: (row: T) => string;
+  };
+  /**
+   * Child rows under a parent, drawn with the same columns and indented
+   * — a store's shift windows under its day line. They travel with the
+   * parent through sort, search and export, and are never selected or
+   * expanded themselves.
+   */
+  subRows?: (row: T) => T[] | undefined;
   /** Rows beyond this count are virtualized. Default 150. */
   virtualizeAfter?: number;
   rowHeight?: number;
@@ -152,11 +184,14 @@ export interface DataGridProps<T> {
    * (the audit log by day, a roster by store). Groups keep the sorted
    * order of their first row; search filters across all of them; export
    * flattens them. Virtualization is off while grouping is on.
+   * `collapsible` turns each heading into a toggle; `defaultOpen` says
+   * which groups start open (the first day, every day this week).
    */
   groupBy?: {
     key: (row: T) => string;
     /** The heading for a group, given its key and the rows in it. */
     header: (key: string, rows: T[]) => React.ReactNode;
+    collapsible?: { defaultOpen: (key: string, index: number) => boolean };
   };
   className?: string;
 }
@@ -249,6 +284,12 @@ function LocalStateGrid<T>(props: DataGridProps<T>) {
   return <GridCore {...props} q={q} setQ={setQ} />;
 }
 
+/** One line of the table body, in the order it is drawn. */
+type GridItem<T> =
+  | { kind: 'group'; group: { key: string; rows: T[] } }
+  | { kind: 'row'; row: T; child: boolean; v: VirtualItem | null }
+  | { kind: 'detail'; row: T };
+
 function GridCore<T>({
   id,
   rows,
@@ -260,6 +301,7 @@ function GridCore<T>({
   caption,
   search = {},
   defaultSort,
+  sort,
   exportCsv = true,
   columnChooser = true,
   selectable,
@@ -267,6 +309,8 @@ function GridCore<T>({
   rowActionLabel,
   rowClassName,
   rowId,
+  expandable,
+  subRows,
   virtualizeAfter = 150,
   rowHeight = 48,
   empty,
@@ -313,14 +357,20 @@ function GridCore<T>({
     });
   }, [rows, q, columns]);
 
-  const { sorted, sortState, toggleSort } = useTableSort(searched, accessors, initialSort ?? defaultSort);
+  // The hook always runs; a controlled sort simply ignores what it did
+  // and keeps the rows in the order they arrived.
+  const own = useTableSort(searched, accessors, initialSort ?? defaultSort);
+  const sorted = sort ? searched : own.sorted;
+  const sortState = sort ? sort.state : own.sortState;
+  const toggleSort = sort ? sort.onToggle : own.toggleSort;
 
   // Tell the shell when the sort changes here, so the URL follows. It is
   // one direction per event — the shell seeds the initial sort, this
-  // reports the rest — so it can never loop.
+  // reports the rest — so it can never loop. A controlled sort is the
+  // page's to keep wherever it likes.
   const lastReported = React.useRef<string>('');
   React.useEffect(() => {
-    if (!onSortChange) return;
+    if (!onSortChange || sort) return;
     const sig = `${sortState.key ?? ''}|${sortState.direction}`;
     if (sig === lastReported.current) return;
     if (lastReported.current === '' && !sortState.key) {
@@ -330,7 +380,7 @@ function GridCore<T>({
     }
     lastReported.current = sig;
     onSortChange(sortState);
-  }, [sortState, onSortChange]);
+  }, [sortState, onSortChange, sort]);
 
   /* ---- column visibility ------------------------------------------- */
   const [hidden, setHidden] = React.useState<Set<string>>(() => {
@@ -390,10 +440,26 @@ function GridCore<T>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sorted]);
 
+  /* ---- details ------------------------------------------------------ */
+  const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
+  const toggleExpand = (row: T) => {
+    const k = rowKey(row);
+    const opening = !expanded.has(k);
+    setExpanded((prev) => {
+      const next = expandable?.single ? new Set<string>() : new Set(prev);
+      if (opening) next.add(k);
+      else next.delete(k);
+      return next;
+    });
+    if (opening) expandable?.onExpand?.(row);
+  };
+  const detailLabel = (row: T) => expandable?.label?.(row) ?? `Details for ${primaryOf(columns).accessor(row) ?? 'row'}`;
+
   /* ---- export -------------------------------------------------------- */
+  const withChildren = (list: T[]) => (subRows ? list.flatMap((r) => [r, ...(subRows(r) ?? [])]) : list);
   const exportRows = () => {
     const head = visible.map((c) => c.header);
-    const body = sorted.map((r) => visible.map((c) => (c.csv ?? c.accessor)(r) ?? ''));
+    const body = withChildren(sorted).map((r) => visible.map((c) => (c.csv ?? c.accessor)(r) ?? ''));
     const base = typeof exportCsv === 'object' ? exportCsv.filename : caption;
     const slug = base.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
     downloadCsv(`${slug || 'export'}.csv`, [head, ...body]);
@@ -417,10 +483,43 @@ function GridCore<T>({
     }
     return order.map((k) => ({ key: k, rows: byKey.get(k)! }));
   }, [groupBy, sorted]);
+  // Which groups are folded. Until the reader touches one, `defaultOpen`
+  // decides; after that their choice stands, and a group that appears
+  // later (a refresh brought a new day) starts open.
+  const collapsible = groupBy?.collapsible;
+  const [closedGroups, setClosedGroups] = React.useState<ReadonlySet<string> | null>(null);
+  const closed = React.useMemo<ReadonlySet<string>>(() => {
+    if (!collapsible || !groups) return new Set();
+    if (closedGroups) return closedGroups;
+    return new Set(groups.filter((g, i) => !collapsible.defaultOpen(g.key, i)).map((g) => g.key));
+  }, [collapsible, groups, closedGroups]);
+  const toggleGroup = (key: string) => {
+    const next = new Set(closed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setClosedGroups(next);
+  };
+  const groupHeading = (g: { key: string; rows: T[] }) =>
+    collapsible ? (
+      <button
+        type="button"
+        aria-expanded={!closed.has(g.key)}
+        onClick={() => toggleGroup(g.key)}
+        className="flex w-full items-center gap-2 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      >
+        <ChevronRight
+          className={cn('h-4 w-4 shrink-0 text-silver transition-transform', !closed.has(g.key) && 'rotate-90')}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1">{groupBy!.header(g.key, g.rows)}</span>
+      </button>
+    ) : (
+      groupBy!.header(g.key, g.rows)
+    );
 
   /* ---- virtualization ----------------------------------------------- */
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const virtualize = !groupBy && sorted.length > virtualizeAfter;
+  const virtualize = !groupBy && !expandable && !subRows && sorted.length > virtualizeAfter;
   const virtualizer = useVirtualizer({
     count: virtualize ? sorted.length : 0,
     getScrollElement: () => scrollRef.current,
@@ -429,7 +528,7 @@ function GridCore<T>({
   });
 
   /* ---- phones: cards ------------------------------------------------- */
-  const primary = columns.find((c) => c.primary) ?? columns[0];
+  const primary = primaryOf(columns);
   const useCards = cards ?? Boolean(primary);
   // Mount the table OR the cards, never both. Hiding the inactive one
   // with CSS still commits every row twice — on a large directory that
@@ -446,6 +545,167 @@ function GridCore<T>({
   })();
 
   const alignClass = (a?: GridAlign) => (a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : '');
+
+  /* ---- the body, in drawing order ------------------------------------ */
+  const leadCols = (selectable ? 1 : 0) + (expandable ? 1 : 0);
+  const colSpan = visible.length + leadCols;
+  const withDetails = (row: T): GridItem<T>[] => {
+    const out: GridItem<T>[] = [{ kind: 'row', row, child: false, v: null }];
+    for (const c of subRows?.(row) ?? []) out.push({ kind: 'row', row: c, child: true, v: null });
+    if (expandable && expanded.has(rowKey(row))) out.push({ kind: 'detail', row });
+    return out;
+  };
+  const items: GridItem<T>[] = virtualize
+    ? virtualizer.getVirtualItems().map((v) => ({ kind: 'row', row: sorted[v.index]!, child: false, v }))
+    : groups
+      ? groups.flatMap((g) => [
+          { kind: 'group', group: g } as GridItem<T>,
+          ...(closed.has(g.key) ? [] : g.rows.flatMap(withDetails)),
+        ])
+      : sorted.flatMap(withDetails);
+
+  /* ---- one card ------------------------------------------------------ */
+  const cardBody = (row: T, child: boolean) => {
+    const key = rowKey(row);
+    const metaCols = visible.filter((c) => c.cardMeta && c !== primary);
+    const fields = visible.filter((c) => c !== primary && !c.cardMeta && !c.stopRowClick);
+    return (
+      <>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            {/* Cards wrap rather than truncate: a nowrap cell
+                ("Today · 2:00 PM – 10:00 PM") inside an
+                overflow-hidden line still measures past a
+                phone's edge, and the overflow guard is right
+                to call that an escape. */}
+            <div className={cn('min-w-0 break-words font-medium text-white', child ? 'text-xs' : 'text-sm')}>
+              {primary.cell ? primary.cell(row) : (primary.accessor(row) ?? '—')}
+            </div>
+            {metaCols.length > 0 && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver/70">
+                {(() => {
+                  const text = metaCols
+                    .map((c) => (c.cell ? null : (c.accessor(row) ?? '')))
+                    .filter((v) => v !== null && v !== '')
+                    .join(' · ');
+                  return text ? <span className="min-w-0 break-words">{text}</span> : null;
+                })()}
+                {metaCols.filter((c) => c.cell).map((c) => (
+                  <span key={c.key} className="min-w-0 break-words [&_*]:whitespace-normal">
+                    {c.cell!(row)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {selectable && !child && !selectable.disabled?.(row) && (
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 accent-gold"
+              checked={selected.has(key)}
+              onChange={() => toggleOne(key)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
+            />
+          )}
+        </div>
+        {fields.length > 0 && (
+          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+            {fields.map((c) => (
+              <div key={c.key} className="min-w-0">
+                <dt className="text-2xs uppercase tracking-wider text-silver/50">
+                  {c.header}
+                </dt>
+                <dd className={cn('min-w-0 break-words text-xs text-silver [&_*]:whitespace-normal', c.className)}>
+                  {c.cell ? c.cell(row) : (c.accessor(row) ?? '—')}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </>
+    );
+  };
+
+  const renderCard = (row: T) => {
+    const key = rowKey(row);
+    // Columns that hold their own controls go under the card, outside
+    // anything that opens the row — a button never nests inside another.
+    const actionCols = visible.filter((c) => c.stopRowClick && c !== primary && c.cell);
+    const clickable = Boolean(onRowClick);
+    const isOpen = Boolean(expandable) && expanded.has(key);
+    const children = subRows?.(row) ?? [];
+    return (
+      <li key={key} id={rowId?.(row)}>
+        <div
+          className={cn(
+            'relative rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3',
+            selected.has(key) && 'border-gold/50',
+          )}
+        >
+          {/* The open-row control is laid over the card, not
+              wrapped around it: a button that contained the
+              manager link or the row checkbox was a control
+              nested in a control. Plain text lets a tap fall
+              through to the overlay; anything interactive in
+              the card keeps its own hit area above it. */}
+          <div
+            className={cn(
+              clickable &&
+                'relative z-10 pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_select]:pointer-events-auto [&_textarea]:pointer-events-auto [&_label]:pointer-events-auto',
+            )}
+          >
+            {cardBody(row, false)}
+          </div>
+          {clickable && (
+            <button
+              type="button"
+              onClick={() => onRowClick!(row)}
+              aria-label={rowActionLabel?.(row) ?? `Open ${primary.accessor(row) ?? 'row'}`}
+              className="absolute -inset-px rounded-lg transition-shadow hover:ring-1 hover:ring-inset hover:ring-gold/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            />
+          )}
+        </div>
+        {(actionCols.length > 0 || expandable) && (
+          <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1">
+            {expandable && (
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-expanded={isOpen}
+                aria-label={detailLabel(row)}
+                onClick={() => toggleExpand(row)}
+                className="mr-auto"
+              >
+                <ChevronRight
+                  className={cn('h-3.5 w-3.5 transition-transform', isOpen && 'rotate-90')}
+                  aria-hidden="true"
+                />
+                Details
+              </Button>
+            )}
+            {actionCols.map((c) => (
+              <React.Fragment key={c.key}>{c.cell!(row)}</React.Fragment>
+            ))}
+          </div>
+        )}
+        {children.length > 0 && (
+          <ul className="ml-3 mt-1.5 space-y-1.5 border-l border-navy-secondary pl-2" aria-label={`Under ${primary.accessor(row) ?? 'row'}`}>
+            {children.map((c) => (
+              <li key={rowKey(c)} className="rounded-md bg-navy-secondary/10 p-2">
+                {cardBody(c, true)}
+              </li>
+            ))}
+          </ul>
+        )}
+        {isOpen && (
+          <div className="mt-1.5 rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3">
+            {expandable!.render(row)}
+          </div>
+        )}
+      </li>
+    );
+  };
 
   /* ---- render ---------------------------------------------------------- */
   return (
@@ -559,112 +819,14 @@ function GridCore<T>({
           {/* Phones: a card per row, from the same column list. */}
           {showCards && (
             <ul className="space-y-2" aria-label={caption}>
-              {sorted.map((row) => {
-                const key = rowKey(row);
-                const metaCols = visible.filter((c) => c.cardMeta && c !== primary);
-                const fields = visible.filter((c) => c !== primary && !c.cardMeta && !c.stopRowClick);
-                // Columns that hold their own controls go under the card,
-                // outside the button that opens the row — a button never
-                // nests inside another.
-                const actionCols = visible.filter((c) => c.stopRowClick && c !== primary && c.cell);
-                const clickable = Boolean(onRowClick);
-                const Body = (
-                  <>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        {/* Cards wrap rather than truncate: a nowrap cell
-                            ("Today · 2:00 PM – 10:00 PM") inside an
-                            overflow-hidden line still measures past a
-                            phone's edge, and the overflow guard is right
-                            to call that an escape. */}
-                        <div className="min-w-0 break-words text-sm font-medium text-white">
-                          {primary.cell ? primary.cell(row) : (primary.accessor(row) ?? '—')}
-                        </div>
-                        {metaCols.length > 0 && (
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver/70">
-                            {(() => {
-                              const text = metaCols
-                                .map((c) => (c.cell ? null : (c.accessor(row) ?? '')))
-                                .filter((v) => v !== null && v !== '')
-                                .join(' · ');
-                              return text ? <span className="min-w-0 break-words">{text}</span> : null;
-                            })()}
-                            {metaCols.filter((c) => c.cell).map((c) => (
-                              <span key={c.key} className="min-w-0 break-words [&_*]:whitespace-normal">
-                                {c.cell!(row)}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {selectable && !selectable.disabled?.(row) && (
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 accent-gold"
-                          checked={selected.has(key)}
-                          onChange={() => toggleOne(key)}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
-                        />
-                      )}
-                    </div>
-                    {fields.length > 0 && (
-                      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-                        {fields.map((c) => (
-                          <div key={c.key} className="min-w-0">
-                            <dt className="text-2xs uppercase tracking-wider text-silver/50">
-                              {c.header}
-                            </dt>
-                            <dd className={cn('min-w-0 break-words text-xs text-silver [&_*]:whitespace-normal', c.className)}>
-                              {c.cell ? c.cell(row) : (c.accessor(row) ?? '—')}
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    )}
-                  </>
-                );
-                return (
-                  <li key={key} id={rowId?.(row)}>
-                    <div
-                      className={cn(
-                        'relative rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3',
-                        selected.has(key) && 'border-gold/50',
-                      )}
-                    >
-                      {/* The open-row control is laid over the card, not
-                          wrapped around it: a button that contained the
-                          manager link or the row checkbox was a control
-                          nested in a control. Plain text lets a tap fall
-                          through to the overlay; anything interactive in
-                          the card keeps its own hit area above it. */}
-                      <div
-                        className={cn(
-                          clickable &&
-                            'relative z-10 pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_select]:pointer-events-auto [&_textarea]:pointer-events-auto [&_label]:pointer-events-auto',
-                        )}
-                      >
-                        {Body}
-                      </div>
-                      {clickable && (
-                        <button
-                          type="button"
-                          onClick={() => onRowClick!(row)}
-                          aria-label={rowActionLabel?.(row) ?? `Open ${primary.accessor(row) ?? 'row'}`}
-                          className="absolute -inset-px rounded-lg transition-shadow hover:ring-1 hover:ring-inset hover:ring-gold/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                        />
-                      )}
-                    </div>
-                    {actionCols.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1">
-                        {actionCols.map((c) => (
-                          <React.Fragment key={c.key}>{c.cell!(row)}</React.Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
+              {(groups ?? [{ key: '', rows: sorted }]).map((g) => (
+                <React.Fragment key={groups ? `group:${g.key}` : 'all'}>
+                  {groups && (
+                    <li className="pt-2 text-xs font-medium text-white">{groupHeading(g)}</li>
+                  )}
+                  {(!groups || !closed.has(g.key)) && g.rows.map(renderCard)}
+                </React.Fragment>
+              ))}
             </ul>
           )}
 
@@ -689,6 +851,11 @@ function GridCore<T>({
                           disabled={selectableRows.length === 0}
                           aria-label={allSelected ? 'Clear selection' : (selectable.selectAllLabel ?? 'Select every row')}
                         />
+                      </TableHead>
+                    )}
+                    {expandable && (
+                      <TableHead className="w-8 pr-0">
+                        <span className="sr-only">Details</span>
                       </TableHead>
                     )}
                     {visible.map((c) =>
@@ -722,41 +889,52 @@ function GridCore<T>({
                       : undefined
                   }
                 >
-                  {(virtualize
-                    ? virtualizer.getVirtualItems().map((v) => ({ row: sorted[v.index]!, v, group: null }))
-                    : groups
-                      ? groups.flatMap((g) => [
-                          { row: null, v: null, group: g },
-                          ...g.rows.map((row) => ({ row, v: null, group: null })),
-                        ])
-                      : sorted.map((row) => ({ row, v: null, group: null }))
-                  ).map(({ row, v, group }) => {
-                    if (group) {
+                  {items.map((item) => {
+                    if (item.kind === 'group') {
                       // A heading row where the group changes — one table, so
                       // a screen reader hears one grid with sections, not
                       // fourteen grids with the same five columns.
                       return (
-                        <TableRow key={`group:${group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
-                          <TableCell
-                            colSpan={visible.length + (selectable ? 1 : 0)}
-                            className="py-2 text-xs font-medium text-white"
-                          >
-                            {groupBy!.header(group.key, group.rows)}
+                        <TableRow key={`group:${item.group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
+                          <TableCell colSpan={colSpan} className="py-2 text-xs font-medium text-white">
+                            {groupHeading(item.group)}
                           </TableCell>
                         </TableRow>
                       );
                     }
-                    if (!row) return null;
+                    if (item.kind === 'detail') {
+                      return (
+                        <TableRow key={`${rowKey(item.row)}:detail`} className="hover:bg-transparent">
+                          <TableCell colSpan={colSpan} className="bg-navy-secondary/20 p-3">
+                            {expandable!.render(item.row)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                    const { row, child, v } = item;
                     const key = rowKey(row);
-                    const isSelected = selected.has(key);
+                    const isSelected = !child && selected.has(key);
+                    const isOpen = !child && Boolean(expandable) && expanded.has(key);
+                    const rowClick = child
+                      ? undefined
+                      : onRowClick
+                        ? () => onRowClick(row)
+                        : expandable
+                          ? () => toggleExpand(row)
+                          : undefined;
                     return (
                       <TableRow
-                        key={key}
-                        id={rowId?.(row)}
+                        key={child ? `${key}:child` : key}
+                        id={child ? undefined : rowId?.(row)}
                         data-state={isSelected ? 'selected' : undefined}
-                        onClick={onRowClick ? () => onRowClick(row) : undefined}
-                        aria-label={onRowClick ? rowActionLabel?.(row) : undefined}
-                        className={cn(onRowClick && 'cursor-pointer', rowClassName?.(row))}
+                        onClick={rowClick}
+                        aria-label={onRowClick && !child ? rowActionLabel?.(row) : undefined}
+                        aria-expanded={expandable && !child ? isOpen : undefined}
+                        className={cn(
+                          rowClick && 'cursor-pointer',
+                          child && 'bg-navy-secondary/[0.15] text-xs text-silver',
+                          !child && rowClassName?.(row),
+                        )}
                         style={
                           v
                             ? {
@@ -773,7 +951,7 @@ function GridCore<T>({
                       >
                         {selectable && (
                           <TableCell className="w-8 pr-0" onClick={(e) => e.stopPropagation()}>
-                            {!selectable.disabled?.(row) && (
+                            {!child && !selectable.disabled?.(row) && (
                               <input
                                 type="checkbox"
                                 className="h-4 w-4 accent-gold"
@@ -784,10 +962,28 @@ function GridCore<T>({
                             )}
                           </TableCell>
                         )}
-                        {visible.map((c) => (
+                        {expandable && (
+                          <TableCell className="w-8 pr-0" onClick={(e) => e.stopPropagation()}>
+                            {!child && (
+                              <button
+                                type="button"
+                                aria-expanded={isOpen}
+                                aria-label={detailLabel(row)}
+                                onClick={() => toggleExpand(row)}
+                                className="rounded p-0.5 text-silver hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                              >
+                                <ChevronRight
+                                  className={cn('h-4 w-4 transition-transform', isOpen && 'rotate-90')}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            )}
+                          </TableCell>
+                        )}
+                        {visible.map((c, i) => (
                           <TableCell
                             key={c.key}
-                            className={cn(alignClass(c.align), c.className)}
+                            className={cn(alignClass(c.align), c.className, child && i === 0 && 'pl-8')}
                             onClick={c.stopRowClick ? (e) => e.stopPropagation() : undefined}
                           >
                             {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
@@ -805,3 +1001,5 @@ function GridCore<T>({
     </div>
   );
 }
+
+const primaryOf = <T,>(columns: GridColumn<T>[]) => columns.find((c) => c.primary) ?? columns[0]!;

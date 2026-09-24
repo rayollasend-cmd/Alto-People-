@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -58,6 +58,7 @@ import { ymd } from './calendarDates';
 // Despite the legacy name, this is the ORG workweek start (Saturday).
 import { startOfWeekMonday } from './WeekCalendarView';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import {
   Button,
   Card,
@@ -68,12 +69,6 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
 
 /**
@@ -1550,6 +1545,227 @@ const emptyTotals = (): Totals => ({
   overstaffHeads: 0,
 });
 /** Cost of the heads above target: extras × the row's avg cost per head. */
+/** One line of a day's table: a store, or one of its shift windows. */
+interface DayLine {
+  key: string;
+  r: LaborCostRow;
+  w?: NonNullable<LaborCostRow['windows']>[number];
+}
+
+const marginClass = (revenue: number, margin: number, child: boolean) =>
+  revenue > 0
+    ? margin >= 0
+      ? child
+        ? 'text-success/80'
+        : 'text-success'
+      : child
+        ? 'text-alert/80'
+        : 'text-alert'
+    : child
+      ? 'text-silver/40'
+      : 'text-silver/50';
+
+const fmtMargin = (revenue: number, margin: number) =>
+  revenue > 0 ? `${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}` : '—';
+
+const DAY_COLUMNS: GridColumn<DayLine>[] = [
+  {
+    key: 'client',
+    header: 'Client',
+    accessor: (l) => (l.w ? null : l.r.clientName),
+    sortable: true,
+    primary: true,
+    className: 'text-white',
+    cell: (l) => (l.w ? '' : (l.r.clientName ?? '—')),
+  },
+  {
+    key: 'store',
+    header: 'Store',
+    accessor: (l) => (l.w ? l.w.label : l.r.locationName),
+    sortable: true,
+    className: 'text-silver',
+    cell: (l) =>
+      l.w ? (
+        <span className="text-xs text-silver/80">
+          ↳ {l.w.label}
+          {l.w.startMinute !== null && l.w.endMinute !== null && (
+            <span className="ml-1 text-2xs tabular-nums text-silver/50">
+              {minuteToHhmm(l.w.startMinute)}–{minuteToHhmm(l.w.endMinute)}
+            </span>
+          )}
+        </span>
+      ) : (
+        (l.r.locationName ?? '—')
+      ),
+  },
+  {
+    key: 'heads',
+    header: 'Heads',
+    accessor: (l) => (l.w ? l.w.scheduledHeads : l.r.scheduledHeads),
+    csv: (l) => {
+      const t = l.w ? l.w.targetHeads : l.r.targetHeads;
+      const h = l.w ? l.w.scheduledHeads : l.r.scheduledHeads;
+      return t !== null ? `${h} / ${t}` : h;
+    },
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums',
+    cell: (l) => {
+      if (l.w) {
+        const over = l.w.targetHeads !== null && l.w.scheduledHeads > l.w.targetHeads;
+        return (
+          <span
+            className={over ? 'font-medium text-alert' : 'text-silver'}
+            title={over ? `${l.w.scheduledHeads - l.w.targetHeads!} above this window's target` : undefined}
+          >
+            {l.w.scheduledHeads}
+            {l.w.targetHeads !== null ? ` / ${l.w.targetHeads}` : ''}
+          </span>
+        );
+      }
+      const r = l.r;
+      const over = r.targetHeads !== null && r.scheduledHeads > r.targetHeads;
+      return (
+        <>
+          <span
+            className={over ? 'font-medium text-alert' : 'text-white'}
+            title={
+              over
+                ? `${r.scheduledHeads - r.targetHeads!} above target — ≈${money(overstaffCostOf(r))} extra`
+                : r.targetHeads !== null && r.scheduledHeads < r.targetHeads
+                  ? `${r.targetHeads - r.scheduledHeads} below target`
+                  : undefined
+            }
+          >
+            {r.scheduledHeads}
+            {r.targetHeads !== null ? ` / ${r.targetHeads}` : ''}
+          </span>
+          {(r.leadHeads > 0 || r.associateHeads > 0) && (
+            <div
+              className="text-2xs text-silver/60"
+              title={`${r.leadHeads} lead${r.leadHeads === 1 ? '' : 's'} · ${r.associateHeads} associate${r.associateHeads === 1 ? '' : 's'}`}
+            >
+              {r.leadHeads} L · {r.associateHeads} A
+            </div>
+          )}
+        </>
+      );
+    },
+  },
+  {
+    key: 'shifts',
+    header: 'Shifts',
+    accessor: (l) => (l.w ? l.w.scheduledShifts : l.r.scheduledShifts),
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums text-silver',
+    cell: (l) =>
+      l.w ? (
+        l.w.scheduledShifts
+      ) : (
+        <>
+          {l.r.scheduledShifts}
+          {l.r.scheduledNoRate > 0 && (
+            <span
+              className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning"
+              title={`${l.r.scheduledNoRate} shift${l.r.scheduledNoRate === 1 ? '' : 's'} without a pay rate`}
+            >
+              {l.r.scheduledNoRate} unpriced
+            </span>
+          )}
+        </>
+      ),
+  },
+  {
+    key: 'schedCost',
+    header: 'Sched. cost',
+    accessor: (l) => (l.w ? l.w.scheduledCost : l.r.scheduledCost),
+    csv: (l) => (l.w ? l.w.scheduledCost : l.r.scheduledCost).toFixed(2),
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums',
+    cell: (l) =>
+      l.w ? (
+        <span className="text-silver" title={hours(l.w.scheduledMinutes)}>
+          {money(l.w.scheduledCost)}
+        </span>
+      ) : (
+        <span
+          className="text-white"
+          title={`${hours(l.r.scheduledMinutes)} · leads ${money(l.r.leadCost)} / associates ${money(l.r.associateCost)}`}
+        >
+          {money(l.r.scheduledCost)}
+        </span>
+      ),
+  },
+  {
+    key: 'billable',
+    header: 'Billable',
+    accessor: (l) => (l.w ? l.w.scheduledRevenue : l.r.scheduledRevenue),
+    csv: (l) => (l.w ? l.w.scheduledRevenue : l.r.scheduledRevenue).toFixed(2),
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums text-silver',
+    cell: (l) =>
+      l.w ? (
+        money(l.w.scheduledRevenue)
+      ) : (
+        <span title={l.r.revenueNoRate > 0 ? `${l.r.revenueNoRate} shift(s) without a bill rate` : undefined}>
+          {money(l.r.scheduledRevenue)}
+          {l.r.revenueNoRate > 0 && (
+            <span className="ml-1 text-warning" aria-label={`${l.r.revenueNoRate} shifts without a bill rate`}>
+              •
+            </span>
+          )}
+        </span>
+      ),
+  },
+  {
+    key: 'margin',
+    header: 'Margin',
+    accessor: (l) => (l.w ? l.w.scheduledRevenue - l.w.scheduledCost : l.r.scheduledRevenue - l.r.scheduledCost),
+    csv: (l) => (l.w ? l.w.scheduledRevenue - l.w.scheduledCost : l.r.scheduledRevenue - l.r.scheduledCost).toFixed(2),
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums',
+    cell: (l) => {
+      const revenue = l.w ? l.w.scheduledRevenue : l.r.scheduledRevenue;
+      const margin = revenue - (l.w ? l.w.scheduledCost : l.r.scheduledCost);
+      return <span className={marginClass(revenue, margin, Boolean(l.w))}>{fmtMargin(revenue, margin)}</span>;
+    },
+  },
+  {
+    key: 'workedCost',
+    header: 'Worked cost',
+    accessor: (l) => (l.w ? l.w.workedCost : l.r.workedCost),
+    csv: (l) => (l.w ? l.w.workedCost : l.r.workedCost).toFixed(2),
+    sortable: true,
+    searchable: false,
+    align: 'right',
+    className: 'tabular-nums text-silver',
+    cell: (l) =>
+      l.w ? (
+        <span title={`${hours(l.w.workedMinutes)} · ${l.w.workedPunches} punches`}>{money(l.w.workedCost)}</span>
+      ) : (
+        <span
+          title={`${hours(l.r.workedMinutes)} · ${l.r.workedPunches} punches · ${hours(l.r.approvedMinutes ?? 0)} approved`}
+        >
+          {money(l.r.workedCost)}
+          {l.r.workedMinutes - (l.r.approvedMinutes ?? 0) > 0 && (
+            <div className="text-2xs text-warning">
+              {hours(l.r.workedMinutes - (l.r.approvedMinutes ?? 0))} unapproved
+            </div>
+          )}
+        </span>
+      ),
+  },
+];
+
 const overstaffCostOf = (r: LaborCostRow): number => {
   if (r.targetHeads === null || r.scheduledHeads <= r.targetHeads) return 0;
   if (r.scheduledHeads === 0) return 0;
@@ -2114,199 +2330,24 @@ export function LaborCostsHome() {
                     <span className="text-white">{money(day.totals.workedCost)}</span>
                   </div>
                 </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Store</TableHead>
-                      <TableHead className="text-right">Heads</TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">
-                        Shifts
-                      </TableHead>
-                      <TableHead className="text-right">Sched. cost</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">
-                        Billable
-                      </TableHead>
-                      <TableHead className="text-right hidden md:table-cell">
-                        Margin
-                      </TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">
-                        Worked cost
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {day.rows.map((r) => {
-                      const over =
-                        r.targetHeads !== null && r.scheduledHeads > r.targetHeads;
-                      const overCost = overstaffCostOf(r);
-                      const rowMargin = r.scheduledRevenue - r.scheduledCost;
-                      return (
-                        <Fragment key={`${r.date}|${r.clientId}|${r.locationId}`}>
-                        <TableRow>
-                          <TableCell className="text-white">
-                            {r.clientName ?? '—'}
-                          </TableCell>
-                          <TableCell className="text-silver">
-                            {r.locationName ?? '—'}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            <span
-                              className={over ? 'text-alert font-medium' : 'text-white'}
-                              title={
-                                over
-                                  ? `${r.scheduledHeads - r.targetHeads!} above target — ≈${money(overCost)} extra`
-                                  : r.targetHeads !== null &&
-                                      r.scheduledHeads < r.targetHeads
-                                    ? `${r.targetHeads - r.scheduledHeads} below target`
-                                    : undefined
-                              }
-                            >
-                              {r.scheduledHeads}
-                              {r.targetHeads !== null ? ` / ${r.targetHeads}` : ''}
-                            </span>
-                            {(r.leadHeads > 0 || r.associateHeads > 0) && (
-                              <div
-                                className="text-2xs text-silver/60"
-                                title={`${r.leadHeads} lead${r.leadHeads === 1 ? '' : 's'} · ${r.associateHeads} associate${r.associateHeads === 1 ? '' : 's'}`}
-                              >
-                                {r.leadHeads} L · {r.associateHeads} A
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-silver hidden sm:table-cell">
-                            {r.scheduledShifts}
-                            {r.scheduledNoRate > 0 && (
-                              <span
-                                className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning"
-                                title={`${r.scheduledNoRate} shift${r.scheduledNoRate === 1 ? '' : 's'} without a pay rate`}
-                              >
-                                {r.scheduledNoRate} unpriced
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell
-                            className="text-right tabular-nums text-white"
-                            title={`${hours(r.scheduledMinutes)} · leads ${money(r.leadCost)} / associates ${money(r.associateCost)}`}
-                          >
-                            {money(r.scheduledCost)}
-                          </TableCell>
-                          <TableCell
-                            className="text-right tabular-nums text-silver hidden md:table-cell"
-                            title={
-                              r.revenueNoRate > 0
-                                ? `${r.revenueNoRate} shift(s) without a bill rate`
-                                : undefined
-                            }
-                          >
-                            {money(r.scheduledRevenue)}
-                            {r.revenueNoRate > 0 && (
-                              <span
-                                className="ml-1 text-warning"
-                                aria-label={`${r.revenueNoRate} shifts without a bill rate`}
-                              >
-                                •
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right tabular-nums hidden md:table-cell ${
-                              r.scheduledRevenue > 0
-                                ? rowMargin >= 0
-                                  ? 'text-success'
-                                  : 'text-alert'
-                                : 'text-silver/50'
-                            }`}
-                          >
-                            {r.scheduledRevenue > 0
-                              ? `${rowMargin >= 0 ? '+' : '−'}${money(Math.abs(rowMargin))}`
-                              : '—'}
-                          </TableCell>
-                          <TableCell
-                            className="text-right tabular-nums text-silver hidden sm:table-cell"
-                            title={`${hours(r.workedMinutes)} · ${r.workedPunches} punches · ${hours(r.approvedMinutes ?? 0)} approved`}
-                          >
-                            {money(r.workedCost)}
-                            {r.workedMinutes - (r.approvedMinutes ?? 0) > 0 && (
-                              <div className="text-2xs text-warning">
-                                {hours(r.workedMinutes - (r.approvedMinutes ?? 0))} unapproved
-                              </div>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {/* Per-shift-window sub-rows — same columns, one
-                            line per window, judged against that WINDOW's
-                            own target. */}
-                        {(r.windows ?? []).map((w) => {
-                          const wOver =
-                            w.targetHeads !== null && w.scheduledHeads > w.targetHeads;
-                          const wMargin = w.scheduledRevenue - w.scheduledCost;
-                          return (
-                            <TableRow
-                              key={`${r.date}|${r.locationId}|${w.label}`}
-                              className="bg-navy-secondary/[0.15]"
-                            >
-                              <TableCell className="text-2xs text-silver/40" />
-                              <TableCell className="text-xs text-silver/80 pl-6">
-                                ↳ {w.label}
-                                {w.startMinute !== null && w.endMinute !== null && (
-                                  <span className="ml-1 text-2xs text-silver/50 tabular-nums">
-                                    {minuteToHhmm(w.startMinute)}–{minuteToHhmm(w.endMinute)}
-                                  </span>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-xs">
-                                <span
-                                  className={wOver ? 'text-alert font-medium' : 'text-silver'}
-                                  title={
-                                    wOver
-                                      ? `${w.scheduledHeads - w.targetHeads!} above this window's target`
-                                      : undefined
-                                  }
-                                >
-                                  {w.scheduledHeads}
-                                  {w.targetHeads !== null ? ` / ${w.targetHeads}` : ''}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-xs text-silver hidden sm:table-cell">
-                                {w.scheduledShifts}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums text-xs text-silver"
-                                title={hours(w.scheduledMinutes)}
-                              >
-                                {money(w.scheduledCost)}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-xs text-silver hidden md:table-cell">
-                                {money(w.scheduledRevenue)}
-                              </TableCell>
-                              <TableCell
-                                className={`text-right tabular-nums text-xs hidden md:table-cell ${
-                                  w.scheduledRevenue > 0
-                                    ? wMargin >= 0
-                                      ? 'text-success/80'
-                                      : 'text-alert/80'
-                                    : 'text-silver/40'
-                                }`}
-                              >
-                                {w.scheduledRevenue > 0
-                                  ? `${wMargin >= 0 ? '+' : '−'}${money(Math.abs(wMargin))}`
-                                  : '—'}
-                              </TableCell>
-                              <TableCell
-                                className="text-right tabular-nums text-xs text-silver hidden sm:table-cell"
-                                title={`${hours(w.workedMinutes)} · ${w.workedPunches} punches`}
-                              >
-                                {money(w.workedCost)}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        </Fragment>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <DataGrid<DayLine>
+                  id="labor-day"
+                  caption={`Labor on ${fmtDate(date)}`}
+                  rows={day.rows.map((r) => ({ key: `${r.date}|${r.clientId}|${r.locationId}`, r }))}
+                  columns={DAY_COLUMNS}
+                  rowKey={(l) => l.key}
+                  // Per-shift-window lines under each store — same columns,
+                  // each judged against that WINDOW's own target. They
+                  // travel with their store through sort and export.
+                  subRows={(l) =>
+                    l.w ? undefined : (l.r.windows ?? []).map((w) => ({ key: `${l.key}|${w.label}`, r: l.r, w }))
+                  }
+                  urlState={false}
+                  search={false}
+                  exportCsv={false}
+                  columnChooser={false}
+                  cards={false}
+                />
               </CardContent>
             </Card>
           ))}

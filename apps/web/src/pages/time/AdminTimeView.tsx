@@ -1,7 +1,8 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import {
   Activity,
   AlertTriangle,
@@ -116,13 +117,6 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  SortableTableHead,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -141,30 +135,6 @@ const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> =
 // Punch formatters live in ./punchFormat so the ShiftTimeline and every
 // other single-entry surface renders identically to the queue.
 
-// PERF: the desktop table and the phone card stack used to BOTH mount — CSS
-// (`hidden md:block` / `md:hidden`) hid one, but React still committed up to
-// 500 dead heavy rows for the hidden list. This matchMedia hook lets us
-// mount only the list the viewport can show, and re-render on breakpoint
-// crossings (resize / rotation).
-//
-// Cutover matches the scheduling module's rule: mouse-class devices get
-// the table from md (768px); TOUCH devices keep the card stack until lg —
-// an iPad portrait is 768px total, and after the sidebar it was cramming
-// the desktop table into ~half a screen.
-const DESKTOP_TABLE_QUERY =
-  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
-function useIsDesktop(): boolean {
-  const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
-  );
-  useEffect(() => {
-    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
-    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-  return isDesktop;
-}
 
 function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive' | 'accent' | 'default' {
   switch (s) {
@@ -623,7 +593,6 @@ function ClientSiteSelects({
 
 export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTimeViewProps) {
   const navigate = useNavigate();
-  const isDesktop = useIsDesktop();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
   // retraces the live↔queue switch instead of leaving the page.
   const [tabParams, setTabParams] = useSearchParams();
@@ -1608,12 +1577,297 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     selected,
     toggle: toggleOne,
     setMany: toggleMany,
-    selectAll: replaceSelection,
+    selectAll: selectIds,
+    replace: replaceSelection,
     clear: clearSelection,
-    allSelected,
-    someSelected,
-    toggleAll,
   } = useSelection(selectableIds);
+
+  // The live board's columns. Client only for cross-client viewers, Job and
+  // Geofence only when some row carries one (see liveCols).
+  const liveColumns = useMemo<GridColumn<ActiveDashboardEntry>[]>(
+    () => [
+      {
+        key: 'associate',
+        header: 'Associate',
+        accessor: (e) => e.associateName,
+        sortable: true,
+        primary: true,
+        cell: (e) => (
+          <span className="flex items-center gap-2.5 font-medium">
+            <Avatar src={`/api/associates/${e.associateId}/photo`} name={e.associateName} size="sm" />
+            <AssociateLink associateId={e.associateId}>{e.associateName}</AssociateLink>
+          </span>
+        ),
+      },
+      ...(liveCols.client
+        ? [
+            {
+              key: 'client',
+              header: 'Client',
+              accessor: (e) => e.clientName,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-silver',
+            } satisfies GridColumn<ActiveDashboardEntry>,
+          ]
+        : []),
+      ...(liveCols.job
+        ? [
+            {
+              key: 'job',
+              header: 'Job',
+              accessor: (e) => e.jobName,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-silver',
+            } satisfies GridColumn<ActiveDashboardEntry>,
+          ]
+        : []),
+      {
+        key: 'since',
+        header: 'Since',
+        accessor: (e) => new Date(e.clockInAt).getTime(),
+        csv: (e) => e.clockInAt,
+        sortable: true,
+        searchable: false,
+        className: 'tabular-nums text-silver',
+        cell: (e) => fmtPunchTime(e.clockInAt, e.locationTimezone),
+      },
+      {
+        key: 'elapsed',
+        header: 'Elapsed',
+        accessor: (e) => e.minutesElapsed,
+        csv: (e) => formatHM(e.minutesElapsed),
+        sortable: true,
+        searchable: false,
+        className: 'tabular-nums',
+        cell: (e) => formatHM(e.minutesElapsed),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        accessor: (e) => (e.onBreak ? 'On break' : 'Working'),
+        sortable: true,
+        cardMeta: true,
+        cell: (e) => (e.onBreak ? <Badge variant="pending">On break</Badge> : <Badge variant="success">Working</Badge>),
+      },
+      ...(liveCols.geofence
+        ? [
+            {
+              key: 'geofence',
+              header: 'Geofence',
+              accessor: (e) => (e.geofenceOk === null ? 'N/A' : e.geofenceOk ? 'OK' : 'Off-site'),
+              sortable: true,
+              cardMeta: true,
+              cell: (e) =>
+                e.geofenceOk === null ? (
+                  <span className="text-xs text-silver/70">N/A</span>
+                ) : e.geofenceOk ? (
+                  <Badge variant="success">OK</Badge>
+                ) : (
+                  <Badge variant="destructive">Off-site</Badge>
+                ),
+            } satisfies GridColumn<ActiveDashboardEntry>,
+          ]
+        : []),
+      ...(canManage
+        ? [
+            {
+              key: 'actions',
+              header: 'Actions',
+              accessor: () => null,
+              searchable: false,
+              stopRowClick: true,
+              align: 'right',
+              className: 'whitespace-nowrap',
+              cell: (e) => (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => clockOutNow(e)}
+                    loading={liveClockOutIds.has(e.id)}
+                    disabled={liveClockOutIds.has(e.id)}
+                  >
+                    Clock out now
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-1 text-silver/70 hover:text-white"
+                    onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
+                    disabled={liveClockOutIds.has(e.id)}
+                    title="Open the edit drawer to type an exact clock-out time"
+                  >
+                    Adjust…
+                  </Button>
+                </>
+              ),
+            } satisfies GridColumn<ActiveDashboardEntry>,
+          ]
+        : []),
+    ],
+    [liveCols, canManage, clockOutNow, liveClockOutIds],
+  );
+
+  // The approval queue's columns. Keys match the page's sort accessors.
+  const queueColumns = useMemo<GridColumn<TimeEntry>[]>(
+    () => [
+      {
+        key: 'associate',
+        header: 'Associate',
+        accessor: (e) => e.associateName,
+        sortable: true,
+        primary: true,
+        stopRowClick: true,
+        cell: (e) => (
+          <button
+            type="button"
+            onClick={() => focusOn(e)}
+            title="View individual timesheet"
+            className="flex items-center gap-2.5 rounded text-left font-medium hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          >
+            <Avatar name={e.associateName ?? '—'} size="sm" />
+            <span className="underline-offset-2 hover:underline">{e.associateName ?? '—'}</span>
+          </button>
+        ),
+      },
+      {
+        key: 'client',
+        header: 'Client',
+        accessor: (e) => e.clientName,
+        sortable: true,
+        cardMeta: true,
+        className: 'text-silver',
+      },
+      {
+        key: 'in',
+        header: 'In',
+        accessor: (e) => new Date(e.clockInAt).getTime(),
+        csv: (e) => e.clockInAt,
+        sortable: true,
+        searchable: false,
+        className: 'tabular-nums',
+        cell: (e) => fmtPunchDateTime(e.clockInAt, e.locationTimezone),
+      },
+      {
+        key: 'out',
+        header: 'Out',
+        accessor: (e) => (e.clockOutAt ? new Date(e.clockOutAt).getTime() : null),
+        csv: (e) => e.clockOutAt ?? '',
+        sortable: true,
+        searchable: false,
+        className: 'tabular-nums',
+        cell: (e) =>
+          e.clockOutAt ? (
+            <>
+              {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+              <DayOffsetTag entry={e} />
+            </>
+          ) : (
+            '—'
+          ),
+      },
+      {
+        key: 'duration',
+        header: 'Duration',
+        accessor: (e) => e.netMinutes ?? e.minutesElapsed,
+        csv: (e) => formatHM(e.netMinutes ?? e.minutesElapsed),
+        sortable: true,
+        searchable: false,
+        cell: (e) => <DurationCell entry={e} />,
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        accessor: (e) => STATUS_LABELS[e.status],
+        sortable: true,
+        cell: (e) => (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+              <LateChip entry={e} />
+            </div>
+            <AnomalyChips anomalies={e.anomalies} />
+            {e.rejectionReason && <div className="mt-1 text-2xs text-alert">{e.rejectionReason}</div>}
+          </>
+        ),
+      },
+      ...(canManage
+        ? [
+            {
+              key: 'actions',
+              header: 'Actions',
+              accessor: () => null,
+              searchable: false,
+              stopRowClick: true,
+              align: 'right',
+              className: 'whitespace-nowrap',
+              cell: (e) => {
+                const isPending = pendingId === e.id;
+                // FORGOT_CLOCKOUT + a scheduled end on a non-ACTIVE,
+                // approvable row → offer the one-click "approve at the
+                // scheduled end" correction.
+                const canApproveAtShiftEnd =
+                  (e.status === 'COMPLETED' || e.status === 'REJECTED') &&
+                  !!e.shiftEndsAt &&
+                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT');
+                return (
+                  <div className="inline-flex items-center gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
+                      title="Edit times"
+                      onClick={() => openEditRow(e)}
+                      disabled={isPending || bulkBusy}
+                      className="opacity-100 transition-opacity focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                    {canApproveAtShiftEnd && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onApproveAtShiftEnd(e)}
+                        loading={isPending}
+                        disabled={isPending || bulkBusy}
+                        title="Approve with the clock-out corrected to the scheduled shift end"
+                      >
+                        Approve at sched. end {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
+                      </Button>
+                    )}
+                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onApprove(e.id)}
+                        loading={isPending}
+                        disabled={isPending || bulkBusy}
+                      >
+                        Approve
+                      </Button>
+                    )}
+                    {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-alert hover:bg-alert/10 hover:text-alert"
+                        onClick={() => openRejectOne(e.id)}
+                        disabled={isPending || bulkBusy}
+                      >
+                        Reject
+                      </Button>
+                    )}
+                  </div>
+                );
+              },
+            } satisfies GridColumn<TimeEntry>,
+          ]
+        : []),
+    ],
+    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne],
+  );
 
   return (
     <div className="mx-auto">
@@ -1813,208 +2067,47 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             )}
             {active && active.length > 0 && filteredActive && (
               <>
-                {/* md+ : full columnar table. Only the breakpoint-active
-                    list mounts (useIsDesktop) — the hidden twin used to
-                    double the DOM for nothing. */}
-                {isDesktop && (
-                <div>
-                  <Table caption="Currently clocked in">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Associate</TableHead>
-                        {liveCols.client && <TableHead>Client</TableHead>}
-                        {liveCols.job && <TableHead>Job</TableHead>}
-                        <TableHead>Since</TableHead>
-                        <TableHead>Elapsed</TableHead>
-                        <TableHead>Status</TableHead>
-                        {liveCols.geofence && <TableHead>Geofence</TableHead>}
-                        {canManage && (
-                          <TableHead className="text-right">Actions</TableHead>
-                        )}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {(liveGroups ?? []).map(([groupName, groupRows]) => (
-                        <Fragment key={groupName}>
-                          {showLiveGroups && (
-                            <TableRow className="bg-navy-secondary/20 hover:bg-navy-secondary/20">
-                              <TableCell
-                                colSpan={liveCols.span}
-                                className="py-1.5 text-xs font-medium text-silver"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span>
-                                    {groupName}
-                                    <span className="ml-2 tabular-nums text-silver/60">
-                                      {groupRows.length} clocked in
-                                    </span>
-                                  </span>
-                                  {canManage && (
-                                    <Button
-                                      size="xs"
-                                      variant="ghost"
-                                      className="ml-auto text-silver/70 hover:text-white"
-                                      onClick={() => clockOutGroup(groupRows)}
-                                      disabled={groupRows.some((r) =>
-                                        liveClockOutIds.has(r.id),
-                                      )}
-                                      title="Clock everyone in this group out at the current time"
-                                    >
-                                      Clock out all ({groupRows.length})
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                          {groupRows.map((e) => (
-                        <TableRow key={e.id} className="group">
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2.5">
-                              <Avatar
-                                src={`/api/associates/${e.associateId}/photo`}
-                                name={e.associateName}
-                                size="sm"
-                              />
-                              <AssociateLink associateId={e.associateId}>
-                                {e.associateName}
-                              </AssociateLink>
-                            </div>
-                          </TableCell>
-                          {liveCols.client && (
-                            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                          )}
-                          {liveCols.job && <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>}
-                          <TableCell className="tabular-nums text-silver">
-                            {fmtPunchTime(e.clockInAt, e.locationTimezone)}
-                          </TableCell>
-                          <TableCell className="tabular-nums">
-                            {formatHM(e.minutesElapsed)}
-                          </TableCell>
-                          <TableCell>
-                            {e.onBreak ? (
-                              <Badge variant="pending">On break</Badge>
-                            ) : (
-                              <Badge variant="success">Working</Badge>
-                            )}
-                          </TableCell>
-                          {liveCols.geofence && (
-                            <TableCell>
-                              {e.geofenceOk === null && (
-                                <span className="text-xs text-silver/70">N/A</span>
-                              )}
-                              {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
-                              {e.geofenceOk === false && (
-                                <Badge variant="destructive">Off-site</Badge>
-                              )}
-                            </TableCell>
-                          )}
-                          {canManage && (
-                            <TableCell className="text-right whitespace-nowrap">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => clockOutNow(e)}
-                                loading={liveClockOutIds.has(e.id)}
-                                disabled={liveClockOutIds.has(e.id)}
-                              >
-                                Clock out now
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="ml-1 text-silver/70 hover:text-white"
-                                onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
-                                disabled={liveClockOutIds.has(e.id)}
-                                title="Open the edit drawer to type an exact clock-out time"
-                              >
-                                Adjust…
-                              </Button>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                          ))}
-                        </Fragment>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                )}
-
-                {/* Phone: card stack. Manager scans for "who's on shift" /
-                    "is anyone off-site"; the elapsed counter and break
-                    state are the load-bearing bits. */}
-                {!isDesktop && (
-                <ul className="space-y-2">
-                  {filteredActive.map((e) => (
-                    <li
-                      key={e.id}
-                      className="rounded-md border border-navy-secondary bg-navy/40 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <Avatar
-                            src={`/api/associates/${e.associateId}/photo`}
-                            name={e.associateName}
-                            size="sm"
-                          />
-                          <div className="min-w-0">
-                            <div className="font-medium text-white truncate">
-                              {e.associateName}
-                            </div>
-                            <div className="text-xs2 text-silver/70 truncate">
-                              {[liveCols.client ? (e.clientName ?? '—') : null, e.jobName]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 shrink-0">
-                          {e.onBreak ? (
-                            <Badge variant="pending">On break</Badge>
-                          ) : (
-                            <Badge variant="success">Working</Badge>
-                          )}
-                          {e.geofenceOk === false && (
-                            <Badge variant="destructive" className="text-2xs">
-                              Off-site
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-2 flex items-end justify-between gap-3 text-xs2 text-silver">
-                        <span className="tabular-nums">
-                          Since {fmtPunchTime(e.clockInAt, e.locationTimezone)}
-                        </span>
-                        <span className="tabular-nums text-white">
-                          {formatHM(e.minutesElapsed)}
-                        </span>
-                      </div>
-                      {canManage && (
-                        <div className="mt-2 flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-silver/70 hover:text-white"
-                            onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
-                            disabled={liveClockOutIds.has(e.id)}
-                          >
-                            Adjust…
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => clockOutNow(e)}
-                            loading={liveClockOutIds.has(e.id)}
-                            disabled={liveClockOutIds.has(e.id)}
-                          >
-                            Clock out now
-                          </Button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                {filteredActive.length > 0 && (
+                  <DataGrid<ActiveDashboardEntry>
+                    id="time-live"
+                    caption="Currently clocked in"
+                    rows={filteredActive}
+                    columns={liveColumns}
+                    rowKey={(e) => e.id}
+                    urlState={false}
+                    search={false}
+                    exportCsv={{ filename: 'clocked-in' }}
+                    // One table grouped by client when the board spans
+                    // several — each place with its headcount and its own
+                    // clock-everyone-out. A single client skips the headers.
+                    groupBy={
+                      showLiveGroups
+                        ? {
+                            key: (e) => e.clientName ?? 'No client',
+                            header: (name, rows) => (
+                              <span className="flex items-center gap-2 font-medium text-silver">
+                                <span>
+                                  {name}
+                                  <span className="ml-2 tabular-nums text-silver/60">{rows.length} clocked in</span>
+                                </span>
+                                {canManage && (
+                                  <Button
+                                    size="xs"
+                                    variant="ghost"
+                                    className="ml-auto text-silver/70 hover:text-white"
+                                    onClick={() => clockOutGroup(rows)}
+                                    disabled={rows.some((r) => liveClockOutIds.has(r.id))}
+                                    title="Clock everyone in this group out at the current time"
+                                  >
+                                    Clock out all ({rows.length})
+                                  </Button>
+                                )}
+                              </span>
+                            ),
+                          }
+                        : undefined
+                    }
+                  />
                 )}
                 {filteredActive.length === 0 && (
                   <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-silver">
@@ -2428,7 +2521,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => replaceSelection(cleanSelectableIds)}
+                    onClick={() => selectIds(cleanSelectableIds)}
                     disabled={bulkBusy}
                     title="Select only completed entries with no anomaly flags (replaces the current selection)"
                   >
@@ -2536,242 +2629,31 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             )}
             {visibleEntries && visibleEntries.length > 0 && !focusAssociate && (
               <>
-                {/* md+ : full sortable table. Only the breakpoint-active
-                    list mounts (useIsDesktop). */}
-                {isDesktop && (
-                <div>
-                  <Table caption="Time entries">
-                    <TableHeader>
-                      <TableRow>
-                        {canManage && filter === 'COMPLETED' && (
-                          <TableHead className="w-8">
-                            <input
-                              type="checkbox"
-                              aria-label="Select all"
-                              checked={allSelected}
-                              ref={(el) => {
-                                if (el) el.indeterminate = someSelected;
-                              }}
-                              onChange={toggleAll}
-                              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                            />
-                          </TableHead>
-                        )}
-                        <SortableTableHead sortKey="associate" state={queueSort} onSort={toggleQueueSort}>
-                          Associate
-                        </SortableTableHead>
-                        <SortableTableHead sortKey="client" state={queueSort} onSort={toggleQueueSort}>
-                          Client
-                        </SortableTableHead>
-                        <SortableTableHead sortKey="in" state={queueSort} onSort={toggleQueueSort}>
-                          In
-                        </SortableTableHead>
-                        <SortableTableHead sortKey="out" state={queueSort} onSort={toggleQueueSort}>
-                          Out
-                        </SortableTableHead>
-                        <SortableTableHead sortKey="duration" state={queueSort} onSort={toggleQueueSort}>
-                          Duration
-                        </SortableTableHead>
-                        <SortableTableHead sortKey="status" state={queueSort} onSort={toggleQueueSort}>
-                          Status
-                        </SortableTableHead>
-                        {canManage && <TableHead className="text-right">Actions</TableHead>}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {sortedEntries.map((e) => (
-                        <QueueEntryRow
-                          key={e.id}
-                          entry={e}
-                          canManage={canManage}
-                          showSelect={canManage && filter === 'COMPLETED'}
-                          isSelected={selected.has(e.id)}
-                          isPending={pendingId === e.id}
-                          bulkBusy={bulkBusy}
-                          onToggleSelect={toggleOne}
-                          onFocus={focusOn}
-                          onOpen={openDrawer}
-                          onApprove={onApprove}
-                          onReject={openRejectOne}
-                          onEdit={openEditRow}
-                          onApproveAtShiftEnd={onApproveAtShiftEnd}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                )}
-
-                {/* Phone: card stack. Approve/Reject are inline on each
-                    card instead of hover-revealed; the row is also tap-to-
-                    open the detail drawer (managers reach the audit trail
-                    + edits there). Selection checkbox top-left when
-                    bulk-eligible. */}
-                {!isDesktop && (
-                <ul className="space-y-2">
-                  {visibleEntries.map((e) => {
-                    const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
-                    const showCheckbox = canManage && filter === 'COMPLETED';
-                    return (
-                      <li key={e.id}>
-                        <div
-                          className={cn(
-                            'rounded-md border bg-navy/40 transition-colors',
-                            selected.has(e.id)
-                              ? 'border-gold/40 bg-gold/5'
-                              : 'border-navy-secondary'
-                          )}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setDrawerTarget(e)}
-                            className="w-full text-left p-3 active:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
-                          >
-                            <div className="flex items-start gap-2.5">
-                              {showCheckbox && (
-                                <span
-                                  className="pt-0.5 shrink-0"
-                                  data-no-row-click
-                                  onClick={(ev) => ev.stopPropagation()}
-                                >
-                                  {isSelectable && (
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
-                                      checked={selected.has(e.id)}
-                                      onChange={() => toggleOne(e.id)}
-                                      className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                                    />
-                                  )}
-                                </span>
-                              )}
-                              <Avatar name={e.associateName ?? '—'} size="sm" />
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="font-medium text-white truncate">
-                                    {e.associateName ?? '—'}
-                                  </div>
-                                  <Badge variant={statusVariant(e.status)} className="shrink-0">
-                                    {STATUS_LABELS[e.status]}
-                                  </Badge>
-                                </div>
-                                <div className="text-xs2 text-silver/70 truncate">
-                                  {e.clientName ?? '—'}
-                                </div>
-                                <div className="mt-1.5 flex items-end justify-between gap-3 text-xs2 text-silver">
-                                  <span className="tabular-nums">
-                                    {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
-                                    {e.clockOutAt ? (
-                                      <>
-                                        {` → ${fmtPunchTime(e.clockOutAt, e.locationTimezone)}`}
-                                        <DayOffsetTag entry={e} />
-                                      </>
-                                    ) : (
-                                      ' → —'
-                                    )}
-                                  </span>
-                                  <span className="tabular-nums text-white">
-                                    {formatHM(e.netMinutes ?? e.minutesElapsed)}
-                                  </span>
-                                </div>
-                                {(() => {
-                                  const breakMin = Math.max(
-                                    0,
-                                    e.minutesElapsed - (e.netMinutes ?? e.minutesElapsed),
-                                  );
-                                  if (breakMin === 0) return null;
-                                  const n = e.breaks?.length ?? 1;
-                                  return (
-                                    <div className="text-2xs text-silver/70 tabular-nums">
-                                      {formatHM(e.minutesElapsed)} on site ·{' '}
-                                      {n > 1 ? `${n} breaks` : '1 break'} ({formatHM(breakMin)})
-                                    </div>
-                                  );
-                                })()}
-                                <div className="mt-1 empty:hidden">
-                                  <LateChip entry={e} />
-                                </div>
-                                <AnomalyChips anomalies={e.anomalies} />
-                                {e.rejectionReason && (
-                                  <div className="text-alert text-2xs mt-1">
-                                    {e.rejectionReason}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </button>
-                          {canManage &&
-                            (e.status === 'COMPLETED' ||
-                              e.status === 'APPROVED' ||
-                              e.status === 'REJECTED') && (
-                              <div
-                                className="flex flex-wrap gap-2 px-3 pb-3 pt-0"
-                                data-no-row-click
-                                onClick={(ev) => ev.stopPropagation()}
-                              >
-                                {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => onApprove(e.id)}
-                                    loading={pendingId === e.id}
-                                    disabled={pendingId === e.id || bulkBusy}
-                                  >
-                                    Approve
-                                  </Button>
-                                )}
-                                {(e.status === 'COMPLETED' || e.status === 'REJECTED') &&
-                                  !!e.shiftEndsAt &&
-                                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT') && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => onApproveAtShiftEnd(e)}
-                                      loading={pendingId === e.id}
-                                      disabled={pendingId === e.id || bulkBusy}
-                                      title="Approve with the clock-out corrected to the scheduled shift end"
-                                    >
-                                      Approve at sched. end{' '}
-                                      {fmtPunchTime(e.shiftEndsAt, e.locationTimezone)}
-                                    </Button>
-                                  )}
-                                <Button
-                                  size="icon-sm"
-                                  variant="ghost"
-                                  aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
-                                  title="Edit times"
-                                  onClick={() => openEditRow(e)}
-                                  disabled={pendingId === e.id || bulkBusy}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                                </Button>
-                                {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="text-alert hover:text-alert hover:bg-alert/10"
-                                    onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
-                                    disabled={pendingId === e.id || bulkBusy}
-                                  >
-                                    Reject
-                                  </Button>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="ml-auto text-silver/70 hover:text-white"
-                                  onClick={() => focusOn(e)}
-                                >
-                                  Timesheet
-                                </Button>
-                              </div>
-                            )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                )}
+                <DataGrid<TimeEntry>
+                  id="time-queue"
+                  caption="Time entries"
+                  rows={sortedEntries}
+                  columns={queueColumns}
+                  rowKey={(e) => e.id}
+                  urlState={false}
+                  search={false}
+                  exportCsv={false}
+                  rowClassName={() => 'group'}
+                  onRowClick={openDrawer}
+                  rowActionLabel={(e) => `Open entry for ${e.associateName ?? 'associate'}`}
+                  // The page keeps the order: the drawer's "approve and
+                  // next" walks the same list the table shows.
+                  sort={{ state: queueSort, onToggle: toggleQueueSort as (key: string) => void }}
+                  selectable={
+                    canManage && filter === 'COMPLETED'
+                      ? {
+                          disabled: (e) => e.status !== 'COMPLETED',
+                          selection: { selected, onChange: replaceSelection },
+                          selectAllLabel: 'Select all',
+                        }
+                      : undefined
+                  }
+                />
               </>
             )}
           </CardContent>
@@ -3153,165 +3035,6 @@ function FocusEntryRow({
     </div>
   );
 }
-
-const QueueEntryRow = memo(function QueueEntryRow({
-  entry: e,
-  canManage,
-  showSelect,
-  isSelected,
-  isPending,
-  bulkBusy,
-  onToggleSelect,
-  onFocus,
-  onOpen,
-  onApprove,
-  onReject,
-  onEdit,
-  onApproveAtShiftEnd,
-}: {
-  entry: TimeEntry;
-  canManage: boolean;
-  showSelect: boolean;
-  isSelected: boolean;
-  isPending: boolean;
-  bulkBusy: boolean;
-  onToggleSelect: (id: string) => void;
-  onFocus: (entry: TimeEntry) => void;
-  onOpen: (entry: TimeEntry) => void;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
-  onEdit: (entry: TimeEntry) => void;
-  onApproveAtShiftEnd: (entry: TimeEntry) => void;
-}) {
-  const isSelectable = showSelect && e.status === 'COMPLETED';
-  // FORGOT_CLOCKOUT + a scheduled end on a non-ACTIVE, approvable row →
-  // offer the one-click "approve at the scheduled end" correction.
-  const canApproveAtShiftEnd =
-    canManage &&
-    (e.status === 'COMPLETED' || e.status === 'REJECTED') &&
-    !!e.shiftEndsAt &&
-    (e.anomalies ?? []).includes('FORGOT_CLOCKOUT');
-  return (
-    <TableRow
-      className="group cursor-pointer"
-      data-state={isSelected ? 'selected' : undefined}
-      onClick={(ev) => {
-        const target = ev.target as HTMLElement;
-        if (target.closest('button, a, input, [data-no-row-click]')) return;
-        if (window.getSelection()?.toString()) return;
-        onOpen(e);
-      }}
-    >
-      {showSelect && (
-        <TableCell className="w-8">
-          {isSelectable && (
-            <input
-              type="checkbox"
-              aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
-              checked={isSelected}
-              onChange={() => onToggleSelect(e.id)}
-              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-            />
-          )}
-        </TableCell>
-      )}
-      <TableCell className="font-medium">
-        <button
-          type="button"
-          onClick={() => onFocus(e)}
-          title="View individual timesheet"
-          className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-        >
-          <Avatar name={e.associateName ?? '—'} size="sm" />
-          <span className="underline-offset-2 hover:underline">
-            {e.associateName ?? '—'}
-          </span>
-        </button>
-      </TableCell>
-      <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-      <TableCell className="tabular-nums">
-        {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
-      </TableCell>
-      <TableCell className="tabular-nums">
-        {e.clockOutAt ? (
-          <>
-            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
-            <DayOffsetTag entry={e} />
-          </>
-        ) : (
-          '—'
-        )}
-      </TableCell>
-      <TableCell>
-        <DurationCell entry={e} />
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
-          <LateChip entry={e} />
-        </div>
-        <AnomalyChips anomalies={e.anomalies} />
-        {e.rejectionReason && (
-          <div className="text-alert text-2xs mt-1">
-            {e.rejectionReason}
-          </div>
-        )}
-      </TableCell>
-      {canManage && (
-        <TableCell className="text-right whitespace-nowrap">
-          <div className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
-              title="Edit times"
-              onClick={() => onEdit(e)}
-              disabled={isPending || bulkBusy}
-              className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-            {canApproveAtShiftEnd && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onApproveAtShiftEnd(e)}
-                loading={isPending}
-                disabled={isPending || bulkBusy}
-                title="Approve with the clock-out corrected to the scheduled shift end"
-              >
-                Approve at sched. end{' '}
-                {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
-              </Button>
-            )}
-            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onApprove(e.id)}
-                loading={isPending}
-                disabled={isPending || bulkBusy}
-              >
-                Approve
-              </Button>
-            )}
-            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-alert hover:text-alert hover:bg-alert/10"
-                onClick={() => onReject(e.id)}
-                disabled={isPending || bulkBusy}
-              >
-                Reject
-              </Button>
-            )}
-          </div>
-        </TableCell>
-      )}
-    </TableRow>
-  );
-});
 
 function TimeEntryDetailPanel({
   entry,

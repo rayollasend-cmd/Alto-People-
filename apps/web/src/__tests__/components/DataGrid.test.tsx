@@ -202,6 +202,68 @@ describe('DataGrid', () => {
     }
   });
 
+  it('opens a detail panel under a row, one at a time when asked', async () => {
+    const onExpand = vi.fn();
+    renderGrid({ expandable: { render: (r) => <div>Details of {r.name}</div>, single: true, onExpand } });
+    const rosa = screen.getByRole('button', { name: 'Details for Rosa Martinez' });
+    expect(rosa).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(rosa);
+    expect(screen.getByText('Details of Rosa Martinez')).toBeInTheDocument();
+    expect(onExpand).toHaveBeenCalledWith(ROWS[0]);
+    // single: opening another row closes the first.
+    await userEvent.click(screen.getByRole('button', { name: 'Details for Dee Kpakpo' }));
+    expect(screen.queryByText('Details of Rosa Martinez')).not.toBeInTheDocument();
+    expect(screen.getByText('Details of Dee Kpakpo')).toBeInTheDocument();
+    expect(onExpand).toHaveBeenCalledTimes(2);
+    // Closing does not count as an expand.
+    await userEvent.click(screen.getByRole('button', { name: 'Details for Dee Kpakpo' }));
+    expect(screen.queryByText('Details of Dee Kpakpo')).not.toBeInTheDocument();
+    expect(onExpand).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws child rows under their parent and exports them with it', async () => {
+    const windows: Record<string, Row[]> = {
+      a: [{ id: 'a-am', name: 'Morning', store: 'Destin', pct: 40, note: null }],
+    };
+    renderGrid({ subRows: (r) => windows[r.id], selectable: {} });
+    // The first cell is the checkbox column; names sit in the second.
+    const table = screen.getByRole('table', { name: 'Test rows' });
+    const names = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[1]!.textContent);
+    expect(names).toEqual(['Rosa Martinez', 'Morning', 'Dee Kpakpo', 'Alan Darison']);
+    // Children are never selectable.
+    expect(screen.queryByRole('checkbox', { name: 'Select Morning' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Export Test rows/ }));
+    const [, rows] = vi.mocked(downloadCsv).mock.calls.at(-1)!;
+    expect(rows.map((r) => r[0])).toEqual(['Name', 'Rosa Martinez', 'Morning', 'Dee Kpakpo', 'Alan Darison']);
+  });
+
+  it('with a controlled sort, shows the state and reports clicks without reordering', async () => {
+    const onToggle = vi.fn();
+    renderGrid({ sort: { state: { key: 'store', direction: 'desc' }, onToggle } });
+    // The server already ordered this page; the grid must not touch it.
+    expect(bodyNames()).toEqual(['Rosa Martinez', 'Dee Kpakpo', 'Alan Darison']);
+    await userEvent.click(screen.getByRole('button', { name: 'Name' }));
+    expect(onToggle).toHaveBeenCalledWith('name');
+    expect(bodyNames()).toEqual(['Rosa Martinez', 'Dee Kpakpo', 'Alan Darison']);
+  });
+
+  it('folds groups when asked, starting where defaultOpen says', async () => {
+    renderGrid({
+      groupBy: {
+        key: (r) => r.store,
+        header: (k, rs) => `${k} (${rs.length})`,
+        collapsible: { defaultOpen: (_k, i) => i === 0 },
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Destin (1)' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Rosa Martinez')).toBeInTheDocument();
+    const miramar = screen.getByRole('button', { name: 'Miramar (1)' });
+    expect(miramar).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Alan Darison')).not.toBeInTheDocument();
+    await userEvent.click(miramar);
+    expect(screen.getByText('Alan Darison')).toBeInTheDocument();
+  });
+
   it('shows the loading, error and empty states rather than an empty table', () => {
     const { rerender } = renderGrid({ rows: null, loading: true });
     expect(screen.getByLabelText('Loading Test rows')).toBeInTheDocument();
