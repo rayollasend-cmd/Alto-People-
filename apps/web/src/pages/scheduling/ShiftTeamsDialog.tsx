@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Plus, Trash2, Users, X } from 'lucide-react';
 import type { ShiftTeam, ShiftTeamDetailResponse } from '@alto-people/shared';
 import {
@@ -61,7 +62,6 @@ export function ShiftTeamsDialog({
   onChanged: () => void;
 }) {
   const confirm = useConfirm();
-  const [teams, setTeams] = useState<ShiftTeam[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ShiftTeamDetailResponse | null>(null);
   const [newName, setNewName] = useState('');
@@ -73,27 +73,27 @@ export function ShiftTeamsDialog({
   const [editStart, setEditStart] = useState('');
   const [editEnd, setEditEnd] = useState('');
 
-  const refreshTeams = useCallback(async () => {
-    try {
-      const r = await listShiftTeams({ locationId });
-      setTeams(r.teams);
-      return r.teams;
-    } catch {
-      setTeams([]);
-      return [];
-    }
-  }, [locationId]);
+  const teamsQuery = useQuery({
+    queryKey: ['ShiftTeamsDialog', 'teams', locationId],
+    queryFn: () => listShiftTeams({ locationId }),
+    enabled: open,
+  });
+  const teams: ShiftTeam[] | null =
+    teamsQuery.data?.teams ?? (teamsQuery.isError ? [] : null);
+  const { refetch: refetchTeams } = teamsQuery;
+  const refreshTeams = useCallback(async (): Promise<ShiftTeam[]> => {
+    const r = await refetchTeams();
+    return r.data?.teams ?? [];
+  }, [refetchTeams]);
 
   useEffect(() => {
     if (!open) return;
-    setTeams(null);
     setSelectedId(null);
     setDetail(null);
     setNewName('');
     setNewStart('');
     setNewEnd('');
-    void refreshTeams();
-  }, [open, refreshTeams]);
+  }, [open]);
 
   const loadDetail = useCallback(async (id: string) => {
     setSelectedId(id);

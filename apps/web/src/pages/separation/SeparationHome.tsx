@@ -86,6 +86,7 @@ export function SeparationHome() {
     setSearchParams(next, { replace: true });
     // Resolve the name from the same directory the picker searches —
     // there's no single-associate getter, so match within the list.
+    // eslint-disable-next-line no-restricted-syntax -- one-shot resolve of a consumed URL param that then opens the drawer; not a cacheable read
     listDirectory({ limit: 500 })
       .then((r) => {
         const match = r.associates.find((a) => a.id === associateId);

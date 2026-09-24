@@ -88,8 +88,7 @@ export function TuitionHome() {
     : false;
   const confirm = useConfirm();
   const [tab, setTab] = useState<'mine' | 'queue'>('mine');
-  const [summary, setSummary] = useState<TuitionSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
+
   const [statusFilter, setStatusFilter] = useState<TuitionStatus | 'ALL'>(
     'SUBMITTED',
   );
@@ -120,21 +119,18 @@ export function TuitionHome() {
   const refresh = () => void (tab === 'mine' ? refreshAQuery.refetch() : refreshBQuery.refetch());
   // Filter-independent KPI summary — fetched once on mount and re-fetched
   // explicitly after mutations, never on tab/filter clicks.
-  const refreshSummary = () => {
-    setSummaryError(null);
-    getTuitionSummary()
-      .then(setSummary)
-      .catch((err) => {
-        setSummary(null);
-        setSummaryError(
-          err instanceof ApiError ? err.message : 'Could not load the summary.',
-        );
-      });
-  };
-  useEffect(() => {
-    if (canProcessPayroll) refreshSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canProcessPayroll]);
+  const summaryQuery = useQuery({
+    queryKey: ['TuitionHome', 'summary'],
+    queryFn: () => getTuitionSummary(),
+    enabled: canProcessPayroll,
+  });
+  const summary: TuitionSummary | null = summaryQuery.data ?? null;
+  const summaryError = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Could not load the summary.'
+    : null;
+  const refreshSummary = () => void summaryQuery.refetch();
 
   // If the open queue row vanished after a refetch (decided elsewhere,
   // filter changed), close the drawer instead of crashing on a missing row.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, CircleDashed, ServerCrash, ShieldAlert } from 'lucide-react';
 import {
   getDisbursementWebhookStatus,
@@ -76,40 +76,20 @@ const STYLE: Record<
 };
 
 export function WebhookHealthTile() {
-  const [data, setData] = useState<DisbursementWebhookStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = () => {
-      getDisbursementWebhookStatus()
-        .then((s) => {
-          if (!cancelled) {
-            setData(s);
-            setError(null);
-          }
-        })
-        .catch((e) => {
-          if (!cancelled) {
-            setError(e instanceof ApiError ? e.message : "Couldn't load webhook status.");
-          }
-        });
-    };
-    tick();
+  const statusQuery = useQuery({
+    queryKey: ['WebhookHealthTile', 'status'],
+    queryFn: () => getDisbursementWebhookStatus(),
     // Skip polls in a backgrounded tab; catch up as soon as it returns.
-    const id = window.setInterval(() => {
-      if (document.visibilityState === 'visible') tick();
-    }, POLL_INTERVAL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') tick();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, []);
+    refetchInterval: POLL_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+  const data: DisbursementWebhookStatus | null = statusQuery.data ?? null;
+  const error = statusQuery.error
+    ? statusQuery.error instanceof ApiError
+      ? statusQuery.error.message
+      : "Couldn't load webhook status."
+    : null;
 
   if (error) {
     // The tile re-polls itself every minute, so no explicit Retry needed.

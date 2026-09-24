@@ -1,8 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { workweekStart } from '@/lib/workweek';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import type { Capability, TimeEntry } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
@@ -50,6 +52,16 @@ function entry(overrides: Partial<TimeEntry> = {}): TimeEntry {
     ...overrides,
   };
 }
+
+function withQueryClient({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+const render = (ui: Parameters<typeof rtlRender>[0], options?: Parameters<typeof rtlRender>[1]) =>
+  rtlRender(ui, { wrapper: withQueryClient, ...options });
 
 function renderView() {
   const value = {

@@ -377,6 +377,7 @@ export function KioskPage() {
     } catch {
       setStage('setup');
     }
+    // eslint-disable-next-line no-restricted-syntax -- boots the on-device face models once per tablet session; not a cacheable read
     void loadFaceModels().catch(() => {
       /* ignore — face match becomes optional if the CDN is down */
     });

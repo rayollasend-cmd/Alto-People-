@@ -115,30 +115,29 @@ export function J1DocsTask() {
   // "Review / edit") shows what's on file instead of a blank form with a
   // disabled Finish button — the DS-2019 number, SEVIS ID, and program
   // dates were being retyped from memory, typos overwriting good data.
+  // One fresh read per visit (nothing cached across mounts) so a stale
+  // copy can never overwrite what the associate has typed since. Hydration
+  // is best-effort — the blank form still works for a first visit; a
+  // revisit can re-save.
+  const profileQuery = useQuery({
+    queryKey: ['J1DocsTask', 'profile', applicationId ?? null],
+    queryFn: () => getJ1Profile(applicationId!),
+    enabled: !!applicationId,
+    staleTime: 0,
+    gcTime: 0,
+  });
   useEffect(() => {
-    if (!applicationId) return;
-    let cancelled = false;
-    void getJ1Profile(applicationId)
-      .then((r) => {
-        if (cancelled || !r.profile) return;
-        const p = r.profile;
-        setProgramStartDate(p.programStartDate.slice(0, 10));
-        setProgramEndDate(p.programEndDate.slice(0, 10));
-        setDs2019Number(p.ds2019Number);
-        setSponsorAgency(p.sponsorAgency);
-        setCountry(p.country);
-        setVisaNumber(p.visaNumber ?? '');
-        setSevisId(p.sevisId ?? '');
-        setProfileSaved(true);
-      })
-      .catch(() => {
-        // Hydration is best-effort — the blank form still works for a
-        // first visit; a revisit can re-save.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [applicationId]);
+    const p = profileQuery.data?.profile;
+    if (!p) return;
+    setProgramStartDate(p.programStartDate.slice(0, 10));
+    setProgramEndDate(p.programEndDate.slice(0, 10));
+    setDs2019Number(p.ds2019Number);
+    setSponsorAgency(p.sponsorAgency);
+    setCountry(p.country);
+    setVisaNumber(p.visaNumber ?? '');
+    setSevisId(p.sevisId ?? '');
+    setProfileSaved(true);
+  }, [profileQuery.data]);
 
   const j1Docs = (docs ?? []).filter(
     (d) => d.kind === 'J1_DS2019' || d.kind === 'J1_VISA'

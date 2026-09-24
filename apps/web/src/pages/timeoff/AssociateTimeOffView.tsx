@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarOff, Plus, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -501,9 +501,7 @@ function CreateRequestDialog({
   // Company holiday dates ("YYYY-MM-DD") for the years the range touches.
   // Best-effort: null (not loaded / failed) → the day math simply doesn't
   // exclude holidays rather than blocking the form.
-  const [holidayDates, setHolidayDates] = useState<ReadonlySet<string> | null>(
-    null,
-  );
+
 
   const reset = () => {
     setCategory('VACATION');
@@ -524,35 +522,33 @@ function CreateRequestDialog({
   };
 
   // Fetch holidays for every year the selected range touches (a range can
-  // straddle New Year). Only the years matter for the fetch key.
+  // straddle New Year). Only the years matter for the fetch key; the last
+  // set stays on screen while a new year loads.
   const startYear = startDate.slice(0, 4);
   const endYear = endDate.slice(0, 4);
-  useEffect(() => {
-    if (!open) return;
-    const sy = Number(startYear);
-    const ey = Number(endYear);
-    if (!Number.isFinite(sy) || !Number.isFinite(ey) || ey < sy || ey - sy > 2) {
-      return;
-    }
-    let cancelled = false;
-    const years: number[] = [];
-    for (let y = sy; y <= ey; y++) years.push(y);
-    Promise.all(years.map((y) => listHolidays({ year: y })))
-      .then((responses) => {
-        if (cancelled) return;
-        setHolidayDates(
-          new Set(
-            responses.flatMap((r) => r.holidays.map((h) => h.date.slice(0, 10))),
+  const sy = Number(startYear);
+  const ey = Number(endYear);
+  const yearsValid =
+    Number.isFinite(sy) && Number.isFinite(ey) && ey >= sy && ey - sy <= 2;
+  const holidaysQuery = useQuery({
+    queryKey: ['TimeOffRequestForm', 'holidays', startYear, endYear],
+    queryFn: () => {
+      const years: number[] = [];
+      for (let y = sy; y <= ey; y++) years.push(y);
+      return Promise.all(years.map((y) => listHolidays({ year: y })));
+    },
+    enabled: open && yearsValid,
+    placeholderData: keepPreviousData,
+  });
+  const holidayDates: ReadonlySet<string> | null = useMemo(
+    () =>
+      holidaysQuery.isError || !holidaysQuery.data
+        ? null
+        : new Set(
+            holidaysQuery.data.flatMap((r) => r.holidays.map((h) => h.date.slice(0, 10))),
           ),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setHolidayDates(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, startYear, endYear]);
+    [holidaysQuery.data, holidaysQuery.isError],
+  );
 
   const dayInfo = useMemo(() => {
     const days = weekdayYmds(startDate, endDate);

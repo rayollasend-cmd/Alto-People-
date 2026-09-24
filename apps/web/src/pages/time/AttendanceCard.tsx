@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CalendarX2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AttendanceEvent, AttendanceListResponse } from '@alto-people/shared';
@@ -45,27 +46,21 @@ export function AttendanceCard({
   associateId?: string;
   canManage?: boolean;
 }) {
-  const [data, setData] = useState<AttendanceListResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const attendanceQuery = useQuery({
+    queryKey: ['AttendanceCard', 'events', associateId ?? 'me'],
+    queryFn: () => (associateId ? getAdminAttendance(associateId) : getMyAttendance()),
+  });
+  const data: AttendanceListResponse | null = attendanceQuery.data ?? null;
+  const error = attendanceQuery.error
+    ? attendanceQuery.error instanceof ApiError
+      ? attendanceQuery.error.message
+      : 'Could not load attendance.'
+    : null;
   const load = async () => {
-    setError(null);
-    try {
-      setData(
-        associateId ? await getAdminAttendance(associateId) : await getMyAttendance(),
-      );
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Could not load attendance.',
-      );
-    }
+    await attendanceQuery.refetch();
   };
-  useEffect(() => {
-    setData(null);
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [associateId]);
 
   const excuse = async (id: string) => {
     setBusyId(id);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -418,7 +418,6 @@ const hhmmToMinute = (s: string): number | null => {
  * cross-client), with the estimated 1.5× billed cost. Quiet when clean.
  */
 function OtOutlookCard() {
-  const [data, setData] = useState<OtOutlookResponse | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Collapsed state survives visits — a supervisor who works from the
   // daily tables can keep the radar folded to its one-line summary.
@@ -431,21 +430,18 @@ function OtOutlookCard() {
   const [clientFilter, setClientFilter] = useState('');
   const [minOtHours, setMinOtHours] = useState(0);
 
+  // Initial-load failure renders nothing — this card is an extra lens
+  // and the floor board above shows the aggregate chips. An explicit
+  // REFRESH failure must speak, though (handled at the button).
+  const outlookQuery = useQuery({
+    queryKey: ['OtOutlookCard', 'outlook'],
+    queryFn: () => otOutlook(),
+  });
+  const data: OtOutlookResponse | null = outlookQuery.data ?? null;
   const load = async (): Promise<boolean> => {
-    try {
-      setData(await otOutlook());
-      return true;
-    } catch {
-      // Initial-load failure renders nothing — this card is an extra lens
-      // and the floor board above shows the aggregate chips. An explicit
-      // REFRESH failure must speak, though (handled at the button).
-      return false;
-    }
+    const r = await outlookQuery.refetch();
+    return r.status === 'success';
   };
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Follow the global Topbar store scope. This lens filters by client NAME
   // (rows carry a display string, not ids), so the scope id is mapped
@@ -1791,15 +1787,30 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
 export function LaborCostsHome() {
   const [from, setFrom] = useState(todayYmd);
   const [toInclusive, setToInclusive] = useState(todayYmd);
-  const [rows, setRows] = useState<LaborCostRow[] | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [fallbacks, setFallbacks] = useState<{
-    associatePayRate: number | null;
-    leadPayRate?: number | null;
-    associateBillRate: number | null;
-    leadBillRate: number | null;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The last range's rows stay on screen while a new one loads (or while
+  // the picker is mid-edit and briefly inverted).
+  const costsQuery = useQuery({
+    queryKey: ['LaborCostsHome', 'costs', from, toInclusive],
+    queryFn: () =>
+      // Server takes an exclusive upper bound; the picker is inclusive.
+      laborCosts({
+        from: new Date(`${from}T00:00:00`).toISOString(),
+        to: new Date(`${addDaysYmd(toInclusive, 1)}T00:00:00`).toISOString(),
+      }),
+    enabled: Boolean(from && toInclusive && toInclusive >= from),
+    placeholderData: keepPreviousData,
+  });
+  const rows: LaborCostRow[] | null = costsQuery.isError ? [] : costsQuery.data?.rows ?? null;
+  const truncated = costsQuery.data?.truncated ?? false;
+  const fallbacks = costsQuery.data?.fallbacks ?? null;
+  const error = costsQuery.error
+    ? costsQuery.error instanceof ApiError
+      ? costsQuery.error.message
+      : 'Could not load labor costs.'
+    : null;
+  const load = async () => {
+    await costsQuery.refetch();
+  };
   const [clientFilter, setClientFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [targetsOpen, setTargetsOpen] = useState(false);
@@ -1817,28 +1828,6 @@ export function LaborCostsHome() {
     });
   }, [boardScopeClientId]);
 
-  const load = useCallback(async () => {
-    if (!from || !toInclusive || toInclusive < from) return;
-    setRows(null);
-    setError(null);
-    try {
-      // Server takes an exclusive upper bound; the picker is inclusive.
-      const res = await laborCosts({
-        from: new Date(`${from}T00:00:00`).toISOString(),
-        to: new Date(`${addDaysYmd(toInclusive, 1)}T00:00:00`).toISOString(),
-      });
-      setRows(res.rows);
-      setTruncated(res.truncated);
-      setFallbacks(res.fallbacks ?? null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load labor costs.');
-      setRows([]);
-    }
-  }, [from, toInclusive]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const preset = (days: number) => {
     const today = todayYmd();

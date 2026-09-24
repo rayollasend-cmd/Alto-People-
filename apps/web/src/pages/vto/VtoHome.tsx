@@ -58,82 +58,66 @@ export function VtoHome() {
     ? hasCapability(user.role, 'manage:performance')
     : false;
   const [tab, setTab] = useState<'mine' | 'queue'>('mine');
-  const [mine, setMine] = useState<MyVolunteerResponse | null>(null);
-  const [queue, setQueue] = useState<QueueVolunteerEntry[] | null>(null);
-  const [summary, setSummary] = useState<VolunteerSummary | null>(null);
   const [statusFilter, setStatusFilter] = useState<VtoStatus | 'ALL'>('PENDING');
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyVolunteerEntry | null>(null);
   const [openQueueId, setOpenQueueId] = useState<string | null>(null);
-  const [mineError, setMineError] = useState<string | null>(null);
-  const [queueError, setQueueError] = useState<string | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  // `soft` refetches WITHOUT nulling the current rows or clearing the
-  // selection — used after mutations so the queue doesn't collapse to a
-  // skeleton and lose scroll/selection; fresh rows reconcile in place
-  // (selection pruned to rows that still exist). Hard refresh (initial
-  // load, tab/filter change, Retry) keeps the skeleton.
-  const refresh = (opts?: { soft?: boolean }) => {
-    const soft = opts?.soft === true;
-    if (tab === 'mine') {
-      if (!soft) setMine(null);
-      setMineError(null);
-      listMyVolunteer()
-        .then(setMine)
-        .catch((err) =>
-          setMineError(
-            err instanceof ApiError
-              ? err.message
-              : 'Failed to load your volunteer hours.',
-          ),
-        );
-    } else {
-      if (!soft) {
-        setQueue(null);
-        setSelected(new Set());
-      }
-      setQueueError(null);
-      listVolunteerQueue(statusFilter === 'ALL' ? undefined : statusFilter)
-        .then((r) => {
-          setQueue(r.entries);
-          setSelected((prev) => {
-            const ids = new Set(r.entries.map((e) => e.id));
-            return new Set(Array.from(prev).filter((id) => ids.has(id)));
-          });
-        })
-        .catch((err) =>
-          setQueueError(
-            err instanceof ApiError
-              ? err.message
-              : 'Failed to load the review queue.',
-          ),
-        );
-    }
-  };
-  // Filter-independent KPI summary — fetched once on mount and re-fetched
-  // explicitly after mutations, never on tab/filter clicks.
-  const refreshSummary = () => {
-    setSummaryError(null);
-    getVolunteerSummary()
-      .then(setSummary)
-      .catch((err) =>
-        setSummaryError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load the summary.',
-        ),
-      );
-  };
+  const mineQuery = useQuery({
+    queryKey: ['VtoHome', 'mine'],
+    queryFn: () => listMyVolunteer(),
+    enabled: tab === 'mine',
+  });
+  const mine: MyVolunteerResponse | null = mineQuery.data ?? null;
+  const mineError = mineQuery.error
+    ? mineQuery.error instanceof ApiError
+      ? mineQuery.error.message
+      : 'Failed to load your volunteer hours.'
+    : null;
+  // Refetches after mutations keep the rows on screen (no skeleton, no
+  // lost scroll); fresh rows reconcile the selection in place, pruned to
+  // rows that still exist. A tab/filter change is a new key, so it keeps
+  // the skeleton and clears the selection.
+  const queueQuery = useQuery({
+    queryKey: ['VtoHome', 'queue', statusFilter],
+    queryFn: () => listVolunteerQueue(statusFilter === 'ALL' ? undefined : statusFilter),
+    enabled: tab === 'queue',
+  });
+  const queue: QueueVolunteerEntry[] | null = queueQuery.data?.entries ?? null;
+  const queueError = queueQuery.error
+    ? queueQuery.error instanceof ApiError
+      ? queueQuery.error.message
+      : 'Failed to load the review queue.'
+    : null;
   useEffect(() => {
-    refresh();
+    setSelected(new Set());
   }, [tab, statusFilter]);
   useEffect(() => {
-    if (canManage) refreshSummary();
-  }, [canManage]);
+    const r = queueQuery.data;
+    if (r === undefined) return;
+    setSelected((prev) => {
+      const ids = new Set(r.entries.map((e) => e.id));
+      return new Set(Array.from(prev).filter((id) => ids.has(id)));
+    });
+  }, [queueQuery.data]);
+  const refresh = () => void (tab === 'mine' ? mineQuery.refetch() : queueQuery.refetch());
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const summaryQuery = useQuery({
+    queryKey: ['VtoHome', 'summary'],
+    queryFn: () => getVolunteerSummary(),
+    enabled: canManage,
+  });
+  const summary: VolunteerSummary | null = summaryQuery.data ?? null;
+  const summaryError = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Failed to load the summary.'
+    : null;
+  const refreshSummary = () => void summaryQuery.refetch();
 
   // Memoized: these four passes over the full queue used to re-run on
   // EVERY render — including each keystroke in the search box.
@@ -182,7 +166,7 @@ export function VtoHome() {
       setSelected((prev) => new Set(Array.from(prev).filter((id) => !drop.has(id))));
     } finally {
       setBulkBusy(false);
-      refresh({ soft: true });
+      refresh();
       if (canManage) refreshSummary();
     }
   };
@@ -560,7 +544,7 @@ export function VtoHome() {
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
-            refresh({ soft: true });
+            refresh();
             if (canManage) refreshSummary();
           }}
         />
@@ -576,7 +560,7 @@ export function VtoHome() {
             setOpenQueueId(null);
             // Soft — the queue stays rendered (scroll + remaining
             // selection intact) while the decided row reconciles.
-            refresh({ soft: true });
+            refresh();
             if (canManage) refreshSummary();
           }}
         />

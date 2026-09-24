@@ -57,6 +57,7 @@ export function PhotoCropDialog({
     (async () => {
       try {
         const { loadImageFile } = await import('@/lib/loadImageFile');
+        // eslint-disable-next-line no-restricted-syntax -- decodes a local File into a bitmap; nothing to cache or refetch
         const el = await loadImageFile(file);
         objectUrl = el.src.startsWith('blob:') ? el.src : null;
         if (cancelled) {

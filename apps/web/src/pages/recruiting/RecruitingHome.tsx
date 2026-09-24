@@ -1077,7 +1077,16 @@ function CreateCandidateDialog({
   const [error, setError] = useState<string | null>(null);
   // Distinct position titles for the Select. null = not loaded / failed —
   // in that case we fall back to the free-text input rather than blocking.
-  const [positionOptions, setPositionOptions] = useState<string[] | null>(null);
+  const positionsQuery = useQuery({
+    queryKey: ['RecruitingHome', 'positionTitles'],
+    queryFn: () => listPositions(),
+    select: (r) =>
+      Array.from(new Set(r.positions.map((p) => p.title))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    enabled: open,
+  });
+  const positionOptions: string[] | null = positionsQuery.data ?? null;
 
   // Clear the form whenever the dialog re-opens.
   useEffect(() => {
@@ -1092,25 +1101,6 @@ function CreateCandidateDialog({
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open || positionOptions !== null) return;
-    let live = true;
-    listPositions()
-      .then((r) => {
-        if (!live) return;
-        setPositionOptions(
-          Array.from(new Set(r.positions.map((p) => p.title))).sort((a, b) =>
-            a.localeCompare(b),
-          ),
-        );
-      })
-      .catch(() => {
-        /* fall back to free-text input */
-      });
-    return () => {
-      live = false;
-    };
-  }, [open, positionOptions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

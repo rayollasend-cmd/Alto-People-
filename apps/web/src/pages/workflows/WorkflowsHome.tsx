@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
 import {
@@ -320,26 +320,22 @@ export function WorkflowsHome() {
 }
 
 function RunsTab() {
-  const [runs, setRuns] = useState<WorkflowRunSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'' | WorkflowRunSummary['status']>('');
   const [details, setDetails] = useState<
     Record<string, WorkflowRunDetail | 'loading' | 'error'>
   >({});
 
-  const load = (status: '' | WorkflowRunSummary['status']) => {
-    setRuns(null);
-    setError(null);
-    listRuns(status ? { status } : {})
-      .then((r) => setRuns(r.runs))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load runs.'),
-      );
-  };
-
-  useEffect(() => {
-    load(statusFilter);
-  }, [statusFilter]);
+  const runsQuery = useQuery({
+    queryKey: ['RunsTab', 'runs', statusFilter],
+    queryFn: () => listRuns(statusFilter ? { status: statusFilter } : {}),
+  });
+  const runs: WorkflowRunSummary[] | null = runsQuery.data?.runs ?? null;
+  const error = runsQuery.error
+    ? runsQuery.error instanceof ApiError
+      ? runsQuery.error.message
+      : 'Failed to load runs.'
+    : null;
+  const load = () => void runsQuery.refetch();
 
   const loadDetail = (id: string) => {
     setDetails((d) => ({ ...d, [id]: 'loading' }));
@@ -412,7 +408,7 @@ function RunsTab() {
       rows={runs}
       loading={!runs && !error}
       error={error}
-      onRetry={() => load(statusFilter)}
+      onRetry={() => load()}
       columns={columns}
       rowKey={(r) => r.id}
       urlState={false}
@@ -434,7 +430,7 @@ function RunsTab() {
               ))}
             </Select>
           </div>
-          <Button size="sm" variant="outline" onClick={() => load(statusFilter)}>
+          <Button size="sm" variant="outline" onClick={() => load()}>
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>

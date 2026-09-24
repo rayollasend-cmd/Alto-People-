@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   paidMinutesForRange,
   type Shift,
@@ -623,32 +624,23 @@ function SwapOfferForm({
   const [candidates, setCandidates] = useState<SwapCandidate[] | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
   const [counterpartyId, setCounterpartyId] = useState('');
-  const [tradeOptions, setTradeOptions] = useState<TradeOption[] | null>(null);
   const [counterpartShiftId, setCounterpartShiftId] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Trade half: once a counterparty is picked, offer their upcoming shifts
-  // as an optional "take one in exchange" list.
+  // as an optional "take one in exchange" list. The list failing shouldn't
+  // block a plain give-away, so an error reads as "no options".
+  const tradeQuery = useQuery({
+    queryKey: ['SwapDialog', 'tradeOptions', counterpartyId],
+    queryFn: () => listTradeOptions(counterpartyId),
+    enabled: counterpartyId !== '',
+  });
+  const tradeOptions: TradeOption[] | null = !counterpartyId
+    ? null
+    : tradeQuery.data?.options ?? (tradeQuery.isError ? [] : null);
   useEffect(() => {
     setCounterpartShiftId('');
-    if (!counterpartyId) {
-      setTradeOptions(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await listTradeOptions(counterpartyId);
-        if (!cancelled) setTradeOptions(res.options);
-      } catch {
-        // Trade list failing shouldn't block a plain give-away.
-        if (!cancelled) setTradeOptions([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [counterpartyId]);
 
   const openForm = async () => {

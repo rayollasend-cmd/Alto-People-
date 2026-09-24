@@ -251,6 +251,7 @@ function EnablePushCard() {
   useEffect(() => {
     let cancelled = false;
     if (localStorage.getItem(PUSH_DISMISS_KEY)) return;
+    // eslint-disable-next-line no-restricted-syntax -- reads the browser's push permission state, not the API
     getPushStatus().then((s) => {
       if (!cancelled && s === 'available') setStatus('ready');
     });

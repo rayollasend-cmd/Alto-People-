@@ -16,6 +16,7 @@
 // pure UI projections so the user can back out without polluting the DB.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
@@ -104,7 +105,17 @@ type RunKind = 'REGULAR' | 'OFF_CYCLE';
 export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props) {
   const [step, setStep] = useState<Step>(1);
   const [runKind, setRunKind] = useState<RunKind>('REGULAR');
-  const [schedules, setSchedules] = useState<PayrollSchedule[] | null>(null);
+  const schedulesQuery = useQuery({
+    queryKey: ['RunPayrollWizard', 'schedules'],
+    queryFn: () => listPayrollSchedules(),
+    enabled: open,
+  });
+  const schedules: PayrollSchedule[] | null = schedulesQuery.data?.schedules ?? null;
+  useEffect(() => {
+    const err = schedulesQuery.error;
+    if (!err) return;
+    toast.error(err instanceof ApiError ? err.message : 'Failed to load schedules.');
+  }, [schedulesQuery.error]);
   const [scheduleId, setScheduleId] = useState<string>('');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
@@ -146,7 +157,6 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     setRunKind('REGULAR');
     setNotes('');
     setSubmitting(false);
-    setSchedules(null);
     setPreview(null);
     setPreviewError(null);
     setExceptions(null);
@@ -157,11 +167,6 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     seededPeriodRef.current = !!seed;
     setQuickReview(!!seed);
     setQuickPending(!!seed);
-    listPayrollSchedules()
-      .then((res) => setSchedules(res.schedules))
-      .catch((err) =>
-        toast.error(err instanceof ApiError ? err.message : 'Failed to load schedules.')
-      );
     // seedKey is the value-compare proxy for `seed`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seedKey]);
@@ -250,6 +255,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
   useEffect(() => {
     if (!open || !quickPending || !schedules) return;
     setQuickPending(false);
+    // eslint-disable-next-line no-restricted-syntax -- fires the user's preview action once the seeded schedule resolves; not a read to cache
     void fetchPreview();
     // fetchPreview reads current state; keyed on the schedule list arriving.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -63,10 +63,26 @@ const READINESS_KEYS = Object.keys(READINESS_LABELS) as SuccessionReadiness[];
 export function SuccessionHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  const [rows, setRows] = useState<SuccessionPositionRow[] | null>(null);
-  const [rowsError, setRowsError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<SuccessionSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const positionsQuery = useQuery({
+    queryKey: ['SuccessionHome', 'positions'],
+    queryFn: () => listSuccessionPositions(),
+  });
+  const rows: SuccessionPositionRow[] | null = positionsQuery.data?.positions ?? null;
+  const rowsError = positionsQuery.error
+    ? positionsQuery.error instanceof ApiError
+      ? positionsQuery.error.message
+      : 'Failed to load positions.'
+    : null;
+  const summaryQuery = useQuery({
+    queryKey: ['SuccessionHome', 'summary'],
+    queryFn: () => getSuccessionSummary(),
+  });
+  const summary: SuccessionSummary | null = summaryQuery.data ?? null;
+  const summaryError = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Failed to load the readiness summary.'
+    : null;
   const [openId, setOpenId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [readinessFilter, setReadinessFilter] = useState<Set<SuccessionReadiness>>(
@@ -80,36 +96,13 @@ export function SuccessionHome() {
   );
   const [candLoading, setCandLoading] = useState(false);
 
-  const refreshPositions = () => {
-    setRows(null);
-    setRowsError(null);
-    setCandMap(null);
-    listSuccessionPositions()
-      .then((r) => setRows(r.positions))
-      .catch((err) =>
-        setRowsError(
-          err instanceof ApiError ? err.message : 'Failed to load positions.',
-        ),
-      );
-  };
-  const refreshSummary = () => {
-    setSummaryError(null);
-    getSuccessionSummary()
-      .then(setSummary)
-      .catch((err) => {
-        setSummary(null);
-        setSummaryError(
-          err instanceof ApiError ? err.message : 'Failed to load the readiness summary.',
-        );
-      });
-  };
+  // Successor lists hang off the positions read, so a reload drops the
+  // lazy cache with it.
   const refresh = () => {
-    refreshPositions();
-    refreshSummary();
+    setCandMap(null);
+    void positionsQuery.refetch();
+    void summaryQuery.refetch();
   };
-  useEffect(() => {
-    refresh();
-  }, []);
 
   const ensureCandidates = async (
     positions: SuccessionPositionRow[],
@@ -245,7 +238,7 @@ export function SuccessionHome() {
         <ErrorBanner>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>{summaryError}</span>
-            <Button size="sm" variant="outline" onClick={refreshSummary}>
+            <Button size="sm" variant="outline" onClick={() => void summaryQuery.refetch()}>
               Retry
             </Button>
           </div>
@@ -307,7 +300,7 @@ export function SuccessionHome() {
               <ErrorBanner>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{rowsError}</span>
-                  <Button size="sm" variant="outline" onClick={refreshPositions}>
+                  <Button size="sm" variant="outline" onClick={() => void positionsQuery.refetch()}>
                     Retry
                   </Button>
                 </div>

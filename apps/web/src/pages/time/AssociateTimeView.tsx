@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import type { BreakType, Job, TimeEntry } from '@alto-people/shared';
 import {
@@ -81,49 +82,55 @@ function defaultHistoryToYmd(): string {
  * view (history, attendance) is a link away. `headerActions` sits in the
  * full view's header (the way back to the floor).
  */
+const NO_JOBS: Job[] = [];
+
 export function AssociateTimeView({
   variant = 'full',
   headerActions,
 }: { variant?: 'full' | 'strip'; headerActions?: ReactNode } = {}) {
-  const [active, setActive] = useState<TimeEntry | null>(null);
-  const [entries, setEntries] = useState<TimeEntry[] | null>(null);
   // History row expanded to its punch timeline. One at a time keeps the
   // list scannable on a phone.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [breakBusy, setBreakBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   // Phase 65 — history range. Defaults to last 30 days (also the API default).
   const [historyFromYmd, setHistoryFromYmd] = useState<string>(defaultHistoryFromYmd());
   const [historyToYmd, setHistoryToYmd] = useState<string>(defaultHistoryToYmd());
 
-  useTicker(!!active);
-
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const [a, list, jobList] = await Promise.all([
+  // The last range's rows stay on screen while a new range loads.
+  const timeQuery = useQuery({
+    queryKey: ['AssociateTimeView', 'time', historyFromYmd, historyToYmd],
+    queryFn: () =>
+      Promise.all([
         getActiveTimeEntry(),
         listMyTimeEntries({
           from: ymdToIsoStart(historyFromYmd),
           to: ymdToIsoEndExclusive(historyToYmd),
         }),
         listJobs().catch(() => ({ jobs: [] as Job[] })),
-      ]);
-      setActive(a.active);
-      setEntries(list.entries);
-      setJobs(jobList.jobs);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load time data.');
-    }
-  }, [historyFromYmd, historyToYmd]);
+      ]),
+    placeholderData: keepPreviousData,
+  });
+  const active: TimeEntry | null = timeQuery.data?.[0].active ?? null;
+  const entries: TimeEntry[] | null = timeQuery.data?.[1].entries ?? null;
+  const jobs: Job[] = timeQuery.data?.[2].jobs ?? NO_JOBS;
+  const error =
+    errorLocal ??
+    (timeQuery.error
+      ? timeQuery.error instanceof ApiError
+        ? timeQuery.error.message
+        : 'Failed to load time data.'
+      : null);
+  const { refetch } = timeQuery;
+  const refresh = useCallback(async () => {
+    setError(null);
+    await refetch();
+  }, [refetch]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useTicker(!!active);
 
   // Break state comes from the server (TimeEntry.onBreak) so it survives a
   // page refresh mid-break — the old client-local flag forgot the break on

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { CreditCard, Save, Trash2 } from 'lucide-react';
 import { toast } from '@/components/ui/Toaster';
 import {
@@ -58,40 +59,28 @@ export function BranchEnrollmentDialog({
   onSaved,
 }: Props) {
   const confirm = useConfirm();
-  const [data, setData] = useState<BranchEnrollment | null>(null);
   const [draft, setDraft] = useState('');
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
+  const enrollmentQuery = useQuery({
+    queryKey: ['BranchEnrollmentDialog', 'enrollment', associateId ?? null],
+    queryFn: () => getBranchEnrollment(associateId!),
+    enabled: !!associateId,
+  });
+  const data: BranchEnrollment | null = associateId ? enrollmentQuery.data ?? null : null;
+  const loading =
+    !!associateId && enrollmentQuery.data === undefined && enrollmentQuery.isFetching;
+  const error =
+    associateId && enrollmentQuery.error
+      ? enrollmentQuery.error instanceof ApiError
+        ? enrollmentQuery.error.message
+        : 'Failed to load.'
+      : null;
+  // The card id field seeds from the record and clears with it.
   useEffect(() => {
-    if (!associateId) {
-      setData(null);
-      setDraft('');
-      setError(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getBranchEnrollment(associateId)
-      .then((d) => {
-        if (cancelled) return;
-        setData(d);
-        setDraft(d.branchCardId ?? '');
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [associateId]);
+    setDraft(enrollmentQuery.data?.branchCardId ?? '');
+  }, [enrollmentQuery.data]);
 
   const close = () => onOpenChange(false);
 

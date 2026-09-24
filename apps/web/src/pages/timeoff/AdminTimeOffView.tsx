@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CalendarCheck, Check, MessageSquarePlus, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -92,9 +93,6 @@ export const isInsufficient = (r: TimeOffRequest) =>
 
 export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
   const [tab, setTab] = useState<TimeOffRequestStatus | 'ALL'>('PENDING');
-  const [items, setItems] = useState<TimeOffRequest[] | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [approveTarget, setApproveTarget] = useState<TimeOffRequest | null>(null);
@@ -106,29 +104,25 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [detail, setDetail] = useState<TimeOffRequest | null>(null);
 
-  const refresh = useCallback(async () => {
-    setItems(null);
-    setTotal(null);
-    setError(null);
-    setSelected(new Set<string>());
-    try {
-      const res = await listAdminRequests(tab === 'ALL' ? undefined : tab);
-      setItems(res.requests);
-      setTotal(res.total ?? null);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        setError("You don't have permission to view the time-off queue.");
-        return;
-      }
-      setError(
-        err instanceof Error ? err.message : 'Could not load requests.',
-      );
-    }
-  }, [tab]);
-
+  const requestsQuery = useQuery({
+    queryKey: ['AdminTimeOffView', 'requests', tab],
+    queryFn: () => listAdminRequests(tab === 'ALL' ? undefined : tab),
+  });
+  const items: TimeOffRequest[] | null = requestsQuery.data?.requests ?? null;
+  const total: number | null = requestsQuery.data?.total ?? null;
+  const error = requestsQuery.error
+    ? requestsQuery.error instanceof ApiError && requestsQuery.error.status === 403
+      ? "You don't have permission to view the time-off queue."
+      : requestsQuery.error.message || 'Could not load requests.'
+    : null;
+  // The selection never outlives the rows it pointed at.
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    setSelected(new Set<string>());
+  }, [tab, requestsQuery.data]);
+  const { refetch } = requestsQuery;
+  const refresh = useCallback(async () => {
+    await refetch();
+  }, [refetch]);
 
   const visible = useMemo(() => {
     if (!items) return null;

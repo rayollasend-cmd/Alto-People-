@@ -417,6 +417,8 @@ function specToFilterRows(spec: ReportSpec): FilterRow[] {
   });
 }
 
+const NO_COLUMNS: string[] = [];
+
 function ReportBuilder({
   seed,
   onClose,
@@ -431,8 +433,7 @@ function ReportBuilder({
   );
   const [entity, setEntity] = useState<ReportEntity>(seed?.report.entity ?? 'ASSOCIATE');
   const [columns, setColumns] = useState<string[]>(seed?.report.spec.columns ?? []);
-  const [allColumns, setAllColumns] = useState<string[]>([]);
-  const [columnsError, setColumnsError] = useState<string | null>(null);
+
   const [isPublic, setIsPublic] = useState(seed?.report.isPublic ?? false);
   const [filters, setFilters] = useState<FilterRow[]>(
     seed ? specToFilterRows(seed.report.spec) : [],
@@ -447,24 +448,23 @@ function ReportBuilder({
     rows: Array<Record<string, unknown>>;
   } | null>(null);
 
-  const loadColumns = (ent: ReportEntity) => {
-    setColumnsError(null);
-    listColumns(ent)
-      .then((r) => setAllColumns(r.columns))
-      .catch((err) => {
-        setAllColumns([]);
-        setColumnsError(
-          err instanceof ApiError ? err.message : 'Failed to load columns.',
-        );
-      });
-  };
+  const columnsQuery = useQuery({
+    queryKey: ['ReportBuilder', 'columns', entity],
+    queryFn: () => listColumns(entity),
+  });
+  const allColumns: string[] = columnsQuery.data?.columns ?? NO_COLUMNS;
+  const columnsError = columnsQuery.error
+    ? columnsQuery.error instanceof ApiError
+      ? columnsQuery.error.message
+      : 'Failed to load columns.'
+    : null;
+  const loadColumns = () => void columnsQuery.refetch();
 
   // On the initial render the seed (if any) already provides columns /
   // filters / sorts for its entity — only wipe them when the admin
   // switches to a different entity afterwards.
   const firstRun = useRef(true);
   useEffect(() => {
-    loadColumns(entity);
     if (firstRun.current) {
       firstRun.current = false;
       return;
@@ -638,7 +638,7 @@ function ReportBuilder({
         {columnsError && (
           <div className="space-y-2">
             <ErrorBanner>{columnsError}</ErrorBanner>
-            <Button size="sm" variant="outline" onClick={() => loadColumns(entity)}>
+            <Button size="sm" variant="outline" onClick={() => loadColumns()}>
               Retry
             </Button>
           </div>
