@@ -7,7 +7,6 @@ import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtMoney } from '@/lib/format';
-import { cn } from '@/lib/cn';
 import { useSelection } from '@/lib/useSelection';
 import {
   clientStatementPdfUrl,
@@ -27,13 +26,8 @@ import {
   ErrorBanner,
   PageHeader,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
 import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
 
@@ -305,123 +299,74 @@ export function ClientStatementsRollup() {
       )}
 
       {visible && visible.length > 0 && (
-        <Card className="overflow-hidden">
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  {canFinalize && (
-                    <TableHead className="w-8">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all draft statements"
-                        checked={sel.allSelected}
-                        ref={(el) => {
-                          if (el) el.indeterminate = sel.someSelected;
-                        }}
-                        onChange={sel.toggleAll}
-                        disabled={draftIds.length === 0}
-                      />
-                    </TableHead>
-                  )}
-                  <TableHead>Client</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right hidden sm:table-cell">
-                    Hours
-                  </TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((s) => (
-                  <TableRow
-                    key={s.id}
-                    id={`statement-${s.id}`}
-                    className={cn(flashId === s.id && FLASH_ROW_CLASS)}
-                  >
-                    {canFinalize && (
-                      <TableCell className="w-8">
-                        {s.status === 'DRAFT' && (
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${s.clientName}'s ${fmtDate(s.periodStart)} draft`}
-                            checked={sel.isSelected(s.id)}
-                            onChange={() => sel.toggle(s.id)}
-                          />
-                        )}
-                      </TableCell>
-                    )}
-                    <TableCell className="font-medium text-white">
-                      {s.clientName}
-                    </TableCell>
-                    <TableCell className="text-silver whitespace-nowrap">
-                      {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}
-                    </TableCell>
-                    <TableCell>
-                      <span className="inline-flex flex-wrap items-center gap-1.5">
-                        {s.status === 'FINAL' ? (
-                          <Badge variant="success" withDot={false}>
-                            <Lock className="mr-1 h-3 w-3" />
-                            No. {String(s.number).padStart(4, '0')}
-                          </Badge>
-                        ) : (
-                          <Badge variant="pending">Draft</Badge>
-                        )}
-                        {s.status === 'FINAL' &&
-                          (s.paidAt ? (
-                            <Badge variant="success">Paid {fmtDate(s.paidAt)}</Badge>
-                          ) : (
-                            <Badge variant="pending">Unpaid</Badge>
-                          ))}
-                        {s.snapshot.sla.pendingEntries > 0 &&
-                          s.status === 'DRAFT' && (
-                            <span
-                              className="text-2xs text-warning"
-                              title="Time entries in this period are still awaiting approval — finalizing now locks the figures without them."
-                            >
-                              {s.snapshot.sla.pendingEntries} pending
-                            </span>
-                          )}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums hidden sm:table-cell text-silver">
-                      {s.snapshot.totals.hours.toFixed(1)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-white">
-                      {fmtMoney(s.snapshot.totals.amount)}
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void downloadStatementFile(
-                            clientStatementPdfUrl(s.clientId, s.id),
-                            `statement-${s.periodStart}.pdf`,
-                          )
-                        }
-                      >
+        <Card>
+          <CardContent>
+            <DataGrid<NonNullable<typeof visible>[number]>
+              id="client-statements-rollup"
+              caption="Client statements"
+              rows={visible}
+              rowKey={(st) => st.id}
+              rowId={(st) => `statement-${st.id}`}
+              rowClassName={(st) => (flashId === st.id ? FLASH_ROW_CLASS : undefined)}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'client-statements' }}
+              selectable={canFinalize ? { disabled: (st) => st.status !== 'DRAFT', selectAllLabel: 'Select all draft statements', selection: { selected: sel.selected, onChange: sel.replace } } : undefined}
+              columns={[
+                { key: 'client', header: 'Client', accessor: (st) => st.clientName, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'period', header: 'Period', accessor: (st) => st.periodStart, csv: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}`, sortable: true, searchable: false, cardMeta: true, className: 'text-silver whitespace-nowrap', cell: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}` },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (st) => (st.status === 'FINAL' ? (st.paidAt ? 'Paid' : 'Unpaid') : 'Draft'),
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (st) => (
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      {st.status === 'FINAL' ? (
+                        <Badge variant="success" withDot={false}>
+                          <Lock className="mr-1 h-3 w-3" />
+                          No. {String(st.number).padStart(4, '0')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="pending">Draft</Badge>
+                      )}
+                      {st.status === 'FINAL' && (st.paidAt ? <Badge variant="success">Paid {fmtDate(st.paidAt)}</Badge> : <Badge variant="pending">Unpaid</Badge>)}
+                      {st.snapshot.sla.pendingEntries > 0 && st.status === 'DRAFT' && (
+                        <span className="text-2xs text-warning" title="Time entries in this period are still awaiting approval — finalizing now locks the figures without them.">
+                          {st.snapshot.sla.pendingEntries} pending
+                        </span>
+                      )}
+                    </span>
+                  ),
+                },
+                { key: 'hours', header: 'Hours', accessor: (st) => st.snapshot.totals.hours, csv: (st) => st.snapshot.totals.hours.toFixed(1), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (st) => st.snapshot.totals.hours.toFixed(1) },
+                { key: 'amount', header: 'Amount', accessor: (st) => st.snapshot.totals.amount, csv: (st) => fmtMoney(st.snapshot.totals.amount), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-white', cell: (st) => fmtMoney(st.snapshot.totals.amount) },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  accessor: () => null,
+                  searchable: false,
+                  csv: () => '',
+                  align: 'right',
+                  stopRowClick: true,
+                  className: 'whitespace-nowrap space-x-2',
+                  cell: (st) => (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => void downloadStatementFile(clientStatementPdfUrl(st.clientId, st.id), `statement-${st.periodStart}.pdf`)}>
                         <FileText className="h-3.5 w-3.5" />
                         PDF
                       </Button>
-                      {canFinalize && s.status === 'FINAL' && !s.paidAt && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setPayTarget(s)}
-                          loading={busy === `paid-${s.id}`}
-                          disabled={busy !== null}
-                        >
+                      {canFinalize && st.status === 'FINAL' && !st.paidAt && (
+                        <Button size="sm" variant="outline" onClick={() => setPayTarget(st)} loading={busy === `paid-${st.id}`} disabled={busy !== null}>
                           Mark paid
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </>
+                  ),
+                },
+              ]}
+            />
           </CardContent>
         </Card>
       )}

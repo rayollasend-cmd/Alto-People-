@@ -152,12 +152,6 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Tabs,
   TabsContent,
   TabsList,
@@ -2458,41 +2452,44 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
           </div>
         )}
         {records && records.length > 0 && (
-          <Table caption="Pay rate history">
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Effective</TableHead>
-                <TableHead>Rate</TableHead>
-                <TableHead>Reason</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {records.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-silver text-xs tabular-nums whitespace-nowrap">
-                    {fmtDate(r.effectiveFrom)}
-                    {r.effectiveTo && (
-                      <>
-                        {' – '}
-                        {fmtDate(r.effectiveTo)}
-                      </>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-white tabular-nums">
-                    {fmtPay(r.amount, r.payType, r.currency)}
-                  </TableCell>
-                  <TableCell className="text-silver text-xs">
+          <DataGrid<NonNullable<typeof records>[number]>
+            id="pay-rate-history"
+            caption="Pay rate history"
+            rows={records}
+            rowKey={(r) => r.id}
+            search={false}
+            urlState={false}
+            exportCsv={false}
+            columnChooser={false}
+            columns={[
+              {
+                key: 'effective',
+                header: 'Effective',
+                accessor: (r) => r.effectiveFrom,
+                csv: (r) => `${fmtDate(r.effectiveFrom)}${r.effectiveTo ? ` – ${fmtDate(r.effectiveTo)}` : ''}`,
+                sortable: true,
+                searchable: false,
+                primary: true,
+                className: 'text-silver text-xs tabular-nums whitespace-nowrap',
+                cell: (r) => `${fmtDate(r.effectiveFrom)}${r.effectiveTo ? ` – ${fmtDate(r.effectiveTo)}` : ''}`,
+              },
+              { key: 'rate', header: 'Rate', accessor: (r) => Number(r.amount), csv: (r) => fmtPay(r.amount, r.payType, r.currency), sortable: true, searchable: false, cardMeta: true, className: 'text-white tabular-nums', cell: (r) => fmtPay(r.amount, r.payType, r.currency) },
+              {
+                key: 'reason',
+                header: 'Reason',
+                accessor: (r) => REASON_LABEL[r.reason],
+                sortable: true,
+                cardMeta: true,
+                className: 'text-silver text-xs',
+                cell: (r) => (
+                  <>
                     {REASON_LABEL[r.reason]}
-                    {r.notes && (
-                      <span className="block text-2xs text-silver/70 truncate max-w-[180px]">
-                        {r.notes}
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    {r.notes && <span className="block text-2xs text-silver/70 truncate max-w-[180px]">{r.notes}</span>}
+                  </>
+                ),
+              },
+            ]}
+          />
         )}
       </div>
 
@@ -4947,10 +4944,17 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     </Button>
   );
 
-  const docRow = (d: DocumentRecord) => (
-            <TableRow key={d.id}>
-              <TableCell>
-                <div className="font-medium text-white text-sm">
+  // One column list for every document section on the profile.
+  const docColumns: GridColumn<DocumentRecord>[] = [
+    {
+      key: 'document',
+      header: 'Document',
+      accessor: (d) => DOCUMENT_KIND_LABEL[d.kind] ?? d.kind,
+      sortable: true,
+      primary: true,
+      cell: (d) => (
+        <>
+          <div className="font-medium text-white text-sm">
                   {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
                 </div>
                 <div className="text-2xs text-silver truncate max-w-[220px]">
@@ -4966,15 +4970,21 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                     {d.rejectionReason}
                   </div>
                 )}
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={d.status} />
-              </TableCell>
-              <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
-                {fmtDate(d.createdAt)}
-              </TableCell>
-              <TableCell>
-                <div className="flex justify-end items-center gap-1">
+        </>
+      ),
+    },
+    { key: 'status', header: 'Status', accessor: (d) => d.status, sortable: true, cardMeta: true, width: '7rem', cell: (d) => <StatusBadge status={d.status} /> },
+    { key: 'uploaded', header: 'Uploaded', accessor: (d) => d.createdAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver tabular-nums', cell: (d) => fmtDate(d.createdAt) },
+    {
+      key: 'actions',
+      header: 'Actions',
+      accessor: () => null,
+      searchable: false,
+      csv: () => '',
+      align: 'right',
+      stopRowClick: true,
+      cell: (d) => (
+        <div className="flex justify-end items-center gap-1">
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -5058,9 +5068,9 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                     </span>
                   )}
                 </div>
-              </TableCell>
-            </TableRow>
-  );
+      ),
+    },
+  ];
 
   return (
     <>
@@ -5145,17 +5155,17 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                   No documents filed in this section.
                 </p>
               ) : (
-                <Table caption={cat.title}>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Document</TableHead>
-                      <TableHead className="w-28">Status</TableHead>
-                      <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>{cat.docs.map(docRow)}</TableBody>
-                </Table>
+                <DataGrid<DocumentRecord>
+                  id={`profile-documents-${cat.key}`}
+                  caption={cat.title}
+                  rows={cat.docs}
+                  rowKey={(d) => d.id}
+                  search={false}
+                  urlState={false}
+                  exportCsv={false}
+                  columnChooser={false}
+                  columns={docColumns}
+                />
               )}
             </section>
           );

@@ -133,6 +133,8 @@ export interface DataGridProps<T> {
   rowActionLabel?: (row: T) => string;
   /** Extra classes on a row (an overdue tint, a highlighted match). */
   rowClassName?: (row: T) => string | undefined;
+  /** A DOM id per row, for deep links that scroll to and flash one record. */
+  rowId?: (row: T) => string;
   /** Rows beyond this count are virtualized. Default 150. */
   virtualizeAfter?: number;
   rowHeight?: number;
@@ -264,6 +266,7 @@ function GridCore<T>({
   onRowClick,
   rowActionLabel,
   rowClassName,
+  rowId,
   virtualizeAfter = 150,
   rowHeight = 48,
   empty,
@@ -614,7 +617,7 @@ function GridCore<T>({
                   </>
                 );
                 return (
-                  <li key={key}>
+                  <li key={key} id={rowId?.(row)}>
                     {clickable ? (
                       <button
                         type="button"
@@ -734,6 +737,7 @@ function GridCore<T>({
                     return (
                       <TableRow
                         key={key}
+                        id={rowId?.(row)}
                         data-state={isSelected ? 'selected' : undefined}
                         onClick={onRowClick ? () => onRowClick(row) : undefined}
                         aria-label={onRowClick ? rowActionLabel?.(row) : undefined}

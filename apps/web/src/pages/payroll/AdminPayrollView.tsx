@@ -2,8 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowDownUp,
-  ArrowUpDown,
   Ban,
   CalendarDays,
   CheckCircle2,
@@ -88,14 +86,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
@@ -125,8 +116,6 @@ interface AdminPayrollViewProps {
   canVoid: boolean;
 }
 
-type SortKey = 'periodEnd' | 'totalGross' | 'totalNet' | 'itemCount' | 'status';
-type SortDir = 'asc' | 'desc';
 
 // Gap 3 — voids are only allowed within this window post-disbursement.
 // Mirrors the server-side guard in POST /payroll/runs/:id/void; UI hides
@@ -217,9 +206,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
   const [upcoming, setUpcoming] = useState<PayrollUpcomingSummary | null>(null);
   const [upcomingLoading, setUpcomingLoading] = useState(true);
-  // Wave 9 — sortable runs table.
-  const [sortKey, setSortKey] = useState<SortKey>('periodEnd');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Four-eyes config flag — when true, Disburse is gated on approvedAt.
   // Fetched once; a fetch failure just leaves the gate off (server still
   // enforces it with a 409).
@@ -247,55 +233,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   }, [filter]);
 
-  const sortedRuns = useMemo(() => {
-    if (!runs) return null;
-    const arr = [...runs];
-    arr.sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case 'periodEnd':
-          cmp = a.periodEnd.localeCompare(b.periodEnd);
-          break;
-        case 'totalGross':
-          cmp = a.totalGross - b.totalGross;
-          break;
-        case 'totalNet':
-          cmp = a.totalNet - b.totalNet;
-          break;
-        case 'itemCount':
-          cmp = a.itemCount - b.itemCount;
-          break;
-        case 'status':
-          cmp = a.status.localeCompare(b.status);
-          break;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return arr;
-  }, [runs, sortKey, sortDir]);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir(key === 'periodEnd' || key === 'totalGross' || key === 'totalNet' || key === 'itemCount' ? 'desc' : 'asc');
-    }
-  };
-
   // Bulk selection — clear when the status filter changes so the action
   // bar never advertises runs that are no longer visible.
   useEffect(() => {
     setBulkSelected(new Set());
   }, [filter]);
-
-  const toggleBulk = (id: string) =>
-    setBulkSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   // Eligibility mirrors the drawer's footer buttons: Finalize on DRAFT,
   // Approve on FINALIZED (not yet approved), Disburse on FINALIZED. The
@@ -878,7 +820,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           <CardTitle>Runs</CardTitle>
         </CardHeader>
         <CardContent>
-          {!sortedRuns && (
+          {!runs && (
             <div className="space-y-2">
               <Skeleton className="h-9" />
               {Array.from({ length: 4 }).map((_, i) => (
@@ -886,7 +828,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               ))}
             </div>
           )}
-          {sortedRuns && sortedRuns.length === 0 && (
+          {runs && runs.length === 0 && (
             <EmptyState
               icon={FileText}
               title={
@@ -916,191 +858,57 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               }
             />
           )}
-          {sortedRuns && sortedRuns.length > 0 && (
-            <>
-              {/* md+ : columnar table with sortable headers. */}
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      {canProcess && (
-                        <TableHead className="w-8">
-                          <input
-                            type="checkbox"
-                            aria-label="Select all runs"
-                            className="h-4 w-4 cursor-pointer accent-gold"
-                            checked={
-                              sortedRuns.length > 0 &&
-                              sortedRuns.every((r) => bulkSelected.has(r.id))
-                            }
-                            onChange={(e) =>
-                              setBulkSelected(
-                                e.target.checked
-                                  ? new Set(sortedRuns.map((r) => r.id))
-                                  : new Set(),
-                              )
-                            }
-                          />
-                        </TableHead>
-                      )}
-                      <SortableTh
-                        label="Period"
-                        sortKey="periodEnd"
-                        activeKey={sortKey}
-                        activeDir={sortDir}
-                        onClick={toggleSort}
-                      />
-                      <SortableTh
-                        label="Status"
-                        sortKey="status"
-                        activeKey={sortKey}
-                        activeDir={sortDir}
-                        onClick={toggleSort}
-                      />
-                      <SortableTh
-                        label="Paystubs"
-                        sortKey="itemCount"
-                        activeKey={sortKey}
-                        activeDir={sortDir}
-                        onClick={toggleSort}
-                        align="right"
-                      />
-                      <SortableTh
-                        label="Gross"
-                        sortKey="totalGross"
-                        activeKey={sortKey}
-                        activeDir={sortDir}
-                        onClick={toggleSort}
-                        align="right"
-                      />
-                      <SortableTh
-                        label="Net"
-                        sortKey="totalNet"
-                        activeKey={sortKey}
-                        activeDir={sortDir}
-                        onClick={toggleSort}
-                        align="right"
-                      />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedRuns.map((r) => (
-                      <TableRow
-                        key={r.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => openRun(r.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            openRun(r.id);
-                          }
-                        }}
-                        className={cn(
-                          'cursor-pointer focus:outline-none focus-visible:bg-navy-secondary/50',
-                          selected?.id === r.id && 'bg-gold/5'
-                        )}
-                      >
-                        {canProcess && (
-                          <TableCell
-                            className="w-8"
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              type="checkbox"
-                              aria-label={`Select run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
-                              className="h-4 w-4 cursor-pointer accent-gold"
-                              checked={bulkSelected.has(r.id)}
-                              onChange={() => toggleBulk(r.id)}
-                            />
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          <div className="text-white tabular-nums">
-                            {fmtPeriod(r.periodStart, r.periodEnd)}
-                          </div>
-                          {r.clientName && (
-                            <div className="text-xs2 text-silver/70 mt-0.5">
-                              {r.clientName}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
-                            {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver">
-                          {r.itemCount}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver">
-                          {fmtMoney(r.totalGross)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-gold">
-                          {fmtMoney(r.totalNet)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Phone: card stack. Same default sort (periodEnd desc); the
-                  sortable headers are desktop-only — on mobile we rely on
-                  the status filter buttons above for the common "show me
-                  drafts" / "show me disbursed" cuts. */}
-              <ul className="md:hidden space-y-2">
-                {sortedRuns.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      onClick={() => openRun(r.id)}
-                      className={cn(
-                        'w-full text-left rounded-md border bg-navy/40 p-3 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                        selected?.id === r.id
-                          ? 'border-gold/40 bg-gold/5'
-                          : 'border-navy-secondary hover:border-silver/40'
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-white tabular-nums">
-                            {fmtPeriod(r.periodStart, r.periodEnd)}
-                          </div>
-                          {r.clientName && (
-                            <div className="text-xs2 text-silver/70 mt-0.5 truncate">
-                              {r.clientName}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
-                          <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
-                        </div>
-                      </div>
-                      <div className="mt-2 flex items-end justify-between gap-3">
-                        <div className="text-xs2 text-silver/70">
-                          {r.itemCount} paystub{r.itemCount === 1 ? '' : 's'} · gross{' '}
-                          <span className="tabular-nums text-silver">
-                            {fmtMoney(r.totalGross)}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xs uppercase tracking-widest text-silver/70">
-                            Net
-                          </div>
-                          <div className="tabular-nums text-gold text-base">
-                            {fmtMoney(r.totalNet)}
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
+          {runs && runs.length > 0 && (
+            // Newest period first; the headers re-sort. The page's bulk
+            // selection drives the checkboxes so the action bar above keeps
+            // reading it.
+            <DataGrid<NonNullable<typeof runs>[number]>
+              id="payroll-runs"
+              caption="Payroll runs"
+              rows={runs}
+              rowKey={(r) => r.id}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: 'payroll-runs' }}
+              defaultSort={{ key: 'period', direction: 'desc' }}
+              onRowClick={(r) => void openRun(r.id)}
+              rowActionLabel={(r) => `Open run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
+              rowClassName={(r) => (selected?.id === r.id ? 'bg-gold/5' : undefined)}
+              selectable={canProcess ? { selectAllLabel: 'Select all runs', selection: { selected: bulkSelected, onChange: setBulkSelected } } : undefined}
+              columns={[
+                {
+                  key: 'period',
+                  header: 'Period',
+                  accessor: (r) => r.periodEnd,
+                  csv: (r) => fmtPeriod(r.periodStart, r.periodEnd),
+                  sortable: true,
+                  searchable: false,
+                  primary: true,
+                  cell: (r) => (
+                    <>
+                      <div className="text-white tabular-nums">{fmtPeriod(r.periodStart, r.periodEnd)}</div>
+                      {r.clientName && <div className="text-xs2 text-silver/70 mt-0.5">{r.clientName}</div>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (r) => r.status,
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (r) => (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
+                      {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
+                    </div>
+                  ),
+                },
+                { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver' },
+                { key: 'gross', header: 'Gross', accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (r) => fmtMoney(r.totalGross) },
+                { key: 'net', header: 'Net', accessor: (r) => r.totalNet, csv: (r) => fmtMoney(r.totalNet), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-gold', cell: (r) => fmtMoney(r.totalNet) },
+              ]}
+            />
           )}
         </CardContent>
       </Card>
@@ -1904,56 +1712,6 @@ function PayrollHeroSkeleton() {
         <Skeleton className="h-7 w-24" />
       </div>
     </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- *
- *  Wave 9 — Sortable table header.
- *
- *  Click toggles direction on the active column, switches to the new key
- *  with a sensible default direction otherwise.
- * -------------------------------------------------------------------------- */
-
-function SortableTh({
-  label,
-  sortKey,
-  activeKey,
-  activeDir,
-  onClick,
-  align = 'left',
-}: {
-  label: string;
-  sortKey: SortKey;
-  activeKey: SortKey;
-  activeDir: SortDir;
-  onClick: (key: SortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const isActive = activeKey === sortKey;
-  return (
-    <TableHead className={align === 'right' ? 'text-right' : ''}>
-      <button
-        type="button"
-        onClick={() => onClick(sortKey)}
-        className={cn(
-          'inline-flex items-center gap-1 text-2xs uppercase tracking-widest transition-colors',
-          'focus:outline-none focus-visible:text-gold',
-          isActive ? 'text-gold' : 'text-silver/70 hover:text-silver'
-        )}
-      >
-        {label}
-        {isActive ? (
-          <ArrowDownUp
-            className={cn(
-              'h-3 w-3 transition-transform',
-              activeDir === 'asc' && 'rotate-180'
-            )}
-          />
-        ) : (
-          <ArrowUpDown className="h-3 w-3 opacity-40" />
-        )}
-      </button>
-    </TableHead>
   );
 }
 
