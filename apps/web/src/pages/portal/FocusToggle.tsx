@@ -27,8 +27,8 @@ export function FocusToggle({
           value: 'mine',
           label: (
             <span>
-              {t('focus.myShift')}
-              <span className="ml-1 opacity-70">· {focusName(windows)}</span>
+              {t('focus.myShift')}{' '}
+              <span className="opacity-70">· {focusName(windows)}</span>
             </span>
           ),
         },

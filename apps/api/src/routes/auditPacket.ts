@@ -404,7 +404,7 @@ auditPacketRouter.post(
       auditAction,
     );
 
-    const { default: archiver } = await import('archiver');
+    const { ZipArchive } = await import('archiver');
     const zipStem =
       input.scope === 'CLIENT_PERIOD'
         ? safeName(client!.name)
@@ -419,7 +419,7 @@ auditPacketRouter.post(
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
     res.setHeader('Cache-Control', 'private, no-store');
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on('error', (err: Error) => {
       console.error('[audit-packet] archive error', err);
       res.destroy(err);

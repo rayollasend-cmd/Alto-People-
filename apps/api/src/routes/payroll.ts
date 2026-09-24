@@ -75,7 +75,7 @@ import { env } from '../config/env.js';
 import { listW2EligibleAssociates } from '../lib/w2Aggregator.js';
 import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 
 export const payrollRouter = Router();
@@ -2862,8 +2862,8 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => {
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    archive.on('error', (err: Error) => {
       res.destroy(err);
     });
     archive.pipe(res);

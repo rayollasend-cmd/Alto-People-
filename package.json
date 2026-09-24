@@ -30,7 +30,7 @@
     "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/node_modules\" \"packages/*/node_modules\" node_modules"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
+    "concurrently": "^10.0.5",
     "rimraf": "^5.0.10"
   },
   "overrides": {

@@ -96,7 +96,7 @@ import {
   passwordResetTemplate,
 } from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { buildDataExport } from '../lib/dataExport.js';
 import { generateSecret, generateURI, verifySync } from 'otplib';
 import {
@@ -1337,8 +1337,8 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => res.destroy(err));
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    archive.on('error', (err: Error) => res.destroy(err));
     archive.pipe(res);
     for (const entry of entries) {
       archive.append(entry.contents, { name: entry.filename });

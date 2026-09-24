@@ -1766,7 +1766,7 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', EXPORT_PII, async (req, res, ne
     }
 
     // Lazy-import archiver so the route file's startup cost stays tiny.
-    const { default: archiver } = await import('archiver');
+    const { ZipArchive } = await import('archiver');
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
@@ -1774,8 +1774,8 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', EXPORT_PII, async (req, res, ne
       `attachment; filename="w2-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
     );
 
-    const zip = archiver('zip', { zlib: { level: 6 } });
-    zip.on('error', (err) => res.destroy(err));
+    const zip = new ZipArchive({ zlib: { level: 6 } });
+    zip.on('error', (err: Error) => res.destroy(err));
     zip.pipe(res);
 
     const skipped: { formId: string; reason: string }[] = [];
@@ -1860,7 +1860,7 @@ payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', EXPORT_PII, async (req, r
       );
     }
 
-    const { default: archiver } = await import('archiver');
+    const { ZipArchive } = await import('archiver');
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
@@ -1868,8 +1868,8 @@ payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', EXPORT_PII, async (req, r
       `attachment; filename="1099nec-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
     );
 
-    const zip = archiver('zip', { zlib: { level: 6 } });
-    zip.on('error', (err) => res.destroy(err));
+    const zip = new ZipArchive({ zlib: { level: 6 } });
+    zip.on('error', (err: Error) => res.destroy(err));
     zip.pipe(res);
 
     const skipped: { formId: string; reason: string }[] = [];
@@ -1952,7 +1952,7 @@ payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', EXPORT_PII, async (req, 
       );
     }
 
-    const { default: archiver } = await import('archiver');
+    const { ZipArchive } = await import('archiver');
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
@@ -1960,8 +1960,8 @@ payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', EXPORT_PII, async (req, 
       `attachment; filename="1099misc-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
     );
 
-    const zip = archiver('zip', { zlib: { level: 6 } });
-    zip.on('error', (err) => res.destroy(err));
+    const zip = new ZipArchive({ zlib: { level: 6 } });
+    zip.on('error', (err: Error) => res.destroy(err));
     zip.pipe(res);
 
     const skipped: { formId: string; reason: string }[] = [];

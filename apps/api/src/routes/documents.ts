@@ -780,7 +780,7 @@ documentsRouter.get('/admin/all.zip', MANAGE, bulkPiiExportLimiter, async (req, 
       throw new HttpError(404, 'associate_not_found', 'Associate not found');
     }
 
-    const { default: archiver } = await import('archiver');
+    const { ZipArchive } = await import('archiver');
     const store = getBlobStore();
 
     // Decide what's actually going in BEFORE streaming: the audit row and the
@@ -835,7 +835,7 @@ documentsRouter.get('/admin/all.zip', MANAGE, bulkPiiExportLimiter, async (req, 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}.zip"`);
     res.setHeader('Cache-Control', 'private, no-store');
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.pipe(res);
 
     for (const d of docs) {

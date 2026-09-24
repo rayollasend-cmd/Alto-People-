@@ -35,6 +35,25 @@ export function initSentry(): void {
       // intentionally, no point reporting.
       'HttpError',
     ],
+    // Sentry 11 collects request bodies, cookies, DB query text and user
+    // info BY DEFAULT unless told otherwise. This API sees SSNs, bank
+    // details and PINs, so the v10 baseline is pinned explicitly: nothing
+    // in these categories leaves the process. (The beforeSend scrub below
+    // stays as the backstop for anything captured by hand.)
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: {
+        request: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user', 'cookie', 'authorization'] },
+        response: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user', 'set-cookie'] },
+      },
+      httpBodies: [],
+      urlQueryParams: false,
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      queues: false,
+      graphQL: { document: false, variables: false },
+    },
     // The API sees SSNs, bank details and PINs. Strip query strings and
     // censor sensitive-looking keys from request data and extra context
     // before anything leaves the process.

@@ -129,7 +129,12 @@ export function ShiftLeadsCard({
                           }
                         >
                           {u.name}
-                          {none && <span className="ml-1 opacity-80">· {t('shiftLeads.noShift')}</span>}
+                          {none && (
+                            <>
+                              {' '}
+                              <span className="opacity-80">· {t('shiftLeads.noShift')}</span>
+                            </>
+                          )}
                         </button>
                       );
                     })}
@@ -145,8 +150,8 @@ export function ShiftLeadsCard({
                         onClick={() => openFloor(c, f)}
                         className="rounded-full border border-warning/40 px-2 py-0.5 text-warning transition hover:border-gold/50 hover:text-white coarse:min-h-9"
                       >
-                        {f.name}
-                        <span className="ml-1 opacity-80">
+                        {f.name}{' '}
+                        <span className="opacity-80">
                           · {f.noShift && f.noLead ? 'no shift or shift supervisor' : f.noShift ? t('shiftLeads.noShift') : 'no shift supervisor'}
                         </span>
                       </button>
