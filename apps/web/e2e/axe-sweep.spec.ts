@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
 import { PERSONAS, signIn } from './personas';
@@ -22,6 +23,9 @@ interface Finding {
   impact: string | null;
   help: string;
   targets: string[];
+  /** What axe measured, where it measures anything — the colour pair and
+   *  ratio behind a contrast finding, so the fix needs no second run. */
+  detail: string;
 }
 
 async function auditRoute(page: Page, route: string): Promise<Finding[]> {
@@ -39,6 +43,16 @@ async function auditRoute(page: Page, route: string): Promise<Finding[]> {
       impact: v.impact ?? null,
       help: v.help,
       targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')),
+      detail: v.nodes
+        .slice(0, 3)
+        .map((n) => {
+          const d = (n.any[0] ?? n.all[0])?.data as
+            | { fgColor?: string; bgColor?: string; contrastRatio?: number; fontSize?: string }
+            | undefined;
+          return d?.contrastRatio ? `${d.fgColor} on ${d.bgColor} = ${d.contrastRatio} (${d.fontSize})` : '';
+        })
+        .filter(Boolean)
+        .join(' | '),
     }));
   });
   return raw.map((f) => ({ route, ...f }));
@@ -53,13 +67,17 @@ for (const persona of PERSONAS) {
     for (const route of [...persona.routes, ...persona.axeRoutes]) {
       findings.push(...(await auditRoute(page, route)));
     }
-    await testInfo.attach(`axe-${persona.name}.json`, {
-      body: JSON.stringify(findings, null, 2),
-      contentType: 'application/json',
-    });
+    // Both the report attachment and a file in the test's output dir —
+    // the CI failure artifact ships the directory, not the report.
+    const body = JSON.stringify(findings, null, 2);
+    writeFileSync(testInfo.outputPath(`axe-${persona.name}.json`), body);
+    await testInfo.attach(`axe-${persona.name}.json`, { body, contentType: 'application/json' });
     const blocking = findings
       .filter((f) => f.impact === 'serious' || f.impact === 'critical')
-      .map((f) => `[${f.route}] ${f.id} (${f.impact}) — ${f.help} @ ${f.targets.join(' | ')}`);
+      .map(
+        (f) =>
+          `[${f.route}] ${f.id} (${f.impact}) — ${f.help} @ ${f.targets.join(' | ')}${f.detail ? ` :: ${f.detail}` : ''}`,
+      );
     expect(blocking, `axe as ${persona.name}`).toEqual([]);
   });
 }

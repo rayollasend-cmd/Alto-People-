@@ -177,6 +177,31 @@ describe('DataGrid', () => {
     }
   });
 
+  it('on a phone keeps links and checkboxes out of the open-row button', () => {
+    // A control nested in a control is what axe called out on the people
+    // directory: the manager link sat inside the card's button. The
+    // button now lies over the card, and everything interactive in the
+    // card stays its own control.
+    const desktopStub = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...desktopStub(query), matches: false })) as typeof window.matchMedia;
+    try {
+      const columns: GridColumn<Row>[] = [
+        ...COLUMNS,
+        { key: 'manager', header: 'Manager', accessor: () => 'Ana Ruiz', cell: () => <a href="/people?associateId=m1">Ana Ruiz</a> },
+      ];
+      renderGrid({ columns, onRowClick: vi.fn(), rowActionLabel: (r) => `Open ${r.name}`, selectable: {} });
+      const card = within(screen.getByRole('list', { name: 'Test rows' })).getAllByRole('listitem')[0]!;
+      const open = within(card).getByRole('button', { name: 'Open Rosa Martinez' });
+      expect(within(open).queryByRole('link')).toBeNull();
+      expect(within(open).queryByRole('checkbox')).toBeNull();
+      const link = within(card).getByRole('link', { name: 'Ana Ruiz' });
+      expect(link.closest('button')).toBeNull();
+      expect(within(card).getByRole('checkbox', { name: 'Select Rosa Martinez' }).closest('button')).toBeNull();
+    } finally {
+      window.matchMedia = desktopStub;
+    }
+  });
+
   it('shows the loading, error and empty states rather than an empty table', () => {
     const { rerender } = renderGrid({ rows: null, loading: true });
     expect(screen.getByLabelText('Loading Test rows')).toBeInTheDocument();

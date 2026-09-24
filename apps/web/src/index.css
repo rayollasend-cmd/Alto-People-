@@ -339,14 +339,50 @@
    app's single most-used secondary text class (617 uses, 275 of them at
    10-11px). The earlier version of this rule stopped at /60, so the
    LIGHTER alphas were repaired while the most-used one was left failing.
-   Floor everything at /70 and below to a solid slate-500; /80 and /90
-   clear AA on their own (5.74 / 7.69) and keep the hierarchy above it. */
+   Floor everything at /70 and below to one solid grey; /80 and /90
+   clear AA on their own (5.74 / 7.69) and keep the hierarchy above it.
+
+   The grey is #5A697F, half a step darker than slate-500. Slate-500
+   cleared white (4.76) and the page (4.55) but not the tinted surfaces a
+   label actually sits on — 4.39 on a bg-navy-secondary/20 KPI tile or
+   filter bar, 4.20 on a bg-black/30 panel, 3.86 on a full navy-secondary
+   hover — which is where the full-stack axe sweep caught it. #5A697F
+   measures 5.58 on white, 5.34 on the page, 4.92 on the /50 tint and
+   4.53 on solid navy-secondary, and still sits under /80's 5.74. */
 :root[data-theme='light'] .text-silver\/30,
 :root[data-theme='light'] .text-silver\/40,
 :root[data-theme='light'] .text-silver\/50,
 :root[data-theme='light'] .text-silver\/60,
 :root[data-theme='light'] .text-silver\/70 {
-  color: rgb(100 116 139); /* slate-500 — 4.76:1 on white, 4.55:1 on the page */
+  color: rgb(90 105 127); /* #5A697F — 5.58:1 on white, 4.53:1 on navy-secondary */
+}
+
+/* Gold in light mode is tuned to 5.2:1 on white (see --color-gold), which
+   leaves no room for alpha or for its own tint: text-gold/80 lands on
+   3.52 against white, and solid text-gold on a gold/8 wash measures 4.37
+   (the active filter chip, the accent badge) and 4.24 on the
+   navy-secondary hover surface. Alpha golds go solid, and gold on a gold
+   or navy-secondary fill — the element's own or an ancestor's — uses
+   gold-bright, which in light mode is the darker, more emphatic step
+   (#7A5906): 5.5:1 on the wash, 5.2:1 on navy-secondary. Dark mode is
+   untouched; each of these clears AA there. */
+:root[data-theme='light'] .text-gold\/60,
+:root[data-theme='light'] .text-gold\/70,
+:root[data-theme='light'] .text-gold\/80,
+:root[data-theme='light'] .text-gold\/90 {
+  color: rgb(var(--color-gold));
+}
+:root[data-theme='light'] .text-gold.bg-gold\/10,
+:root[data-theme='light'] .text-gold.bg-gold\/15,
+:root[data-theme='light'] .text-gold.bg-gold\/20,
+:root[data-theme='light'] .text-gold.bg-gold\/30,
+:root[data-theme='light'] .text-gold.bg-navy-secondary,
+:root[data-theme='light'] .bg-gold\/10 .text-gold,
+:root[data-theme='light'] .bg-gold\/15 .text-gold,
+:root[data-theme='light'] .bg-gold\/20 .text-gold,
+:root[data-theme='light'] .bg-gold\/30 .text-gold,
+:root[data-theme='light'] .bg-navy-secondary .text-gold {
+  color: rgb(var(--color-gold-bright));
 }
 
 /* The same floor was never written for DARK mode, where /30 (2.14:1),

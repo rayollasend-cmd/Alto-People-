@@ -626,28 +626,35 @@ function GridCore<T>({
                 );
                 return (
                   <li key={key} id={rowId?.(row)}>
-                    {clickable ? (
-                      <button
-                        type="button"
-                        onClick={() => onRowClick!(row)}
-                        aria-label={rowActionLabel?.(row)}
-                        className={cn(
-                          'w-full rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3 text-left transition-colors hover:border-gold/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                          selected.has(key) && 'border-gold/50',
-                        )}
-                      >
-                        {Body}
-                      </button>
-                    ) : (
+                    <div
+                      className={cn(
+                        'relative rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3',
+                        selected.has(key) && 'border-gold/50',
+                      )}
+                    >
+                      {/* The open-row control is laid over the card, not
+                          wrapped around it: a button that contained the
+                          manager link or the row checkbox was a control
+                          nested in a control. Plain text lets a tap fall
+                          through to the overlay; anything interactive in
+                          the card keeps its own hit area above it. */}
                       <div
                         className={cn(
-                          'rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3',
-                          selected.has(key) && 'border-gold/50',
+                          clickable &&
+                            'relative z-10 pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_select]:pointer-events-auto [&_textarea]:pointer-events-auto [&_label]:pointer-events-auto',
                         )}
                       >
                         {Body}
                       </div>
-                    )}
+                      {clickable && (
+                        <button
+                          type="button"
+                          onClick={() => onRowClick!(row)}
+                          aria-label={rowActionLabel?.(row) ?? `Open ${primary.accessor(row) ?? 'row'}`}
+                          className="absolute -inset-px rounded-lg transition-shadow hover:ring-1 hover:ring-inset hover:ring-gold/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                        />
+                      )}
+                    </div>
                     {actionCols.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1">
                         {actionCols.map((c) => (

@@ -21,6 +21,12 @@ interface TabsContextValue {
   value: string;
   onValueChange: (value: string) => void;
   baseId: string;
+  /** Values whose panel is mounted right now. A trigger only claims
+   *  `aria-controls` for a panel that exists: strips that switch a view
+   *  without a TabsContent (the live board, a status filter) pointed the
+   *  selected tab at an id that was never in the document. */
+  panels: ReadonlySet<string>;
+  registerPanel: (value: string) => () => void;
 }
 
 const TabsContext = React.createContext<TabsContextValue | null>(null);
@@ -42,9 +48,21 @@ interface TabsProps {
 
 export function Tabs({ value, onValueChange, className, children }: TabsProps) {
   const baseId = React.useId();
+  const [panels, setPanels] = React.useState<ReadonlySet<string>>(() => new Set());
+  const registerPanel = React.useCallback((panel: string) => {
+    setPanels((prev) => (prev.has(panel) ? prev : new Set(prev).add(panel)));
+    return () => {
+      setPanels((prev) => {
+        if (!prev.has(panel)) return prev;
+        const next = new Set(prev);
+        next.delete(panel);
+        return next;
+      });
+    };
+  }, []);
   const ctx = React.useMemo(
-    () => ({ value, onValueChange, baseId }),
-    [value, onValueChange, baseId],
+    () => ({ value, onValueChange, baseId, panels, registerPanel }),
+    [value, onValueChange, baseId, panels, registerPanel],
   );
   return (
     <TabsContext.Provider value={ctx}>
@@ -151,7 +169,7 @@ interface TabsTriggerProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonEle
 
 export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
   ({ value, className, children, disabled, ...props }, ref) => {
-    const { value: active, onValueChange, baseId } = useTabsContext('TabsTrigger');
+    const { value: active, onValueChange, baseId, panels } = useTabsContext('TabsTrigger');
     const selected = value === active;
     return (
       <button
@@ -160,7 +178,7 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
         role="tab"
         id={`${baseId}-trigger-${value}`}
         aria-selected={selected}
-        aria-controls={`${baseId}-content-${value}`}
+        aria-controls={panels.has(value) ? `${baseId}-content-${value}` : undefined}
         tabIndex={selected ? 0 : -1}
         disabled={disabled}
         onClick={() => onValueChange(value)}
@@ -190,8 +208,12 @@ interface TabsContentProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
   ({ value, className, children, ...props }, ref) => {
-    const { value: active, baseId } = useTabsContext('TabsContent');
+    const { value: active, baseId, registerPanel } = useTabsContext('TabsContent');
     const selected = value === active;
+    React.useLayoutEffect(
+      () => (selected ? registerPanel(value) : undefined),
+      [selected, value, registerPanel],
+    );
     if (!selected) return null;
     return (
       <div
