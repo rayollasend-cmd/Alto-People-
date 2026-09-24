@@ -134,7 +134,9 @@ jobs:
       - run: npm -w apps/web exec playwright install --with-deps chromium
       - name: Start API + web dev servers
         run: |
-          npm -w apps/api run dev > api.log 2>&1 &
+          # Every spec signs in from this one address; the per-IP login
+          # limiter (20/min) is a production guard, not a test subject.
+          LOGIN_IP_LIMIT=500 npm -w apps/api run dev > api.log 2>&1 &
           npm -w apps/web run dev > web.log 2>&1 &
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:3001/health > /dev/null 2>&1 && break

@@ -4,7 +4,10 @@ import type { Request } from 'express';
 // In test runs the entire suite shares 127.0.0.1, which would trip the
 // IP limiter across unrelated tests. The per-email limiter still enforces
 // brute-force defense and is exercised explicitly by auth.test.ts.
-const IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 20;
+// LOGIN_IP_LIMIT exists for the E2E stack, where every persona in every
+// spec signs in from the one runner address; production never sets it.
+const IP_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : Number(process.env.LOGIN_IP_LIMIT) || 20;
 
 // Brute-force defense matters in prod and is exercised in tests; in
 // development it just gets in the way when iterating on the login flow.
