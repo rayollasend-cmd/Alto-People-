@@ -3,6 +3,14 @@ import type { Prisma } from '@prisma/client';
 import { hasCapability, type Capability, type Role, type SearchGroup, type SearchHit, type SearchKind } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import {
+  scopeApplications,
+  scopeAssociates,
+  scopeClients,
+  scopeDocuments,
+  scopeShifts,
+} from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 
 export const searchRouter = Router();
 
@@ -13,8 +21,11 @@ export const searchRouter = Router();
  * pallet-of-dairy handover, "the Destin statement", a filename someone
  * uploaded last week — each lived behind a different list with its own
  * search box. This answers all of them at once, grouped by kind, each
- * group gated by the same capability that gates its page, so a hit can
- * never reveal a record the person could not open.
+ * group gated by the same capability that gates its page AND narrowed by
+ * the same scope rule as its list, so a hit can never reveal a record the
+ * person could not open. The capability alone is not enough: an associate
+ * holds view:scheduling for their own schedule, not the org's, and a
+ * store account holds view:documents for its own people.
  *
  * Every group is a bounded, indexed-prefix-friendly query with its own
  * limit; the groups run in parallel and the response is the union. It is
@@ -30,15 +41,15 @@ const SHIFT_LOOKBACK_DAYS = 7;
 const ci = (q: string): Prisma.StringFilter => ({ contains: q, mode: 'insensitive' });
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
-type Finder = (q: string, limit: number) => Promise<SearchHit[]>;
+type Finder = (q: string, limit: number, user: SessionUser) => Promise<SearchHit[]>;
 
 const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'people',
     cap: 'view:org',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.associate.findMany({
-        where: { deletedAt: null, OR: [{ firstName: ci(q) }, { lastName: ci(q) }, { email: ci(q) }] },
+        where: { AND: [scopeAssociates(user), { deletedAt: null, OR: [{ firstName: ci(q) }, { lastName: ci(q) }, { email: ci(q) }] }] },
         select: { id: true, firstName: true, lastName: true, email: true },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
         take: limit,
@@ -49,9 +60,9 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'clients',
     cap: 'view:clients',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.client.findMany({
-        where: { deletedAt: null, name: ci(q) },
+        where: { ...scopeClients(user), name: ci(q) },
         select: { id: true, name: true, status: true },
         orderBy: { name: 'asc' },
         take: limit,
@@ -62,9 +73,9 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'locations',
     cap: 'view:clients',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.location.findMany({
-        where: { deletedAt: null, name: ci(q), client: { deletedAt: null } },
+        where: { deletedAt: null, name: ci(q), client: { is: scopeClients(user) } },
         select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
         orderBy: { name: 'asc' },
         take: limit,
@@ -75,15 +86,19 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'applications',
     cap: 'view:onboarding',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.application.findMany({
         where: {
-          deletedAt: null,
-          OR: [
-            { position: ci(q) },
-            { associate: { firstName: ci(q) } },
-            { associate: { lastName: ci(q) } },
-            { associate: { email: ci(q) } },
+          AND: [
+            scopeApplications(user),
+            {
+              OR: [
+                { position: ci(q) },
+                { associate: { firstName: ci(q) } },
+                { associate: { lastName: ci(q) } },
+                { associate: { email: ci(q) } },
+              ],
+            },
           ],
         },
         select: {
@@ -107,10 +122,15 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'shifts',
     cap: 'view:scheduling',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const since = new Date(Date.now() - SHIFT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
       const rows = await prisma.shift.findMany({
-        where: { startsAt: { gte: since }, OR: [{ position: ci(q) }, { client: { name: ci(q) } }, { assignedAssociate: { lastName: ci(q) } }] },
+        where: {
+          AND: [
+            scopeShifts(user),
+            { startsAt: { gte: since }, OR: [{ position: ci(q) }, { client: { name: ci(q) } }, { assignedAssociate: { lastName: ci(q) } }] },
+          ],
+        },
         select: { id: true, position: true, startsAt: true, status: true, clientId: true, client: { select: { name: true } } },
         orderBy: { startsAt: 'asc' },
         take: limit,
@@ -126,9 +146,14 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'documents',
     cap: 'view:documents',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.documentRecord.findMany({
-        where: { OR: [{ filename: ci(q) }, { associate: { lastName: ci(q) } }, { associate: { firstName: ci(q) } }] },
+        where: {
+          AND: [
+            scopeDocuments(user),
+            { OR: [{ filename: ci(q) }, { associate: { lastName: ci(q) } }, { associate: { firstName: ci(q) } }] },
+          ],
+        },
         select: { id: true, filename: true, kind: true, status: true, associateId: true, associate: { select: { firstName: true, lastName: true } } },
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -144,9 +169,9 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
   {
     kind: 'statements',
     cap: 'view:clients',
-    find: async (q, limit) => {
+    find: async (q, limit, user) => {
       const rows = await prisma.clientStatement.findMany({
-        where: { client: { name: ci(q), deletedAt: null } },
+        where: { client: { is: { ...scopeClients(user), name: ci(q) } } },
         select: { id: true, periodStart: true, periodEnd: true, status: true, number: true, client: { select: { name: true } } },
         orderBy: { periodStart: 'desc' },
         take: limit,
@@ -183,9 +208,15 @@ searchRouter.get('/', requireAuth, async (req, res, next) => {
       return;
     }
     const limit = Math.min(Math.max(Number(req.query.limit) || 5, 1), MAX_LIMIT);
-    const role = req.user!.role as Role;
-    const allowed = FINDERS.filter((f) => f.cap === null || hasCapability(role, f.cap));
-    const results = await Promise.all(allowed.map((f) => f.find(q, limit)));
+    const user = req.user!;
+    const role = user.role as Role;
+    // An associate with no associate record has nothing of their own to
+    // find; the scope helpers fall open for that case, so close it here.
+    const recordsClosed = role === 'ASSOCIATE' && !user.associateId;
+    const allowed = FINDERS.filter(
+      (f) => f.cap === null || (!recordsClosed && hasCapability(role, f.cap)),
+    );
+    const results = await Promise.all(allowed.map((f) => f.find(q, limit, user)));
     const groups: SearchGroup[] = allowed
       .map((f, i) => ({ kind: f.kind, hits: results[i]! }))
       .filter((g) => g.hits.length > 0);

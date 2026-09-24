@@ -93,6 +93,34 @@ describe('GET /search', () => {
     expect(kinds(res.body)).toEqual(['help']);
   });
 
+  it('narrows a signed-in associate to their own records', async () => {
+    const seed = await seedDestin();
+    const dee = await loginAs((await createUser({ role: 'ASSOCIATE', associateId: seed.associate.id })).user.email);
+    const res = await dee.get('/search?q=destin');
+    expect(res.status).toBe(200);
+    // Their own application and file; the shift is unassigned, and the
+    // roster, clients and statements are not theirs to search.
+    expect(kinds(res.body)).toEqual(['applications', 'documents', 'help']);
+    // Someone else's application stays out of reach even when it matches.
+    const other = await createAssociate({ firstName: 'Destiny', lastName: 'Other', email: 'destiny@example.com' });
+    await prisma.application.create({
+      data: { associateId: other.id, clientId: seed.client.id, onboardingTrack: 'STANDARD', status: 'SUBMITTED', position: 'Destin Cashier' },
+    });
+    const again = await dee.get('/search?q=destin');
+    expect(again.body.groups.find((g: { kind: string }) => g.kind === 'applications').hits).toHaveLength(1);
+  });
+
+  it('clamps a client-bound account to its own client', async () => {
+    await seedDestin();
+    const other = await createClient('Other Grocery');
+    // A store account and a shift supervisor at another client hold the
+    // scheduling and onboarding capabilities, but Destin is not theirs.
+    const portal = await loginAs((await createUser({ role: 'CLIENT_PORTAL', clientId: other.id })).user.email);
+    expect(kinds((await portal.get('/search?q=destin')).body)).toEqual(['help']);
+    const supervisor = await loginAs((await createUser({ role: 'SHIFT_SUPERVISOR', clientId: other.id })).user.email);
+    expect(kinds((await supervisor.get('/search?q=destin')).body)).toEqual(['help']);
+  });
+
   it('needs two characters, a session, and drops empty groups', async () => {
     await seedDestin();
     expect((await request(createApp()).get('/search?q=destin')).status).toBe(401);
