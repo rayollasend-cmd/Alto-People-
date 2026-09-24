@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box } from 'lucide-react';
 import { toast } from 'sonner';
@@ -75,8 +76,6 @@ export function AssetsHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [rows, setRows] = useState<Asset[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editTarget, setEditTarget] = useState<Asset | null>(null);
   const [assignTarget, setAssignTarget] = useState<Asset | null>(null);
@@ -98,16 +97,13 @@ export function AssetsHome() {
     }
   };
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listAssets()
-      .then((r) => setRows(r.assets))
-      .catch(() => setLoadError('Failed to load assets.'));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['assets'],
+    queryFn: () => listAssets(),
+  });
+  const rows = refreshQuery.data?.assets ?? null;
+  const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load assets.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const q = search.trim().toLowerCase();
   const visible = (rows ?? []).filter(

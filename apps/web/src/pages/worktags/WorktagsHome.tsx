@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Tags } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -79,24 +80,15 @@ export function WorktagsHome() {
 }
 
 function CategoriesTab({ canManage }: { canManage: boolean }) {
-  const [rows, setRows] = useState<WorktagCategory[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listCategories()
-      .then((r) => setRows(r.categories))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load categories.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => listCategories(),
+  });
+  const rows = refreshQuery.data?.categories ?? null;
+  const error = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load categories.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   return (
     <div className="space-y-4">

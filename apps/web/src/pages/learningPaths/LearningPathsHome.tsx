@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -73,8 +74,6 @@ const PATH_ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } 
 export function LearningPathsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
-  const [rows, setRows] = useState<LearningPathSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<LearningPathStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
@@ -82,18 +81,13 @@ export function LearningPathsHome() {
   const [deleteTarget, setDeleteTarget] = useState<LearningPathSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listLearningPaths()
-      .then((r) => setRows(r.paths))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load learning paths.'),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['learningPaths'],
+    queryFn: () => listLearningPaths(),
+  });
+  const rows = refreshQuery.data?.paths ?? null;
+  const error = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load learning paths.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const q = search.trim().toLowerCase();
   const filtered = (rows ?? []).filter(

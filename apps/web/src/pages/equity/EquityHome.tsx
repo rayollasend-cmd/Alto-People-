@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Coins, Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -783,24 +784,15 @@ function AdminDetailDrawer({
   onSaved: () => void;
 }) {
   const confirm = useConfirm();
-  const [grant, setGrant] = useState<EquityGrantDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = () => {
-    setGrant(null);
-    setLoadError(null);
-    getEquityGrant(id)
-      .then((r) => setGrant(r.grant))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Could not load this grant.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load();
-  }, [id]);
+  const loadQuery = useQuery({
+    queryKey: ['equityGrant', id],
+    queryFn: () => getEquityGrant(id),
+  });
+  const grant = loadQuery.data?.grant ?? null;
+  const loadError = loadQuery.error ? (loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load this grant.') : null;
+  const load = () => void loadQuery.refetch();
 
   const act = async (
     fn: () => Promise<{ ok: true }>,

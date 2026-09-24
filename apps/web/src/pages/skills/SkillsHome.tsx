@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Search, Sparkles, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -275,8 +276,6 @@ function SearchTab({ canManage }: { canManage: boolean }) {
 
 function CatalogTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<SkillCatalogEntry[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -293,20 +292,13 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
     }
   };
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listSkills()
-      .then((r) => setRows(r.skills))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load the skill catalog.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['skills'],
+    queryFn: () => listSkills(),
+  });
+  const rows = refreshQuery.data?.skills ?? null;
+  const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load the skill catalog.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const categories = useMemo(() => (rows ? distinctCategories(rows) : []), [rows]);
 

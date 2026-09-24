@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, type RenderResult } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { axe } from 'vitest-axe';
 import { ROLE_CAPABILITIES } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
@@ -264,11 +265,16 @@ const ADMIN_AUTH = {
 };
 
 function renderPage(ui: React.ReactElement): RenderResult {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <AuthContext.Provider value={ADMIN_AUTH}>
-      <ConfirmProvider>
-        <MemoryRouter>{ui}</MemoryRouter>
-      </ConfirmProvider>
+      <QueryClientProvider client={queryClient}>
+        <ConfirmProvider>
+          <MemoryRouter>{ui}</MemoryRouter>
+        </ConfirmProvider>
+      </QueryClientProvider>
     </AuthContext.Provider>,
   );
 }

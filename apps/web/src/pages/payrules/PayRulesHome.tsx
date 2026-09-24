@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -32,7 +33,6 @@ import {
   type PremiumPayKind,
   type PremiumPayRule,
   type Project,
-  type TipAllocation,
   type TipPool,
 } from '@/lib/payRulesApi';
 import {
@@ -847,8 +847,6 @@ function TipPoolDrawer({
   onChanged: () => void;
 }) {
   const confirm = useConfirm();
-  const [allocations, setAllocations] = useState<TipAllocation[] | null>(null);
-  const [allocError, setAllocError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // datetime-local wall-clock values; converted to UTC ISO on submit.
   const [from, setFrom] = useState(`${pool.shiftDate}T00:00`);
@@ -856,16 +854,13 @@ function TipPoolDrawer({
   const [manualAssociate, setManualAssociate] = useState<PickedAssociate | null>(null);
   const [manualAmount, setManualAmount] = useState('');
 
-  const refresh = () => {
-    setAllocations(null);
-    setAllocError(null);
-    listAllocations(pool.id)
-      .then((r) => setAllocations(r.allocations))
-      .catch(() => setAllocError('Failed to load allocations.'));
-  };
-  useEffect(() => {
-    refresh();
-  }, [pool.id]);
+  const refreshQuery = useQuery({
+    queryKey: ['allocations', pool.id],
+    queryFn: () => listAllocations(pool.id),
+  });
+  const allocations = refreshQuery.data?.allocations ?? null;
+  const allocError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load allocations.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const headcount = allocations?.length ?? 0;
   const allocatedTotal = (allocations ?? []).reduce(

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Check, Copy, Download, FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -65,8 +66,6 @@ const ASSOCIATE_TOKEN_PATHS = [
 
 export function TemplatesHome() {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<DocumentTemplate[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
   // One in-flight action at a time — a double-click on Delete used to
@@ -82,20 +81,13 @@ export function TemplatesHome() {
     }
   };
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listTemplates()
-      .then((r) => setRows(r.templates))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Could not load templates.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => listTemplates(),
+  });
+  const rows = refreshQuery.data?.templates ?? null;
+  const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load templates.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this template?', destructive: true }))) return;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Download, GraduationCap, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -65,8 +66,6 @@ interface PairingPrefill {
 export function MentorshipHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [rows, setRows] = useState<Mentorship[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);
   const [prefill, setPrefill] = useState<PairingPrefill | null>(null);
@@ -87,20 +86,13 @@ export function MentorshipHome() {
     }
   };
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listMentorships()
-      .then((r) => setRows(r.mentorships))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load mentorships.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const refreshQuery = useQuery({
+    queryKey: ['mentorships'],
+    queryFn: () => listMentorships(),
+  });
+  const rows = refreshQuery.data?.mentorships ?? null;
+  const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load mentorships.') : null;
+  const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!rows) return null;
