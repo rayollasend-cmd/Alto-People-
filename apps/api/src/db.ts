@@ -3,7 +3,6 @@ import { PrismaClient } from '@prisma/client';
 // Singleton across `tsx watch` reloads — without this, dev mode opens a new
 // Prisma connection pool on every file change and exhausts Postgres slots.
 declare global {
-  // eslint-disable-next-line no-var
   var __altoPrisma__: PrismaClient | undefined;
 }
 

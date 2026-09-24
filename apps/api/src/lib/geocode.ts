@@ -367,7 +367,7 @@ export async function geocode(address: string | null | undefined): Promise<GeoPo
   if (cached && !cached.found && Date.now() - cached.createdAt.getTime() < MISS_RETRY_MS) return null;
   const p = provider();
   if (!p.lookup) return null;
-  let point: GeoPoint | null = null;
+  let point: GeoPoint | null;
   try {
     point = await p.lookup(address);
   } catch (err) {

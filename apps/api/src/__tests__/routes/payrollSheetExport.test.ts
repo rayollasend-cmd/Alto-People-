@@ -14,7 +14,7 @@ import {
 
 // supertest doesn't auto-buffer the xlsx content-type into a Buffer; collect
 // the raw bytes so we can re-open the workbook and assert cell values.
-function binaryParser(res: Test, cb: (err: Error | null, body: Buffer) => void) {
+function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffer) => void) {
   const chunks: Buffer[] = [];
   (res as unknown as NodeJS.EventEmitter).on('data', (c: Buffer) =>
     chunks.push(Buffer.from(c)),

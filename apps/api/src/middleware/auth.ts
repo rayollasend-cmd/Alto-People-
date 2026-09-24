@@ -212,8 +212,8 @@ export async function attachUser(
       associate: _a,
       associateId: _aid,
       mfaEnabledAt,
-      additionalRoles,
-      activeRole,
+      additionalRoles: _additionalRoles,
+      activeRole: _activeRole,
       ...rest
     } = user;
     const sessionUser: SessionUser = {
@@ -276,6 +276,7 @@ function isSafeNextPath(path: string): boolean {
   if (path[1] === '/' || path[1] === '\\') return false;
   // Reject control chars and whitespace anywhere in the path — they can
   // smuggle a CR/LF into the Location header or trick parsers.
+  // eslint-disable-next-line no-control-regex -- rejects control characters on purpose
   if (/[\x00-\x1f\s]/.test(path)) return false;
   return true;
 }
@@ -373,7 +374,13 @@ export async function allowMfaEnrollToken(
       return next();
     }
 
-    const { associate, mfaEnabledAt, additionalRoles, activeRole, ...rest } = user;
+    const {
+      associate,
+      mfaEnabledAt,
+      additionalRoles: _additionalRoles,
+      activeRole: _activeRole,
+      ...rest
+    } = user;
     req.user = {
       ...rest,
       role: effectiveRoleOf(user),

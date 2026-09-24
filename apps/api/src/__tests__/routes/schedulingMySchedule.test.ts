@@ -327,7 +327,7 @@ describe('swap candidates: client scoping + PTO', () => {
     const client = await createClient();
     const otherClient = await createClient();
     const { associate: me, user } = await mkPlaced(client.id, 'Maria', 'Lopez');
-    const { associate: free } = await mkPlaced(client.id, 'Fay', 'Free');
+    await mkPlaced(client.id, 'Fay', 'Free');
     const { associate: onPto } = await mkPlaced(client.id, 'Pat', 'Pto');
     const { associate: dayOff } = await mkPlaced(client.id, 'Dan', 'Dayoff');
     await mkPlaced(otherClient.id, 'Sam', 'Elsewhere');
@@ -743,7 +743,7 @@ describe('overtime chip on admin review lists', () => {
   it('flags a pickup that would push the claimant past 40h that week', async () => {
     const client = await createClient();
     const { associate: busy, user: busyUser } = await mkPlaced(client.id, 'Bea', 'Busy');
-    const { associate: light, user: lightUser } = await mkPlaced(client.id, 'Lia', 'Light');
+    const { user: lightUser } = await mkPlaced(client.id, 'Lia', 'Light');
 
     // Anchor everything inside next org week (Sat→Fri, per startOfWeekUTC)
     // so the 40h math can't straddle a week boundary regardless of when

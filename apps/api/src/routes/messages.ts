@@ -503,7 +503,7 @@ messagesRouter.get('/conversations/:id/transcript.csv', requireAuth, async (req,
       'Content-Disposition',
       `attachment; filename="messages-${title.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv"`,
     );
-    res.send(`﻿${lines.join('\r\n')}`);
+    res.send(`\uFEFF${lines.join('\r\n')}`);
   } catch (err) {
     next(err);
   }

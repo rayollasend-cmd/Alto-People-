@@ -44,7 +44,7 @@ export interface Form1099MiscBoxes {
    * (checkbox, not dollars). MVP: always false; we don't track this
    * category. Listed for spec completeness.
    */
-  box7DirectSales: false;
+  box7DirectSales: boolean;
   /** Box 8 — Substitute payments in lieu of dividends/interest. */
   box8SubstitutePayments: number;
   /** Box 9 — Crop insurance proceeds. */

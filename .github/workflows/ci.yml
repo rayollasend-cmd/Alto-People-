@@ -42,6 +42,13 @@ jobs:
       # debt (the warning count is the burndown metric) but any ERROR —
       # including parse failures — fails the job.
       - run: npm -w apps/web run lint
+      # Correctness lint for the API and the shared package (typescript-eslint
+      # recommended + ESLint recommended). Held at zero findings.
+      - run: npm -w apps/api run lint
+      - run: npm -w packages/shared run lint
+      # The API test suite typechecks too (vitest alone would not notice a
+      # fixture drifting from the types it fakes).
+      - run: npm -w apps/api run typecheck:test
       - run: npm -w apps/web run test
 
   api-tests:

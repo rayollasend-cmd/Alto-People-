@@ -90,7 +90,7 @@ async function resolveScope(
   opts: { floorLead?: boolean } = {},
 ): Promise<PortalScope> {
   let clientId: string;
-  let locationId: string | null = null;
+  let locationId: string | null;
   if (user.role === 'CLIENT_PORTAL' && !user.clientId && user.regionId) {
     // A REGION account (the command center) opens any store in its region
     // by naming it — validated below to belong to the region, never wider.

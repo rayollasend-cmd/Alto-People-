@@ -8,7 +8,6 @@
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { Prisma } from '@prisma/client';
 import { createApp } from '../../app.js';
 import { encryptString } from '../../lib/crypto.js';
 import {

@@ -130,7 +130,7 @@ describe('an associate’s timesheet history', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
     expect(res.headers['content-disposition']).toContain('timesheet-history-lee-ann.csv');
-    const lines = res.text.replace(/^﻿/, '').split('\r\n');
+    const lines = res.text.replace(/^\uFEFF/, '').split('\r\n');
     expect(lines[0]).toContain('Pay period,Pay date,Week ending');
     expect(lines[0]).toContain('Week amount');
     expect(lines).toHaveLength(4); // header + the three approved days

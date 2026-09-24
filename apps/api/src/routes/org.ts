@@ -1036,7 +1036,7 @@ orgRouter.get(
       res.json({ hasPayoutMethod: false });
       return;
     }
-    let routingMasked: string | null = null;
+    let routingMasked: string | null;
     let accountLast4: string | null = null;
     try {
       // maskRoutingNumber, not toString('utf8'): the column holds plaintext
@@ -1088,7 +1088,7 @@ orgRouter.post(
       );
     }
 
-    let routingNumber: string | null = null;
+    let routingNumber: string | null;
     let accountNumber: string | null = null;
     try {
       routingNumber = readRoutingNumber(payout.routingNumberEnc) || null;

@@ -69,7 +69,8 @@ async function mkHired(clientId: string, firstName: string, lastName: string) {
   return { associate, user };
 }
 
-const zipParse = (r: request.Response & NodeJS.ReadableStream, cb: (err: Error | null, body: Buffer) => void) => {
+const zipParse = (res: request.Response, cb: (err: Error | null, body: Buffer) => void) => {
+  const r = res as unknown as NodeJS.ReadableStream;
   const chunks: Buffer[] = [];
   r.on('data', (c: Buffer) => chunks.push(c));
   r.on('end', () => cb(null, Buffer.concat(chunks)));

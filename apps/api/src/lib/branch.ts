@@ -120,6 +120,7 @@ export function mapBranchStatus(
     // BranchPaymentStatus is preserved on the BranchWebhookEvent row
     // so finance can distinguish a never-settled FAILED from a
     // settled-then-bounced RETURNED at reconcile time.
+    // falls through
     case 'RETURNED':
       return 'FAILED';
     case 'PROCESSING':
@@ -176,7 +177,7 @@ export async function createPayment(
   } catch (err) {
     clearTimeout(timer);
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`branch_network_error: ${msg}`);
+    throw new Error(`branch_network_error: ${msg}`, { cause: err });
   }
   clearTimeout(timer);
 

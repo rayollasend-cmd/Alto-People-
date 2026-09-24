@@ -1693,7 +1693,6 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
         // Layout change between renders. Surface in logs but still serve
         // the bytes — finance shouldn't be blocked by a font swap or PDF
         // engine update. Hash mismatch is observable via the audit log.
-        // eslint-disable-next-line no-console
         console.warn(
           `[w2] pdfHash mismatch for TaxForm ${form.id}: stored ${form.pdfHash}, current ${hash}`,
         );

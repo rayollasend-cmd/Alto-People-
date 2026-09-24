@@ -288,7 +288,7 @@ export async function verifyIdToken(
     throw new OidcError('bad_jwk');
   }
 
-  let signatureOk = false;
+  let signatureOk: boolean;
   try {
     signatureOk = cryptoVerify(
       'sha256',

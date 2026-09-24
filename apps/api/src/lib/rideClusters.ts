@@ -142,7 +142,7 @@ export function clusterMembers(members: ClusterMember[], radiusM = CLUSTER_RADIU
 export function orderClusters(clusters: RideCluster[], store: GeoPoint | null, direction: 'TO_WORK' | 'FROM_WORK'): RideCluster[] {
   const mapped = clusters.filter((c) => c.point);
   const rest = clusters.filter((c) => !c.point);
-  let route: RideCluster[] = [];
+  let route: RideCluster[];
   if (!store || mapped.length === 0) {
     route = mapped;
   } else if (direction === 'FROM_WORK') {

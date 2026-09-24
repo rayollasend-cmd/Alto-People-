@@ -22,7 +22,7 @@
  */
 
 const DEFAULT_MODELS_URL =
-  'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+  'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 
 type FaceApi = typeof import('face-api.js');
 

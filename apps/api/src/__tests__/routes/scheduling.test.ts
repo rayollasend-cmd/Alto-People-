@@ -594,7 +594,7 @@ describe('GET /scheduling/me/shifts/:id/swap-candidates', () => {
     };
 
     const me = await mkQualified('Maria', 'Lopez');
-    const free = await mkQualified('Fay', 'Free');
+    await mkQualified('Fay', 'Free');
     const busy = await mkQualified('Bob', 'Busy');
     // No user account → not schedulable → must not appear at all.
     await createAssociate({ firstName: 'Nou', lastName: 'Ser' });

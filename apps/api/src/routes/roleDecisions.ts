@@ -585,7 +585,7 @@ roleDecisionsRouter.post('/decisions/quick', requireAuth, async (req: Request, r
     throw new HttpError(404, 'not_found', 'No quick action available for that item.');
   }
 
-  let summary = '';
+  let summary: string;
   if (key.startsWith('walkins:pending')) {
     const clamp = me.clientId ? { clientId: me.clientId } : {};
     const pending = await prisma.clockInRequest.findMany({

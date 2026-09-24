@@ -470,7 +470,7 @@ function renderSummary(doc: PDFKit.PDFDocument, data: PaystubData, top: number):
 
 function renderDistribution(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
   if (!data.payDistribution) return top;
-  let y = tableHeader(doc, ensureRoom(doc, top, 60), 'PAY DISTRIBUTION');
+  const y = tableHeader(doc, ensureRoom(doc, top, 60), 'PAY DISTRIBUTION');
   doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(data.payDistribution.label, COL.label, y, {
     width: 300,
   });

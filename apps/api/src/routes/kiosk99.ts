@@ -2123,7 +2123,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
   // the offline queue dropped it as a permanent 4xx and the server had no
   // trace. Hours someone actually worked vanished without a record for HR
   // to act on.
-  let clientPunchedAt: Date | null = input.clientPunchedAt
+  const clientPunchedAt: Date | null = input.clientPunchedAt
     ? new Date(input.clientPunchedAt)
     : null;
 

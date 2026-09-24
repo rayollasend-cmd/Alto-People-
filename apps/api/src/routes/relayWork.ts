@@ -121,7 +121,20 @@ const requestInclude = {
   _count: { select: { messages: true } },
 } as const;
 
-function requestView(r: any, meId: string, myDesk: Desk | null, withMessages = false) {
+type RequestRow = Prisma.RelayRequestGetPayload<{ include: typeof requestInclude }>;
+type MessageRow = Prisma.RelayMessageGetPayload<{
+  include: {
+    author: { select: typeof personSelect };
+    files: { where: { deletedAt: null }; select: typeof fileSelect };
+  };
+}>;
+
+function requestView(
+  r: RequestRow & { messages?: MessageRow[] },
+  meId: string,
+  myDesk: Desk | null,
+  withMessages = false,
+) {
   return {
     id: r.id,
     kind: r.kind,
@@ -143,7 +156,7 @@ function requestView(r: any, meId: string, myDesk: Desk | null, withMessages = f
     mine: r.toUserId === meId || (!r.toUserId && r.toDesk === myDesk),
     ...(withMessages
       ? {
-          messages: (r.messages ?? []).map((m: any) => ({
+          messages: (r.messages ?? []).map((m) => ({
             id: m.id,
             body: m.body,
             createdAt: m.createdAt.toISOString(),

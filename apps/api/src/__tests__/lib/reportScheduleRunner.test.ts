@@ -79,8 +79,8 @@ describe('buildReportCsv', () => {
       { firstName: 'Rob "Bob"', lastName: 'Smith, Jr.', email: 'rob@example.com' },
       { firstName: '=SUM(A1)', lastName: null, email: 'x@example.com' },
     ]);
-    expect(csv.startsWith('﻿')).toBe(true);
-    const lines = csv.replace(/^﻿/, '').split('\r\n');
+    expect(csv.startsWith('\uFEFF')).toBe(true);
+    const lines = csv.replace(/^\uFEFF/, '').split('\r\n');
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe('firstName,lastName,email');
     // Embedded quotes doubled, comma-bearing cell wrapped.
@@ -94,7 +94,7 @@ describe('buildReportCsv', () => {
     const csv = buildReportCsv('TIME_ENTRY', ['clockIn', 'status'], [
       { clockInAt: clockIn, status: 'APPROVED' },
     ]);
-    const lines = csv.replace(/^﻿/, '').split('\r\n');
+    const lines = csv.replace(/^\uFEFF/, '').split('\r\n');
     expect(lines[0]).toBe('clockIn,status');
     expect(lines[1]).toBe('2026-07-31T09:00:00.000Z,APPROVED');
   });

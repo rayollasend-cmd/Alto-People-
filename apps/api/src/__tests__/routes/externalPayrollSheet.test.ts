@@ -22,7 +22,7 @@ import {
  * and that every generation is recorded.
  */
 
-function binaryParser(res: Test, cb: (err: Error | null, body: Buffer) => void) {
+function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffer) => void) {
   const chunks: Buffer[] = [];
   (res as unknown as NodeJS.EventEmitter).on('data', (c: Buffer) =>
     chunks.push(Buffer.from(c)),

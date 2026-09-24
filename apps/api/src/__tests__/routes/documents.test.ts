@@ -839,7 +839,7 @@ describe('GET /documents/admin — the queue has to be sortable across the whole
   async function seedVault(n: number) {
     const client = await createClient();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const associate = await createAssociate({ clientId: client.id });
+    const associate = await createAssociate();
     const base = Date.now() - n * 60_000;
     for (let i = 0; i < n; i++) {
       await prisma.documentRecord.create({
@@ -919,7 +919,7 @@ describe('GET /documents/admin/stats', () => {
   it('counts the whole vault, not the page', async () => {
     const client = await createClient();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const associate = await createAssociate({ clientId: client.id });
+    const associate = await createAssociate();
     const mk = (status: 'UPLOADED' | 'VERIFIED' | 'REJECTED', i: number, at?: Date) =>
       prisma.documentRecord.create({
         data: {

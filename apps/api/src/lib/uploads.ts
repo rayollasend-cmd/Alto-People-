@@ -10,6 +10,7 @@ export function sanitizeUploadFilename(raw: string | undefined | null): string {
   const name = (raw ?? '').trim();
   if (!name) return 'upload';
   return basename(name)
+    // eslint-disable-next-line no-control-regex -- strips control characters on purpose
     .replace(/[\x00-\x1f\x7f]/g, '')
     .replace(/[\\/]/g, '')
     .slice(0, FILENAME_MAX) || 'upload';

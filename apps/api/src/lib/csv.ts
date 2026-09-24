@@ -34,7 +34,7 @@ export class CsvParseError extends Error {
 
 export function parseCsv(text: string): CsvRecord[] {
   // Strip a UTF-8 BOM — Excel prepends one and it would otherwise glue
-  // itself onto the first header name ("﻿firstName").
+  // itself onto the first header name ("<U+FEFF>firstName").
   let src = text;
   if (src.charCodeAt(0) === 0xfeff) src = src.slice(1);
 

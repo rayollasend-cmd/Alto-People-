@@ -142,7 +142,6 @@ export async function renderGarnishmentLetterPdf(
       }
       if (deductions.length > 30) {
         doc.text(`(+${deductions.length - 30} earlier deductions not shown)`, colDate, y);
-        y += rowH;
       }
       doc.moveDown(2);
       doc.fontSize(10);

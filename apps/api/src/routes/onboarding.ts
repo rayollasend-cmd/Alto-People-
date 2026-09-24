@@ -1747,7 +1747,7 @@ onboardingRouter.get(
               // We slice the last 4 chars of the *plaintext* and discard
               // the rest before handing to the renderer — full numbers
               // never reach the PDF process state past this expression.
-              let routingMasked: string | null = null;
+              let routingMasked: string | null;
               let accountLast4: string | null = null;
               try {
                 // This used to call decryptString on the routing number,

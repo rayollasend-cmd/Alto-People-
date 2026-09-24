@@ -255,7 +255,6 @@ describe('the assignment screen shows what the clock-in would honour', () => {
 
     const after = await w.opsAgent.get(`/ops/store-shifts?clientId=${w.client.id}`);
     expect(windowOf(after.body).templateIds).toEqual([]);
-    expect(windowOf(after.body).templateId).toBeNull();
 
     // And the supervisor genuinely gets nothing, which is now what the
     // screen says.

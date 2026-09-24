@@ -24,7 +24,7 @@ const OUT_DIR = resolve(__dirname, '../public/face-models');
 // node_modules. jsDelivr serves the package's weights directory; the
 // raw GitHub URL would also work but jsDelivr's cache-on-CDN gives
 // faster, more reliable build-time fetches.
-const BASE_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+const BASE_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 
 // face-api.js splits each model into a JSON manifest + one or more
 // binary shards. We need all of them for the three nets the kiosk
