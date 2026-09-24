@@ -41,7 +41,7 @@ import {
 } from '@simplewebauthn/server';
 import type {
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import {
@@ -2357,7 +2357,7 @@ authRouter.post('/webauthn/register/options', requireAuth, async (req, res, next
       attestationType: 'none',
       excludeCredentials: existing.map((c) => ({
         id: c.credentialId,
-        transports: c.transports as AuthenticatorTransportFuture[],
+        transports: c.transports as AuthenticatorTransport[],
       })),
       authenticatorSelection: {
         residentKey: 'preferred',
@@ -2516,7 +2516,7 @@ authRouter.post('/webauthn/login/options', loginIpLimiter, async (req, res, next
       userVerification: 'required',
       allowCredentials: creds.map((c) => ({
         id: c.credentialId,
-        transports: c.transports as AuthenticatorTransportFuture[],
+        transports: c.transports as AuthenticatorTransport[],
       })),
     });
     const challengeId = await mintWebauthnChallenge(
@@ -2576,7 +2576,7 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
         id: cred.credentialId,
         publicKey: new Uint8Array(cred.publicKey),
         counter: Number(cred.counter),
-        transports: cred.transports as AuthenticatorTransportFuture[],
+        transports: cred.transports as AuthenticatorTransport[],
       },
       requireUserVerification: true,
     });
