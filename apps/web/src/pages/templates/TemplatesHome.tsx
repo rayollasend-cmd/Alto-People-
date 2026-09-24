@@ -271,8 +271,6 @@ function TemplateDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [versions, setVersions] = useState<DocumentTemplateVersion[] | null>(null);
-  const [versionsError, setVersionsError] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [renderResult, setRenderResult] = useState<{
@@ -330,26 +328,22 @@ function TemplateDrawer({
     });
   };
 
-  const refresh = () => {
-    setVersionsError(null);
-    listVersions(template.id)
-      .then((r) => {
-        setVersions(r.versions);
-        const latest = r.versions[0];
-        if (latest) {
-          setSubject(latest.subject ?? '');
-          setBody(latest.body);
-        }
-      })
-      .catch((err) =>
-        setVersionsError(
-          err instanceof ApiError ? err.message : 'Could not load versions.',
-        ),
-      );
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['TemplateDrawer', 'versions', template.id],
+    queryFn: () => listVersions(template.id),
+  });
+  const versions: DocumentTemplateVersion[] | null = refreshQuery.data?.versions ?? null;
+  const versionsError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load versions.' : null;
   useEffect(() => {
-    refresh();
-  }, [template.id]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    const latest = r.versions[0];
+    if (latest) {
+      setSubject(latest.subject ?? '');
+      setBody(latest.body);
+    }
+  }, [refreshQuery.data]);
+  const refresh = () => void refreshQuery.refetch();
 
   const onSave = async () => {
     if (!body.trim()) {

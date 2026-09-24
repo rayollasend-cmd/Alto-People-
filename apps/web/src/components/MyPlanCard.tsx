@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, Check, CheckCircle2, Link2, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -105,7 +106,6 @@ function CheckCircle({
 
 export function MyPlanCard() {
   const [items, setItems] = useState<PlanItem[] | null>(null);
-  const [failed, setFailed] = useState(false);
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
@@ -114,14 +114,17 @@ export function MyPlanCard() {
   const tomorrowKey = days[1].key;
   const [selectedDay, setSelectedDay] = useState(todayKey);
 
-  const load = useCallback(() => {
-    setFailed(false);
-    apiFetch<{ items: PlanItem[] }>(`/me/plan?from=${todayKey}&to=${days[6].key}`)
-      .then((r) => setItems(r.items))
-      .catch(() => setFailed(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(load, [load]);
+  const loadQuery = useQuery({
+    queryKey: ['MyPlanCard', 'items'],
+    queryFn: () => apiFetch<{ items: PlanItem[] }>(`/me/plan?from=${todayKey}&to=${days[6].key}`),
+  });
+  const failed = loadQuery.isError;
+  useEffect(() => {
+    const r = loadQuery.data;
+    if (r === undefined) return;
+    setItems(r.items)
+  }, [loadQuery.data]);
+  const load = () => void loadQuery.refetch();
   useEffect(() => {
     const onChanged = () => load();
     window.addEventListener(PLAN_CHANGED_EVENT, onChanged);

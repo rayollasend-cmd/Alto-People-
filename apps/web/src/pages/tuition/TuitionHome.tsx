@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { GraduationCap, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -87,10 +88,6 @@ export function TuitionHome() {
     : false;
   const confirm = useConfirm();
   const [tab, setTab] = useState<'mine' | 'queue'>('mine');
-  const [mine, setMine] = useState<MyTuitionRequest[] | null>(null);
-  const [mineError, setMineError] = useState<string | null>(null);
-  const [queue, setQueue] = useState<QueueTuitionRequest[] | null>(null);
-  const [queueError, setQueueError] = useState<string | null>(null);
   const [summary, setSummary] = useState<TuitionSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<TuitionStatus | 'ALL'>(
@@ -103,30 +100,24 @@ export function TuitionHome() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [openMine, setOpenMine] = useState<MyTuitionRequest | null>(null);
 
-  const refresh = () => {
-    if (tab === 'mine') {
-      setMine(null);
-      setMineError(null);
-      listMyTuition()
-        .then((r) => setMine(r.requests))
-        .catch((err) =>
-          setMineError(
-            err instanceof ApiError ? err.message : 'Could not load your requests.',
-          ),
-        );
-    } else {
-      setQueue(null);
-      setQueueError(null);
-      setSelected(new Set());
-      listTuitionQueue(statusFilter === 'ALL' ? undefined : statusFilter)
-        .then((r) => setQueue(r.requests))
-        .catch((err) =>
-          setQueueError(
-            err instanceof ApiError ? err.message : 'Could not load the queue.',
-          ),
-        );
-    }
-  };
+  const refreshAQuery = useQuery({
+    queryKey: ['TuitionHome', 'mine', tab, statusFilter],
+    queryFn: () => listMyTuition(),
+    enabled: (tab === 'mine'),
+  });
+  const mine: MyTuitionRequest[] | null = refreshAQuery.data?.requests ?? null;
+  const mineError = refreshAQuery.error ? refreshAQuery.error instanceof ApiError ? refreshAQuery.error.message : 'Could not load your requests.' : null;
+  const refreshBQuery = useQuery({
+    queryKey: ['TuitionHome', 'queue', tab, statusFilter],
+    queryFn: () => listTuitionQueue(statusFilter === 'ALL' ? undefined : statusFilter),
+    enabled: !(tab === 'mine'),
+  });
+  const queue: QueueTuitionRequest[] | null = refreshBQuery.data?.requests ?? null;
+  const queueError = refreshBQuery.error ? refreshBQuery.error instanceof ApiError ? refreshBQuery.error.message : 'Could not load the queue.' : null;
+  useEffect(() => {
+    setSelected(new Set());
+  }, [tab, statusFilter]);
+  const refresh = () => void (tab === 'mine' ? refreshAQuery.refetch() : refreshBQuery.refetch());
   // Filter-independent KPI summary — fetched once on mount and re-fetched
   // explicitly after mutations, never on tab/filter clicks.
   const refreshSummary = () => {
@@ -140,10 +131,6 @@ export function TuitionHome() {
         );
       });
   };
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter]);
   useEffect(() => {
     if (canProcessPayroll) refreshSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -110,7 +110,6 @@ export function MarketplaceHome() {
 function AvailableTab() {
   const { t } = useI18n();
   const [rows, setRows] = useState<OpenShiftListItem[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   // The card that just got claimed — plays the success flash once.
   const [flashId, setFlashId] = useState<string | null>(null);
   // The shift whose claim is in flight — its button goes into a loading
@@ -123,20 +122,17 @@ function AvailableTab() {
   // the page, above the shifts themselves.
   const [showDates, setShowDates] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listOpenShifts()
-      .then((r) => setRows(r.shifts))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : t('mk.loadFailed'),
-        ),
-      );
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['AvailableTab', 'rows'],
+    queryFn: () => listOpenShifts(),
+  });
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('mk.loadFailed') : null;
   useEffect(() => {
-    refresh();
-  }, []);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setRows(r.shifts)
+  }, [refreshQuery.data]);
+  const refresh = () => void refreshQuery.refetch();
 
   // Post-action refetch that keeps the current cards rendered (no
   // skeleton, no scroll loss) and reconciles in place when server truth
@@ -413,27 +409,22 @@ function AvailableTab() {
 
 function ClaimsTab() {
   const [rows, setRows] = useState<PendingClaim[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingClaim | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    setSelected(new Set());
-    listPendingClaims()
-      .then((r) => setRows(r.claims))
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load pending claims.',
-        ),
-      );
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['ClaimsTab', 'rows'],
+    queryFn: () => listPendingClaims(),
+  });
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load pending claims.' : null;
   useEffect(() => {
-    refresh();
-  }, []);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setRows(r.claims)
+  }, [refreshQuery.data]);
+  const refresh = () => void refreshQuery.refetch();
 
   // Post-action refetch: keep the table (and the manager's scroll/selection)
   // in place, reconcile with server truth when it lands, and prune the

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ImagePlus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -42,9 +43,7 @@ const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
 export function BrandingHome() {
   const confirm = useConfirm();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [orgName, setOrgName] = useState('Alto HR');
   const [senderName, setSenderName] = useState('');
@@ -57,30 +56,29 @@ export function BrandingHome() {
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const loadQuery = useQuery({
+    queryKey: ['BrandingHome', 'branding'],
+    queryFn: () => getOrgBranding(),
+  });
+  const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load branding.' : null;
+  const loading = loadQuery.isPending;
+  useEffect(() => {
+    const b = loadQuery.data;
+    if (b === undefined) return;
+    setBranding(b);
+    setOrgName(b.orgName);
+    setSenderName(b.senderName ?? '');
+    setSupportEmail(b.supportEmail ?? '');
+    setSupportEmailTouched(false);
+    setPrimaryColor(b.primaryColor ?? '');
+    setPrimaryColorTouched(false);
+    setMfaRequirement(b.mfaRequirement);
+    setLogoBust((n) => n + 1);
+  }, [loadQuery.data]);
   const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const b = await getOrgBranding();
-      setBranding(b);
-      setOrgName(b.orgName);
-      setSenderName(b.senderName ?? '');
-      setSupportEmail(b.supportEmail ?? '');
-      setSupportEmailTouched(false);
-      setPrimaryColor(b.primaryColor ?? '');
-      setPrimaryColorTouched(false);
-      setMfaRequirement(b.mfaRequirement);
-      setLogoBust((n) => n + 1);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load branding.');
-    } finally {
-      setLoading(false);
-    }
+    await loadQuery.refetch();
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
 
   const colorValid = primaryColor === '' || HEX_COLOR_REGEX.test(primaryColor);
   const emailValid =

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -826,28 +827,22 @@ function QueueDetailDrawer({
     ratio: number;
     currency: string;
   } | null>(null);
-  const [policyError, setPolicyError] = useState(false);
   const showMatchForm =
     row.status === 'APPROVED' && row.matchRequested && !row.matchAmount;
+  const readQuery = useQuery({
+    queryKey: ['QueueDetailDrawer', 'readQuery', showMatchForm],
+    queryFn: () => getVtoPolicy(),
+    enabled: Boolean(showMatchForm),
+  });
+  const policyError = readQuery.isError;
   useEffect(() => {
-    if (!showMatchForm) return;
-    let cancelled = false;
-    setPolicyError(false);
-    getVtoPolicy()
-      .then((p) => {
-        if (cancelled) return;
-        const ratio = Number(p.effective.matchRatio);
-        if (Number.isFinite(ratio) && ratio > 0) {
-          setPolicyRatio({ ratio, currency: p.effective.matchCurrency });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPolicyError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [showMatchForm]);
+    const p = readQuery.data;
+    if (p === undefined) return;
+    const ratio = Number(p.effective.matchRatio);
+    if (Number.isFinite(ratio) && ratio > 0) {
+      setPolicyRatio({ ratio, currency: p.effective.matchCurrency });
+    }
+  }, [readQuery.data]);
   const policyEstimate =
     policyRatio && Number.isFinite(Number(row.hours))
       ? Number(row.hours) * policyRatio.ratio

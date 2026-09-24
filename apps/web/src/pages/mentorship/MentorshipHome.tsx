@@ -351,20 +351,26 @@ function NewPairingDrawer({
   const [mentor, setMentor] = useState<PickedAssociate | null>(initialMentor);
   const [mentee, setMentee] = useState<PickedAssociate | null>(initialMentee);
   const [skillId, setSkillId] = useState(initialSkillId);
-  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const loadSkills = () => {
-    setSkillsError(null);
-    listSkills()
-      .then((r) => setSkills(r.skills))
-      .catch(() => setSkillsError('Failed to load the skill catalog.'));
-  };
+  const loadSkillsQuery = useQuery({
+    queryKey: ['NewPairingDrawer', 'skills'],
+    queryFn: () => listSkills(),
+  });
+  const skills: SkillCatalogEntry[] = loadSkillsQuery.data?.skills ?? [];
   useEffect(() => {
-    loadSkills();
-  }, []);
+    const r = loadSkillsQuery.data;
+    if (r === undefined) return;
+    setSkillsError(null);
+
+  }, [loadSkillsQuery.data]);
+  useEffect(() => {
+    if (!loadSkillsQuery.isError) return;
+    setSkillsError('Failed to load the skill catalog.')
+  }, [loadSkillsQuery.isError, loadSkillsQuery.error]);
+  const loadSkills = () => void loadSkillsQuery.refetch();
 
   const submit = async () => {
     if (!mentor || !mentee) {
@@ -454,20 +460,26 @@ function SuggestDrawer({
 }) {
   const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
-  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [results, setResults] = useState<MentorshipCandidate[] | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const loadSkills = () => {
-    setSkillsError(null);
-    listSkills()
-      .then((r) => setSkills(r.skills))
-      .catch(() => setSkillsError('Failed to load the skill catalog.'));
-  };
+  const loadSkillsQuery = useQuery({
+    queryKey: ['SuggestDrawer', 'skills'],
+    queryFn: () => listSkills(),
+  });
+  const skills: SkillCatalogEntry[] = loadSkillsQuery.data?.skills ?? [];
   useEffect(() => {
-    loadSkills();
-  }, []);
+    const r = loadSkillsQuery.data;
+    if (r === undefined) return;
+    setSkillsError(null);
+
+  }, [loadSkillsQuery.data]);
+  useEffect(() => {
+    if (!loadSkillsQuery.isError) return;
+    setSkillsError('Failed to load the skill catalog.')
+  }, [loadSkillsQuery.isError, loadSkillsQuery.error]);
+  const loadSkills = () => void loadSkillsQuery.refetch();
 
   const submit = async () => {
     if (!mentee) {

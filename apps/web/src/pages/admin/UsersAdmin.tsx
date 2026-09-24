@@ -93,9 +93,6 @@ export function UsersAdmin() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [rows, setRows] = useState<AdminUser[] | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const [q, setQ] = useState('');
@@ -194,27 +191,26 @@ export function UsersAdmin() {
   };
 
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listAdminUsers({
+  const loadQuery = useQuery({
+    queryKey: ['UsersAdmin', 'rows'],
+    queryFn: () => listAdminUsers({
         q: appliedQ.trim() || undefined,
         role: role || undefined,
         status: status || undefined,
-      });
-      setRows(res.users);
-      setTotal(res.total);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load users.');
-    } finally {
-      setLoading(false);
-    }
-  }, [appliedQ, role, status]);
-
+      }),
+  });
+  const total: number | null = loadQuery.data?.total ?? null;
+  const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load users.' : null;
+  const loading = loadQuery.isPending;
   useEffect(() => {
-    load();
-  }, [load]);
+    const res = loadQuery.data;
+    if (res === undefined) return;
+    setRows(res.users);
+  }, [loadQuery.data]);
+  const load = async () => {
+    await loadQuery.refetch();
+  };
+
 
   // Past the cap, "Load all" fetches the rest. The server list endpoint has
   // a hard 500-row cap and accepts NO limit/cursor/offset parameter

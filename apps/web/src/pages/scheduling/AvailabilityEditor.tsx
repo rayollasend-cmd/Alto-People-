@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type {
   AvailabilityException,
@@ -62,26 +62,25 @@ const isInvalidRange = (w: DraftWindow) =>
 
 export function AvailabilityEditor() {
   const [drafts, setDrafts] = useState<DraftWindow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await getMyAvailability();
-      setDrafts(fromAPI(res.windows));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load availability.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  const refreshQuery = useQuery({
+    queryKey: ['AvailabilityEditor', 'drafts'],
+    queryFn: () => getMyAvailability(),
+  });
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load availability.' : null);
+  const loading = refreshQuery.isPending;
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setDrafts(fromAPI(res.windows));
+  }, [refreshQuery.data]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   // "Saved." goes stale fast — clear it after a few seconds so a
   // later edit doesn't sit next to an old success message.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Crown, Download, Plus, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -419,7 +420,6 @@ function PositionDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<SuccessionPositionDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   // One in-flight action at a time — a double-click on Remove used to
   // fire the write twice.
@@ -434,20 +434,20 @@ function PositionDrawer({
     }
   };
 
-  const refresh = () => {
-    setData(null);
-    setLoadError(null);
-    getSuccessionPosition(positionId)
-      .then(setData)
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load this position.',
-        ),
-      );
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['PositionDrawer', 'data', positionId],
+    queryFn: () => getSuccessionPosition(positionId),
+  });
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load this position.' : null;
   useEffect(() => {
-    refresh();
+    setData(null);
   }, [positionId]);
+  useEffect(() => {
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setData(r);
+  }, [refreshQuery.data]);
+  const refresh = () => void refreshQuery.refetch();
 
   const changeReadiness = async (
     candidateId: string,

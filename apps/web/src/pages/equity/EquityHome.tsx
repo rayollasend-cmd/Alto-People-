@@ -112,10 +112,6 @@ export function EquityHome() {
   const { user } = useAuth();
   const canManageComp = user ? hasCapability(user.role, 'manage:comp') : false;
   const [tab, setTab] = useState<'mine' | 'admin'>('mine');
-  const [mine, setMine] = useState<MyEquityGrant[] | null>(null);
-  const [mineError, setMineError] = useState<string | null>(null);
-  const [admin, setAdmin] = useState<EquityGrant[] | null>(null);
-  const [adminError, setAdminError] = useState<string | null>(null);
   const [summary, setSummary] = useState<EquitySummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<EquityGrantStatus | 'ALL'>(
@@ -126,29 +122,21 @@ export function EquityHome() {
   const [openMine, setOpenMine] = useState<MyEquityGrant | null>(null);
   const [openAdminId, setOpenAdminId] = useState<string | null>(null);
 
-  const refresh = () => {
-    if (tab === 'mine') {
-      setMine(null);
-      setMineError(null);
-      listMyEquity()
-        .then((r) => setMine(r.grants))
-        .catch((err) =>
-          setMineError(
-            err instanceof ApiError ? err.message : 'Could not load your grants.',
-          ),
-        );
-    } else {
-      setAdmin(null);
-      setAdminError(null);
-      listEquityGrants(statusFilter === 'ALL' ? undefined : statusFilter)
-        .then((r) => setAdmin(r.grants))
-        .catch((err) =>
-          setAdminError(
-            err instanceof ApiError ? err.message : 'Could not load grants.',
-          ),
-        );
-    }
-  };
+  const refreshAQuery = useQuery({
+    queryKey: ['EquityHome', 'mine', tab, statusFilter],
+    queryFn: () => listMyEquity(),
+    enabled: (tab === 'mine'),
+  });
+  const mine: MyEquityGrant[] | null = refreshAQuery.data?.grants ?? null;
+  const mineError = refreshAQuery.error ? refreshAQuery.error instanceof ApiError ? refreshAQuery.error.message : 'Could not load your grants.' : null;
+  const refreshBQuery = useQuery({
+    queryKey: ['EquityHome', 'admin', tab, statusFilter],
+    queryFn: () => listEquityGrants(statusFilter === 'ALL' ? undefined : statusFilter),
+    enabled: !(tab === 'mine'),
+  });
+  const admin: EquityGrant[] | null = refreshBQuery.data?.grants ?? null;
+  const adminError = refreshBQuery.error ? refreshBQuery.error instanceof ApiError ? refreshBQuery.error.message : 'Could not load grants.' : null;
+  const refresh = () => void (tab === 'mine' ? refreshAQuery.refetch() : refreshBQuery.refetch());
   // Filter-independent KPI summary — fetched once on mount and re-fetched
   // explicitly after mutations, never on tab/filter clicks.
   const refreshSummary = () => {
@@ -164,9 +152,6 @@ export function EquityHome() {
         );
       });
   };
-  useEffect(() => {
-    refresh();
-  }, [tab, statusFilter]);
   useEffect(() => {
     if (canManageComp) refreshSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps

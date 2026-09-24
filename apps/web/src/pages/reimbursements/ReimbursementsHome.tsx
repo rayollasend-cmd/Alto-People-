@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -149,7 +150,6 @@ export function ReimbursementsHome() {
   const { t } = useI18n();
   const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
   const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
-  const [rows, setRows] = useState<ReimbursementSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<ReimbursementSummary | null>(null);
@@ -158,17 +158,22 @@ export function ReimbursementsHome() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    setSelected(new Set());
-    listReimbursements()
-      .then((r) => setRows(r.reimbursements))
-      .catch(() => setLoadError(t('rmb.loadFailed')));
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['ReimbursementsHome', 'rows'],
+    queryFn: () => listReimbursements(),
+  });
+  const rows: ReimbursementSummary[] | null = refreshQuery.data?.reimbursements ?? null;
   useEffect(() => {
-    refresh();
-  }, []);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError(t('rmb.loadFailed'))
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
 
   const q = search.trim().toLowerCase();
   const visible = (rows ?? []).filter(
@@ -448,21 +453,26 @@ function ReimbursementDrawer({
   const { t } = useI18n();
   const prompt = usePrompt();
   const confirm = useConfirm();
-  const [data, setData] = useState<ReimbursementFull | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddLine, setShowAddLine] = useState(false);
   const [showSettle, setShowSettle] = useState(false);
 
-  const refresh = () => {
-    setLoadError(null);
-    getReimbursement(summary.id)
-      .then(setData)
-      .catch(() => setLoadError(t('rmb.loadOneFailed')));
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['ReimbursementDrawer', 'data', summary.id],
+    queryFn: () => getReimbursement(summary.id),
+  });
+  const data: ReimbursementFull | null = refreshQuery.data ?? null;
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summary.id]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError(t('rmb.loadOneFailed'))
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
 
   const onSubmit = async () => {
     try {

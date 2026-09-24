@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
@@ -177,7 +178,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [checks, setChecks] = useState<BackgroundCheck[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<BackgroundCheck | null>(null);
@@ -238,19 +239,20 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [detail, setDetail] = useState<BackgroundCheckDetail | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listBackgroundChecks();
-      setChecks(res.checks);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, []);
-
+  const refreshQuery = useQuery({
+    queryKey: ['BackgroundTab', 'checks'],
+    queryFn: () => listBackgroundChecks(),
+  });
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setChecks(res.checks);
+  }, [refreshQuery.data]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   const loadDetail = useCallback(async (id: string) => {
     try {

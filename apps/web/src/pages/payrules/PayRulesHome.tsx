@@ -156,7 +156,6 @@ export function PayRulesHome() {
 
 function ProjectsTab({ clientId }: { clientId: string }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Project[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editTarget, setEditTarget] = useState<Project | null>(null);
@@ -164,16 +163,22 @@ function ProjectsTab({ clientId }: { clientId: string }) {
   const [name, setName] = useState('');
   const [isBillable, setIsBillable] = useState(true);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listProjects(clientId)
-      .then((r) => setRows(r.projects))
-      .catch(() => setLoadError('Failed to load projects.'));
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['ProjectsTab', 'rows', clientId],
+    queryFn: () => listProjects(clientId),
+  });
+  const rows: Project[] | null = refreshQuery.data?.projects ?? null;
   useEffect(() => {
-    refresh();
-  }, [clientId]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError('Failed to load projects.')
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
 
   const onCreate = async () => {
     if (!code.trim() || !name.trim()) {
@@ -406,20 +411,25 @@ const KIND_LABEL: Record<PremiumPayKind, string> = {
 
 function PremiumTab({ clientId }: { clientId: string }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<PremiumPayRule[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listPremiumPayRules(clientId)
-      .then((r) => setRows(r.rules))
-      .catch(() => setLoadError('Failed to load premium pay rules.'));
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['PremiumTab', 'rows', clientId],
+    queryFn: () => listPremiumPayRules(clientId),
+  });
+  const rows: PremiumPayRule[] | null = refreshQuery.data?.rules ?? null;
   useEffect(() => {
-    refresh();
-  }, [clientId]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError('Failed to load premium pay rules.')
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Deactivate this rule?', destructive: true }))) return;
@@ -653,21 +663,26 @@ const POOL_STATUS_LABELS: Record<TipPool['status'], string> = {
 };
 
 function TipsTab({ clientId }: { clientId: string }) {
-  const [rows, setRows] = useState<TipPool[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<TipPool | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listTipPools(clientId)
-      .then((r) => setRows(r.pools))
-      .catch(() => setLoadError('Failed to load tip pools.'));
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['TipsTab', 'rows', clientId],
+    queryFn: () => listTipPools(clientId),
+  });
+  const rows: TipPool[] | null = refreshQuery.data?.pools ?? null;
   useEffect(() => {
-    refresh();
-  }, [clientId]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError('Failed to load tip pools.')
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
 
   return (
     <div className="space-y-4">

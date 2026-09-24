@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -56,7 +57,6 @@ export function ExpirationsHome() {
   const canRenew = user
     ? hasCapability(user.role, 'manage:scheduling')
     : false;
-  const [data, setData] = useState<ExpirationsResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [days, setDays] = usePersistentState<30 | 60 | 90>(
     'alto:list.expirations.days.v1',
@@ -77,26 +77,26 @@ export function ExpirationsHome() {
   // Keeps the previous buckets on screen while a filter flip refetches —
   // no full-skeleton flash. The sequence guard drops out-of-order responses
   // from rapid toggling.
-  const reqSeq = useRef(0);
-  const refresh = () => {
-    const seq = ++reqSeq.current;
-    setLoadError(null);
-    getExpirations({
+  const refreshQuery = useQuery({
+    queryKey: ['ExpirationsHome', 'data', days, filter],
+    queryFn: () => getExpirations({
       days,
       isCert: filter === 'cert' ? true : undefined,
-    })
-      .then((d) => {
-        if (seq === reqSeq.current) setData(d);
-      })
-      .catch(() => {
-        if (seq === reqSeq.current) setLoadError('Failed to load expirations.');
-      });
-  };
-
+    }),
+  });
+  const data: ExpirationsResponse | null = refreshQuery.data ?? null;
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, filter]);
+    const d = refreshQuery.data;
+    if (d === undefined) return;
+    setLoadError(null);
+
+  }, [refreshQuery.data]);
+  useEffect(() => {
+    if (!refreshQuery.isError) return;
+    setLoadError('Failed to load expirations.');
+  }, [refreshQuery.isError, refreshQuery.error]);
+  const refresh = () => void refreshQuery.refetch();
+
 
   const q = search.trim().toLowerCase();
   const { expired, dueSoon, dueLater } = useMemo(() => {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
@@ -91,9 +92,8 @@ const STATUS_LABELS: Record<PerformanceReviewStatus, string> = {
 
 export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [filter, setFilter] = useState<PerformanceReviewStatus | 'ALL'>('DRAFT');
-  const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [submitTarget, setSubmitTarget] = useState<PerformanceReview | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<PerformanceReview | null>(null);
@@ -102,27 +102,27 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listReviews(filter === 'ALL' ? {} : { status: filter });
-      setReviews(res.reviews);
-      // Drop selections for rows no longer present (or no longer DRAFT).
-      setSelected((prev) => {
-        const next = new Set<string>();
-        for (const r of res.reviews) {
-          if (r.status === 'DRAFT' && prev.has(r.id)) next.add(r.id);
-        }
-        return next;
-      });
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load reviews.');
-    }
-  }, [filter]);
-
+  const refreshQuery = useQuery({
+    queryKey: ['AdminReviewsView', 'reviews'],
+    queryFn: () => listReviews(filter === 'ALL' ? {} : { status: filter }),
+  });
+  const reviews: PerformanceReview[] | null = refreshQuery.data?.reviews ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load reviews.' : null);
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setSelected((prev) => {
+      const next = new Set<string>();
+      for (const r of res.reviews) {
+        if (r.status === 'DRAFT' && prev.has(r.id)) next.add(r.id);
+      }
+      return next;
+    });
+  }, [refreshQuery.data]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   const filtered = useMemo(() => {
     if (!reviews) return null;

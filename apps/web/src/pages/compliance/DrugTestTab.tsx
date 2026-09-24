@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
@@ -183,7 +184,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [tests, setTests] = useState<DrugTest[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<DrugTest | null>(null);
@@ -244,19 +245,20 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
   const [detail, setDetail] = useState<DrugTestDetail | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await listDrugTests();
-      setTests(res.tests);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, []);
-
+  const refreshQuery = useQuery({
+    queryKey: ['DrugTestTab', 'tests'],
+    queryFn: () => listDrugTests(),
+  });
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const res = refreshQuery.data;
+    if (res === undefined) return;
+    setTests(res.tests);
+  }, [refreshQuery.data]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
+
 
   const loadDetail = useCallback(async (id: string) => {
     try {

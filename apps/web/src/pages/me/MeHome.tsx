@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
@@ -542,30 +543,26 @@ function FaceConsentRow() {
   const { t } = useI18n();
   const confirm = useConfirm();
   const [consent, setConsent] = useState<FaceConsent | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
 
   // A failed fetch must NOT render as "Not set" — that's a real consent
   // state with its own copy. Show a retry affordance instead.
+  const consentQuery = useQuery({
+    queryKey: ['FaceConsentRow', 'consent', attempt],
+    queryFn: () => getFaceConsent(),
+  });
+  const loadError = consentQuery.error ? consentQuery.error instanceof ApiError
+            ? consentQuery.error.message
+            : t('me.face.loadFailed') : null;
   useEffect(() => {
-    let cancelled = false;
     setConsent(null);
-    setLoadError(null);
-    getFaceConsent()
-      .then((c) => !cancelled && setConsent(c))
-      .catch((err) => {
-        if (cancelled) return;
-        setLoadError(
-          err instanceof ApiError
-            ? err.message
-            : t('me.face.loadFailed'),
-        );
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [attempt]);
+  useEffect(() => {
+    const c = consentQuery.data;
+    if (c === undefined) return;
+    setConsent(c);
+  }, [consentQuery.data]);
 
   const change = async (next: boolean) => {
     const ok = await confirm(
