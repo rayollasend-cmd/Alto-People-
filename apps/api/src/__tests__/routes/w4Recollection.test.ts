@@ -37,14 +37,14 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 
 /** Correctly-shaped v1 blob that cannot decrypt under the current key —
  *  what a pre-key-rotation row looks like to the running system. */
-function unreadableBlob(): Buffer {
+function unreadableBlob(): Buffer<ArrayBuffer> {
   return Buffer.concat([Buffer.from([1]), randomBytes(12), randomBytes(24), randomBytes(16)]);
 }
 
 /** Associate + application + W4 row, optionally with an ACTIVE login. */
 async function seedAssociate(opts: {
   clientId: string;
-  ssnBlob: Buffer | null;
+  ssnBlob: Buffer<ArrayBuffer> | null;
   withAccount?: boolean;
   firstName?: string;
 }) {

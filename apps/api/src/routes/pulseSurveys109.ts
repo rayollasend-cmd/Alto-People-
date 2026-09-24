@@ -37,10 +37,10 @@ function pulseSecret(): string {
   return env.PULSE_HASH_SECRET ?? env.PAYOUT_ENCRYPTION_KEY;
 }
 
-function responderHash(userId: string, surveyId: string): Buffer {
-  return createHmac('sha256', pulseSecret())
+function responderHash(userId: string, surveyId: string): Buffer<ArrayBuffer> {
+  return Buffer.from(createHmac('sha256', pulseSecret())
     .update(`${userId}:${surveyId}`)
-    .digest();
+    .digest());
 }
 
 const SurveyInputSchema = z.object({
@@ -278,7 +278,7 @@ pulseSurveysRouter.get('/my/pulse-surveys', ANY_USER, async (req, res) => {
     select: { surveyId: true, responderHash: true },
   });
   const answeredKeys = new Set(
-    answered.map((a) => `${a.surveyId}:${a.responderHash.toString('hex')}`),
+    answered.map((a) => `${a.surveyId}:${Buffer.from(a.responderHash).toString('hex')}`),
   );
   const todo = open.filter(
     (s, i) =>

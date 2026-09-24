@@ -293,7 +293,7 @@ const PinInputSchema = z.object({
 // environment). Returns null instead of throwing — otherwise a single bad
 // row 500s the whole /kiosk-pins list, which the admin UI swallows and
 // renders as "0 with codes", hiding every other associate's code too.
-function safeDecrypt(buf: Buffer | null): string | null {
+function safeDecrypt(buf: Uint8Array | null): string | null {
   if (!buf) return null;
   try {
     return decryptString(buf);
@@ -832,7 +832,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     id: string;
     clientId: string;
     associateId: string;
-    pinEncrypted: Buffer | null;
+    pinEncrypted: Uint8Array | null;
   } | null = null;
 
   if (employeeNumber) {
@@ -1419,7 +1419,7 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   res.setHeader('Cache-Control', 'private, no-store');
-  res.send(p.selfie);
+  res.send(Buffer.from(p.selfie));
 });
 
 // ----- Public: kiosk punch ----------------------------------------------
@@ -1472,13 +1472,14 @@ const SELFIE_MAX_BYTES = 1_000_000; // 1MB
 // flags low for HR.
 const FACE_MATCH_THRESHOLD = 0.6;
 
-function descriptorToBytes(d: number[]): Buffer {
+function descriptorToBytes(d: number[]): Buffer<ArrayBuffer> {
   const buf = Buffer.alloc(128 * 4);
   for (let i = 0; i < 128; i++) buf.writeFloatLE(d[i], i * 4);
   return buf;
 }
 
-function bytesToDescriptor(buf: Buffer): Float32Array {
+function bytesToDescriptor(bytes: Uint8Array): Float32Array {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const out = new Float32Array(128);
   for (let i = 0; i < 128; i++) out[i] = buf.readFloatLE(i * 4);
   return out;
@@ -1493,7 +1494,7 @@ function euclideanDistance(a: Float32Array, b: number[]): number {
   return Math.sqrt(sum);
 }
 
-function decodeSelfie(s: string | null | undefined): Buffer | null {
+function decodeSelfie(s: string | null | undefined): Buffer<ArrayBuffer> | null {
   if (!s) return null;
   // Accept "data:image/jpeg;base64,XXXX" or raw "XXXX".
   const comma = s.indexOf(',');
@@ -3008,7 +3009,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   // Store the deferred selfie. Best-effort and independent of the face
   // descriptor: a malformed/oversize image is skipped without aborting the
   // face match below.
-  let selfie: Buffer | null = null;
+  let selfie: Buffer<ArrayBuffer> | null = null;
   try {
     selfie = decodeSelfie(input.selfie ?? null);
   } catch {

@@ -36,13 +36,13 @@ export async function renderSignedAgreement(input: EsignRenderInput): Promise<Bu
   return pass2;
 }
 
-export function hashSignedPdf(buf: Buffer): string {
+export function hashSignedPdf(buf: Uint8Array): string {
   // Final hash is computed over pass-2 bytes — what you get when you
   // download the PDF. This is what we store on Signature.pdfHash.
   return sha256(buf);
 }
 
-function sha256(buf: Buffer): string {
+function sha256(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

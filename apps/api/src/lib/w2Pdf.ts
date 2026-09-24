@@ -179,7 +179,7 @@ export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
   });
 }
 
-export function hashW2Pdf(buf: Buffer): string {
+export function hashW2Pdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

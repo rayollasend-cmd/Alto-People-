@@ -30,7 +30,7 @@ function getKey(): Buffer {
   return decoded;
 }
 
-export function encryptBytes(plaintext: Buffer): Buffer {
+export function encryptBytes(plaintext: Uint8Array): Buffer<ArrayBuffer> {
   try {
     const iv = randomBytes(IV_LEN);
     const cipher = createCipheriv('aes-256-gcm', getKey(), iv);
@@ -42,7 +42,7 @@ export function encryptBytes(plaintext: Buffer): Buffer {
   }
 }
 
-export function decryptBytes(blob: Buffer): Buffer {
+export function decryptBytes(blob: Uint8Array): Buffer<ArrayBuffer> {
   try {
     if (blob.length < 1 + IV_LEN + TAG_LEN) {
       throw new Error('ciphertext too short');
@@ -62,11 +62,11 @@ export function decryptBytes(blob: Buffer): Buffer {
   }
 }
 
-export function encryptString(plaintext: string): Buffer {
+export function encryptString(plaintext: string): Buffer<ArrayBuffer> {
   return encryptBytes(Buffer.from(plaintext, 'utf8'));
 }
 
-export function decryptString(blob: Buffer): string {
+export function decryptString(blob: Uint8Array): string {
   return decryptBytes(blob).toString('utf8');
 }
 
@@ -76,7 +76,7 @@ export function decryptString(blob: Buffer): string {
  * 2026-06-11 key-rotation incident. Callers use this to distinguish
  * "SSN on file" from "SSN on file but unreadable, needs re-collection".
  */
-export function tryDecryptString(blob: Buffer): string | null {
+export function tryDecryptString(blob: Uint8Array): string | null {
   try {
     return decryptString(blob);
   } catch {

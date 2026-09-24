@@ -30,7 +30,7 @@ function getKey(): Buffer {
   return decoded;
 }
 
-export function encryptMfaSecret(plaintext: string): Buffer {
+export function encryptMfaSecret(plaintext: string): Buffer<ArrayBuffer> {
   try {
     const iv = randomBytes(IV_LEN);
     const cipher = createCipheriv('aes-256-gcm', getKey(), iv);
@@ -45,7 +45,7 @@ export function encryptMfaSecret(plaintext: string): Buffer {
   }
 }
 
-export function decryptMfaSecret(blob: Buffer): string {
+export function decryptMfaSecret(blob: Uint8Array): string {
   try {
     if (blob.length < 1 + IV_LEN + TAG_LEN) {
       throw new Error('ciphertext too short');

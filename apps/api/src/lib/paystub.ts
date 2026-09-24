@@ -108,7 +108,7 @@ const money = (n: number) =>
   '$' +
   Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function hashPdf(buf: Buffer): string {
+export function hashPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

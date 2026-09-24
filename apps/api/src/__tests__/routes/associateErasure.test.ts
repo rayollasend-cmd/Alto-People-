@@ -38,13 +38,13 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 }
 
 /** A blob shaped like a real v1 ciphertext that will not decrypt. */
-function unreadableBlob(): Buffer {
+function unreadableBlob(): Buffer<ArrayBuffer> {
   return Buffer.concat([Buffer.from([1]), randomBytes(12), randomBytes(24), randomBytes(16)]);
 }
 
 interface SeedOptions {
   separated?: boolean;
-  ssnBlob?: Buffer;
+  ssnBlob?: Buffer<ArrayBuffer>;
 }
 
 /**

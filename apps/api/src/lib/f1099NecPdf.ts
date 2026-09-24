@@ -111,7 +111,7 @@ export async function renderForm1099NecPdf(data: Form1099NecPdfData): Promise<Bu
   });
 }
 
-export function hashForm1099NecPdf(buf: Buffer): string {
+export function hashForm1099NecPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

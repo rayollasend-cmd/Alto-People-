@@ -82,7 +82,7 @@ export async function renderW2cPdf(data: W2cPdfData): Promise<Buffer> {
   });
 }
 
-export function hashW2cPdf(buf: Buffer): string {
+export function hashW2cPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

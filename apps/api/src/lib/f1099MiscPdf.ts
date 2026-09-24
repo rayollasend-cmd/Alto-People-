@@ -102,7 +102,7 @@ export async function renderForm1099MiscPdf(data: Form1099MiscPdfData): Promise<
   });
 }
 
-export function hashForm1099MiscPdf(buf: Buffer): string {
+export function hashForm1099MiscPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 

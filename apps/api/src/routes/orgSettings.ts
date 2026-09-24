@@ -156,12 +156,12 @@ orgSettingsRouter.post(
       where: { id: 'singleton' },
       create: {
         id: 'singleton',
-        logoBytes: req.file.buffer,
+        logoBytes: Buffer.from(req.file.buffer),
         logoContentType: req.file.mimetype,
         logoUpdatedAt: now,
       },
       update: {
-        logoBytes: req.file.buffer,
+        logoBytes: Buffer.from(req.file.buffer),
         logoContentType: req.file.mimetype,
         logoUpdatedAt: now,
       },

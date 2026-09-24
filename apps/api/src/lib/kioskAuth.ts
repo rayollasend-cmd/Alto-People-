@@ -39,12 +39,12 @@ function pinSecret(): string {
   return env.KIOSK_PIN_SECRET ?? env.PAYOUT_ENCRYPTION_KEY;
 }
 
-export function hmacPin(pin: string): Buffer {
+export function hmacPin(pin: string): Buffer<ArrayBuffer> {
   // Validate format here so we never HMAC garbage. 4-digit numeric only.
   if (!/^\d{4}$/.test(pin)) {
     throw new Error('PIN must be exactly 4 digits.');
   }
-  return createHmac('sha256', pinSecret()).update(pin).digest();
+  return Buffer.from(createHmac('sha256', pinSecret()).update(pin).digest());
 }
 
 export function generatePin(): string {
