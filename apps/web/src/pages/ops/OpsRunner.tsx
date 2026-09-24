@@ -165,12 +165,15 @@ export function OpsRunner() {
   );
 
   // Always a fresh read on open: a closed, foreign, or stale id has to
-  // fall back to the picker, never replay from cache.
+  // fall back to the picker, never replay from cache — so nothing is
+  // kept once the runner leaves a shift (gcTime 0), and a re-opened id
+  // can't flash its last ACTIVE copy before the fresh read lands.
   const shiftQuery = useQuery({
     queryKey: ['OpsRunner', 'shift', shiftId],
     queryFn: () => getOpsShift(shiftId!),
     enabled: shiftId !== null,
     staleTime: 0,
+    gcTime: 0,
   });
   useEffect(() => {
     if (!shiftId) {
