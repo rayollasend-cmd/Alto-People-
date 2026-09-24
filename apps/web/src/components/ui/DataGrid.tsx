@@ -572,17 +572,25 @@ function GridCore<T>({
                   <>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-white">
+                        {/* Cards wrap rather than truncate: a nowrap cell
+                            ("Today · 2:00 PM – 10:00 PM") inside an
+                            overflow-hidden line still measures past a
+                            phone's edge, and the overflow guard is right
+                            to call that an escape. */}
+                        <div className="min-w-0 break-words text-sm font-medium text-white">
                           {primary.cell ? primary.cell(row) : (primary.accessor(row) ?? '—')}
                         </div>
                         {metaCols.length > 0 && (
-                          <div className="mt-0.5 truncate text-xs text-silver/70">
-                            {metaCols
-                              .map((c) => (c.cell ? null : (c.accessor(row) ?? '')))
-                              .filter((v) => v !== null && v !== '')
-                              .join(' · ')}
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver/70">
+                            {(() => {
+                              const text = metaCols
+                                .map((c) => (c.cell ? null : (c.accessor(row) ?? '')))
+                                .filter((v) => v !== null && v !== '')
+                                .join(' · ');
+                              return text ? <span className="min-w-0 break-words">{text}</span> : null;
+                            })()}
                             {metaCols.filter((c) => c.cell).map((c) => (
-                              <span key={c.key} className="mr-2">
+                              <span key={c.key} className="min-w-0 break-words [&_*]:whitespace-normal">
                                 {c.cell!(row)}
                               </span>
                             ))}
@@ -607,7 +615,7 @@ function GridCore<T>({
                             <dt className="text-2xs uppercase tracking-wider text-silver/50">
                               {c.header}
                             </dt>
-                            <dd className={cn('truncate text-xs text-silver', c.className)}>
+                            <dd className={cn('min-w-0 break-words text-xs text-silver [&_*]:whitespace-normal', c.className)}>
                               {c.cell ? c.cell(row) : (c.accessor(row) ?? '—')}
                             </dd>
                           </div>
