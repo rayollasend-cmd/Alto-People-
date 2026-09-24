@@ -50,6 +50,9 @@ jobs:
       # fixture drifting from the types it fakes).
       - run: npm -w apps/api run typecheck:test
       - run: npm -w apps/web run test
+      # The shared package has its own unit suite (workweek math, roles,
+      # formatting) that nothing else exercised in CI.
+      - run: npm -w packages/shared run test
 
   api-tests:
     name: API tests (postgres)
