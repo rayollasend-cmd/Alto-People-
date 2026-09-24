@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, BarChart3, Download, MessageSquare, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -112,23 +113,14 @@ export function PulseHome() {
 }
 
 function MyPulseTab() {
-  const [rows, setRows] = useState<PulseSurveyOpen[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listMyOpenSurveys()
-      .then((r) => setRows(r.surveys))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load surveys.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const openQuery = useQuery({ queryKey: ['pulse', 'mine'], queryFn: () => listMyOpenSurveys() });
+  const rows: PulseSurveyOpen[] | null = openQuery.data?.surveys ?? null;
+  const error = openQuery.error
+    ? openQuery.error instanceof ApiError
+      ? openQuery.error.message
+      : 'Could not load surveys.'
+    : null;
+  const refresh = () => void openQuery.refetch();
 
   if (error) {
     return (
@@ -278,8 +270,6 @@ function RespondCard({
 
 function AdminPulseTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<PulseSurveyAdmin[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [resultsFor, setResultsFor] = useState<PulseSurveyAdmin | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PulseSurveyAdmin | null>(null);
@@ -287,20 +277,14 @@ function AdminPulseTab({ canManage }: { canManage: boolean }) {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all');
 
-  const refresh = () => {
-    setRows(null);
-    setError(null);
-    listPulseSurveys()
-      .then((r) => setRows(r.surveys))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load surveys.',
-        ),
-      );
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const surveysQuery = useQuery({ queryKey: ['pulse', 'surveys'], queryFn: () => listPulseSurveys() });
+  const rows: PulseSurveyAdmin[] | null = surveysQuery.data?.surveys ?? null;
+  const error = surveysQuery.error
+    ? surveysQuery.error instanceof ApiError
+      ? surveysQuery.error.message
+      : 'Could not load surveys.'
+    : null;
+  const refresh = () => void surveysQuery.refetch();
 
   const closeNow = async (s: PulseSurveyAdmin) => {
     const ok = await confirm({
@@ -492,8 +476,6 @@ function NewSurveyDrawer({
   const [audienceId, setAudienceId] = useState('');
   const [openHours, setOpenHours] = useState(72);
   const [saving, setSaving] = useState(false);
-  const [departments, setDepartments] = useState<Department[] | null>(null);
-  const [departmentsError, setDepartmentsError] = useState<string | null>(null);
   // Shared react-query cache; only fetched once a BY_CLIENT audience is
   // picked (most surveys go to everyone, so don't fetch upfront).
   const {
@@ -503,27 +485,26 @@ function NewSurveyDrawer({
     refetch: refetchClients,
   } = useClients({ enabled: audience === 'BY_CLIENT' });
 
-  const loadDepartments = () => {
-    setDepartments(null);
-    setDepartmentsError(null);
-    listDepartments()
-      .then((r) => setDepartments(r.departments))
-      .catch((err) =>
-        setDepartmentsError(
-          err instanceof ApiError ? err.message : 'Could not load departments.',
-        ),
-      );
-  };
+  // The department picker's source is read the first time a BY_DEPARTMENT
+  // audience is picked. Most surveys go to everyone, so not upfront.
+  const departmentsQuery = useQuery({
+    queryKey: ['org', 'departments', ''],
+    queryFn: () => listDepartments(),
+    enabled: audience === 'BY_DEPARTMENT',
+  });
+  const departments: Department[] | null = departmentsQuery.isError
+    ? null
+    : (departmentsQuery.data?.departments ?? null);
+  const departmentsError = departmentsQuery.error
+    ? departmentsQuery.error instanceof ApiError
+      ? departmentsQuery.error.message
+      : 'Could not load departments.'
+    : null;
+  const loadDepartments = () => void departmentsQuery.refetch();
 
-  // Lazy-load the picker source the first time the user picks a non-ALL
-  // audience. Most surveys go to everyone, so don't fetch upfront.
+  // Reset selection when the audience type changes.
   useEffect(() => {
-    if (audience === 'BY_DEPARTMENT' && departments === null && !departmentsError) {
-      loadDepartments();
-    }
-    // Reset selection when the audience type changes.
     setAudienceId('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audience]);
 
   const submit = async () => {
@@ -719,24 +700,14 @@ function ResultsDrawer({
   surveyId: string;
   onClose: () => void;
 }) {
-  const [data, setData] = useState<PulseResults | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = () => {
-    setData(null);
-    setError(null);
-    getPulseResults(surveyId)
-      .then(setData)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load results.',
-        ),
-      );
-  };
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surveyId]);
+  const resultsQuery = useQuery({ queryKey: ['pulse', 'results', surveyId], queryFn: () => getPulseResults(surveyId) });
+  const data: PulseResults | null = resultsQuery.data ?? null;
+  const error = resultsQuery.error
+    ? resultsQuery.error instanceof ApiError
+      ? resultsQuery.error.message
+      : 'Could not load results.'
+    : null;
+  const load = () => void resultsQuery.refetch();
 
   const exportCsv = () => {
     if (!data) return;

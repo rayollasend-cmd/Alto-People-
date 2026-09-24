@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   AlertTriangle,
@@ -140,17 +141,12 @@ export function TimesheetsView() {
     const parsed = w && /^\d{4}-\d{2}-\d{2}$/.test(w) ? parseYmd(w) : null;
     return parsed ? startOfSaturdayWeek(parsed) : lastCompletedWeekStart(new Date());
   });
-  const [data, setData] = useState<TimesheetWeekResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [filingBusy, setFilingBusy] = useState(false);
 
-  // Fieldglass individual-timesheet drill-down.
+  // Fieldglass individual-timesheet drill-down: whose drawer is open.
   const [detailOpen, setDetailOpen] = useState(false);
-  const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  // Whose drawer is open — so a live refresh can re-pull it in place.
-  const detailAssociateRef = useRef<string | null>(null);
+  const [detailAssociateId, setDetailAssociateId] = useState<string | null>(null);
 
   const [showSchedule, setShowSchedule] = useState(false);
   const [search, setSearch] = useState('');
@@ -195,6 +191,31 @@ export function TimesheetsView() {
     );
   }, [weekStart, clientId, boundedClient?.id, setSearchParams]);
 
+  // The week. A failed background refresh keeps the last good rows on
+  // screen — the next announcement or focus retries; only a read with
+  // nothing to show yet may toast.
+  const weekKey = ['timesheets', 'week', weekStart.toISOString(), clientArg ?? ''] as const;
+  const weekQuery = useQuery({
+    queryKey: weekKey,
+    queryFn: () => getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg }),
+    placeholderData: keepPreviousData,
+  });
+  const data: TimesheetWeekResponse | null = weekQuery.data ?? null;
+  const loading = weekQuery.isPending;
+  const { refetch: refetchWeek } = weekQuery;
+  const load = useCallback(
+    async (_opts?: { silent?: boolean }) => {
+      await refetchWeek();
+    },
+    [refetchWeek],
+  );
+  useEffect(() => {
+    if (weekQuery.error && !weekQuery.data) {
+      toast.error(weekQuery.error instanceof ApiError ? weekQuery.error.message : 'Could not load timesheets.');
+    }
+  }, [weekQuery.error, weekQuery.data]);
+  const queryCache = useQueryClient();
+
   // No-show (scheduled but zero worked) or a delta of 2h+ either way.
   const scheduleFlags = useMemo(
     () =>
@@ -204,68 +225,32 @@ export function TimesheetsView() {
     [data],
   );
 
-  const openDetail = useCallback(
-    async (associateId: string) => {
-      detailAssociateRef.current = associateId;
-      setDetailOpen(true);
-      setDetail(null);
-      setDetailLoading(true);
-      try {
-        const res = await getAssociateTimesheetDetail({
-          associateId,
-          weekStart: weekStart.toISOString(),
-          clientId: clientArg,
-        });
-        setDetail(res);
-      } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : 'Could not load the timesheet.');
-        setDetailOpen(false);
-        detailAssociateRef.current = null;
-      } finally {
-        setDetailLoading(false);
-      }
-    },
-    [weekStart, clientArg],
-  );
 
-  /** Re-pull the open drawer in place — no loading flash, keep it on failure. */
-  const refreshDetail = useCallback(async () => {
-    const associateId = detailAssociateRef.current;
-    if (!associateId) return;
-    try {
-      const res = await getAssociateTimesheetDetail({
-        associateId,
+  // The open drawer's timesheet, re-read in place by the live refresh —
+  // no loading flash, and a failed re-read leaves it showing what it had.
+  const detailQuery = useQuery({
+    queryKey: ['timesheets', 'detail', detailAssociateId ?? '', weekStart.toISOString(), clientArg ?? ''],
+    queryFn: () =>
+      getAssociateTimesheetDetail({
+        associateId: detailAssociateId!,
         weekStart: weekStart.toISOString(),
         clientId: clientArg,
-      });
-      setDetail(res);
-    } catch {
-      // Silent refresh — leave the drawer showing what it had.
-    }
-  }, [weekStart, clientArg]);
-
-  const load = useCallback(
-    async (opts?: { silent?: boolean }) => {
-      if (!opts?.silent) setLoading(true);
-      try {
-        const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
-        setData(res);
-      } catch (err) {
-        // A failed background refresh keeps the last good data — the next
-        // announcement or focus retries; only a foreground load may toast.
-        if (opts?.silent) return;
-        toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
-        setData(null);
-      } finally {
-        if (!opts?.silent) setLoading(false);
-      }
-    },
-    [weekStart, clientArg],
-  );
-
+      }),
+    enabled: detailOpen && Boolean(detailAssociateId),
+  });
+  const detail: TimesheetAssociateDetailResponse | null = detailQuery.data ?? null;
+  const detailLoading = detailOpen && Boolean(detailAssociateId) && detailQuery.isPending;
+  const { refetch: refetchDetail } = detailQuery;
+  const openDetail = useCallback((associateId: string) => {
+    setDetailAssociateId(associateId);
+    setDetailOpen(true);
+  }, []);
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!detailOpen || !detailQuery.isError || detailQuery.data) return;
+    toast.error(detailQuery.error instanceof ApiError ? detailQuery.error.message : 'Could not load the timesheet.');
+    setDetailOpen(false);
+    setDetailAssociateId(null);
+  }, [detailOpen, detailQuery.isError, detailQuery.error, detailQuery.data]);
 
   // Live refresh. The approval queue announces every successful mutation on
   // a BroadcastChannel (reaches every tab of this browser) — debounced so a
@@ -275,20 +260,20 @@ export function TimesheetsView() {
   useEffect(() => {
     let debounce: ReturnType<typeof setTimeout> | undefined;
     let lastFocus = 0;
-    const refresh = () => {
-      void load({ silent: true });
-      void refreshDetail();
+    const reread = () => {
+      void refetchWeek();
+      if (detailOpen) void refetchDetail();
     };
     const offChanged = onTimeEntriesChanged(() => {
       clearTimeout(debounce);
-      debounce = setTimeout(refresh, 400);
+      debounce = setTimeout(reread, 400);
     });
     const onFocus = () => {
       if (document.hidden) return;
       const now = Date.now();
       if (now - lastFocus < 5_000) return;
       lastFocus = now;
-      refresh();
+      reread();
     };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
@@ -298,7 +283,7 @@ export function TimesheetsView() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
     };
-  }, [load, refreshDetail]);
+  }, [refetchWeek, refetchDetail, detailOpen]);
 
   const onDownload = async () => {
     if (downloading) return;
@@ -353,7 +338,7 @@ export function TimesheetsView() {
     setFilingBusy(true);
     try {
       const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
-      setData(updated);
+      queryCache.setQueryData<TimesheetWeekResponse>(weekKey, updated);
       // Attestation is best-effort and only for compliance-managers; the
       // filing snapshot is already recorded regardless.
       if (canAttest) {
@@ -508,7 +493,7 @@ export function TimesheetsView() {
               </span>
             )}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => void load()} loading={loading}>
+          <Button variant="ghost" size="sm" onClick={() => void load()} loading={weekQuery.isFetching}>
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>
@@ -827,22 +812,22 @@ export function TimesheetsView() {
         onOpenChange={(o) => {
           if (!o) {
             setDetailOpen(false);
-            detailAssociateRef.current = null;
+            setDetailAssociateId(null);
           }
         }}
         width="max-w-3xl"
       >
         <DrawerHeader>
           <DrawerTitle>
-            <AssociateLink associateId={detailAssociateRef.current}>
+            <AssociateLink associateId={detailAssociateId}>
               {detail?.worker ?? 'Timesheet'}
             </AssociateLink>
           </DrawerTitle>
           <DrawerDescription>
             {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
-            {detailAssociateRef.current && (
+            {detailAssociateId && (
               <Link
-                to={`/time-attendance/timesheets/history/${detailAssociateRef.current}`}
+                to={`/time-attendance/timesheets/history/${detailAssociateId}`}
                 className="ml-2 inline-flex items-center gap-1 text-gold hover:underline"
               >
                 <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />

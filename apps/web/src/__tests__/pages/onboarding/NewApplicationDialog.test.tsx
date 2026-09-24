@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/onboardingApi', () => ({
   createApplication: vi.fn(),
@@ -61,9 +62,11 @@ beforeEach(() => {
 
 function renderDialog(onCreated = vi.fn()) {
   return render(
-    <MemoryRouter>
-      <NewApplicationDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
-    </MemoryRouter>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>
+        <NewApplicationDialog open onOpenChange={vi.fn()} onCreated={onCreated} />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 

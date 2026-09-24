@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Copy, Mail, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -85,9 +86,27 @@ interface Props {
  * raw `inviteUrl` so HR can copy it into Slack / a manual email.
  */
 export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
-  const [clients, setClients] = useState<ClientSummary[] | null>(null);
-  const [clientsFailed, setClientsFailed] = useState(false);
-  const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
+  // Pickers, read when the dialog opens and kept for later opens in the
+  // session — clients/templates don't change often. "Load failed" stays
+  // distinct from "no clients exist": an empty Select with no explanation
+  // made the dialog unsubmittable for no visible reason.
+  const clientsQuery = useQuery({
+    queryKey: ['clients', 'summaries'],
+    queryFn: () => listClients(),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+  const templatesQuery = useQuery({
+    queryKey: ['onboarding', 'templates'],
+    queryFn: () => listTemplates(),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+  const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
+  const clientsFailed = clientsQuery.isError;
+  const templates: OnboardingTemplate[] | null = templatesQuery.isError
+    ? []
+    : (templatesQuery.data?.templates ?? null);
 
   // Last-used client / location / template / employment type — shared with
   // BulkInviteDialog so back-to-back invites skip the repeated dropdowns.
@@ -104,7 +123,6 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [startDate, setStartDate] = useState('');
   const [clientId, setClientId] = useState(lastUsed.clientId);
   const [locationId, setLocationId] = useState('');
-  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [templateId, setTemplateId] = useState(lastUsed.templateId);
   const [employmentType, setEmploymentType] = useState<EmploymentType>(
     lastUsed.employmentType,
@@ -149,95 +167,56 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     });
   }, [open]);
 
-  // Load pickers once when the dialog opens. Keep cached for subsequent
-  // opens within the same session — clients/templates don't change often.
+  // A persisted client can be stale (deleted / out of scope) — fall back
+  // to '' rather than submitting a ghost id.
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    if (!clients) {
-      listClients()
-        .then((r) => {
-          if (cancelled) return;
-          setClients(r.clients);
-          setClientsFailed(false);
-          // A persisted client can be stale (deleted / out of scope) —
-          // fall back to '' rather than submitting a ghost id.
-          setClientId((prev) =>
-            prev && !r.clients.some((c) => c.id === prev) ? '' : prev,
-          );
-        })
-        .catch(() => {
-          if (cancelled) return;
-          // Distinguish "load failed" from "no clients exist" — an empty
-          // Select with no explanation made the dialog unsubmittable for
-          // no visible reason.
-          setClients([]);
-          setClientsFailed(true);
-        });
-    }
-    if (!templates) {
-      listTemplates()
-        .then((r) => !cancelled && setTemplates(r.templates))
-        .catch(() => !cancelled && setTemplates([]));
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [open, clients, templates]);
+    const list = clientsQuery.data?.clients;
+    if (!list) return;
+    setClientId((prev) => (prev && !list.some((c) => c.id === prev) ? '' : prev));
+  }, [clientsQuery.data]);
 
-  // Phase 131 — fetch Locations whenever the client changes. Reset
-  // locationId so a stale selection from a prior client doesn't bleed
-  // through.
+  // Phase 131 — the client's Locations. locationId resets on a client
+  // change so a stale selection from a prior client doesn't bleed through.
   useEffect(() => {
     setLocationId('');
-    if (!clientId) {
-      setLocations(null);
+  }, [clientId]);
+  const locationsQuery = useQuery({
+    queryKey: ['clients', clientId, 'locations'],
+    queryFn: () => listClientLocations(clientId),
+    enabled: Boolean(clientId),
+  });
+  const locations: LocationSummary[] | null = !clientId
+    ? null
+    : locationsQuery.isError
+      ? []
+      : (locationsQuery.data?.locations ?? null);
+  useEffect(() => {
+    if (!locations) return;
+    // Restore the persisted location (once) if it still belongs to this
+    // client — a stale id falls through to the default below.
+    const restore = restoreLocationId.current;
+    restoreLocationId.current = '';
+    if (restore && locations.some((l) => l.id === restore)) {
+      setLocationId(restore);
       return;
     }
-    let cancelled = false;
-    setLocations(null);
-    listClientLocations(clientId)
-      .then((r) => {
-        if (cancelled) return;
-        setLocations(r.locations);
-        // Restore the persisted location (once) if it still belongs to
-        // this client — a stale id falls through to the defaults below.
-        const restore = restoreLocationId.current;
-        restoreLocationId.current = '';
-        if (restore && r.locations.some((l) => l.id === restore)) {
-          setLocationId(restore);
-          return;
-        }
-        // One possible answer — pick it (the server auto-defaults a sole
-        // site anyway; this keeps the form's required check in agreement).
-        if (r.locations.length === 1) setLocationId(r.locations[0].id);
-      })
-      .catch(() => !cancelled && setLocations([]));
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
+    // One possible answer — pick it (the server auto-defaults a sole site
+    // anyway; this keeps the form's required check in agreement).
+    if (locations.length === 1) setLocationId((cur) => cur || locations[0]!.id);
+  }, [locations]);
 
   // The client's position catalog feeds the Position field as typeahead
   // suggestions — free text still allowed for one-off titles.
-  const [positionNames, setPositionNames] = useState<string[]>([]);
-  useEffect(() => {
-    if (!clientId) {
-      setPositionNames([]);
-      return;
-    }
-    let cancelled = false;
-    listShiftPositions(clientId)
-      .then((r) => {
-        if (!cancelled) {
-          setPositionNames(r.shiftPositions.map((sp) => sp.name));
-        }
-      })
-      .catch(() => !cancelled && setPositionNames([]));
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
+  const positionsQuery = useQuery({
+    queryKey: ['scheduling', 'positions', clientId],
+    queryFn: () => listShiftPositions(clientId),
+    enabled: Boolean(clientId),
+  });
+  const positionNames = useMemo(
+    () =>
+      clientId && positionsQuery.data ? positionsQuery.data.shiftPositions.map((sp) => sp.name) : [],
+    [clientId, positionsQuery.data],
+  );
 
   // Filter templates to global + client-specific for the chosen client.
   const visibleTemplates = useMemo(() => {
@@ -465,10 +444,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                       <button
                         type="button"
                         className="underline"
-                        onClick={() => {
-                          setClientsFailed(false);
-                          setClients(null); // re-triggers the load effect
-                        }}
+                        onClick={() => void clientsQuery.refetch()}
                       >
                         Retry
                       </button>

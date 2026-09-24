@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -137,26 +138,18 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Garnishment[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
   const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    setLoadError(null);
-    listGarnishments()
-      .then((r) => setRows(r.garnishments))
-      .catch((err) => {
-        setLoadError(
-          err instanceof ApiError ? err.message : "Couldn't load garnishments.",
-        );
-      });
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const garnishmentsQuery = useQuery({ queryKey: ['payrollTax', 'garnishments'], queryFn: () => listGarnishments() });
+  const rows: Garnishment[] | null = garnishmentsQuery.data?.garnishments ?? null;
+  const loadError = garnishmentsQuery.error
+    ? garnishmentsQuery.error instanceof ApiError
+      ? garnishmentsQuery.error.message
+      : "Couldn't load garnishments."
+    : null;
+  const refresh = () => void garnishmentsQuery.refetch();
 
   const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
     if (status === g.status) return;
@@ -507,22 +500,16 @@ function GarnishmentHistoryDrawer({
   garnishment: Garnishment;
   onClose: () => void;
 }) {
-  const [rows, setRows] = useState<GarnishmentDeduction[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    listGarnishmentDeductions(garnishment.id)
-      .then((r) => !cancelled && setRows(r.deductions))
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Couldn't load history.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [garnishment.id]);
+  const historyQuery = useQuery({
+    queryKey: ['payrollTax', 'garnishment-deductions', garnishment.id],
+    queryFn: () => listGarnishmentDeductions(garnishment.id),
+  });
+  const rows: GarnishmentDeduction[] | null = historyQuery.data?.deductions ?? null;
+  const error = historyQuery.error
+    ? historyQuery.error instanceof ApiError
+      ? historyQuery.error.message
+      : "Couldn't load history."
+    : null;
 
   return (
     <Drawer open onOpenChange={(v) => !v && onClose()}>
@@ -730,8 +717,6 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const canExportPii = useAuth().can('export:payroll-pii');
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const [rows, setRows] = useState<TaxForm[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
   const [show940Builder, setShow940Builder] = useState(false);
@@ -745,21 +730,17 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [statusFilter, setStatusFilter] = useState<'all' | TaxFormStatus>('all');
   const [kindFilter, setKindFilter] = useState<'all' | TaxFormKind>('all');
 
+  const formsQuery = useQuery({ queryKey: ['payrollTax', 'forms'], queryFn: () => listTaxForms() });
+  const rows: TaxForm[] | null = formsQuery.data?.forms ?? null;
+  const loadError = formsQuery.error
+    ? formsQuery.error instanceof ApiError
+      ? formsQuery.error.message
+      : "Couldn't load tax forms."
+    : null;
   const refresh = () => {
-    setRows(null);
-    setLoadError(null);
     setSelected(new Set());
-    listTaxForms()
-      .then((r) => setRows(r.forms))
-      .catch((err) => {
-        setLoadError(
-          err instanceof ApiError ? err.message : "Couldn't load tax forms.",
-        );
-      });
+    void formsQuery.refetch();
   };
-  useEffect(() => {
-    refresh();
-  }, []);
 
   // Derived once per data load, not on every keystroke/filter re-render.
   const years = useMemo(
@@ -2347,8 +2328,6 @@ function Form940BuilderDrawer({
 
 function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
   const [profile, setProfile] = useState<SubmitterProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SubmitterProfileInput>({
     ein: '',
@@ -2366,35 +2345,32 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
     irsTcc: '',
   });
 
+  // The saved profile seeds the form once it is in. A failed read is held
+  // as loadFailed: without it, a failed load rendered a silently BLANK
+  // form that would overwrite the real SSA submitter profile on save.
+  const profileQuery = useQuery({ queryKey: ['payrollTax', 'submitter-profile'], queryFn: () => getSubmitterProfile() });
+  const loading = profileQuery.isPending;
+  const loadFailed = profileQuery.isError;
   useEffect(() => {
-    getSubmitterProfile()
-      .then((r) => {
-        if (r.profile) {
-          setProfile(r.profile);
-          setForm({
-            ein: r.profile.ein,
-            userId: r.profile.userId,
-            name: r.profile.name,
-            addressLine1: r.profile.addressLine1,
-            addressLine2: r.profile.addressLine2 ?? '',
-            city: r.profile.city,
-            state: r.profile.state,
-            zip5: r.profile.zip5,
-            zip4: r.profile.zip4 ?? '',
-            contactName: r.profile.contactName,
-            contactPhone: r.profile.contactPhone,
-            contactEmail: r.profile.contactEmail,
-            irsTcc: r.profile.irsTcc ?? '',
-          });
-        }
-      })
-      .catch(() => {
-        // Without this, a failed load rendered a silently BLANK form that
-        // would overwrite the real SSA submitter profile on save.
-        setLoadFailed(true);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    const saved = profileQuery.data?.profile;
+    if (!saved) return;
+    setProfile(saved);
+    setForm({
+      ein: saved.ein,
+      userId: saved.userId,
+      name: saved.name,
+      addressLine1: saved.addressLine1,
+      addressLine2: saved.addressLine2 ?? '',
+      city: saved.city,
+      state: saved.state,
+      zip5: saved.zip5,
+      zip4: saved.zip4 ?? '',
+      contactName: saved.contactName,
+      contactPhone: saved.contactPhone,
+      contactEmail: saved.contactEmail,
+      irsTcc: saved.irsTcc ?? '',
+    });
+  }, [profileQuery.data]);
 
   const onSave = async () => {
     if (loadFailed) {
