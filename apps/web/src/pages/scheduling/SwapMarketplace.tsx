@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeftRight } from 'lucide-react';
 import type { ShiftSwapRequest, ShiftSwapStatus } from '@alto-people/shared';
 import {
@@ -83,23 +84,19 @@ export function SwapMarketplace({
   const confirm = useConfirm();
   const { t } = useI18n();
   const [tab, setTab] = useState<Tab>('incoming');
-  const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setError(null);
-      const res = tab === 'incoming' ? await listSwapsIncoming() : await listSwapsOutgoing();
-      setItems(res.requests);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t('swap.loadFailed'));
-    }
-  }, [tab, t]);
+  const refreshQuery = useQuery({
+    queryKey: ['SwapMarketplace', 'items', refreshToken],
+    queryFn: () => tab === 'incoming' ? listSwapsIncoming() : listSwapsOutgoing(),
+  });
+  const items: ShiftSwapRequest[] | null = refreshQuery.data?.requests ?? null;
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('swap.loadFailed') : null);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
-  useEffect(() => {
-    refresh();
-  }, [refresh, refreshToken]);
 
   const wrap = async (id: string, fn: () => Promise<unknown>) => {
     setPendingId(id);

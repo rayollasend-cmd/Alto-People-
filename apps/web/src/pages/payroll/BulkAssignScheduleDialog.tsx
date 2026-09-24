@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Search, Users } from 'lucide-react';
 import type { DirectoryEntry, PayrollSchedule } from '@alto-people/shared';
 import { listDirectory } from '@/lib/directoryApi';
@@ -25,22 +26,25 @@ interface Props {
 }
 
 export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved }: Props) {
-  const [people, setPeople] = useState<DirectoryEntry[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [q, setQ] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const peopleQuery = useQuery({
+    queryKey: ['BulkAssignScheduleDialog', 'people', open],
+    queryFn: () => listDirectory({ status: 'ACTIVE' }),
+    enabled: Boolean(open),
+  });
+  const people: DirectoryEntry[] | null = peopleQuery.data?.associates ?? null;
   useEffect(() => {
-    if (!open) return;
     setSelected(new Set());
     setQ('');
-    setPeople(null);
-    listDirectory({ status: 'ACTIVE' })
-      .then((r) => setPeople(r.associates))
-      .catch((err) =>
-        toast.error(err instanceof ApiError ? err.message : "Couldn't load directory."),
-      );
   }, [open]);
+  useEffect(() => {
+    if (!peopleQuery.isError) return;
+    const err = peopleQuery.error;
+    toast.error(err instanceof ApiError ? err.message : "Couldn't load directory.")
+  }, [peopleQuery.isError, peopleQuery.error]);
 
   const filtered = useMemo(() => {
     if (!people) return [];

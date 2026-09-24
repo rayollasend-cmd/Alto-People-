@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
@@ -62,10 +63,7 @@ const STATUS_LABELS: Record<SeparationStatus, string> = {
 export function SeparationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
-  const [summary, setSummary] = useState<SeparationSummary | null>(null);
-  const [summaryFailed, setSummaryFailed] = useState(false);
   const [rows, setRows] = useState<SeparationRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<SeparationRow | null>(null);
@@ -107,34 +105,28 @@ export function SeparationHome() {
   // Keeps the previous rows on screen while the refetch is in flight —
   // nulling them here used to blank the entire list (and skeleton-flash)
   // every time a drawer action refreshed it.
-  const refresh = () => {
-    setLoadError(null);
-    listSeparations({ status: filter === 'ALL' ? undefined : filter })
-      .then((r) => {
-        setRows(r.separations);
-        // Sync the open drawer to server truth when its row is in the
-        // refreshed list; otherwise keep the locally patched copy.
-        setOpenRow((prev) =>
-          prev ? r.separations.find((s) => s.id === prev.id) ?? prev : prev,
-        );
-      })
-      .catch((err) =>
-        setLoadError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load separations.',
-        ),
-      );
-    getSeparationSummary(90)
-      .then(setSummary)
-      .catch(() => {
-        setSummary(null);
-        setSummaryFailed(true);
-      });
-  };
+  const refreshQuery = useQuery({
+    queryKey: ['SeparationHome', 'rows', filter],
+    queryFn: () => listSeparations({ status: filter === 'ALL' ? undefined : filter }),
+  });
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError
+            ? refreshQuery.error.message
+            : 'Failed to load separations.' : null;
   useEffect(() => {
-    refresh();
-  }, [filter]);
+    const r = refreshQuery.data;
+    if (r === undefined) return;
+    setRows(r.separations);
+    setOpenRow((prev) =>
+      prev ? r.separations.find((s) => s.id === prev.id) ?? prev : prev,
+    );
+  }, [refreshQuery.data]);
+  const refresh2Query = useQuery({
+    queryKey: ['SeparationHome', 'summary', filter],
+    queryFn: () => getSeparationSummary(90),
+  });
+  const summary: SeparationSummary | null = refresh2Query.isError ? null : (refresh2Query.data ?? null);
+  const summaryFailed = refresh2Query.isError;
+  const refresh = () => void Promise.all([refreshQuery.refetch(), refresh2Query.refetch()]);
 
   // In-place update of one row (list + open drawer) after a drawer
   // action — no full reload, no drawer close.

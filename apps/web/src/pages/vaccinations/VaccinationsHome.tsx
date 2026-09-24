@@ -49,10 +49,6 @@ export function VaccinationsHome() {
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [tab, setTab] = useState<'all' | 'expiring'>('all');
-  const [expiring, setExpiring] = useState<ExpiringRecord[] | null>(null);
-  const [expiringError, setExpiringError] = useState<string | null>(null);
-  const [coverage, setCoverage] = useState<CoverageReport | null>(null);
-  const [coverageFailed, setCoverageFailed] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [filterKind, setFilterKind] = useState<VaccinationKind | 'ALL'>('ALL');
   // One in-flight action at a time — a double-click on Delete used to
@@ -79,32 +75,25 @@ export function VaccinationsHome() {
   const refreshRecords = () => void refreshRecordsQuery.refetch();
   // Filter-independent summaries (expiring + coverage) — fetched once on
   // mount and re-fetched explicitly after mutations, never on filter clicks.
-  const refreshSummaries = () => {
-    setExpiring(null);
-    setExpiringError(null);
-    listExpiringSoon(60)
-      .then((r) => setExpiring(r.records))
-      .catch((err) =>
-        setExpiringError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load expiring records.',
-        ),
-      );
-    getCoverage()
-      .then(setCoverage)
-      .catch(() => {
-        setCoverage(null);
-        setCoverageFailed(true);
-      });
-  };
+  const refreshSummariesQuery = useQuery({
+    queryKey: ['VaccinationsHome', 'expiring'],
+    queryFn: () => listExpiringSoon(60),
+  });
+  const expiring: ExpiringRecord[] | null = refreshSummariesQuery.data?.records ?? null;
+  const expiringError = refreshSummariesQuery.error ? refreshSummariesQuery.error instanceof ApiError
+            ? refreshSummariesQuery.error.message
+            : 'Could not load expiring records.' : null;
+  const refreshSummaries2Query = useQuery({
+    queryKey: ['VaccinationsHome', 'coverage'],
+    queryFn: () => getCoverage(),
+  });
+  const coverage: CoverageReport | null = refreshSummaries2Query.isError ? null : (refreshSummaries2Query.data ?? null);
+  const coverageFailed = refreshSummaries2Query.isError;
+  const refreshSummaries = () => void Promise.all([refreshSummariesQuery.refetch(), refreshSummaries2Query.refetch()]);
   const refresh = () => {
     refreshRecords();
     refreshSummaries();
   };
-  useEffect(() => {
-    refreshSummaries();
-  }, []);
 
   return (
     <div className="space-y-5">

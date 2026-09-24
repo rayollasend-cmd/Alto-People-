@@ -850,25 +850,23 @@ function BulkOrderDialog({
   onOpenChange: (open: boolean) => void;
   onInitiated: () => void;
 }) {
-  const [pending, setPending] = useState<DrugTestPendingResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorLocal, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
   const [busy, setBusy] = useState(false);
   // Active + onboarding by default; inactive is opt-in — testing people who
   // don't work here is usually wasted spend.
   const [groups, setGroups] = useState({ ACTIVE: true, PENDING: true, INACTIVE: false });
 
+  const pendingQuery = useQuery({
+    queryKey: ['BulkOrderDialog', 'pending', open],
+    queryFn: () => listPendingDrugTests(),
+    enabled: Boolean(open),
+  });
+  const pending: DrugTestPendingResponse | null = pendingQuery.data ?? null;
+  const error = errorLocal ?? (pendingQuery.error ? pendingQuery.error instanceof ApiError ? pendingQuery.error.message : 'Could not load the pending list.' : null);
   useEffect(() => {
-    if (!open) return;
-    setPending(null);
-    setError(null);
     setDownloaded(false);
     setGroups({ ACTIVE: true, PENDING: true, INACTIVE: false });
-    listPendingDrugTests()
-      .then(setPending)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the pending list.'),
-      );
   }, [open]);
 
   const all = pending?.rows ?? [];

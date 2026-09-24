@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,36 +60,24 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export function ProbationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
-  const [summary, setSummary] = useState<ProbationSummary | null>(null);
-  const [summaryFailed, setSummaryFailed] = useState(false);
-  const [rows, setRows] = useState<ProbationRow[] | null>(null);
   const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [decideRow, setDecideRow] = useState<ProbationRow | null>(null);
   const [extendRow, setExtendRow] = useState<ProbationRow | null>(null);
 
-  const refresh = () => {
-    setError(null);
-    setRows(null);
-    listProbations(filter === 'ALL' ? undefined : filter)
-      .then((r) => setRows(r.probations))
-      .catch((err) => {
-        setRows([]);
-        setError(
-          err instanceof ApiError ? err.message : 'Failed to load probations.',
-        );
-      });
-    getProbationSummary()
-      .then(setSummary)
-      .catch(() => {
-        setSummary(null);
-        setSummaryFailed(true);
-      });
-  };
-  useEffect(() => {
-    refresh();
-  }, [filter]);
+  const refreshQuery = useQuery({
+    queryKey: ['ProbationHome', 'rows', filter],
+    queryFn: () => listProbations(filter === 'ALL' ? undefined : filter),
+  });
+  const rows: ProbationRow[] | null = refreshQuery.isError ? [] : (refreshQuery.data?.probations ?? null);
+  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load probations.' : null;
+  const refresh2Query = useQuery({
+    queryKey: ['ProbationHome', 'summary', filter],
+    queryFn: () => getProbationSummary(),
+  });
+  const summary: ProbationSummary | null = refresh2Query.isError ? null : (refresh2Query.data ?? null);
+  const summaryFailed = refresh2Query.isError;
+  const refresh = () => void Promise.all([refreshQuery.refetch(), refresh2Query.refetch()]);
 
   return (
     <div className="space-y-5">

@@ -754,8 +754,6 @@ function CycleDetailDrawer({
   onChanged: () => void;
 }) {
   const confirm = useConfirm();
-  const [proposals, setProposals] = useState<MeritProposal[] | null>(null);
-  const [proposalsError, setProposalsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [statusChip, setStatusChip] = useState<MeritProposalStatus | 'ALL'>('ALL');
@@ -766,24 +764,20 @@ function CycleDetailDrawer({
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
-  const refresh = async () => {
-    setProposals(null);
-    setProposalsError(null);
+  const refreshQuery = useQuery({
+    queryKey: ['CycleDetailDrawer', 'proposals', cycle.id],
+    queryFn: () => listProposals(cycle.id),
+  });
+  const proposals: MeritProposal[] | null = refreshQuery.data?.proposals ?? null;
+  const proposalsError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load proposals.' : null;
+  useEffect(() => {
     setSelected(new Set());
     setEdits({});
     setEditErrors({});
-    try {
-      const r = await listProposals(cycle.id);
-      setProposals(r.proposals);
-    } catch (err) {
-      setProposalsError(
-        err instanceof ApiError ? err.message : 'Could not load proposals.',
-      );
-    }
-  };
-  useEffect(() => {
-    refresh();
   }, [cycle.id]);
+  const refresh = async () => {
+    await refreshQuery.refetch();
+  };
 
   const totalProposed = useMemo(() => {
     if (!proposals) return 0;

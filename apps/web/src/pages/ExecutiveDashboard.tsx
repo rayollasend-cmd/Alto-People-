@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Area,
@@ -265,17 +266,17 @@ const CATEGORY_LABEL: Record<string, string> = {
  * glance, with the full board one click away.
  */
 function OpsPulseCard() {
-  const [data, setData] = useState<Awaited<ReturnType<typeof getOpsScorecard>> | null>(null);
-  const [live, setLive] = useState<number | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    getOpsScorecard(4)
-      .then(setData)
-      .catch(() => setFailed(true));
-    getOpsBoard()
-      .then((b) => setLive(b.active.length))
-      .catch(() => {});
-  }, []);
+  const dataQuery = useQuery({
+    queryKey: ['OpsPulseCard', 'data'],
+    queryFn: () => getOpsScorecard(4),
+  });
+  const data: Awaited<ReturnType<typeof getOpsScorecard>> | null = dataQuery.data ?? null;
+  const failed = dataQuery.isError;
+  const live2Query = useQuery({
+    queryKey: ['OpsPulseCard', 'live'],
+    queryFn: () => getOpsBoard(),
+  });
+  const live: number | null = live2Query.data ? live2Query.data.active.length : null;
   // Quiet until the ops module has real runs — no empty ceremony.
   if (failed || !data || data.totals.shifts === 0) return null;
   const worst = [...data.rows]

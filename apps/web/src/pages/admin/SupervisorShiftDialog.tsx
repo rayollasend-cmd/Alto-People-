@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRightLeft, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -62,9 +63,6 @@ export function SupervisorShiftDialog({
   /** A viewer who can see assignments but not change them (manage:org). */
   readOnly?: boolean;
 }) {
-  const [stores, setStores] = useState<StoreShiftWindows[] | null>(null);
-  const [supervisors, setSupervisors] = useState<ClientShiftSupervisor[]>([]);
-  const [loadError, setLoadError] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // null = not chosen by hand yet: follow the suggestion.
   const [leadPick, setLeadPick] = useState<string | null>(null);
@@ -75,29 +73,32 @@ export function SupervisorShiftDialog({
   const first = who.split(' ')[0] ?? who;
   const isFloor = user.role === 'FLOOR_SUPERVISOR';
 
+  const storesQuery = useQuery({
+    queryKey: ['SupervisorShiftDialog', 'stores', open, user.clientId, user.shiftWindows, user.leadUserId, user.role, user.id, readOnly],
+    queryFn: () => listClientShiftWindows(user.clientId!),
+    enabled: !(!open || !user.clientId),
+  });
+  const stores: StoreShiftWindows[] | null = storesQuery.data?.stores ?? null;
+  const supervisors: ClientShiftSupervisor[] = storesQuery.data ? storesQuery.data.supervisors ?? [] : [];
+  const loadError = storesQuery.isError;
   useEffect(() => {
-    if (!open || !user.clientId) return;
-    let live = true;
-    setStores(null);
-    setLoadError(false);
     setPicked(new Set((user.shiftWindows ?? []).map((w) => keyOf(w.locationId, w.label))));
     setLeadPick(user.leadUserId ?? null);
-    listClientShiftWindows(user.clientId)
-      .then((r) => {
-        if (!live) return;
-        setStores(r.stores);
-        setSupervisors(r.supervisors ?? []);
-      })
-      .catch(() => live && setLoadError(true));
-    if (user.role === 'SHIFT_SUPERVISOR' && !readOnly) {
-      getLeadFloorTeam(user.id)
-        .then((t) => live && setTeam(t))
-        .catch(() => live && setTeam(null));
-    }
-    return () => {
-      live = false;
-    };
   }, [open, user.clientId, user.shiftWindows, user.leadUserId, user.role, user.id, readOnly]);
+  const team2Query = useQuery({
+    queryKey: ['SupervisorShiftDialog', 'team', open, user.clientId, user.shiftWindows, user.leadUserId, user.role, user.id, readOnly],
+    queryFn: () => getLeadFloorTeam(user.id),
+    enabled: !(!open || !user.clientId) && (user.role === 'SHIFT_SUPERVISOR' && !readOnly),
+  });
+  useEffect(() => {
+    const t = team2Query.data;
+    if (t === undefined) return;
+    setTeam(t);
+  }, [team2Query.data]);
+  useEffect(() => {
+    if (!team2Query.isError) return;
+    setTeam(null);
+  }, [team2Query.isError, team2Query.error]);
 
   const withWindows = useMemo(() => (stores ?? []).filter((s) => s.windows.length > 0), [stores]);
   const defined = withWindows.length > 0;

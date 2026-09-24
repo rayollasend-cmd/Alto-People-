@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CalendarClock, FileText, Link2, Mail, Phone, Send } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
@@ -180,36 +181,27 @@ export function CandidateDetailDrawer({
   const { can } = useAuth();
   const [interviews, setInterviews] = useState<InterviewRecord[] | null>(null);
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const candidateId = candidate?.id ?? null;
 
+  const interviewsQuery = useQuery({
+    queryKey: ['CandidateDetailDrawer', 'interviews', candidateId],
+    queryFn: () => Promise.all([listInterviews(candidateId!), listOffers(candidateId!)]),
+    enabled: Boolean(candidateId),
+  });
+  const error = interviewsQuery.error ? interviewsQuery.error instanceof ApiError
+            ? interviewsQuery.error.message
+            : 'Could not load interviews and offers.' : null;
   useEffect(() => {
-    if (!candidateId) return;
-    let live = true;
     setInterviews(null);
     setOffers(null);
-    setError(null);
-    Promise.all([listInterviews(candidateId), listOffers(candidateId)])
-      .then(([i, o]) => {
-        if (!live) return;
-        setInterviews(i.interviews);
-        setOffers(o.offers);
-      })
-      .catch((err) => {
-        if (!live) return;
-        // A failed history load must not hide the profile — the fields above
-        // are already in hand from the list response.
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load interviews and offers.',
-        );
-      });
-    return () => {
-      live = false;
-    };
   }, [candidateId]);
+  useEffect(() => {
+    if (interviewsQuery.data === undefined) return;
+    const [i, o] = interviewsQuery.data;
+    setInterviews(i.interviews);
+    setOffers(o.offers);
+  }, [interviewsQuery.data]);
 
   if (!candidate) return null;
 

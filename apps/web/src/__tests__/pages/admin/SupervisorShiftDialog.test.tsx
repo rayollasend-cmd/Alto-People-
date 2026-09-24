@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render as rtlRender, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -18,6 +20,17 @@ import {
 } from '@/lib/shiftWindowsApi';
 import { SupervisorShiftDialog } from '@/pages/admin/SupervisorShiftDialog';
 import type { AdminUser } from '@/lib/usersAdminApi';
+
+// The dialog reads through the query layer; every render gets a client.
+function withQueryClient({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+const render = (ui: Parameters<typeof rtlRender>[0], options?: Parameters<typeof rtlRender>[1]) =>
+  rtlRender(ui, { wrapper: withQueryClient, ...options });
 
 const dana: AdminUser = {
   id: 'u-dana',
@@ -130,7 +143,8 @@ describe('<SupervisorShiftDialog> — a floor supervisor gets their shift and th
     const { onSaved } = renderDialog([frontBeach], vi.fn(), false, marcus);
     expect(await screen.findByRole('heading', { name: 'Marcus Hill’s shift and shift supervisor' })).toBeInTheDocument();
     // No shift yet: nobody suggested, nothing to save.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    // The list arrives through the query cache a tick after the heading.
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox', { name: /Overnight/ }));
     const danaRow = screen.getByRole('radio', { name: /Dana Reyes/ });
     expect(danaRow).toBeChecked();
