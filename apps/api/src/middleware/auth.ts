@@ -127,6 +127,7 @@ export async function attachUser(
       req.sessionStale = true;
       return next();
     }
+    req.authMethod = payload.amr ?? 'password';
 
     // Fast path — cache hit and tokenVersion still matches the JWT. Skips
     // the DB round-trip entirely.
@@ -155,6 +156,7 @@ export async function attachUser(
         associateId: true,
         tokenVersion: true,
         timezone: true,
+        language: true,
         mfaEnabledAt: true,
         associate: {
           select: {
@@ -353,6 +355,7 @@ export async function allowMfaEnrollToken(
         associateId: true,
         tokenVersion: true,
         timezone: true,
+        language: true,
         mfaEnabledAt: true,
         associate: {
           select: {

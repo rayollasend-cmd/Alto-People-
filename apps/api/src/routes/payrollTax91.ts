@@ -7,6 +7,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { hasCapability } from '@alto-people/shared';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
+import { dispatchFinancialChange, recordFinancialChange, ssnSummary } from '../lib/financialChanges.js';
 import {
   aggregateW2Wages,
   listEmployerClientIds,
@@ -2980,7 +2981,7 @@ payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) =>
 
     const a = await prisma.associate.findUnique({
       where: { id },
-      select: { id: true, employmentType: true },
+      select: { id: true, employmentType: true, tinEncrypted: true },
     });
     if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
     if (
@@ -2994,10 +2995,27 @@ payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) =>
       );
     }
 
-    await prisma.associate.update({
-      where: { id },
-      data: { tinEncrypted: encryptString(cleaned) },
+    const priorTin = a.tinEncrypted ? decryptString(a.tinEncrypted).replace(/[^0-9]/g, '') : null;
+    const tinChange = await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id },
+        data: { tinEncrypted: encryptString(cleaned) },
+      });
+      // Replacing a number on file is a change Finance must see; the first
+      // capture is not.
+      return priorTin && priorTin !== cleaned
+        ? recordFinancialChange(tx, {
+            associateId: id,
+            kind: 'SSN',
+            source: 'ADMIN',
+            actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+            req,
+            oldSummary: ssnSummary(priorTin, 'TIN'),
+            newSummary: ssnSummary(cleaned, 'TIN'),
+          })
+        : null;
     });
+    if (tinChange) void dispatchFinancialChange(tinChange.id);
     res.json({
       associateId: id,
       hasTin: true,
@@ -3013,13 +3031,28 @@ payrollTax91Router.delete('/associates/:id/tin', MANAGE, async (req, res, next) 
     const id = z.string().uuid().parse(req.params.id);
     const a = await prisma.associate.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, tinEncrypted: true },
     });
     if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
-    await prisma.associate.update({
-      where: { id },
-      data: { tinEncrypted: null },
+    const priorTin = a.tinEncrypted ? decryptString(a.tinEncrypted).replace(/[^0-9]/g, '') : null;
+    const removal = await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id },
+        data: { tinEncrypted: null },
+      });
+      return priorTin
+        ? recordFinancialChange(tx, {
+            associateId: id,
+            kind: 'SSN',
+            source: 'ADMIN',
+            actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+            req,
+            oldSummary: ssnSummary(priorTin, 'TIN'),
+            newSummary: ssnSummary(null, 'TIN'),
+          })
+        : null;
     });
+    if (removal) void dispatchFinancialChange(removal.id);
     res.json({ associateId: id, hasTin: false });
   } catch (err) {
     next(err);

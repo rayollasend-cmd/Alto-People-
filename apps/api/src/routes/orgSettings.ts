@@ -59,6 +59,8 @@ async function loadResponse(): Promise<OrgBranding> {
       logoUrl: null,
       logoUpdatedAt: null,
       mfaRequirement: 'OFF',
+      financeMailbox: null,
+      unverifiedPayoutPolicy: 'PREVIOUS_VERIFIED',
       updatedAt: new Date(0).toISOString(),
     };
   }
@@ -72,6 +74,8 @@ async function loadResponse(): Promise<OrgBranding> {
       : null,
     logoUpdatedAt: row.logoUpdatedAt?.toISOString() ?? null,
     mfaRequirement: row.mfaRequirement,
+    financeMailbox: row.financeMailbox,
+    unverifiedPayoutPolicy: row.unverifiedPayoutPolicy,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -104,6 +108,8 @@ orgSettingsRouter.patch(
         primaryColor: body.primaryColor ?? null,
         // Org-enforced MFA policy — defaults OFF when not supplied.
         mfaRequirement: body.mfaRequirement ?? 'OFF',
+        financeMailbox: body.financeMailbox ?? null,
+        unverifiedPayoutPolicy: body.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED',
       },
       update: body,
     });

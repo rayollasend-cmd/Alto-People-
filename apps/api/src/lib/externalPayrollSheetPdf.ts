@@ -42,9 +42,19 @@ function fmtRange(from: Date, toExclusive: Date): string {
   return `${from.toLocaleDateString('en-US', opts)} – ${last.toLocaleDateString('en-US', opts)}`;
 }
 
+export interface PacketRenderOpts {
+  /** "Downloaded by Dana Ortiz · Sep 24, 2026 10:14 AM ET · PKT-…" — on every page. */
+  watermark: string;
+}
+
+function fmtWhen(d: Date): string {
+  return d.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export async function renderExternalPayrollSheetPdf(
   data: ExternalPayrollSheetResult,
   generatedAt: Date,
+  opts: PacketRenderOpts = { watermark: `Generated ${fmtWhen(generatedAt)}` },
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: MARGIN, bufferPages: true });
@@ -77,6 +87,7 @@ export async function renderExternalPayrollSheetPdf(
       ['Status', 'Approved time only'],
       ['Employees', String(data.rows.length)],
       ['Generated', generatedAt.toLocaleString('en-US')],
+      ['Download', opts.watermark],
     ];
     for (const [label, value] of meta) {
       doc.font('Helvetica').fontSize(8).fillColor(MUTED);
@@ -104,14 +115,67 @@ export async function renderExternalPayrollSheetPdf(
 
     doc.moveDown(0.8);
 
+    // ---- Changes since last packet -----------------------------------------
+    // Every bank, pay-card, W-4, name, SSN and address change since the
+    // previous download, with who made it and whether Finance verified it.
+    // The bureau reads this before the roster; an unverified change is
+    // printed in the warning colour.
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(INK);
+    doc.text(
+      `Changes since last packet${data.sinceLastPacket ? ` (${fmtWhen(data.sinceLastPacket)})` : ' (since the period start)'}`,
+      MARGIN,
+      doc.y,
+      { width: pageW },
+    );
+    doc.moveDown(0.3);
+    if (data.changes.length === 0) {
+      doc.font('Helvetica').fontSize(9).fillColor(MUTED);
+      doc.text('No financial changes.', MARGIN, doc.y, { width: pageW });
+    } else {
+      for (const c of data.changes) {
+        if (doc.y + LINE_H * 3 > doc.page.height - MARGIN - 24) doc.addPage();
+        const unverified = c.status === 'PENDING' || c.status === 'HELD';
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(unverified ? WARN : INK);
+        doc.text(
+          `${c.associateName}${c.inPacket ? '' : ' (not in this packet)'} — ${c.kindLabel}${c.highRisk ? ' — HIGH RISK' : ''}`,
+          MARGIN,
+          doc.y,
+          { width: pageW },
+        );
+        doc.font('Helvetica').fontSize(8).fillColor(INK);
+        doc.text(`${c.oldSummary}  ->  ${c.newSummary}`, MARGIN + 10, doc.y, { width: pageW - 10 });
+        doc.font('Helvetica').fontSize(7.5).fillColor(unverified ? WARN : MUTED);
+        const state =
+          c.status === 'VERIFIED'
+            ? `Verified by ${c.verifiedBy ?? 'Finance'} on ${c.verifiedAt ? fmtWhen(c.verifiedAt) : '—'}`
+            : c.status === 'REJECTED'
+              ? 'Rejected — previous account restored'
+              : c.status === 'HELD'
+                ? 'HELD — not verified; do not pay to the new account'
+                : 'UNVERIFIED — acknowledged by the downloader; verify before paying';
+        doc.text(
+          `By ${c.by}${c.onBehalf ? ' (on behalf)' : ''} on ${fmtWhen(c.at)} · ${state}${c.riskFlags.length ? ` · Flags: ${c.riskFlags.join(', ')}` : ''}`,
+          MARGIN + 10,
+          doc.y,
+          { width: pageW - 10 },
+        );
+        doc.moveDown(0.35);
+      }
+    }
+    doc.moveDown(0.6);
+
     if (data.rows.length === 0) {
       doc.font('Helvetica').fontSize(10).fillColor(MUTED);
       doc.text('No approved time in this range.', MARGIN, doc.y, { width: pageW });
     }
 
     // ---- One card per employee --------------------------------------------
-    const cardH = CARD_PAD * 2 + LINE_H * 6 + 6;
+    const baseCardH = CARD_PAD * 2 + LINE_H * 6 + 6;
+    const flagsW = pageW - CARD_PAD * 2;
     for (const r of data.rows) {
+      doc.font('Helvetica-Bold').fontSize(7.5);
+      const flagsH = r.flags ? doc.heightOfString(r.flags, { width: flagsW }) + 8 : 0;
+      const cardH = baseCardH + flagsH;
       if (doc.y + cardH > doc.page.height - MARGIN - 24) {
         doc.addPage();
       }
@@ -156,6 +220,15 @@ export async function renderExternalPayrollSheetPdf(
         doc.font('Helvetica-Bold').fontSize(8).fillColor(INK);
         doc.text(value, x, y + 6, { width: colW - 6, lineBreak: false, ellipsis: true });
       });
+      if (r.flags) {
+        // Holds, fallbacks and changes, in full — the bureau acts on these.
+        const fy = top + baseCardH - CARD_PAD + 2;
+        const urgent = /HOLD|UNVERIFIED|HELD|HIGH RISK/.test(r.flags);
+        doc.font('Helvetica').fontSize(6.5).fillColor(MUTED);
+        doc.text('FLAGS', MARGIN + CARD_PAD, fy, { width: flagsW, lineBreak: false });
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(urgent ? WARN : INK);
+        doc.text(r.flags, MARGIN + CARD_PAD, fy + 7, { width: flagsW });
+      }
 
       doc.y = top + cardH + 8;
     }
@@ -164,6 +237,8 @@ export async function renderExternalPayrollSheetPdf(
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i += 1) {
       doc.switchToPage(range.start + i);
+      // Writing below the bottom margin would otherwise open a new page.
+      doc.page.margins.bottom = 0;
       const footY = doc.page.height - MARGIN + 6;
       doc.font('Helvetica').fontSize(7).fillColor(WARN);
       doc.text('CONFIDENTIAL — contains SSN and bank account data', MARGIN, footY, {
@@ -176,6 +251,15 @@ export async function renderExternalPayrollSheetPdf(
         align: 'right',
         lineBreak: false,
       });
+      doc.font('Helvetica').fontSize(6.5).fillColor(MUTED);
+      doc.text(opts.watermark, MARGIN, footY + 9, { width: pageW, lineBreak: false, ellipsis: true });
+      // A faint diagonal stamp across the page: a photo of a page still
+      // says who downloaded it and when.
+      doc.save();
+      doc.rotate(-32, { origin: [doc.page.width / 2, doc.page.height / 2] });
+      doc.font('Helvetica-Bold').fontSize(22).fillColor(MUTED).fillOpacity(0.08);
+      doc.text(opts.watermark, MARGIN - 60, doc.page.height / 2 - 12, { width: pageW + 120, align: 'center', lineBreak: false });
+      doc.restore();
     }
 
     doc.end();

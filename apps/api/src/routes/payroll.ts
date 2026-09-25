@@ -64,6 +64,16 @@ import { decryptString, tryDecryptString } from '../lib/crypto.js';
 import { readRoutingNumber } from '../lib/payoutMethod.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
+import {
+  dispatchFinancialChange,
+  last4,
+  loadUnverifiedPayoutPolicy,
+  notifyFinance,
+  payoutMethodSummary,
+  recordFinancialChange,
+  replacePrimaryPayoutMethod,
+  resolvePayoutsForPayroll,
+} from '../lib/financialChanges.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
   isStubMode as qboIsStubMode,
@@ -320,21 +330,34 @@ payrollRouter.patch(
       }
 
       const existing = await prisma.payoutMethod.findFirst({
-        where: { associateId: associate.id, isPrimary: true },
+        where: { associateId: associate.id, isPrimary: true, retiredAt: null },
       });
-      if (existing) {
-        await prisma.payoutMethod.update({
-          where: { id: existing.id },
-          data: { branchCardId },
-        });
-      } else if (branchCardId) {
-        await prisma.payoutMethod.create({
-          data: {
-            associateId: associate.id,
-            type: 'BRANCH_CARD',
+      let change: { id: string } | null = null;
+      if (existing || branchCardId) {
+        change = await prisma.$transaction(async (tx) => {
+          // Retire, never overwrite: the bank fields ride along onto the
+          // new row so clearing the card still falls back to ACH.
+          const { previous, created } = await replacePrimaryPayoutMethod(tx, associate.id, {
+            type: branchCardId ? 'BRANCH_CARD' : (existing?.type ?? 'BANK_ACCOUNT'),
+            routingNumberEnc: existing?.routingNumberEnc ?? null,
+            accountNumberEnc: existing?.accountNumberEnc ?? null,
+            accountType: existing?.accountType ?? null,
+            bankName: existing?.bankName ?? null,
             branchCardId,
-            isPrimary: true,
-          },
+            accountLast4: branchCardId ? last4(branchCardId) : (existing?.accountLast4 ?? null),
+            accountFingerprint: existing?.accountFingerprint ?? null,
+          });
+          return recordFinancialChange(tx, {
+            associateId: associate.id,
+            kind: previous && previous.type !== created.type ? 'PAY_METHOD' : 'PAY_CARD',
+            source: 'ADMIN',
+            actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+            req,
+            oldSummary: payoutMethodSummary(previous),
+            newSummary: payoutMethodSummary(created),
+            oldPayoutMethodId: previous?.id ?? null,
+            newPayoutMethodId: created.id,
+          });
         });
       }
       // No-op when there's no primary method AND HR sent null — nothing to clear.
@@ -355,8 +378,9 @@ payrollRouter.patch(
         },
         'payroll.branch_enrollment_updated'
       );
+      if (change) void dispatchFinancialChange(change.id);
 
-      res.json({ ok: true, branchCardId });
+      res.json({ ok: true, branchCardId, financialChangeId: change?.id ?? null });
     } catch (err) {
       next(err);
     }
@@ -1490,19 +1514,22 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
     ).map((x) => x.id);
 
     const now = new Date();
+    // Verify-before-pay. An account whose change Finance has not verified
+    // is never paid into: the previous verified account is used, or the
+    // item is held, per the org setting. High-risk holds always hold.
+    const payoutPolicy = await loadUnverifiedPayoutPolicy(prisma);
+    const heldForVerification: Array<{ name: string; changeId: string | null }> = [];
+    const paidPrevious: Array<{ name: string; changeId: string | null }> = [];
     for (let batchStart = 0; batchStart < pendingIds.length; batchStart += 100) {
     const items = await prisma.payrollItem.findMany({
       where: { id: { in: pendingIds.slice(batchStart, batchStart + 100) } },
-      include: {
-        associate: {
-          include: {
-            // Pull the primary payout method so the adapter can address
-            // the right rail per associate (Branch card vs ACH bank).
-            payoutMethods: { where: { isPrimary: true }, take: 1 },
-          },
-        },
-      },
+      include: { associate: true },
     });
+    const payouts = await resolvePayoutsForPayroll(
+      prisma,
+      [...new Set(items.map((i) => i.associateId))],
+      payoutPolicy,
+    );
 
     // PERF: bounded parallelism. Each item is independent (idempotencyKey
     // per item, per-item writes) — the old fully-serial walk blocked the
@@ -1535,7 +1562,30 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         return;
       }
 
-      const primary = item.associate.payoutMethods[0] ?? null;
+      const resolution = payouts.get(item.associateId) ?? { method: null, decision: 'none' as const, changeId: null, pendingMethod: null };
+      const associateName = `${item.associate.firstName} ${item.associate.lastName}`;
+      if (resolution.decision === 'hold') {
+        heldForVerification.push({ name: associateName, changeId: resolution.changeId });
+        await prisma.payrollDisbursementAttempt.create({
+          data: {
+            payrollItemId: item.id,
+            provider: adapter.provider,
+            status: 'FAILED',
+            externalRef: null,
+            failureReason: 'unverified_payout_change',
+            attemptedById: req.user!.id,
+          },
+        });
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: { status: 'HELD', failureReason: 'unverified_payout_change: Finance has not verified the new pay account' },
+        });
+        return;
+      }
+      if (resolution.decision === 'previous_verified') {
+        paidPrevious.push({ name: associateName, changeId: resolution.changeId });
+      }
+      const primary = resolution.method;
       const disburseInput = {
         amount: netPayNum,
         currency: 'USD',
@@ -1606,6 +1656,20 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         });
       }
     });
+    }
+
+    // Finance hears about every item this rule touched, in one message.
+    if (heldForVerification.length > 0 || paidPrevious.length > 0) {
+      const lines = [
+        ...heldForVerification.map((h) => `Held: ${h.name} — new pay account not yet verified`),
+        ...paidPrevious.map((p) => `Paid to previous verified account: ${p.name}`),
+      ];
+      void notifyFinance({
+        subject: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}: ${heldForVerification.length} held, ${paidPrevious.length} paid to a previous account`,
+        body: lines.slice(0, 3).join('; ') + (lines.length > 3 ? ` (+${lines.length - 3} more)` : ''),
+        text: lines.join('\n'),
+        linkUrl: '/payroll/financial-changes',
+      });
     }
 
     // The run is complete only when NOTHING remains pending or held —

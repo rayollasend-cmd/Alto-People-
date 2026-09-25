@@ -49,9 +49,18 @@ function fmtRange(from: Date, toExclusive: Date): string {
   return `${from.toLocaleDateString('en-US', opts)} – ${last.toLocaleDateString('en-US', opts)}`;
 }
 
+export interface PacketRenderOpts {
+  watermark: string;
+}
+
+function fmtWhen(d: Date): string {
+  return d.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export async function renderExternalPayrollSheetXlsx(
   data: ExternalPayrollSheetResult,
   generatedAt: Date,
+  opts: PacketRenderOpts = { watermark: `Generated ${fmtWhen(generatedAt)}` },
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Alto People';
@@ -82,6 +91,7 @@ export async function renderExternalPayrollSheetXlsx(
     ['Status', 'Approved time only'],
     ['Employees', String(data.rows.length)],
     ['Generated', generatedAt.toLocaleString('en-US')],
+    ['Download', opts.watermark],
   ];
   let row = 4;
   for (const [label, value] of meta) {
@@ -156,6 +166,65 @@ export async function renderExternalPayrollSheetXlsx(
       to: { row: headerRowIdx + data.rows.length, column: EXTERNAL_PAYROLL_COLUMNS.length },
     };
   }
+
+  // Printed on every page of every sheet.
+  ws.headerFooter = { oddFooter: `&L&8${opts.watermark}&R&8Page &P of &N`, evenFooter: `&L&8${opts.watermark}&R&8Page &P of &N` };
+
+  // ---- Changes since last packet ---------------------------------------
+  const cs = wb.addWorksheet('Changes since last packet', {
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+  });
+  cs.headerFooter = { oddFooter: `&L&8${opts.watermark}&R&8Page &P of &N` };
+  cs.mergeCells('A1:K1');
+  cs.getCell('A1').value = `Changes since last packet${data.sinceLastPacket ? ` (${fmtWhen(data.sinceLastPacket)})` : ' (since the period start)'}`;
+  cs.getCell('A1').font = { bold: true, size: 14, color: { argb: INK } };
+  cs.mergeCells('A2:K2');
+  cs.getCell('A2').value =
+    'Every bank, pay card, W-4, legal name, SSN/TIN and home address change, with who made it and whether Finance verified it by phone. UNVERIFIED and HELD rows must not be paid to the new account.';
+  cs.getCell('A2').font = { size: 9, color: { argb: MUTED } };
+  const CH = [
+    ['Associate', 26], ['In packet', 10], ['Change', 18], ['Before', 30], ['After', 30], ['By', 22], ['On behalf', 10],
+    ['When', 20], ['Status', 14], ['Verified by / when', 30], ['Risk flags', 36],
+  ] as const;
+  const h = cs.getRow(4);
+  CH.forEach(([label, width], i) => {
+    h.getCell(i + 1).value = label;
+    cs.getColumn(i + 1).width = width;
+  });
+  h.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+  h.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BAND } };
+    cell.border = THIN;
+  });
+  data.changes.forEach((c, i) => {
+    const r = cs.getRow(5 + i);
+    const unverified = c.status === 'PENDING' || c.status === 'HELD';
+    const values = [
+      c.associateName,
+      c.inPacket ? 'Yes' : 'No',
+      c.kindLabel + (c.highRisk ? ' (HIGH RISK)' : ''),
+      c.oldSummary,
+      c.newSummary,
+      c.by,
+      c.onBehalf ? 'Yes' : 'No',
+      fmtWhen(c.at),
+      c.status === 'PENDING' ? 'UNVERIFIED' : c.status,
+      c.verifiedBy ? `${c.verifiedBy} · ${c.verifiedAt ? fmtWhen(c.verifiedAt) : ''}` : '',
+      c.riskFlags.join(', '),
+    ];
+    values.forEach((v, j) => {
+      const cell = r.getCell(j + 1);
+      cell.value = v;
+      cell.border = THIN;
+      cell.alignment = { vertical: 'middle', wrapText: true };
+      if (unverified) cell.font = { bold: j === 8, color: { argb: WARN } };
+    });
+  });
+  if (data.changes.length === 0) {
+    cs.getCell('A5').value = 'No financial changes.';
+    cs.getCell('A5').font = { color: { argb: MUTED } };
+  }
+  cs.views = [{ state: 'frozen', ySplit: 4 }];
 
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);

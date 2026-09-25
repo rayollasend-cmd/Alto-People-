@@ -392,6 +392,10 @@ model User {
   activeRole         Role?
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
+  /// Preferred language for the emails Alto sends this person: en, es or tr.
+  /// Null means English. Set from the app's language toggle and Settings;
+  /// every associate-facing email reads it and falls back to English.
+  language           String?    @db.VarChar(2)
   // SCIM 2.0 externalId passthrough — the identity provider's (Entra ID /
   // Okta) own identifier for this account. Opaque to us; stored so we can
   // echo it back on every SCIM read and the IdP can correlate resources.
@@ -564,6 +568,9 @@ model User {
   kioskDevicesCreated               KioskDevice[]                 @relation("KioskDeviceCreator")
   kioskPinsCreated                  KioskPin[]                    @relation("KioskPinCreator")
   readyToWorkHandoffsIssued         ReadyToWorkHandoff[]          @relation("ReadyToWorkIssuer")
+  financialChangesMade              FinancialChange[]             @relation("FinancialChangeActor")
+  financialChangesVerified          FinancialChange[]             @relation("FinancialChangeVerifier")
+  packetDownloads                   PacketDownload[]
   kioskPunchesReviewed              KioskPunch[]                  @relation("KioskPunchReviewer")
   assetAssignmentsAssigned          AssetAssignment[]             @relation("AssetAssigner")
   assetAssignmentsReturned          AssetAssignment[]             @relation("AssetReturner")
@@ -1739,6 +1746,7 @@ model Associate {
   i9Verification           I9Verification?
   w4Submission             W4Submission?
   payoutMethods            PayoutMethod[]
+  financialChanges         FinancialChange[]
   timeEntries              TimeEntry[]
   rides                    Ride[]
   ridePlaces               RidePlace[]
@@ -2644,11 +2652,25 @@ model PayoutMethod {
   branchCardId     String?
   isPrimary        Boolean    @default(false)
   verifiedAt       DateTime?  @db.Timestamptz(6)
+  /// Set when a newer method replaced this one. A replaced account is kept
+  /// (never overwritten) so payroll can fall back to the last verified one
+  /// and Finance can see what changed.
+  retiredAt        DateTime?  @db.Timestamptz(6)
+  verifiedById     String?    @db.Uuid
+  /// Last four digits of the account (or card id), so alerts, the Finance
+  /// queue and the associate's confirmation can name the account without
+  /// decrypting it. Null on rows written before this column existed.
+  accountLast4     String?    @db.VarChar(4)
+  /// Keyed hash of routing + account. Lets the same bank account on two
+  /// associates be spotted without decrypting anything.
+  accountFingerprint String?  @db.VarChar(64)
   associate        Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
   createdAt        DateTime   @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime   @updatedAt @db.Timestamptz(6)
 
   @@index([associateId])
+  @@index([associateId, isPrimary, retiredAt])
+  @@index([accountFingerprint])
 }
 
 model TimeEntry {
@@ -7180,6 +7202,12 @@ model OrgSetting {
   // must enroll in TOTP before a password sign-in completes. ALL = every
   // human role. Passkey sign-in is exempt (it is already strong auth).
   mfaRequirement     MfaRequirement @default(OFF)
+  /// Finance's shared mailbox. Every financial-change alert is also sent
+  /// here when set, so an alert is never lost to one person's inbox.
+  financeMailbox     String?        @db.VarChar(254)
+  /// What payroll does with a bank change Finance has not verified by the
+  /// cutoff: pay the previous verified account, or hold the pay.
+  unverifiedPayoutPolicy UnverifiedPayoutPolicy @default(PREVIOUS_VERIFIED)
   updatedAt          DateTime       @updatedAt @db.Timestamptz(6)
 }
 
@@ -8033,4 +8061,116 @@ model ReadyToWorkHandoff {
 
   @@index([clientId, locationId, issuedAt(sort: Desc)])
   @@index([nudgedAt, supervisorsNotifiedAt])
+}
+
+/// Every change to how or to whom an associate is paid, and to the identity
+/// payroll files under. One row per change, written in the same transaction
+/// as the change itself. The Finance queue, the associate confirmation, the
+/// packet's "Changes since last packet" section and verify-before-pay all
+/// read this table; the email retry queue is delivery, this is the truth.
+model FinancialChange {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId            String                @db.Uuid
+  kind                   FinancialChangeKind
+  /// Who made it: the associate, an administrator on their behalf, or the
+  /// onboarding flow (the applicant, before they have an account).
+  source                 FinancialChangeSource
+  actorUserId            String?               @db.Uuid
+  actorRole              String?               @db.VarChar(40)
+  onBehalf               Boolean               @default(false)
+  ip                     String?               @db.VarChar(64)
+  userAgent              String?               @db.VarChar(512)
+  /// How the actor was signed in: PASSWORD, MFA, PASSKEY or UNKNOWN.
+  authStrength           String                @default("UNKNOWN") @db.VarChar(16)
+  /// Masked, safe-to-email descriptions: "Chase · checking · ending 4821".
+  /// Never a full account number, never an SSN.
+  oldSummary             String?               @db.VarChar(200)
+  newSummary             String?               @db.VarChar(200)
+  oldPayoutMethodId      String?               @db.Uuid
+  newPayoutMethodId      String?               @db.Uuid
+  riskFlags              String[]              @default([])
+  riskScore              Int                   @default(0)
+  highRisk               Boolean               @default(false)
+  status                 FinancialChangeStatus @default(PENDING)
+  /// The phone number on file BEFORE this change, masked (last 4). Finance
+  /// verifies by calling this number — never one that was just added.
+  verifyPhoneLast4       String?               @db.VarChar(4)
+  verifiedById           String?               @db.Uuid
+  verifiedAt             DateTime?             @db.Timestamptz(6)
+  verifiedVia            String?               @db.VarChar(32)
+  verificationNote       String?               @db.VarChar(1000)
+  financeNotifiedAt      DateTime?             @db.Timestamptz(6)
+  associateNotifiedAt    DateTime?             @db.Timestamptz(6)
+  priorContactNotifiedAt DateTime?             @db.Timestamptz(6)
+  /// Set when a packet download recorded an acknowledgment of this change
+  /// while it was still unverified.
+  acknowledgedAt         DateTime?             @db.Timestamptz(6)
+  acknowledgedById       String?               @db.Uuid
+  createdAt              DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime              @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  actorUser  User?     @relation("FinancialChangeActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  verifiedBy User?     @relation("FinancialChangeVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([associateId, createdAt(sort: Desc)])
+  @@index([createdAt])
+}
+
+enum FinancialChangeKind {
+  BANK_ACCOUNT
+  PAY_CARD
+  PAY_METHOD
+  W4
+  LEGAL_NAME
+  SSN
+  HOME_ADDRESS
+}
+
+enum FinancialChangeSource {
+  SELF
+  ADMIN
+  ONBOARDING
+}
+
+enum FinancialChangeStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  HELD
+}
+
+enum UnverifiedPayoutPolicy {
+  PREVIOUS_VERIFIED
+  HOLD
+}
+
+/// Every download of the external payroll packet (the sheet that carries
+/// SSNs and bank accounts). Who, when, from where, what it covered, which
+/// unverified changes they acknowledged, and the watermark stamped on it.
+model PacketDownload {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String   @db.Uuid
+  format                String   @db.VarChar(8)
+  from                  DateTime @db.Timestamptz(6)
+  to                    DateTime @db.Timestamptz(6)
+  clientId              String?  @db.Uuid
+  locationId            String?  @db.Uuid
+  associateId           String?  @db.Uuid
+  rowCount              Int      @default(0)
+  associateCount        Int      @default(0)
+  changeCount           Int      @default(0)
+  unverifiedCount       Int      @default(0)
+  acknowledgedChangeIds String[] @default([])
+  ip                    String?  @db.VarChar(64)
+  userAgent             String?  @db.VarChar(512)
+  /// The text stamped on every page / sheet: who, when, download id.
+  watermark             String   @db.VarChar(200)
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
 }

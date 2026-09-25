@@ -175,6 +175,12 @@ export interface NotifyOpts {
    * IN_APP rows always store the text body — the bell never renders HTML.
    */
   html?: string;
+  /**
+   * The plain-text twin of `html`. When set, the email's text part is this
+   * and `body` stays the short line the bell shows; when absent the email's
+   * text part is `body`.
+   */
+  text?: string;
   /** Tag for filtering in the bell ("onboarding", "documents", etc.). */
   category?: string;
   /**
@@ -222,7 +228,7 @@ function sendEmailNotification(
       // company block, or disclaimer — indistinguishable from phishing,
       // which is exactly what the standard footer exists to prevent.
       const branded = opts.html
-        ? { html: opts.html, text: opts.body }
+        ? { html: opts.html, text: opts.text ?? opts.body }
         : (() => {
             const tpl = genericNotificationTemplate({
               subject: opts.subject ?? 'Notification from Alto HR',
@@ -532,7 +538,7 @@ export function notifyAssociate(
       // fallback path (e.g. "your application was declined") must not be
       // the one send that leaves unbranded.
       const tpl = opts.html
-        ? { html: opts.html, text: opts.body }
+        ? { html: opts.html, text: opts.text ?? opts.body }
         : genericNotificationTemplate({
             subject: opts.subject ?? 'Notification from Alto HR',
             body: opts.body,

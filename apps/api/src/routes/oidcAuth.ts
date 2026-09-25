@@ -369,6 +369,7 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       sub: sessionUser.id,
       role: sessionUser.role,
       ver: sessionUser.tokenVersion,
+      amr: 'sso',
     });
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
     res.redirect(302, '/');

@@ -452,6 +452,15 @@ export const RoleSchema = z.enum([
 
 export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
 
+export const EMAIL_LANGUAGES = ['en', 'es', 'tr'] as const;
+export const EmailLanguageSchema = z.enum(EMAIL_LANGUAGES);
+export type EmailLanguage = z.infer<typeof EmailLanguageSchema>;
+export const EMAIL_LANGUAGE_LABELS: Record<EmailLanguage, string> = {
+  en: 'English',
+  es: 'Español',
+  tr: 'Türkçe',
+};
+
 export const AuthUserSchema = z.object({
   id: UuidSchema,
   email: z.string().email(),
@@ -484,6 +493,9 @@ export const AuthUserSchema = z.object({
   // Phase 39 — IANA timezone preference. Null means "use the browser's
   // locale" on the web side and "fall back to UTC" in email layout.
   timezone: z.string().nullable(),
+  // Preferred language for the emails Alto sends this person. Null means
+  // English. The app's language toggle and Settings both write it.
+  language: EmailLanguageSchema.nullable().optional(),
   // Phase 47 — TOTP MFA. True iff the user has confirmed enrollment with
   // a valid 6-digit code. Drives the Settings card and (in a follow-up
   // PR) the login challenge step.
@@ -1390,7 +1402,73 @@ export const ExternalPayrollSheetInputSchema = z.object({
   clientId: UuidSchema.optional(),
   locationId: UuidSchema.optional(),
   associateId: UuidSchema.optional(),
+  // Unverified financial changes block the packet until the person
+  // downloading it acknowledges each one by id; the acknowledgment is
+  // recorded on the change and on the download.
+  acknowledgeChangeIds: z.array(UuidSchema).max(500).optional(),
 });
+
+/* -------------------------------------------------------------------------- *
+ *  Financial changes — the Finance queue.
+ * -------------------------------------------------------------------------- */
+
+export const FinancialChangeKindSchema = z.enum([
+  'BANK_ACCOUNT',
+  'PAY_CARD',
+  'PAY_METHOD',
+  'W4',
+  'LEGAL_NAME',
+  'SSN',
+  'HOME_ADDRESS',
+]);
+export type FinancialChangeKind = z.infer<typeof FinancialChangeKindSchema>;
+export const FinancialChangeStatusSchema = z.enum(['PENDING', 'VERIFIED', 'REJECTED', 'HELD']);
+export type FinancialChangeStatus = z.infer<typeof FinancialChangeStatusSchema>;
+
+export const FinancialChangeRowSchema = z.object({
+  id: UuidSchema,
+  associate: z.object({ id: UuidSchema, name: z.string() }),
+  kind: FinancialChangeKindSchema,
+  kindLabel: z.string(),
+  source: z.enum(['SELF', 'ADMIN', 'ONBOARDING']),
+  onBehalf: z.boolean(),
+  actor: z.object({ id: UuidSchema, name: z.string().nullable(), role: z.string().nullable() }).nullable(),
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  authStrength: z.string(),
+  oldSummary: z.string().nullable(),
+  newSummary: z.string().nullable(),
+  riskFlags: z.array(z.string()),
+  riskLabels: z.array(z.string()),
+  riskScore: z.number(),
+  highRisk: z.boolean(),
+  status: FinancialChangeStatusSchema,
+  verifyPhoneLast4: z.string().nullable(),
+  verifiedBy: z.object({ id: UuidSchema, name: z.string().nullable() }).nullable(),
+  verifiedAt: z.string().nullable(),
+  verifiedVia: z.string().nullable(),
+  verificationNote: z.string().nullable(),
+  financeNotifiedAt: z.string().nullable(),
+  associateNotifiedAt: z.string().nullable(),
+  priorContactNotifiedAt: z.string().nullable(),
+  acknowledgedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type FinancialChangeRow = z.infer<typeof FinancialChangeRowSchema>;
+
+export const VerifyFinancialChangeInputSchema = z.object({
+  via: z.enum(['PHONE_CALL', 'IN_PERSON', 'OTHER']),
+  note: z.string().trim().max(1000).optional().nullable(),
+  reachedOnNumberOnFile: z.literal(true),
+});
+export type VerifyFinancialChangeInput = z.infer<typeof VerifyFinancialChangeInputSchema>;
+
+export const UnverifiedPayoutPolicySchema = z.enum(['PREVIOUS_VERIFIED', 'HOLD']);
+export type UnverifiedPayoutPolicy = z.infer<typeof UnverifiedPayoutPolicySchema>;
+export const UNVERIFIED_PAYOUT_POLICY_LABELS: Record<UnverifiedPayoutPolicy, string> = {
+  PREVIOUS_VERIFIED: 'Pay the previous verified account',
+  HOLD: 'Hold the pay until Finance verifies',
+};
 export type ExternalPayrollSheetInput = z.infer<
   typeof ExternalPayrollSheetInputSchema
 >;
@@ -4511,6 +4589,11 @@ export const TIMEZONE_LABELS: Record<SupportedTimezone, string> = {
   'Australia/Sydney': 'Sydney',
 };
 
+export const UpdateLanguageInputSchema = z.object({
+  // Null clears the preference (English).
+  language: EmailLanguageSchema.nullable(),
+});
+
 export const UpdateTimezoneInputSchema = z.object({
   // Null clears the preference and falls back to the browser locale.
   timezone: z.enum(SUPPORTED_TIMEZONES).nullable(),
@@ -6092,6 +6175,10 @@ export const OrgBrandingSchema = z.object({
   // Security — org-enforced MFA. Not branding, but it lives on the same
   // OrgSetting singleton and rides the same GET/PATCH surface.
   mfaRequirement: MfaRequirementSchema,
+  // Finance — where financial-change alerts also go, and what payroll does
+  // with a bank change Finance has not verified by the cutoff.
+  financeMailbox: z.string().nullable(),
+  unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema,
   updatedAt: z.string().datetime(),
 });
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -6114,6 +6201,13 @@ export const UpdateOrgBrandingInputSchema = z
       .nullable()
       .optional(),
     mfaRequirement: MfaRequirementSchema.optional(),
+    financeMailbox: z
+      .string()
+      .max(254)
+      .regex(/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/, 'Must be a bare email address.')
+      .nullable()
+      .optional(),
+    unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema.optional(),
   })
   .strict();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;

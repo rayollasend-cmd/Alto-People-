@@ -28,6 +28,7 @@ import { timeOffRouter } from './routes/timeOff.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
+import { financialChangesRouter } from './routes/financialChanges.js';
 import { w4RecollectionRouter } from './routes/w4Recollection.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
@@ -378,6 +379,9 @@ export function createApp() {
     requireCapability('view:scheduling'),
     schedulingRouter
   );
+  // The Finance queue — mounted before /payroll so its stricter gate
+  // (process:payroll) is the one that answers for this path.
+  app.use('/payroll/financial-changes', requireCapability('process:payroll'), financialChangesRouter);
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
   // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
   // Same capability as the SSN reveal endpoint — this surface names who

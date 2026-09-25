@@ -38,6 +38,7 @@ import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/st
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
 import { enqueueAudit, recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
+import { PACKET_CATEGORY, notifyFinance } from '../lib/financialChanges.js';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
 import { renderExternalPayrollSheetXlsx } from '../lib/externalPayrollSheetXlsx.js';
@@ -2879,8 +2880,70 @@ async function loadExternalSheet(
     parsed.data,
   );
 
+  // Unverified financial changes block the packet. The person downloading
+  // it must acknowledge each one by id; the acknowledgment is recorded on
+  // the change, on the download, and in the audit trail.
+  const acknowledged = new Set(parsed.data.acknowledgeChangeIds ?? []);
+  const blocking = data.changes.filter((c) => data.unverifiedChangeIds.includes(c.id) && !acknowledged.has(c.id));
+  if (blocking.length > 0) {
+    throw new HttpError(
+      409,
+      'unverified_changes',
+      `${blocking.length} financial change${blocking.length === 1 ? '' : 's'} in this packet ${blocking.length === 1 ? 'has' : 'have'} not been verified by Finance. Verify them, or acknowledge each one to download anyway.`,
+      {
+        changes: blocking.map((c) => ({
+          id: c.id,
+          associateName: c.associateName,
+          kindLabel: c.kindLabel,
+          oldSummary: c.oldSummary,
+          newSummary: c.newSummary,
+          by: c.by,
+          at: c.at.toISOString(),
+          status: c.status,
+          highRisk: c.highRisk,
+          riskFlags: c.riskFlags,
+        })),
+      },
+    );
+  }
+  const ackNow = data.unverifiedChangeIds.filter((id) => acknowledged.has(id));
+
   // Record BEFORE the bytes go out. A throw here aborts the download, which
   // is the intended trade: no silent export of SSNs and bank accounts.
+  const now = new Date();
+  const downloaderName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email;
+  const download = await prisma.$transaction(async (tx) => {
+    const row = await tx.packetDownload.create({
+      data: {
+        userId: user.id,
+        format,
+        from: data.from,
+        to: data.to,
+        clientId: parsed.data.clientId ?? null,
+        locationId: parsed.data.locationId ?? null,
+        associateId: parsed.data.associateId ?? null,
+        rowCount: data.rows.length,
+        associateCount: data.rows.length,
+        changeCount: data.changes.length,
+        unverifiedCount: data.unverifiedChangeIds.length,
+        acknowledgedChangeIds: ackNow,
+        ip: req.ip?.slice(0, 64) ?? null,
+        userAgent: req.get('user-agent')?.slice(0, 512) ?? null,
+        watermark: 'pending',
+        createdAt: now,
+      },
+    });
+    const watermark = `Downloaded by ${downloaderName} · ${now.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })} ET · PKT-${row.id.slice(0, 8).toUpperCase()}`.slice(0, 200);
+    await tx.packetDownload.update({ where: { id: row.id }, data: { watermark } });
+    if (ackNow.length > 0) {
+      await tx.financialChange.updateMany({
+        where: { id: { in: ackNow }, acknowledgedAt: null },
+        data: { acknowledgedAt: now, acknowledgedById: user.id },
+      });
+    }
+    return { id: row.id, watermark };
+  });
+
   await recordCriticalAudit(
     {
       actorUserId: user.id,
@@ -2902,6 +2965,10 @@ async function loadExternalSheet(
         includedBankAccounts: data.rows.filter((r) => r.accountNumber !== '').length,
         gaps: data.gaps,
         truncated: data.truncated,
+        packetDownloadId: download.id,
+        watermark: download.watermark,
+        changesListed: data.changes.length,
+        unverifiedAcknowledged: ackNow,
         ip: req.ip ?? null,
         userAgent: req.get('user-agent') ?? null,
       },
@@ -2909,7 +2976,23 @@ async function loadExternalSheet(
     'externalPayrollSheet',
   );
 
-  return data;
+  // Finance leadership hears about every download, with what it carried.
+  const scope = data.clientName ?? 'all clients';
+  void notifyFinance({
+    subject: `Payroll packet downloaded by ${downloaderName} (${scope})`,
+    body: `${data.rows.length} employee${data.rows.length === 1 ? '' : 's'}, ${data.changes.length} change${data.changes.length === 1 ? '' : 's'} listed${ackNow.length ? `, ${ackNow.length} unverified acknowledged` : ''}. ${download.watermark}`,
+    text: [
+      `${downloaderName} downloaded the external payroll packet (${format.toUpperCase()}).`,
+      `Scope: ${scope}, ${data.from.toISOString().slice(0, 10)} to ${new Date(data.to.getTime() - 1).toISOString().slice(0, 10)}.`,
+      `Employees: ${data.rows.length}. Changes since last packet: ${data.changes.length}. Unverified changes acknowledged: ${ackNow.length}.`,
+      `From ${req.ip ?? 'unknown IP'}.`,
+      download.watermark,
+    ].join('\n'),
+    linkUrl: '/payroll/financial-changes',
+    category: PACKET_CATEGORY,
+  });
+
+  return { ...data, watermark: download.watermark };
 }
 
 /** Gap counts ride back as headers so the UI can warn without a second call. */
@@ -2933,7 +3016,7 @@ function externalSheetFilename(from: Date, to: Date, ext: string): string {
 timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'xlsx');
-    const xlsx = await renderExternalPayrollSheetXlsx(data, new Date());
+    const xlsx = await renderExternalPayrollSheetXlsx(data, new Date(), { watermark: data.watermark });
     setExternalSheetHeaders(res, data);
     res.setHeader(
       'Content-Type',
@@ -2952,7 +3035,7 @@ timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportL
 timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'pdf');
-    const pdf = await renderExternalPayrollSheetPdf(data, new Date());
+    const pdf = await renderExternalPayrollSheetPdf(data, new Date(), { watermark: data.watermark });
     setExternalSheetHeaders(res, data);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

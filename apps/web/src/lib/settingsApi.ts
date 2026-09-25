@@ -52,6 +52,13 @@ export function revokeOtherSessions(): Promise<void> {
   return apiFetch<void>('/auth/me/revoke-other-sessions', { method: 'POST' });
 }
 
+export function updateLanguage(language: 'en' | 'es' | 'tr' | null): Promise<void> {
+  return apiFetch<void>('/auth/me/language', {
+    method: 'PATCH',
+    body: { language },
+  });
+}
+
 export function updateTimezone(timezone: SupportedTimezone | null): Promise<void> {
   return apiFetch<void>('/auth/me/timezone', {
     method: 'PATCH',

@@ -71,6 +71,19 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { enqueueAudit, recordOnboardingEvent } from '../lib/audit.js';
+import {
+  accountFingerprint,
+  addressSummary,
+  dispatchFinancialChange,
+  last4,
+  nameSummary,
+  payoutMethodSummary,
+  recordFinancialChange,
+  replacePrimaryPayoutMethod,
+  sameNumber,
+  ssnSummary,
+  w4Summary,
+} from '../lib/financialChanges.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { withMandatoryTasks } from '../lib/checklistTasks.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
@@ -1972,8 +1985,64 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
+    const before = await prisma.associate.findUniqueOrThrow({
+      where: { id: app.associateId },
+      select: {
+        firstName: true,
+        lastName: true,
+        middleInitial: true,
+        phone: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+      },
+    });
+    const selfEntry = req.user!.associateId === app.associateId;
+    // Filling the form for the first time is not a change. Once hired, or
+    // when someone else edits it, a new legal name or address is.
+    const tracked = app.status === 'APPROVED' || !selfEntry;
+    const after = {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      middleInitial: input.middleInitial !== undefined ? input.middleInitial || null : before.middleInitial,
+      addressLine1: input.addressLine1 !== undefined ? input.addressLine1 : before.addressLine1,
+      addressLine2: input.addressLine2 !== undefined ? input.addressLine2 : before.addressLine2,
+      city: input.city !== undefined ? input.city : before.city,
+      state: input.state !== undefined ? input.state : before.state,
+      zip: input.zip !== undefined ? input.zip : before.zip,
+    };
+    const nameChanged = nameSummary(after) !== nameSummary(before);
+    const addressChanged = addressSummary(after) !== addressSummary(before);
+    const phoneChanged = input.phone !== undefined && (input.phone ?? null) !== (before.phone ?? null);
 
-    await prisma.$transaction(async (tx) => {
+    const changes = await prisma.$transaction(async (tx) => {
+      const recorded: string[] = [];
+      if (tracked && nameChanged) {
+        const row = await recordFinancialChange(tx, {
+          associateId: app.associateId,
+          kind: 'LEGAL_NAME',
+          source: selfEntry ? 'SELF' : 'ADMIN',
+          actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+          req,
+          oldSummary: nameSummary(before),
+          newSummary: nameSummary(after),
+        });
+        recorded.push(row.id);
+      }
+      if (tracked && addressChanged) {
+        const row = await recordFinancialChange(tx, {
+          associateId: app.associateId,
+          kind: 'HOME_ADDRESS',
+          source: selfEntry ? 'SELF' : 'ADMIN',
+          actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+          req,
+          oldSummary: addressSummary(before),
+          newSummary: addressSummary(after),
+        });
+        recorded.push(row.id);
+      }
       await tx.associate.update({
         where: { id: app.associateId },
         data: {
@@ -2011,7 +2080,21 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
       if (checklist) {
         await markTaskDoneByKind(tx, checklist.id, 'PROFILE_INFO');
       }
+      return recorded;
     }, TX_OPTS);
+    if (tracked && phoneChanged) {
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: selfEntry ? 'self.phone_changed' : 'associate.phone_changed',
+          entityType: 'Associate',
+          entityId: app.associateId,
+          metadata: { fromLast4: last4(before.phone), toLast4: last4(input.phone), ip: req.ip ?? null },
+        },
+        'onboarding.phone_changed',
+      );
+    }
+    for (const id of changes) void dispatchFinancialChange(id);
 
     await flagPostSubmissionEdit(app, req.user!, 'profile information');
 
@@ -2093,7 +2176,15 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
     // shows "•••-••-1234" and doesn't require retype).
     const existing = await prisma.w4Submission.findUnique({
       where: { associateId: app.associateId },
-      select: { ssnEncrypted: true },
+      select: {
+        ssnEncrypted: true,
+        filingStatus: true,
+        multipleJobs: true,
+        dependentsAmount: true,
+        otherIncome: true,
+        deductions: true,
+        extraWithholding: true,
+      },
     });
     // "Already has an SSN" means a blob that still decrypts. A row from
     // before the 2026-06-11 key rotation is present but unreadable, and
@@ -2138,8 +2229,48 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
     const ssnDigits = input.ssn ? input.ssn.replace(/-/g, '') : null;
     const ssnCipher = ssnDigits ? encryptString(ssnDigits) : null;
     const ssnLast4 = ssnDigits ? ssnDigits.slice(-4) : null;
+    const selfEntry = req.user!.associateId === app.associateId;
+    const priorSsn = existing?.ssnEncrypted ? tryDecryptString(existing.ssnEncrypted) : null;
 
-    await prisma.$transaction(async (tx) => {
+    const changes = await prisma.$transaction(async (tx) => {
+      const recorded: string[] = [];
+      // A resubmission that changes the elections, or the number itself,
+      // is a financial change; the first submission is not.
+      if (existing) {
+        const newSummary = w4Summary({
+          filingStatus: input.filingStatus,
+          multipleJobs: input.multipleJobs,
+          dependentsAmount: input.dependentsAmount,
+          otherIncome: input.otherIncome,
+          deductions: input.deductions,
+          extraWithholding: input.extraWithholding,
+        });
+        const oldSummary = w4Summary(existing);
+        if (newSummary !== oldSummary) {
+          const row = await recordFinancialChange(tx, {
+            associateId: app.associateId,
+            kind: 'W4',
+            source: selfEntry ? 'SELF' : 'ADMIN',
+            actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+            req,
+            oldSummary,
+            newSummary,
+          });
+          recorded.push(row.id);
+        }
+        if (ssnDigits && priorSsn && !sameNumber(priorSsn, ssnDigits)) {
+          const row = await recordFinancialChange(tx, {
+            associateId: app.associateId,
+            kind: 'SSN',
+            source: selfEntry ? 'SELF' : 'ADMIN',
+            actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+            req,
+            oldSummary: ssnSummary(priorSsn),
+            newSummary: ssnSummary(ssnDigits),
+          });
+          recorded.push(row.id);
+        }
+      }
       await tx.w4Submission.upsert({
         where: { associateId: app.associateId },
         create: {
@@ -2178,7 +2309,9 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       if (checklist) {
         await markTaskDoneByKind(tx, checklist.id, 'W4');
       }
+      return recorded;
     }, TX_OPTS);
+    for (const id of changes) void dispatchFinancialChange(id);
 
     await flagPostSubmissionEdit(app, req.user!, 'W-4 tax elections');
 
@@ -2279,50 +2412,65 @@ onboardingRouter.post(
         );
       }
 
-      await prisma.$transaction(async (tx) => {
-        const existing = await tx.payoutMethod.findFirst({
-          where: { associateId: app.associateId, isPrimary: true },
-        });
-
-        if (input.type === 'BANK_ACCOUNT') {
-          const data = {
-            type: 'BANK_ACCOUNT' as const,
-            // Routing numbers are public (printed on every check). No encryption.
-            routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
-            accountNumberEnc: encryptString(input.accountNumber),
-            accountType: input.accountType,
-            bankName: input.bankName ?? null,
-            branchCardId: null,
-            isPrimary: true,
-            verifiedAt: null,
-          };
-          if (existing) {
-            await tx.payoutMethod.update({ where: { id: existing.id }, data });
-          } else {
-            await tx.payoutMethod.create({
-              data: { associateId: app.associateId, ...data },
-            });
-          }
-        } else {
-          const data = {
-            type: 'BRANCH_CARD' as const,
-            routingNumberEnc: null,
-            accountNumberEnc: null,
-            accountType: null,
-            // Switching to a card clears the bank name with the rest of the
-            // account details — leaving it would misdescribe the method.
-            bankName: null,
-            branchCardId: input.branchCardId,
-            isPrimary: true,
-            verifiedAt: null,
-          };
-          if (existing) {
-            await tx.payoutMethod.update({ where: { id: existing.id }, data });
-          } else {
-            await tx.payoutMethod.create({
-              data: { associateId: app.associateId, ...data },
-            });
-          }
+      // The applicant filling their own onboarding is ONBOARDING; anyone
+      // else (HR keying it in) is an administrator acting on their behalf.
+      const selfEntry = req.user!.associateId === app.associateId;
+      const fingerprint =
+        input.type === 'BANK_ACCOUNT' ? accountFingerprint(input.routingNumber, input.accountNumber) : null;
+      const change = await prisma.$transaction(async (tx) => {
+        // Retire, never overwrite: the previous account stays on file so
+        // payroll can keep paying it until Finance verifies the new one.
+        const { previous, created } = await replacePrimaryPayoutMethod(
+          tx,
+          app.associateId,
+          input.type === 'BANK_ACCOUNT'
+            ? {
+                type: 'BANK_ACCOUNT',
+                // Routing numbers are public (printed on every check). No encryption.
+                routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
+                accountNumberEnc: encryptString(input.accountNumber),
+                accountType: input.accountType,
+                bankName: input.bankName ?? null,
+                branchCardId: null,
+                accountLast4: input.accountNumber.slice(-4),
+                accountFingerprint: fingerprint,
+              }
+            : {
+                type: 'BRANCH_CARD',
+                routingNumberEnc: null,
+                accountNumberEnc: null,
+                accountType: null,
+                bankName: null,
+                branchCardId: input.branchCardId,
+                accountLast4: last4(input.branchCardId),
+                accountFingerprint: null,
+              },
+        );
+        // A first-time entry with nothing before it is not a change and
+        // needs no verification call; a replacement is.
+        const recorded = previous
+          ? await recordFinancialChange(tx, {
+              associateId: app.associateId,
+              kind:
+                previous.type !== created.type
+                  ? 'PAY_METHOD'
+                  : created.type === 'BRANCH_CARD'
+                    ? 'PAY_CARD'
+                    : 'BANK_ACCOUNT',
+              source: selfEntry ? 'ONBOARDING' : 'ADMIN',
+              actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+              req,
+              oldSummary: payoutMethodSummary(previous),
+              newSummary: payoutMethodSummary(created),
+              oldPayoutMethodId: previous.id,
+              newPayoutMethodId: created.id,
+              fingerprint,
+            })
+          : null;
+        if (!previous) {
+          // Nothing to fall back to, so the first account is usable at once
+          // — the onboarding approval is HR's check on it.
+          await tx.payoutMethod.update({ where: { id: created.id }, data: { verifiedAt: new Date() } });
         }
 
         const checklist = await tx.onboardingChecklist.findUnique({
@@ -2331,7 +2479,9 @@ onboardingRouter.post(
         if (checklist) {
           await markTaskDoneByKind(tx, checklist.id, 'DIRECT_DEPOSIT');
         }
+        return recorded;
       }, TX_OPTS);
+      if (change) void dispatchFinancialChange(change.id);
 
       await flagPostSubmissionEdit(app, req.user!, 'bank information');
 

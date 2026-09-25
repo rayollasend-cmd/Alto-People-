@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -21,6 +21,7 @@ import {
   revokeOtherSessions,
   startMfaEnrollment,
   updateProfile,
+  updateLanguage,
   updateTimezone,
   type LoginEvent,
 } from '@/lib/settingsApi';
@@ -38,8 +39,11 @@ import {
 } from '@/lib/webauthn';
 import {
   ROLE_LABELS,
+  EMAIL_LANGUAGES,
+  EMAIL_LANGUAGE_LABELS,
   SUPPORTED_TIMEZONES,
   TIMEZONE_LABELS,
+  type EmailLanguage,
   type NotificationPreferenceEntry,
   type SupportedTimezone,
 } from '@/lib/roles';
@@ -54,6 +58,7 @@ import {
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
+import { useI18n } from '@/lib/i18n';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -102,6 +107,7 @@ export function Settings() {
           {user?.associateId && <ProfilePhotoCard />}
           <EmailCard />
           <TimezoneCard />
+          <LanguageCard />
           <OutOfOfficeCard />
           <NotificationsCard />
         </div>
@@ -1135,6 +1141,68 @@ function TimezoneCard() {
           </Field>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
             Save timezone
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LanguageCard() {
+  const { user, refreshUser } = useAuth();
+  const { setLang } = useI18n();
+  const [language, setLanguage] = useState<EmailLanguage | ''>(user?.language ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const dirty = (user?.language ?? '') !== language;
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      await updateLanguage(language === '' ? null : language);
+      // The UI follows when it has the language; Turkish is email-only.
+      if (language === 'es' || language === 'en') setLang(language);
+      if (language === '') setLang('en');
+      toast.success(language === '' ? 'Language preference cleared.' : 'Language updated.');
+      await refreshUser();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Languages className="h-4 w-4 text-gold" />
+          Language
+        </CardTitle>
+        <CardDescription>
+          The language Alto writes to you in — emails, reminders and the app
+          where it is translated. Leave blank for English.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Preferred language" className="flex-1 min-w-[240px]">
+            {(p) => (
+              <Select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as EmailLanguage | '')}
+                {...p}
+              >
+                <option value="">English (default)</option>
+                {EMAIL_LANGUAGES.map((l) => (
+                  <option key={l} value={l}>
+                    {EMAIL_LANGUAGE_LABELS[l]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Button onClick={submit} loading={submitting} disabled={!dirty}>
+            Save language
           </Button>
         </div>
       </CardContent>

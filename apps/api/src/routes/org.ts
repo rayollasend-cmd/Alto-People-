@@ -32,6 +32,13 @@ import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import {
+  bankSummary,
+  dispatchFinancialChange,
+  last4,
+  recordFinancialChange,
+  w4Summary,
+} from '../lib/financialChanges.js';
 import { notifyFinanceOfTransfer } from '../lib/fieldglassNotify.js';
 import { notifyAssociate, notifyManager, notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -843,6 +850,20 @@ orgRouter.patch(
       },
       select: { id: true, phone: true },
     });
+    if (input.phone !== undefined && (input.phone ?? null) !== (existing.phone ?? null)) {
+      // A phone change is a takeover signal for the next 14 days: a bank
+      // change that follows it is flagged and verified on the OLD number.
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'associate.phone_changed',
+          entityType: 'Associate',
+          entityId: id,
+          metadata: { fromLast4: last4(existing.phone), toLast4: last4(input.phone), onBehalf: true, ip: req.ip ?? null },
+        },
+        'org.associate.phone_changed',
+      );
+    }
     // Position / start date live on the workplace application — the same
     // record the directory drawer displays (newest APPROVED, else newest).
     if (input.position !== undefined || input.startDate !== undefined) {
@@ -1191,6 +1212,22 @@ orgRouter.patch(
       where: { id: payout.id },
       data: { bankName },
     });
+    // The account itself is unchanged, so this does not reset verification;
+    // it is still a change to the payroll file and Finance hears about it.
+    const bankNameChange = await recordFinancialChange(prisma, {
+      associateId: req.params.id,
+      kind: 'BANK_ACCOUNT',
+      source: 'ADMIN',
+      actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+      req,
+      oldSummary: bankSummary({ bankName: previous, accountType: payout.accountType, accountLast4: payout.accountLast4 }),
+      newSummary: bankSummary({ bankName, accountType: payout.accountType, accountLast4: payout.accountLast4 }),
+    });
+    await prisma.financialChange.update({
+      where: { id: bankNameChange.id },
+      data: { status: 'VERIFIED', verifiedById: req.user!.id, verifiedAt: new Date(), verifiedVia: 'NAME_ONLY' },
+    });
+    void dispatchFinancialChange(bankNameChange.id);
 
     // Old value included: a bank name silently changing on a payroll file is
     // the kind of thing a reviewer needs to be able to trace back.
@@ -1459,7 +1496,15 @@ orgRouter.patch(
     }
     const existing = await prisma.w4Submission.findUnique({
       where: { associateId: associate.id },
-      select: { id: true },
+      select: {
+        id: true,
+        filingStatus: true,
+        multipleJobs: true,
+        dependentsAmount: true,
+        otherIncome: true,
+        deductions: true,
+        extraWithholding: true,
+      },
     });
     if (!existing) {
       throw new HttpError(
@@ -1468,6 +1513,22 @@ orgRouter.patch(
         'This associate has no W-4 on file yet — it (with the SSN) must be completed during onboarding first.',
       );
     }
+    const w4Change = await recordFinancialChange(prisma, {
+      associateId: associate.id,
+      kind: 'W4',
+      source: 'ADMIN',
+      actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+      req,
+      oldSummary: w4Summary(existing),
+      newSummary: w4Summary({
+        filingStatus: input.filingStatus,
+        multipleJobs: input.multipleJobs ?? existing.multipleJobs,
+        dependentsAmount: input.dependentsAmount ?? existing.dependentsAmount,
+        otherIncome: input.otherIncome ?? existing.otherIncome,
+        deductions: input.deductions ?? existing.deductions,
+        extraWithholding: input.extraWithholding ?? existing.extraWithholding,
+      }),
+    });
     await prisma.w4Submission.update({
       where: { associateId: associate.id },
       data: {
@@ -1490,6 +1551,7 @@ orgRouter.patch(
       },
       'org.associate.w4_updated_by_hr',
     );
+    void dispatchFinancialChange(w4Change.id);
     res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
   },
 );

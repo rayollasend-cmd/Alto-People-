@@ -18,11 +18,13 @@ import {
   Plus,
   RotateCw,
   Send,
+  Landmark,
   ShieldAlert,
   ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
+import { getFinancialChangesSummary } from '@/lib/financialChangesApi';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -174,6 +176,14 @@ function expectedVoidConfirmation(periodStartYmd: string, periodEndYmd: string):
 }
 
 export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps) {
+  // The Finance queue's open count rides on the header link.
+  const financialChanges = useQuery({
+    queryKey: ['AdminPayrollView', 'financialChangesSummary'],
+    queryFn: () => getFinancialChangesSummary(),
+    enabled: canProcess,
+    refetchInterval: 120_000,
+  });
+  const openChanges = financialChanges.data?.open ?? 0;
   const [tab, setTab] = useState<'runs' | 'schedules' | 'garnishments'>('runs');
   const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
@@ -624,6 +634,15 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         primaryAction={
           canProcess ? (
             <div className="flex flex-wrap items-center gap-2">
+              <Button asChild variant={openChanges > 0 ? 'outline' : 'ghost'} size="sm">
+                <Link to="/payroll/financial-changes">
+                  <Landmark className="mr-1 h-4 w-4" />
+                  Financial changes
+                  {openChanges > 0 && (
+                    <span className="ml-1.5 rounded-full bg-alert/20 px-1.5 text-xs font-semibold text-alert">{openChanges}</span>
+                  )}
+                </Link>
+              </Button>
               <Button asChild variant="ghost" size="sm">
                 <Link to="/payroll/readiness">
                   <Users className="mr-1 h-4 w-4" />

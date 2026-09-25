@@ -2,10 +2,14 @@ import jwt from 'jsonwebtoken';
 import type { Role } from '@alto-people/shared';
 import { env } from '../config/env.js';
 
+/** How the session was established. Financial changes record it. */
+export type AuthMethod = 'password' | 'mfa' | 'passkey' | 'sso';
+
 export interface SessionPayload {
   sub: string; // user id
   role: Role;
   ver: number; // tokenVersion
+  amr?: AuthMethod;
   iat: number;
   exp: number;
 }
@@ -14,9 +18,10 @@ export function signSession(input: {
   sub: string;
   role: Role;
   ver: number;
+  amr?: AuthMethod;
 }): string {
   return jwt.sign(
-    { sub: input.sub, role: input.role, ver: input.ver },
+    { sub: input.sub, role: input.role, ver: input.ver, amr: input.amr ?? 'password' },
     env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: env.JWT_TTL_SECONDS }
   );
@@ -29,7 +34,7 @@ export function verifySession(raw: string): SessionPayload | null {
     });
     if (typeof decoded === 'string') return null;
 
-    const { sub, role, ver, iat, exp } = decoded as Record<string, unknown>;
+    const { sub, role, ver, iat, exp, amr } = decoded as Record<string, unknown>;
     if (
       typeof sub !== 'string' ||
       typeof role !== 'string' ||
@@ -39,7 +44,9 @@ export function verifySession(raw: string): SessionPayload | null {
     ) {
       return null;
     }
-    return { sub, role: role as Role, ver, iat, exp };
+    const method: AuthMethod | undefined =
+      amr === 'password' || amr === 'mfa' || amr === 'passkey' || amr === 'sso' ? amr : undefined;
+    return { sub, role: role as Role, ver, iat, exp, amr: method };
   } catch {
     return null;
   }

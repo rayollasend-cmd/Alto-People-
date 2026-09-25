@@ -8,7 +8,16 @@ import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { send } from '../lib/notifications.js';
+import {
+  accountFingerprint,
+  addressSummary,
+  dispatchFinancialChange,
+  last4,
+  payoutMethodSummary,
+  recordFinancialChange,
+  replacePrimaryPayoutMethod,
+  w4Summary,
+} from '../lib/financialChanges.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from '../lib/notify.js';
 import { readyToWorkForAssociate } from '../lib/readyToWork.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
@@ -98,19 +107,59 @@ selfServiceRouter.put('/me/profile', async (req, res) => {
   const input = ProfileUpdateSchema.parse(req.body);
   const before = await prisma.associate.findUnique({
     where: { id },
-    select: { state: true, addressLine1: true, addressLine2: true, city: true, zip: true },
+    select: { state: true, addressLine1: true, addressLine2: true, city: true, zip: true, phone: true },
   });
-  const updated = await prisma.associate.update({
-    where: { id },
-    data: {
-      phone: input.phone === undefined ? undefined : input.phone,
-      addressLine1: input.addressLine1 === undefined ? undefined : input.addressLine1,
-      addressLine2: input.addressLine2 === undefined ? undefined : input.addressLine2,
-      city: input.city === undefined ? undefined : input.city,
-      state: input.state === undefined ? undefined : input.state,
-      zip: input.zip === undefined ? undefined : input.zip,
-    },
+  const addressTouched = (['addressLine1', 'addressLine2', 'city', 'state', 'zip'] as const).some(
+    (k) => input[k] !== undefined && (input[k] ?? null) !== (before?.[k] ?? null),
+  );
+  const phoneTouched = input.phone !== undefined && (input.phone ?? null) !== (before?.phone ?? null);
+  const { updated, change } = await prisma.$transaction(async (tx) => {
+    // Recorded before the phone changes: Finance verifies on the number
+    // that was on file BEFORE, never one that was just typed in.
+    const change = addressTouched && before
+      ? await recordFinancialChange(tx, {
+          associateId: id,
+          kind: 'HOME_ADDRESS',
+          source: 'SELF',
+          actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+          req,
+          oldSummary: addressSummary(before),
+          newSummary: addressSummary({
+            addressLine1: input.addressLine1 === undefined ? before.addressLine1 : input.addressLine1,
+            addressLine2: input.addressLine2 === undefined ? before.addressLine2 : input.addressLine2,
+            city: input.city === undefined ? before.city : input.city,
+            state: input.state === undefined ? before.state : input.state,
+            zip: input.zip === undefined ? before.zip : input.zip,
+          }),
+        })
+      : null;
+    const updated = await tx.associate.update({
+      where: { id },
+      data: {
+        phone: input.phone === undefined ? undefined : input.phone,
+        addressLine1: input.addressLine1 === undefined ? undefined : input.addressLine1,
+        addressLine2: input.addressLine2 === undefined ? undefined : input.addressLine2,
+        city: input.city === undefined ? undefined : input.city,
+        state: input.state === undefined ? undefined : input.state,
+        zip: input.zip === undefined ? undefined : input.zip,
+      },
+    });
+    return { updated, change };
   });
+  if (phoneTouched) {
+    // A phone change is a takeover signal for the next 14 days.
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'self.phone_changed',
+        entityType: 'Associate',
+        entityId: id,
+        metadata: { fromLast4: last4(before?.phone), toLast4: last4(input.phone), ip: req.ip ?? null },
+      },
+      'self.phone_changed',
+    );
+  }
+  if (change) void dispatchFinancialChange(change.id);
   if (input.state !== undefined && input.state !== before?.state) {
     await recordChange(prisma, {
       associateId: id,
@@ -644,6 +693,24 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
   // stuck being withheld at defaults with a 409 dead end. `ssnEncrypted`
   // stays null on this path — HR captures it via onboarding/HR tooling;
   // the election fields alone are what payroll math needs.
+  const w4Change = existing
+    ? await recordFinancialChange(prisma, {
+        associateId: id,
+        kind: 'W4',
+        source: 'SELF',
+        actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+        req,
+        oldSummary: w4Summary(existing),
+        newSummary: w4Summary({
+          filingStatus: input.filingStatus,
+          multipleJobs: input.multipleJobs ?? existing.multipleJobs,
+          dependentsAmount: input.dependentsAmount ?? existing.dependentsAmount,
+          otherIncome: input.otherIncome ?? existing.otherIncome,
+          deductions: input.deductions ?? existing.deductions,
+          extraWithholding: input.extraWithholding ?? existing.extraWithholding,
+        }),
+      })
+    : null;
   await prisma.w4Submission.upsert({
     where: { associateId: id },
     update: {
@@ -676,6 +743,7 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
     },
     existing ? 'self.w4_updated' : 'self.w4_created',
   );
+  if (w4Change) void dispatchFinancialChange(w4Change.id);
   res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
 });
 
@@ -775,37 +843,40 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
   if (!isValidRoutingNumber(input.routingNumber)) {
     throw new HttpError(400, 'invalid_routing', 'That routing number fails the ABA checksum — double-check it.');
   }
-  const associate = await prisma.associate.findUnique({
-    where: { id: associateId },
-    select: { email: true, firstName: true },
+  const accountLast4 = input.accountNumber.slice(-4);
+  const fingerprint = accountFingerprint(input.routingNumber, input.accountNumber);
+  // The old account is retired, not overwritten: payroll keeps paying the
+  // last verified account until Finance verifies this one by phone, and
+  // the ledger row written here is what Finance, the associate and the
+  // payroll packet all see.
+  const change = await prisma.$transaction(async (tx) => {
+    const { previous, created } = await replacePrimaryPayoutMethod(tx, associateId, {
+      type: 'BANK_ACCOUNT',
+      // Plain UTF-8, matching the onboarding writer (routing numbers are
+      // public — printed on every cheque). This route used to write AES-GCM
+      // ciphertext here, which raw readers decoded as mojibake; readers now
+      // accept both (lib/payoutMethod.ts), but new rows use the one format.
+      routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
+      accountNumberEnc: encryptString(input.accountNumber),
+      accountType: input.accountType,
+      bankName: input.bankName ?? null,
+      branchCardId: null,
+      accountLast4,
+      accountFingerprint: fingerprint,
+    });
+    return recordFinancialChange(tx, {
+      associateId,
+      kind: 'BANK_ACCOUNT',
+      source: 'SELF',
+      actor: { id: req.user!.id, role: req.user!.role, associateId: req.user!.associateId },
+      req,
+      oldSummary: payoutMethodSummary(previous),
+      newSummary: payoutMethodSummary(created),
+      oldPayoutMethodId: previous?.id ?? null,
+      newPayoutMethodId: created.id,
+      fingerprint,
+    });
   });
-  const existing = await prisma.payoutMethod.findFirst({
-    where: { associateId, isPrimary: true },
-  });
-  const data = {
-    type: 'BANK_ACCOUNT' as const,
-    // Plain UTF-8, matching the onboarding writer (routing numbers are
-    // public — printed on every cheque). This route used to write AES-GCM
-    // ciphertext here, which raw readers decoded as mojibake; readers now
-    // accept both (lib/payoutMethod.ts), but new rows use the one format.
-    routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
-    accountNumberEnc: encryptString(input.accountNumber),
-    accountType: input.accountType,
-    // This replaces the whole account, so a bank name carried over from the
-    // previous one would name the wrong institution on the payroll file.
-    // Take the new value, or clear it.
-    bankName: input.bankName ?? null,
-    // Replacing a Branch card with a bank account must clear the card link,
-    // or the record reads as both at once.
-    branchCardId: null,
-    verifiedAt: null,
-    isPrimary: true,
-  };
-  if (existing) {
-    await prisma.payoutMethod.update({ where: { id: existing.id }, data });
-  } else {
-    await prisma.payoutMethod.create({ data: { associateId, ...data } });
-  }
   enqueueAudit(
     {
       actorUserId: req.user!.id,
@@ -816,17 +887,8 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
     },
     'self.payout_method_updated',
   );
-  if (associate?.email) {
-    void send({
-      channel: 'EMAIL',
-      category: 'direct_deposit_change',
-      recipient: { userId: req.user!.id, phone: null, email: associate.email },
-      subject: 'Your direct deposit account was changed',
-      body:
-        `Hi ${associate.firstName},\n\nThe bank account for your paychecks was just updated ` +
-        `(account ending ${input.accountNumber.slice(-4)}). If you made this change, no action is needed. ` +
-        `If you did NOT make this change, contact your manager immediately.`,
-    }).catch(() => {});
-  }
-  res.json({ ok: true, accountLast4: input.accountNumber.slice(-4) });
+  // Finance alert + the associate's confirmation (in their language, and
+  // to a recently replaced email too) go out from the ledger row.
+  void dispatchFinancialChange(change.id);
+  res.json({ ok: true, accountLast4, verificationPending: true, financialChangeId: change.id });
 });

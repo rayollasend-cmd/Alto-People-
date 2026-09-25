@@ -101,6 +101,10 @@ const PayrollConfigView = lazyNamed(
   () => import('@/pages/payroll/PayrollConfigView'),
   'PayrollConfigView',
 );
+const FinancialChangesQueue = lazyNamed(
+  () => import('@/pages/payroll/FinancialChangesQueue'),
+  'FinancialChangesQueue',
+);
 const PayrollReadiness = lazyNamed(
   () => import('@/pages/payroll/PayrollReadiness'),
   'PayrollReadiness',
@@ -471,6 +475,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
+  { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },

@@ -30,6 +30,7 @@ export interface SessionUser {
   lastName: string | null;
   photoUrl: string | null;
   timezone: string | null;
+  language: string | null;
   mfaEnabled: boolean;
 }
 
@@ -50,6 +51,8 @@ declare global {
   namespace Express {
     interface Request {
       user?: SessionUser;
+      /** How this session was established (from the token's amr claim). */
+      authMethod?: 'password' | 'mfa' | 'passkey' | 'sso';
       apiKey?: ApiKeyContext;
       /**
        * Set by `attachUser` when the request had a session cookie that

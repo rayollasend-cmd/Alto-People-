@@ -1,3 +1,4 @@
+import { KIND_LABEL, resolvePayoutsForPayroll } from './financialChanges.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type {
   ExternalPayrollSheetGaps,
@@ -48,13 +49,40 @@ export interface ExternalPayrollRow {
   accountType: string;
   routingNumber: string;
   accountNumber: string;
+  /** What the bureau must know about this row: holds, fallbacks, changes. */
+  flags: string;
   payRate: number | null;
   payType: string;
   regularHours: number;
   overtimeHours: number;
 }
 
+/** One financial change, as the packet's "Changes since last packet" lists it. */
+export interface PacketChange {
+  id: string;
+  associateId: string;
+  associateName: string;
+  inPacket: boolean;
+  kind: string;
+  kindLabel: string;
+  oldSummary: string;
+  newSummary: string;
+  by: string;
+  onBehalf: boolean;
+  at: Date;
+  status: string;
+  verifiedBy: string | null;
+  verifiedAt: Date | null;
+  riskFlags: string[];
+  highRisk: boolean;
+}
+
 export interface ExternalPayrollSheetResult {
+  /** Financial changes since the previous packet download (or since the period start). */
+  changes: PacketChange[];
+  /** The PENDING/HELD changes in `changes` — these block the download until acknowledged. */
+  unverifiedChangeIds: string[];
+  sinceLastPacket: Date | null;
   rows: ExternalPayrollRow[];
   clientName: string | null;
   from: Date;
@@ -146,6 +174,9 @@ export async function buildExternalPayrollSheet(
         })
       : null;
     return {
+      changes: [],
+      unverifiedChangeIds: [],
+      sinceLastPacket: null,
       rows: [],
       clientName: client?.name ?? null,
       from,
@@ -184,19 +215,10 @@ export async function buildExternalPayrollSheet(
       where: { associateId: { in: associateIds } },
       select: { associateId: true, filingStatus: true, ssnEncrypted: true },
     }),
-    prisma.payoutMethod.findMany({
-      where: { associateId: { in: associateIds } },
-      // Primary first so the Map keeps the account payroll actually pays into.
-      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
-      select: {
-        associateId: true,
-        type: true,
-        accountType: true,
-        bankName: true,
-        routingNumberEnc: true,
-        accountNumberEnc: true,
-      },
-    }),
+    // Verify-before-pay: the account on this sheet is the one payroll may
+    // pay into — a verified account, the previous verified one while a
+    // change is pending, or none (a hold) — never an unverified account.
+    resolvePayoutsForPayroll(prisma, associateIds),
     prisma.compensationRecord.findMany({
       where: { associateId: { in: associateIds }, effectiveTo: null },
       orderBy: { effectiveFrom: 'desc' },
@@ -212,9 +234,48 @@ export async function buildExternalPayrollSheet(
 
   const personById = new Map(people.map((p) => [p.id, p]));
   const w4ById = new Map(w4s.map((w) => [w.associateId, w]));
-  const payoutById = new Map<string, (typeof payouts)[number]>();
-  for (const p of payouts) {
-    if (!payoutById.has(p.associateId)) payoutById.set(p.associateId, p);
+  const lastPacket = await prisma.packetDownload.findFirst({
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  });
+  const sinceLastPacket = lastPacket?.createdAt ?? null;
+  const changeRows = await prisma.financialChange.findMany({
+    where: { createdAt: { gte: sinceLastPacket ?? from } },
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+      actorUser: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+      verifiedBy: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+    },
+    orderBy: [{ associateId: 'asc' }, { createdAt: 'asc' }],
+    take: 2000,
+  });
+  const inPacket = new Set(associateIds);
+  const who = (u: { email: string; associate: { firstName: string; lastName: string } | null } | null): string | null =>
+    u ? (u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email) : null;
+  const changes: PacketChange[] = changeRows.map((c) => ({
+    id: c.id,
+    associateId: c.associateId,
+    associateName: `${c.associate.firstName} ${c.associate.lastName}`,
+    inPacket: inPacket.has(c.associateId),
+    kind: c.kind,
+    kindLabel: KIND_LABEL[c.kind],
+    oldSummary: c.oldSummary ?? 'none on file',
+    newSummary: c.newSummary ?? 'none on file',
+    by: who(c.actorUser) ?? 'System',
+    onBehalf: c.onBehalf,
+    at: c.createdAt,
+    status: c.status,
+    verifiedBy: who(c.verifiedBy),
+    verifiedAt: c.verifiedAt,
+    riskFlags: c.riskFlags,
+    highRisk: c.highRisk,
+  }));
+  const unverifiedChangeIds = changes.filter((c) => c.status === 'PENDING' || c.status === 'HELD').map((c) => c.id);
+  const changesByAssociate = new Map<string, PacketChange[]>();
+  for (const c of changes) {
+    const list = changesByAssociate.get(c.associateId) ?? [];
+    list.push(c);
+    changesByAssociate.set(c.associateId, list);
   }
   const compById = new Map<string, (typeof comps)[number]>();
   for (const c of comps) {
@@ -254,8 +315,29 @@ export async function buildExternalPayrollSheet(
   const rows: ExternalPayrollRow[] = hoursSheet.associates.map((a) => {
     const person = personById.get(a.associateId);
     const w4 = w4ById.get(a.associateId);
-    const payout = payoutById.get(a.associateId);
+    const resolution = payouts.get(a.associateId);
+    const payout = resolution?.method ?? null;
     const comp = compById.get(a.associateId);
+    const flags: string[] = [];
+    if (resolution?.decision === 'hold') {
+      flags.push('HOLD — new pay account not verified by Finance; do not pay');
+    } else if (resolution?.decision === 'previous_verified') {
+      flags.push(
+        `PREVIOUS VERIFIED ACCOUNT — new account${resolution.pendingMethod?.accountLast4 ? ` ending ${resolution.pendingMethod.accountLast4}` : ''} pending verification`,
+      );
+    }
+    for (const c of changesByAssociate.get(a.associateId) ?? []) {
+      const when = c.at.toISOString().slice(0, 10);
+      const state =
+        c.status === 'VERIFIED'
+          ? `verified ${c.verifiedAt?.toISOString().slice(0, 10) ?? ''} by ${c.verifiedBy ?? 'Finance'}`
+          : c.status === 'REJECTED'
+            ? 'rejected'
+            : c.status === 'HELD'
+              ? 'HELD'
+              : 'UNVERIFIED';
+      flags.push(`${c.kindLabel.toUpperCase()} CHANGED ${when} (${state})`);
+    }
 
     let ssn = '';
     if (!w4) {
@@ -274,7 +356,9 @@ export async function buildExternalPayrollSheet(
 
     let routingNumber = '';
     let accountNumber = '';
-    if (!payout || payout.type !== 'BANK_ACCOUNT') {
+    if (resolution?.decision === 'hold') {
+      // Held on purpose — not a gap in the data.
+    } else if (!payout || payout.type !== 'BANK_ACCOUNT') {
       gaps.missingBankDetails += 1;
     } else {
       routingNumber = payout.routingNumberEnc
@@ -300,11 +384,13 @@ export async function buildExternalPayrollSheet(
       w4FilingStatus: w4 ? (FILING_STATUS_LABEL[w4.filingStatus] ?? w4.filingStatus) : '',
       clientName:
         client?.name ?? clientNameByAssociate.get(a.associateId) ?? '',
-      paymentMethod: payout ? (PAYOUT_TYPE_LABEL[payout.type] ?? payout.type) : '',
+      paymentMethod:
+        resolution?.decision === 'hold' ? 'HOLD' : payout ? (PAYOUT_TYPE_LABEL[payout.type] ?? payout.type) : '',
       bankName: payout?.bankName ?? '',
       accountType: payout?.accountType ?? '',
       routingNumber,
       accountNumber,
+      flags: flags.join(' | '),
       payRate,
       payType: comp?.payType ?? '',
       regularHours: hours(a.regularMinutes),
@@ -313,6 +399,9 @@ export async function buildExternalPayrollSheet(
   });
 
   return {
+    changes,
+    unverifiedChangeIds,
+    sinceLastPacket,
     rows,
     clientName: client?.name ?? null,
     from,
@@ -340,6 +429,7 @@ export const EXTERNAL_PAYROLL_COLUMNS: Array<{
   { key: 'accountType', label: 'Account Type', width: 14 },
   { key: 'routingNumber', label: 'Routing Number', width: 16 },
   { key: 'accountNumber', label: 'Account Number', width: 20 },
+  { key: 'flags', label: 'Flags', width: 40 },
   { key: 'w4FilingStatus', label: 'W-4 Filing Status', width: 20 },
   { key: 'payRate', label: 'Pay Rate', width: 12 },
   { key: 'regularHours', label: 'Regular Hours', width: 14 },

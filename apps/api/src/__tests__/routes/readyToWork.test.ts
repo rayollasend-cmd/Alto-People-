@@ -236,7 +236,7 @@ describe('POST /onboarding/applications/:id/approve — the store', () => {
       .post(`/onboarding/applications/${application.id}/approve`)
       .send({ hireDate: '2026-10-01', acknowledgeWarnings: true });
     expect(noStore.status).toBe(409);
-    expect(noStore.body.error ?? noStore.body.code).toBe('store_required');
+    expect(noStore.body.error?.code ?? noStore.body.error).toBe('store_required');
 
     const withStore = await asHr
       .post(`/onboarding/applications/${application.id}/approve`)
@@ -250,7 +250,8 @@ describe('POST /onboarding/applications/:id/approve — the store', () => {
 
   it('assigns the only store on its own', async () => {
     const client = await createClient('Acme Resort');
-    const only = await prisma.location.create({ data: { clientId: client.id, name: 'Northgate' } });
+    // createClient seeds one default store; that store IS the only one.
+    const only = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
     const hr = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr@example.com' });
     const { associate, application } = await approvable(client.id);
     const asHr = await loginAs(hr.user.email);

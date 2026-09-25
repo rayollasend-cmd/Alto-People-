@@ -27,7 +27,7 @@ import type {
   ClockInRequestListResponse,
   AttendanceListResponse,
 } from '@alto-people/shared';
-import { apiFetch } from './api';
+import { apiFetch, ApiError } from './api';
 import { announceTimeEntriesChanged } from './timeEntriesChannel';
 
 /** Announce on success so open timesheet views reload — see timeEntriesChannel. */
@@ -360,15 +360,21 @@ async function downloadExportPost(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    // Surface the server's error message; fall back to a generic one.
+    // Surface the server's error message (and its code + details, so a
+    // refusal the caller can resolve — like unverified financial changes —
+    // is recognisable); fall back to a generic one.
     let message = 'Export failed.';
+    let code = 'export_failed';
+    let details: unknown = undefined;
     try {
       const data = await res.json();
       if (data?.error?.message) message = data.error.message;
+      if (data?.error?.code) code = data.error.code;
+      details = data?.error?.details;
     } catch {
       /* keep default */
     }
-    throw new Error(message);
+    throw new ApiError(res.status, code, message, details);
   }
   const blob = await res.blob();
   const objUrl = URL.createObjectURL(blob);

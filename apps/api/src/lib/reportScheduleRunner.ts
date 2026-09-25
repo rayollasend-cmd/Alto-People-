@@ -168,6 +168,7 @@ async function resolveRunAsUser(
     lastName: null,
     photoUrl: null,
     timezone: u.timezone,
+    language: null,
     mfaEnabled: u.mfaEnabledAt !== null,
   };
 }

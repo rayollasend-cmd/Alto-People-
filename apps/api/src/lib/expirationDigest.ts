@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { notifyAllAdmins, notifyAssociate } from './notify.js';
+import { agreementReminderEmail } from './emailContent.js';
 import { buildExpirationsTile } from '../routes/complianceScorecard.js';
 
 /**
@@ -72,17 +73,34 @@ export async function runAgreementSweep(
       createdAt: { lt: staleCutoff },
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: staleCutoff } }],
     },
+    include: {
+      associate: {
+        select: {
+          firstName: true,
+          user: { select: { language: true } },
+          applications: { orderBy: { createdAt: 'desc' }, take: 1, select: { client: { select: { name: true } } } },
+        },
+      },
+    },
     take: 200,
   });
   for (const a of unsigned) {
-    const label =
-      a.kind === 'OTHER' ? (a.customLabel ?? 'agreement') : a.kind.replace(/_/g, ' ');
+    // The reminder goes out in the associate's language, through the
+    // shared layout: one headline, the document, the dates, one button.
+    const email = agreementReminderEmail({
+      lang: a.associate.user?.language ?? null,
+      firstName: a.associate.firstName,
+      kind: a.kind,
+      customLabel: a.customLabel,
+      issuedAt: a.createdAt,
+      signBy: a.expiresOn,
+      employerName: a.associate.applications[0]?.client.name ?? null,
+    });
     void notifyAssociate(a.associateId, {
-      subject: `Reminder: your ${label} is still unsigned`,
-      body:
-        `The ${label} issued to you is still awaiting your signature. ` +
-        `Sign it here: ${env.APP_BASE_URL}/agreements` +
-        (a.expiresOn ? ` (expires ${a.expiresOn.toISOString().slice(0, 10)})` : ''),
+      subject: email.subject,
+      body: email.heading,
+      text: email.text,
+      html: email.html,
       category: 'agreements',
       linkUrl: '/agreements',
       emailFallback: true,

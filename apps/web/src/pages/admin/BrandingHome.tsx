@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ImagePlus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   HEX_COLOR_REGEX,
   ORG_LOGO_ALLOWED_TYPES,
   ORG_LOGO_MAX_BYTES,
+  UNVERIFIED_PAYOUT_POLICY_LABELS,
   type MfaRequirement,
   type OrgBranding,
+  type UnverifiedPayoutPolicy,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -53,6 +55,9 @@ export function BrandingHome() {
   const [primaryColorTouched, setPrimaryColorTouched] = useState(false);
   const [mfaRequirement, setMfaRequirement] = useState<MfaRequirement>('OFF');
   const [mfaSaving, setMfaSaving] = useState(false);
+  const [financeMailbox, setFinanceMailbox] = useState('');
+  const [unverifiedPayoutPolicy, setUnverifiedPayoutPolicy] = useState<UnverifiedPayoutPolicy>('PREVIOUS_VERIFIED');
+  const [financeSaving, setFinanceSaving] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +78,8 @@ export function BrandingHome() {
     setPrimaryColor(b.primaryColor ?? '');
     setPrimaryColorTouched(false);
     setMfaRequirement(b.mfaRequirement);
+    setFinanceMailbox(b.financeMailbox ?? '');
+    setUnverifiedPayoutPolicy(b.unverifiedPayoutPolicy);
     setLogoBust((n) => n + 1);
   }, [loadQuery.data]);
   const load = async () => {
@@ -83,6 +90,31 @@ export function BrandingHome() {
   const colorValid = primaryColor === '' || HEX_COLOR_REGEX.test(primaryColor);
   const emailValid =
     supportEmail === '' || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(supportEmail);
+
+  const financeMailboxValid =
+    financeMailbox.trim() === '' || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(financeMailbox.trim());
+  const financeDirty =
+    (branding?.financeMailbox ?? '') !== financeMailbox.trim() ||
+    (branding?.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED') !== unverifiedPayoutPolicy;
+  const onSaveFinance = async () => {
+    if (!financeMailboxValid) {
+      toast.error('Finance mailbox must be a bare address like finance@example.com.');
+      return;
+    }
+    setFinanceSaving(true);
+    try {
+      const updated = await patchOrgBranding({
+        financeMailbox: financeMailbox.trim() === '' ? null : financeMailbox.trim(),
+        unverifiedPayoutPolicy,
+      });
+      setBranding(updated);
+      toast.success('Finance settings saved.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setFinanceSaving(false);
+    }
+  };
 
   const onSave = async () => {
     if (!colorValid) {
@@ -377,6 +409,52 @@ export function BrandingHome() {
                   Last updated {fmtDateTime(branding.logoUpdatedAt)}
                 </p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Landmark className="h-4 w-4 text-gold" />
+                Finance
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Field
+                label="Finance mailbox"
+                hint="Every financial-change alert (bank, pay card, W-4, name, SSN, address) and every payroll packet download is also emailed here, so an alert never depends on one person's inbox."
+              >
+                {(p) => (
+                  <Input
+                    type="email"
+                    value={financeMailbox}
+                    onChange={(e) => setFinanceMailbox(e.target.value)}
+                    placeholder="finance@altohr.com"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field
+                label="Unverified bank change at the payroll cutoff"
+                hint="A new pay account is not used until Finance verifies it by phone. If that has not happened by the cutoff, payroll either pays the previous verified account or holds that person's pay. A high-risk change is always held."
+              >
+                {() => (
+                  <SegmentedControl<UnverifiedPayoutPolicy>
+                    options={(['PREVIOUS_VERIFIED', 'HOLD'] as const).map((v) => ({
+                      value: v,
+                      label: UNVERIFIED_PAYOUT_POLICY_LABELS[v],
+                    }))}
+                    value={unverifiedPayoutPolicy}
+                    onChange={setUnverifiedPayoutPolicy}
+                    ariaLabel="Unverified bank change policy"
+                  />
+                )}
+              </Field>
+              <div>
+                <Button onClick={() => void onSaveFinance()} loading={financeSaving} disabled={!financeDirty}>
+                  Save Finance settings
+                </Button>
+              </div>
             </CardContent>
           </Card>
 

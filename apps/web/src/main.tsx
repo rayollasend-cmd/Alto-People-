@@ -19,6 +19,7 @@ watchHistoryChurn();
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
 import { I18nProvider } from '@/lib/i18n';
+import { LanguageSync } from '@/lib/LanguageSync';
 import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
@@ -276,6 +277,7 @@ ReactDOM.createRoot(rootEl).render(
                           showing it instead of swapping to a fallback.
                           Without it every navigation blanked to a skeleton
                           even when the next page was 80ms away. */}
+                      <LanguageSync />
                       <RouterProvider router={router} />
                       <Toaster />
                     </ConfirmProvider>

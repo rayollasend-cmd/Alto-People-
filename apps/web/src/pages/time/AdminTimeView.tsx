@@ -125,6 +125,19 @@ import {
   useTableSort,
 } from '@/components/ui';
 
+interface UnverifiedPacketChange {
+  id: string;
+  associateName: string;
+  kindLabel: string;
+  oldSummary: string;
+  newSummary: string;
+  by: string;
+  at: string;
+  status: string;
+  highRisk: boolean;
+  riskFlags: string[];
+}
+
 const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> = [
   { value: 'COMPLETED', label: 'Pending review' },
   { value: 'APPROVED', label: 'Approved' },
@@ -4517,6 +4530,10 @@ function ExternalPayrollSheetDialog({
   const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
+  // Unverified financial changes the server refused over; each must be
+  // ticked before the download is retried with their ids.
+  const [blocking, setBlocking] = useState<UnverifiedPacketChange[]>([]);
+  const [ackIds, setAckIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open) return;
@@ -4526,6 +4543,8 @@ function ExternalPayrollSheetDialog({
     setErr(null);
     // Re-arm every time. A sticky acknowledgement would defeat the point.
     setAcknowledged(false);
+    setBlocking([]);
+    setAckIds(new Set());
     // boundedClient is a per-render literal; open/defaults drive this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultFromYmd, defaultToYmd, defaultClientId]);
@@ -4544,6 +4563,7 @@ function ExternalPayrollSheetDialog({
           from: ymdToIsoStart(fromYmd),
           to: ymdToIsoEndExclusive(toYmd),
           ...(clientId ? { clientId } : {}),
+          ...(ackIds.size > 0 ? { acknowledgeChangeIds: [...ackIds] } : {}),
         },
       );
       // Blank cells in a bureau file are rejected submissions or unpaid
@@ -4575,11 +4595,19 @@ function ExternalPayrollSheetDialog({
       }
       onOpenChange(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Export failed.');
+      if (e instanceof ApiError && e.code === 'unverified_changes') {
+        const list = (e.details as { changes?: UnverifiedPacketChange[] } | undefined)?.changes ?? [];
+        setBlocking(list);
+        setAckIds(new Set());
+        setErr(e.message);
+      } else {
+        setErr(e instanceof Error ? e.message : 'Export failed.');
+      }
     } finally {
       setBusy(null);
     }
   };
+  const allAcknowledged = blocking.length === 0 || blocking.every((c) => ackIds.has(c.id));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -4593,6 +4621,48 @@ function ExternalPayrollSheetDialog({
         </DialogHeader>
         <div className="space-y-3">
           {err && <ErrorBanner>{err}</ErrorBanner>}
+
+          {blocking.length > 0 && (
+            <div className="space-y-2 rounded-md border border-alert/40 bg-alert/[0.07] p-3 text-xs">
+              <div className="font-medium text-white">
+                Finance has not verified these changes. Verify them in the Finance queue, or acknowledge each
+                one to download anyway — your acknowledgment is recorded on the change and on this download.
+              </div>
+              <ul className="space-y-1.5">
+                {blocking.map((c) => (
+                  <li key={c.id}>
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={ackIds.has(c.id)}
+                        onChange={(e) =>
+                          setAckIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(c.id);
+                            else next.delete(c.id);
+                            return next;
+                          })
+                        }
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0"
+                      />
+                      <span className="min-w-0">
+                        <span className="text-white">
+                          {c.associateName} — {c.kindLabel}
+                          {c.highRisk ? ' (HIGH RISK)' : ''}
+                        </span>
+                        <span className="block text-silver">
+                          {c.oldSummary} → {c.newSummary} · by {c.by} · {c.status === 'HELD' ? 'held' : 'unverified'}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <RouterLink to="/payroll/financial-changes" className="text-gold underline">
+                Open the Finance queue
+              </RouterLink>
+            </div>
+          )}
 
           <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3">
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -4686,7 +4756,7 @@ function ExternalPayrollSheetDialog({
             variant="outline"
             onClick={() => download('pdf')}
             loading={busy === 'pdf'}
-            disabled={busy !== null || !acknowledged}
+            disabled={busy !== null || !acknowledged || !allAcknowledged}
           >
             <FileText className="mr-2 h-4 w-4" />
             PDF
@@ -4694,7 +4764,7 @@ function ExternalPayrollSheetDialog({
           <Button
             onClick={() => download('xlsx')}
             loading={busy === 'xlsx'}
-            disabled={busy !== null || !acknowledged}
+            disabled={busy !== null || !acknowledged || !allAcknowledged}
           >
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Excel

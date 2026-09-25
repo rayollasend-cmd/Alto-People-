@@ -15,6 +15,7 @@ import {
   PatchNotificationPreferenceInputSchema,
   RequestEmailChangeInputSchema,
   UpdateProfileInputSchema,
+  UpdateLanguageInputSchema,
   UpdateTimezoneInputSchema,
   type AuthUser,
   type InviteSummary,
@@ -246,6 +247,7 @@ function toAuthUser(u: {
   lastName?: string | null;
   photoUrl?: string | null;
   timezone?: string | null;
+  language?: string | null;
   // Both shapes are accepted: SessionUser carries `mfaEnabled` (boolean)
   // pre-computed; raw prisma User carries `mfaEnabledAt` (Date | null).
   mfaEnabled?: boolean;
@@ -280,6 +282,7 @@ function toAuthUser(u: {
     lastName: u.lastName ?? null,
     photoUrl: u.photoUrl ?? null,
     timezone: u.timezone ?? null,
+    language: u.language === 'en' || u.language === 'es' || u.language === 'tr' ? u.language : null,
     mfaEnabled: u.mfaEnabled ?? (u.mfaEnabledAt != null),
   };
 }
@@ -633,6 +636,7 @@ authRouter.post(
         sub: user.id,
         role: user.role,
         ver: user.tokenVersion,
+        amr: 'mfa',
       });
       res.cookie(SESSION_COOKIE, token, cookieOptions());
 
@@ -931,6 +935,7 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
       sub: updated.id,
       role: updated.role,
       ver: updated.tokenVersion,
+      amr: req.authMethod,
     });
     res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
 
@@ -977,6 +982,7 @@ authRouter.post('/me/revoke-other-sessions', requireAuth, async (req, res, next)
       sub: updated.id,
       role: updated.role,
       ver: updated.tokenVersion,
+      amr: req.authMethod,
     });
     res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
 
@@ -1527,6 +1533,7 @@ authRouter.post('/me/mfa/enroll/confirm', allowMfaEnrollToken, requireAuth, mfaE
         sub: req.user!.id,
         role: req.user!.role,
         ver: req.user!.tokenVersion,
+        amr: 'mfa',
       });
       res.cookie(SESSION_COOKIE, token, cookieOptions());
       await recordLoginSuccess({
@@ -1818,6 +1825,30 @@ authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
     await prisma.user.update({
       where: { id: req.user!.id },
       data: { timezone: parsed.data.timezone },
+    });
+    invalidateUserCache(req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /auth/me/language { language }
+ *
+ * The language Alto writes to this person in: English, Spanish or Turkish.
+ * The app's toggle and the Settings card both land here; every
+ * associate-facing email reads it and falls back to English.
+ */
+authRouter.patch('/me/language', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = UpdateLanguageInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { language: parsed.data.language },
     });
     invalidateUserCache(req.user!.id);
     res.status(204).end();
@@ -2602,7 +2633,7 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
     // guessing, and a verified passkey assertion proves possession of an
     // enrolled authenticator — something a brute-forcer doesn't have. A
     // user whose password is under attack keeps a working sign-in path.
-    const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion });
+    const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion, amr: 'passkey' });
     res.cookie(SESSION_COOKIE, token, cookieOptions());
     await recordLoginSuccess({ email: user.email, req, userId: user.id, clientId: user.clientId });
     const profile = await loadProfileFor(user.associateId);
