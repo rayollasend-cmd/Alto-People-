@@ -11,7 +11,7 @@ import type {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
-import { send } from './notifications.js';
+import { EmailSuppressedError, send } from './notifications.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
 import { enqueueAudit } from './audit.js';
 import { getCurrentPeriod } from './payrollSchedule.js';
@@ -367,6 +367,57 @@ export async function financeRecipients(db: Db = prisma): Promise<{ users: Array
   };
 }
 
+/**
+ * A direct email that records itself: SENT or FAILED/SUPPRESSED, like the
+ * notify* fan-outs do. send() only writes a row on failure, and an alert
+ * about money must be traceable either way.
+ */
+async function sendRecorded(input: {
+  userId: string | null;
+  email: string;
+  subject: string;
+  body: string;
+  html?: string;
+  category: string;
+}): Promise<boolean> {
+  let externalRef: string | null = null;
+  let providerMessageId: string | null = null;
+  let failureReason: string | null = null;
+  let suppressed = false;
+  try {
+    const r = await send({
+      channel: 'EMAIL',
+      audit: false,
+      recipient: { userId: input.userId, phone: null, email: input.email },
+      subject: input.subject,
+      body: input.body,
+      html: input.html,
+      category: input.category,
+    });
+    externalRef = r.externalRef;
+    providerMessageId = r.providerMessageId;
+  } catch (err) {
+    if (err instanceof EmailSuppressedError) suppressed = true;
+    failureReason = err instanceof Error ? err.message : String(err);
+  }
+  await prisma.notification.create({
+    data: {
+      channel: 'EMAIL',
+      status: suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT',
+      recipientUserId: input.userId,
+      recipientEmail: input.email,
+      subject: input.subject,
+      body: input.body.slice(0, 2000),
+      category: input.category,
+      externalRef,
+      providerMessageId,
+      failureReason,
+      sentAt: failureReason ? null : new Date(),
+    },
+  });
+  return failureReason === null;
+}
+
 export interface FinanceMessage {
   subject: string;
   /** One line for the bell. */
@@ -398,15 +449,13 @@ export async function notifyFinance(msg: FinanceMessage): Promise<{ users: numbe
     ),
   );
   if (mailbox) {
-    await send({
-      channel: 'EMAIL',
-      category,
-      recipient: { userId: null, phone: null, email: mailbox },
+    await sendRecorded({
+      userId: null,
+      email: mailbox,
       subject: msg.subject,
       body: msg.text ?? msg.body,
       html: msg.html,
-    }).catch((err: unknown) => {
-      logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'finance mailbox send failed');
+      category,
     });
   }
   return { users: users.length, mailbox: mailbox !== null };
@@ -475,20 +524,14 @@ export function dispatchFinancialChange(changeId: string): Promise<void> {
       const associateEmail = change.associate.user?.email ?? change.associate.email;
       let associateNotified = false;
       if (associateEmail) {
-        await send({
-          channel: 'EMAIL',
-          category: 'direct_deposit_change',
-          recipient: { userId: change.associate.user?.id ?? null, phone: null, email: associateEmail },
+        associateNotified = await sendRecorded({
+          userId: change.associate.user?.id ?? null,
+          email: associateEmail,
           subject: confirmation.subject,
           body: confirmation.text,
           html: confirmation.html,
-        })
-          .then(() => {
-            associateNotified = true;
-          })
-          .catch(() => {
-            /* recorded by send() as FAILED */
-          });
+          category: 'direct_deposit_change',
+        });
       }
       if (change.associate.user) {
         await notifyUser(change.associate.user.id, {
@@ -512,18 +555,14 @@ export function dispatchFinancialChange(changeId: string): Promise<void> {
         });
         const fromEmail = (recent?.metadata as { fromEmail?: string } | null)?.fromEmail;
         if (fromEmail && fromEmail !== associateEmail) {
-          await send({
-            channel: 'EMAIL',
-            category: 'direct_deposit_change',
-            recipient: { userId: null, phone: null, email: fromEmail },
+          priorNotified = await sendRecorded({
+            userId: null,
+            email: fromEmail,
             subject: confirmation.subject,
             body: confirmation.text,
             html: confirmation.html,
-          })
-            .then(() => {
-              priorNotified = true;
-            })
-            .catch(() => {});
+            category: 'direct_deposit_change',
+          });
         }
       }
 
@@ -567,8 +606,11 @@ function resolveFrom(
 ): PayoutResolution {
   const current = methods.find((m) => m.isPrimary && !m.retiredAt) ?? null;
   if (!current) return { method: null, decision: 'none', changeId: null, pendingMethod: null };
-  if (current.verifiedAt) return { method: current, decision: 'verified', changeId: null, pendingMethod: null };
+  // The ledger decides: a method is held back only while an open (pending
+  // or held) change names it. A verified method, a legacy row from before
+  // the ledger, or a first-time entry with nothing before it is paid.
   const change = changes.find((c) => c.newPayoutMethodId === current.id) ?? null;
+  if (current.verifiedAt || !change) return { method: current, decision: 'verified', changeId: null, pendingMethod: null };
   const previous = methods
     .filter((m) => m.retiredAt && m.verifiedAt)
     .sort((a, b) => (b.verifiedAt!.getTime() - a.verifiedAt!.getTime()))[0];

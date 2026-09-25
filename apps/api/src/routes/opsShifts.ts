@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import type { SessionUser } from '../types/express.js';
 import multer from 'multer';
 import { randomUUID, createHash } from 'node:crypto';
 import { extname } from 'node:path';
@@ -3145,6 +3146,18 @@ async function reportRecipients(
   }));
 }
 
+/**
+ * The client a report request may see. Portal, associate and supervisor
+ * accounts are clamped by effectiveClientIdFilter; an administrator whose
+ * account is attached to a client is limited to that client too — a store
+ * on another account is not found, not shown.
+ */
+function reportClamp(user: SessionUser, requested: string | undefined): string | null | undefined {
+  const scoped = effectiveClientIdFilter(user, requested);
+  if (scoped !== undefined) return scoped;
+  return user.clientId ?? requested;
+}
+
 async function buildReportForRequest(
   q: StoreReportQuery,
   clamp: string | undefined,
@@ -3167,7 +3180,7 @@ async function buildReportForRequest(
 
 opsRouter.get('/report.pdf', BOARD, async (req, res, next) => {
   try {
-    const clamp = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const clamp = reportClamp(req.user!, req.query.clientId?.toString());
     if (clamp === null) {
       throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
     }
@@ -3194,7 +3207,7 @@ opsRouter.get('/report.pdf', BOARD, async (req, res, next) => {
 
 opsRouter.get('/report/recipients', BOARD, async (req, res, next) => {
   try {
-    const clamp = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const clamp = reportClamp(req.user!, req.query.clientId?.toString());
     if (clamp === null) {
       throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
     }
@@ -3227,7 +3240,7 @@ const EmailReportSchema = z.object({
 opsRouter.post('/report/email', BOARD, async (req, res, next) => {
   try {
     const input = EmailReportSchema.parse(req.body);
-    const clamp = effectiveClientIdFilter(req.user!, input.clientId);
+    const clamp = reportClamp(req.user!, input.clientId);
     if (clamp === null) {
       throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
     }

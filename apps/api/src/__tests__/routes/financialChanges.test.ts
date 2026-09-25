@@ -417,7 +417,7 @@ describe('the payroll packet', () => {
       const values = row.values as unknown[];
       const header = values.findIndex((v) => v === 'Flags');
       if (header > 0) return;
-      const text = values.map((v) => (v == null ? '' : String(v)));
+      const text = Array.from(values, (v) => (v == null ? '' : String(v)));
       if (text.some((t) => t.includes('PREVIOUS VERIFIED ACCOUNT'))) {
         flagsCell = text.find((t) => t.includes('PREVIOUS VERIFIED ACCOUNT'))!;
         accountCell = text.find((t) => t === '555500001111') ?? '';
