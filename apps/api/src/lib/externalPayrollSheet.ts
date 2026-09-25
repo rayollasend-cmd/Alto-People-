@@ -429,9 +429,11 @@ export const EXTERNAL_PAYROLL_COLUMNS: Array<{
   { key: 'accountType', label: 'Account Type', width: 14 },
   { key: 'routingNumber', label: 'Routing Number', width: 16 },
   { key: 'accountNumber', label: 'Account Number', width: 20 },
-  { key: 'flags', label: 'Flags', width: 40 },
   { key: 'w4FilingStatus', label: 'W-4 Filing Status', width: 20 },
   { key: 'payRate', label: 'Pay Rate', width: 12 },
   { key: 'regularHours', label: 'Regular Hours', width: 14 },
   { key: 'overtimeHours', label: 'Overtime', width: 12 },
+  // Last on purpose: a bureau's intake mapping is by column position, so
+  // the new column must not shift the ones they already map.
+  { key: 'flags', label: 'Flags', width: 40 },
 ];
