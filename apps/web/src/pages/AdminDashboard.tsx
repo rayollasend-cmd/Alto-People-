@@ -53,6 +53,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { RecruitingPulse } from '@/components/RecruitingPulse';
 import { ClockStrip } from '@/components/ClockStrip';
 
 /**
@@ -237,6 +238,10 @@ export function AdminDashboard() {
 
       <RoleDecisionQueue />
       <MyPlanCard />
+
+      {/* The recruiter's day is the pipeline; the subtitle promised it and
+          the page used to show none of it. */}
+      {role === 'INTERNAL_RECRUITER' && can('view:recruiting') && <RecruitingPulse />}
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
