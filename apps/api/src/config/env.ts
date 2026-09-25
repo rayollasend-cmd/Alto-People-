@@ -133,6 +133,12 @@ const EnvSchema = z.object({
   // and 3 ever — the manual button stays uncapped. On by default (6h
   // scan). Set 0 to disable.
   STALE_NUDGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  // Held onboarding invites (the Undo window) are sent by a timer; this
+  // sweep is the net for a restart in between. 0 disables it.
+  DUE_INVITE_SWEEP_SECONDS: z.coerce.number().int().min(0).default(15),
+  // Recruiting clean-up: quiet candidates close as No response, and
+  // onboarding invites nobody touched expire. 0 disables it.
+  RECRUITING_CLEANUP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   /** Ready-to-work handoffs: how often to look for hires still without a
    *  first shift (0 = off), and how long the store gets before it is nudged
    *  again and Workforce is told. */

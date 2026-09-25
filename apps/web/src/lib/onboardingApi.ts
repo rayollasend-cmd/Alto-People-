@@ -87,6 +87,11 @@ export interface CreateApplicationResponse {
    * In prod this is always null because the email goes out for real.
    */
   inviteUrl: string | null;
+  /**
+   * When the invite email goes out: it waits a few seconds for an Undo.
+   * Null when it went out already (or email isn't configured).
+   */
+  emailDueAt?: string | null;
 }
 
 export function createApplication(
@@ -545,4 +550,42 @@ export function finishJ1Docs(
     `/onboarding/applications/${applicationId}/j1-finish`,
     { method: 'POST', body: {} }
   );
+}
+
+/* ----- Cancel and reopen --------------------------------------------------- */
+
+export type CancelInviteReason =
+  | 'SENT_IN_ERROR'
+  | 'WRONG_PERSON'
+  | 'WRONG_CLIENT'
+  | 'DUPLICATE'
+  | 'NOT_JOINING'
+  | 'OTHER';
+
+export const CANCEL_REASON_LABEL: Record<CancelInviteReason | 'HIRE_UNDONE' | 'EXPIRED', string> = {
+  SENT_IN_ERROR: 'Sent by mistake',
+  WRONG_PERSON: 'Wrong person',
+  WRONG_CLIENT: 'Wrong client or store',
+  DUPLICATE: 'Duplicate invite',
+  NOT_JOINING: 'Not joining after all',
+  OTHER: 'Other',
+  HIRE_UNDONE: 'Hire undone in Recruiting',
+  EXPIRED: 'Expired — no response',
+};
+
+/**
+ * Call off an invite — not a decision about the person: no "declined"
+ * email, and their link stops working. `removed` when nothing of theirs
+ * existed beyond the invite (the address is free for the right one).
+ */
+export function cancelApplication(
+  applicationId: string,
+  body: { reason: CancelInviteReason; note?: string },
+): Promise<{ mode: 'removed' | 'cancelled'; associate: { firstName: string; lastName: string; email: string }; clientId: string }> {
+  return apiFetch(`/onboarding/applications/${applicationId}/cancel`, { method: 'POST', body });
+}
+
+/** Bring a cancelled invite back, with a fresh link. */
+export function reopenApplication(applicationId: string): Promise<{ emailed: boolean; inviteUrl: string | null }> {
+  return apiFetch(`/onboarding/applications/${applicationId}/reopen`, { method: 'POST' });
 }

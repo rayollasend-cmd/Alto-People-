@@ -55,6 +55,7 @@ const STATUS_ORDER: readonly string[] = [
   'SUBMITTED',
   'DRAFT',
   'REJECTED',
+  'CANCELLED',
 ] as const;
 const STATUS_LABELS: Record<string, string> = {
   APPROVED: 'Approved',
@@ -62,6 +63,7 @@ const STATUS_LABELS: Record<string, string> = {
   SUBMITTED: 'Submitted',
   DRAFT: 'Draft',
   REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
 };
 // Palette TOKENS, not hexes — resolved via chartColor() at render time so
 // the donut tracks index.css (including the light/dark flip) instead of a
@@ -72,6 +74,8 @@ const STATUS_COLORS: Record<string, ChartColorToken> = {
   SUBMITTED: 'gold',
   DRAFT: 'silver',
   REJECTED: 'alert',
+  // Called off, not a verdict — muted, never red.
+  CANCELLED: 'steel',
 };
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;

@@ -3,6 +3,9 @@ import { hasCapability, type RecruiterHome } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
+import { closingSoon } from './recruitingCleanup.js';
+import { INVITE_EXPIRE_AFTER_DAYS } from './onboardingUndo.js';
+import { IDLE_PURGE_AFTER_DAYS, INVITE_PURGE_AFTER_DAYS, hasProtectedHistory } from './onboardingPurge.js';
 
 /**
  * The recruiter's dashboard, in one round trip.
@@ -77,6 +80,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     hires90,
     decided90,
     events,
+    closing,
   ] = await Promise.all([
     prisma.interview.findMany({
       where: { ...LIVE, scheduledFor: { gte: startOfToday, lt: startOfTomorrow } },
@@ -201,6 +205,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
       take: 12,
       include: { candidate: { select: { id: true, firstName: true, lastName: true } }, actor: PERSON },
     }),
+    closingSoon(now, 500),
   ]);
 
   /* ----- Today ----- */
@@ -253,9 +258,46 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     ? await prisma.application.findMany({
         where: { deletedAt: null, status: 'DRAFT', associateId: { in: [...byAssociate.keys()] } },
         orderBy: { invitedAt: 'asc' },
-        include: { client: { select: { name: true } } },
+        include: {
+          client: { select: { name: true } },
+          associate: {
+            select: {
+              user: {
+                select: {
+                  passwordHash: true,
+                  createdAt: true,
+                  inviteTokens: { orderBy: { createdAt: 'desc' }, take: 5, select: { createdAt: true, mintedBySweep: true } },
+                },
+              },
+            },
+          },
+          checklist: { select: { tasks: { where: { completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, take: 1, select: { completedAt: true } } } },
+        },
       })
     : [];
+  // When the onboarding clean-up would close each one — the same rules it
+  // runs: never accepted, INVITE_PURGE_AFTER_DAYS after the last invite a
+  // person sent; accepted and idle, IDLE_PURGE_AFTER_DAYS; anyone with
+  // history, INVITE_EXPIRE_AFTER_DAYS untouched.
+  const closesAt = new Map<string, Date>();
+  for (const a of drafts.slice(0, LIST)) {
+    const u = a.associate.user;
+    const latest = (xs: Array<Date | null | undefined>) =>
+      new Date(Math.max(...xs.filter((x): x is Date => Boolean(x)).map((x) => x.getTime())));
+    const plus = (d: Date, days: number) => new Date(d.getTime() + days * DAY);
+    const protectedHistory = await hasProtectedHistory(prisma, a.associateId);
+    if (!protectedHistory && u && !u.passwordHash) {
+      const human = u.inviteTokens.find((t) => !t.mintedBySweep)?.createdAt ?? u.createdAt;
+      closesAt.set(a.id, plus(human, INVITE_PURGE_AFTER_DAYS));
+    } else if (!protectedHistory && u?.passwordHash) {
+      closesAt.set(a.id, plus(latest([a.updatedAt, a.checklist?.tasks[0]?.completedAt]), IDLE_PURGE_AFTER_DAYS));
+    } else {
+      closesAt.set(
+        a.id,
+        plus(latest([a.invitedAt, a.updatedAt, a.progressRemindedAt, u?.inviteTokens[0]?.createdAt]), INVITE_EXPIRE_AFTER_DAYS),
+      );
+    }
+  }
 
   /* ----- Postings ----- */
   const fresh = new Map(applicants7dByPosting.map((g) => [g.jobPostingId, g._count._all]));
@@ -326,6 +368,19 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
         startDate: o.startDate.toISOString().slice(0, 10),
         acceptedAt: (o.signedAt ?? o.decidedAt)?.toISOString() ?? null,
       })),
+      closingSoon: {
+        total: closing.length,
+        // Soonest to close first.
+        items: [...closing]
+          .sort((a, b) => a.closesAt.getTime() - b.closesAt.getTime())
+          .slice(0, LIST)
+          .map((c) => ({
+            candidateId: c.id,
+            candidateName: nameOf(c),
+            stage: c.stage,
+            closesAt: c.closesAt.toISOString(),
+          })),
+      },
       offersToApprove: held.map((o) => ({
         offerId: o.id,
         candidateId: o.candidate.id,
@@ -370,6 +425,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
             clientName: a.client.name,
             invitedAt: a.invitedAt.toISOString(),
             days: Math.floor((now.getTime() - a.invitedAt.getTime()) / DAY),
+            closesAt: closesAt.get(a.id)?.toISOString() ?? null,
           };
         }),
       },

@@ -14,12 +14,14 @@ import type {
 import { HIREABLE_ROLES } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
+  cancelApplication,
   createApplication,
   listClients,
   listTemplates,
 } from '@/lib/onboardingApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { hireCandidate } from '@/lib/recruitingApi';
+import { secondsUntil, undoWindowToast } from '@/lib/undoToast';
 import type { OfferRecord } from '@/lib/recruiting90Api';
 import { fmtMoney } from '@/lib/format';
 import { listShiftPositions } from '@/lib/orgApi';
@@ -93,6 +95,11 @@ interface Props {
   onCreated: () => void;
   /** Set to hire a candidate instead of inviting someone new. */
   hire?: HireMode;
+  /**
+   * Start from someone already typed once — "send a corrected invite"
+   * after cancelling one sent to the wrong client or store.
+   */
+  prefill?: { firstName: string; lastName: string; email: string } | null;
 }
 
 const NO_TEMPLATES: OnboardingTemplate[] = [];
@@ -107,7 +114,7 @@ const NO_LOCATIONS: LocationSummary[] = [];
  * If the API isn't configured with Resend, the response includes the
  * raw `inviteUrl` so HR can copy it into Slack / a manual email.
  */
-export function NewApplicationDialog({ open, onOpenChange, onCreated, hire }: Props) {
+export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, prefill }: Props) {
   // Pickers, read when the dialog opens and kept for later opens in the
   // session — clients/templates don't change often. "Load failed" stays
   // distinct from "no clients exist": an empty Select with no explanation
@@ -208,6 +215,16 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire }: Pr
     // wipe what the recruiter has changed since opening.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, hireCandidateId]);
+
+  // A corrected invite starts from the person, not from blank.
+  const prefillKey = prefill ? `${prefill.email}|${prefill.firstName}|${prefill.lastName}` : null;
+  useEffect(() => {
+    if (!open || !prefill) return;
+    setFirstName(prefill.firstName);
+    setLastName(prefill.lastName);
+    setEmail(prefill.email);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefillKey]);
 
   // A persisted client can be stale (deleted / out of scope) — fall back
   // to '' rather than submitting a ghost id.
@@ -355,18 +372,33 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire }: Pr
       onCreated();
       // Remember the picks for the next invite (this dialog + bulk invite).
       setLastUsed({ clientId, locationId, templateId, employmentType });
+      const invitedName = `${firstName.trim()} ${lastName.trim()}`;
+      // Held for a few seconds: Undo means it never goes out.
+      const offerUndo = () =>
+        res.emailDueAt &&
+        undoWindowToast({
+          message: `Invite to ${invitedName} goes out in ${secondsUntil(res.emailDueAt)} seconds.`,
+          dueAt: res.emailDueAt,
+          onUndo: async () => {
+            await cancelApplication(res.id, { reason: 'SENT_IN_ERROR' });
+            onCreated();
+            return `Undone — nothing was sent to ${invitedName}.`;
+          },
+        });
       if (res.inviteUrl) {
         // Dev-stub mode: keep the dialog open and surface the link so HR
         // can copy it. Closing only happens via the buttons below.
         setInviteLink(res.inviteUrl);
         toast.success('Application created — invite link ready to copy.');
       } else if (keepOpen) {
-        toast.success('Application created — invite emailed.');
+        if (res.emailDueAt) offerUndo();
+        else toast.success('Application created — invite emailed.');
         resetPerson();
         // Focus lands after React swaps the cleared inputs back in.
         requestAnimationFrame(() => firstNameRef.current?.focus());
       } else {
-        toast.success('Application created — invite emailed.');
+        if (res.emailDueAt) offerUndo();
+        else toast.success('Application created — invite emailed.');
         reset();
         onOpenChange(false);
       }

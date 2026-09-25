@@ -10,6 +10,9 @@ vi.mock('@/pages/onboarding/EsignSection', () => ({
   EsignSection: () => null,
 }));
 vi.mock('@/lib/onboardingApi', () => ({
+  CANCEL_REASON_LABEL: {},
+  cancelApplication: vi.fn(),
+  reopenApplication: vi.fn(),
   approveApplication: vi.fn(),
   compliancePacketUrl: (id: string) =>
     `/api/onboarding/applications/${id}/compliance-packet`,

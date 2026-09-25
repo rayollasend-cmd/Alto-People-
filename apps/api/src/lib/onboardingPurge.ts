@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
+import { revertCandidateHire } from './candidateHire.js';
 import { getBlobStore } from './blobStore.js';
 import { logger } from './logger.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyUser } from './notify.js';
@@ -67,7 +68,7 @@ export interface PurgeSweepResult {
 }
 
 /** Work-history guard, shared by both rules. True = this is NOT a ghost. */
-async function hasProtectedHistory(
+export async function hasProtectedHistory(
   prisma: PrismaClient,
   associateId: string,
 ): Promise<boolean> {
@@ -101,7 +102,17 @@ async function hasProtectedHistory(
  * Hard-delete one ghost: notifications, onboarding rows, login, associate,
  * document blobs. Caller has already verified the guards.
  */
-async function purgeGhost(
+export type PurgeKind = 'invite_expired' | 'onboarding_abandoned' | 'hire_undone' | 'invite_cancelled';
+
+/** What the candidate's timeline says when a purge takes a hire back. */
+const HIRE_REVERT_REASON: Record<PurgeKind, string> = {
+  invite_expired: 'Onboarding invite never accepted — hire undone automatically',
+  onboarding_abandoned: 'Onboarding not started for 10 days — hire undone automatically',
+  hire_undone: 'Hire undone',
+  invite_cancelled: 'Onboarding invite cancelled',
+};
+
+export async function purgeGhost(
   prisma: PrismaClient,
   ghost: {
     associateId: string;
@@ -110,8 +121,10 @@ async function purgeGhost(
     firstName: string;
     lastName: string;
   },
-  kind: 'invite_expired' | 'onboarding_abandoned',
+  kind: PurgeKind,
   now: Date,
+  /** The recruiter's own words and name, when a person (not a sweep) did it. */
+  revert?: { reason: string; actorUserId: string | null },
 ): Promise<void> {
   const docs = await prisma.documentRecord.findMany({
     where: { associateId: ghost.associateId },
@@ -121,9 +134,22 @@ async function purgeGhost(
     where: { id: ghost.associateId },
     select: { photoS3Key: true },
   });
-  const blobKeys = docs
+  const docKeys = docs
     .map((d) => d.s3Key)
     .filter((k): k is string => k !== null);
+  // A hire files the signed offer letter under the associate, pointing at
+  // the offer's own PDF. The offer outlives the purge — keep its file.
+  const offerKeys = new Set(
+    docKeys.length
+      ? (
+          await prisma.offer.findMany({
+            where: { signedPdfKey: { in: docKeys } },
+            select: { signedPdfKey: true },
+          })
+        ).map((o) => o.signedPdfKey)
+      : [],
+  );
+  const blobKeys = docKeys.filter((k) => !offerKeys.has(k));
   if (assoc?.photoS3Key) blobKeys.push(assoc.photoS3Key);
 
   await prisma.$transaction(
@@ -146,6 +172,15 @@ async function purgeGhost(
       await tx.documentRecord.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.pendingPayrollDeduction.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.application.deleteMany({ where: { associateId: ghost.associateId } });
+      // A recruiting hire whose onboarding this was goes back to Offer —
+      // it used to stay Hired forever, pointing at nobody.
+      await revertCandidateHire(
+        tx,
+        { associateId: ghost.associateId },
+        revert
+          ? { reason: revert.reason, actorUserId: revert.actorUserId }
+          : { reason: HIRE_REVERT_REASON[kind], actorUserId: null, automatic: true },
+      );
       if (ghost.userId) {
         // Cascades invite/reset tokens, passkeys, push subs, prefs.
         await tx.user.delete({ where: { id: ghost.userId } });

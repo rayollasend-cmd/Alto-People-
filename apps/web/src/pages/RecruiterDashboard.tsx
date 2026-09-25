@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  AlarmClock,
   ArrowRight,
   Calendar,
   CalendarClock,
@@ -221,7 +222,12 @@ function NewApplicants({ home }: { home: RecruiterHome }) {
 function WaitingOnYou({ home }: { home: RecruiterHome }) {
   const w = home.waitingOnYou;
   const total =
-    w.toScore.total + w.clientApproved.length + w.readyToHire.length + w.offersToApprove.length + w.stuck.total;
+    w.toScore.total +
+    w.clientApproved.length +
+    w.readyToHire.length +
+    w.offersToApprove.length +
+    w.stuck.total +
+    w.closingSoon.total;
   return (
     <section aria-labelledby="waiting-on-you">
       <SectionTitle count={total}>
@@ -309,6 +315,29 @@ function WaitingOnYou({ home }: { home: RecruiterHome }) {
                   <span className="text-silver"> · {o.jobTitle}</span>
                   {o.approvalNote && <div className="text-xs text-warning">{o.approvalNote}</div>}
                 </li>
+              ))}
+            </WaitCard>
+          )}
+          {w.closingSoon.total > 0 && (
+            <WaitCard
+              icon={AlarmClock}
+              tone="attention"
+              title={`Closing soon — no response (${w.closingSoon.total})`}
+              footer={
+                <p className="text-xs text-silver">
+                  Anything on their record — a note, a move, an interview — keeps them open. Otherwise they close as No
+                  response; you can reopen them.
+                </p>
+              }
+            >
+              {w.closingSoon.items.map((c) => (
+                <Row
+                  key={c.candidateId}
+                  id={c.candidateId}
+                  name={c.candidateName}
+                  detail={STAGE_LABEL[c.stage as keyof typeof STAGE_LABEL] ?? c.stage}
+                  trailing={`closes ${fmtDate(c.closesAt)}`}
+                />
               ))}
             </WaitCard>
           )}
@@ -424,6 +453,16 @@ function WaitingOnOthers({ home }: { home: RecruiterHome }) {
                     </Link>
                     <span className="block truncate text-xs text-silver">
                       {a.clientName} · invited {a.days === 0 ? 'today' : `${a.days}d ago`}
+                      {a.closesAt && (
+                        <span
+                          className={
+                            Date.parse(a.closesAt) - Date.now() < 3 * 86_400_000 ? 'text-warning' : undefined
+                          }
+                        >
+                          {' '}
+                          · closes around {fmtDate(a.closesAt)}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <Button

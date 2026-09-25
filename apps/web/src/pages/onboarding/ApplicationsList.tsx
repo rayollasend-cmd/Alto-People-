@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Ban,
@@ -15,6 +15,7 @@ import {
   MailWarning,
   MessageCircle,
   Plus,
+  RotateCcw,
   Search,
   Send,
   UserCheck,
@@ -32,8 +33,10 @@ import {
   getApplicationStats,
   listApplications,
   nudgeAllStale,
+  reopenApplication,
   resendInvite,
 } from '@/lib/onboardingApi';
+import { CancelInviteDialog, cancelledToast, type AfterCancel, type CancelledInvite } from './CancelInviteDialog';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
@@ -195,7 +198,7 @@ const EMPTY_STATS: ApplicationStatsResponse = {
 };
 
 function isStale(a: ApplicationSummary, now: number): boolean {
-  if (a.status === 'APPROVED' || a.status === 'REJECTED') return false;
+  if (isTerminal(a)) return false;
   if (a.percentComplete === 100) return false;
   const invitedMs = new Date(a.invitedAt).getTime();
   return now - invitedMs > STALE_DAYS * ONE_DAY_MS;
@@ -205,8 +208,9 @@ function daysSince(iso: string, now: number): number {
   return Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
 }
 
+/** Decided, or called off — nothing more to send or chase. */
 function isTerminal(a: ApplicationSummary): boolean {
-  return a.status === 'APPROVED' || a.status === 'REJECTED';
+  return a.status === 'APPROVED' || a.status === 'REJECTED' || a.status === 'CANCELLED';
 }
 
 /** Last movement on the application: latest task completion, else the invite. */
@@ -268,6 +272,7 @@ export function ApplicationsList() {
   const prompt = usePrompt();
   const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
 
   // Default lands on ACTIVE so terminal applications (Approved/Rejected)
   // are hidden until the user explicitly clicks Archived. Legacy URLs
@@ -332,6 +337,10 @@ export function ApplicationsList() {
   // mount — clients change rarely enough that a cache miss isn't worth
   // the extra plumbing.
   const [openCreate, setOpenCreate] = useState(false);
+  // An invite being called off; and after a mistake, the corrected one.
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; name: string } | null>(null);
+  const [createPrefill, setCreatePrefill] = useState<{ firstName: string; lastName: string; email: string } | null>(null);
+  const [reopening, setReopening] = useState<string | null>(null);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
   const [openCsvImport, setOpenCsvImport] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
@@ -344,14 +353,18 @@ export function ApplicationsList() {
   // opens the invite dialog once, then the param is consumed with a replace
   // navigation so Back / refresh doesn't reopen it. Falls back to Bulk
   // invite for invite-only roles (no manage:onboarding → no single-create).
+  // The application page's "send a corrected invite" arrives the same way,
+  // carrying the person to prefill in navigation state.
   useEffect(() => {
     if (searchParams.get('new') !== 'invite') return;
+    const carried = (location.state as { invitePrefill?: { firstName: string; lastName: string; email: string } } | null)?.invitePrefill;
+    if (carried) setCreatePrefill(carried);
     if (canManage) setOpenCreate(true);
     else if (canInvite) setOpenBulkInvite(true);
     const next = new URLSearchParams(searchParams);
     next.delete('new');
     setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, canManage, canInvite]);
+  }, [searchParams, setSearchParams, canManage, canInvite, location.state]);
 
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
@@ -498,6 +511,41 @@ export function ApplicationsList() {
       toast.error('Export failed — try again.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  // After a cancel from a row, a card or the drawer: confirm it, and open
+  // the corrected invite when the recruiter asked for one.
+  const handleCancelled = (r: CancelledInvite, next: AfterCancel) => {
+    cancelledToast(r);
+    refresh();
+    refreshStats();
+    if (next !== 'none') {
+      setCreatePrefill(next === 'corrected' ? r.associate : null);
+      setOpenCreate(true);
+    }
+  };
+
+  const onReopen = async (a: ApplicationSummary) => {
+    setReopening(a.id);
+    try {
+      const r = await reopenApplication(a.id);
+      if (r.inviteUrl) {
+        await navigator.clipboard.writeText(r.inviteUrl).catch(() => {});
+        toast.success('Reopened — fresh invite link copied.');
+      } else {
+        toast.success(
+          r.emailed
+            ? `Reopened — a new invite link is on its way to ${a.associateName}.`
+            : `Reopened — ${a.associateName} already has a login and signs in as before.`,
+        );
+      }
+      refresh();
+      refreshStats();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not reopen it.');
+    } finally {
+      setReopening(null);
     }
   };
 
@@ -879,7 +927,8 @@ export function ApplicationsList() {
                       (stats.byStatus.IN_REVIEW ?? 0)
                     : f.value === 'ARCHIVED'
                       ? (stats.byStatus.APPROVED ?? 0) +
-                        (stats.byStatus.REJECTED ?? 0)
+                        (stats.byStatus.REJECTED ?? 0) +
+                        (stats.byStatus.CANCELLED ?? 0)
                       : (stats.byStatus[f.value] ?? 0);
               const active = status === f.value;
               return (
@@ -997,11 +1046,21 @@ export function ApplicationsList() {
 
       <NewApplicationDialog
         open={openCreate}
-        onOpenChange={setOpenCreate}
+        onOpenChange={(o) => {
+          setOpenCreate(o);
+          if (!o) setCreatePrefill(null);
+        }}
         onCreated={() => {
           refresh();
           refreshStats();
         }}
+        prefill={createPrefill}
+      />
+
+      <CancelInviteDialog
+        target={cancelTarget}
+        onOpenChange={(o) => !o && setCancelTarget(null)}
+        onCancelled={handleCancelled}
       />
 
       <BulkInviteDialog
@@ -1254,19 +1313,32 @@ export function ApplicationsList() {
                       className: 'whitespace-nowrap no-print',
                       cell: (a: (typeof items)[number]) => (
                         <div className="flex items-center justify-end gap-0.5">
-                          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+                          {canManage && !isTerminal(a) && (
                             <Button asChild variant="ghost" size="sm" title="Onboard in person — open the walk-in workspace">
                               <Link to={`/onboarding/in-person/${a.id}`}>
                                 <UserCheck className="h-3.5 w-3.5" />
                               </Link>
                             </Button>
                           )}
-                          <Button variant="ghost" size="sm" onClick={() => setNudgeTarget(a)} title="Send nudge email" disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}>
+                          <Button variant="ghost" size="sm" onClick={() => setNudgeTarget(a)} title="Send nudge email" disabled={isTerminal(a)}>
                             <MessageCircle className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => onResend(a)} loading={resendingIds.has(a.id)} title="Resend invite">
-                            <Send className="h-3.5 w-3.5" />
-                          </Button>
+                          {a.status === 'CANCELLED' ? (
+                            canManage && (
+                              <Button variant="ghost" size="sm" onClick={() => void onReopen(a)} loading={reopening === a.id} title="Reopen with a fresh invite link" aria-label={`Reopen the invite to ${a.associateName}`}>
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              </Button>
+                            )
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={() => onResend(a)} loading={resendingIds.has(a.id)} title="Resend invite" disabled={isTerminal(a)}>
+                              <Send className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {canManage && !isTerminal(a) && (
+                            <Button variant="ghost" size="sm" onClick={() => setCancelTarget({ id: a.id, name: a.associateName })} title="Cancel this invite — sent by mistake, or not joining" aria-label={`Cancel the invite to ${a.associateName}`}>
+                              <Ban className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         </div>
                       ),
                     },
@@ -1295,6 +1367,9 @@ export function ApplicationsList() {
                 onNudge={() => setNudgeTarget(a)}
                 onResend={() => onResend(a)}
                 resending={resendingIds.has(a.id)}
+                onCancel={() => setCancelTarget({ id: a.id, name: a.associateName })}
+                onReopen={() => void onReopen(a)}
+                reopening={reopening === a.id}
               />
             );
           })}
@@ -1360,7 +1435,14 @@ export function ApplicationsList() {
               </DrawerDescription>
             </DrawerHeader>
             <DrawerBody>
-              <ApplicationDetailBody applicationId={drawerTarget.id} mode="drawer" />
+              <ApplicationDetailBody
+                applicationId={drawerTarget.id}
+                mode="drawer"
+                onCancelled={(r, next) => {
+                  setDrawerTarget(null);
+                  handleCancelled(r, next);
+                }}
+              />
             </DrawerBody>
           </>
         )}
@@ -1382,6 +1464,11 @@ interface ApplicationCardProps {
   onNudge: () => void;
   onResend: () => void;
   resending: boolean;
+  /** Call off the invite (sent by mistake, not joining). */
+  onCancel: () => void;
+  /** Bring back a cancelled invite. */
+  onReopen: () => void;
+  reopening: boolean;
 }
 
 function ApplicationCard({
@@ -1395,6 +1482,9 @@ function ApplicationCard({
   onNudge,
   onResend,
   resending,
+  onCancel,
+  onReopen,
+  reopening,
 }: ApplicationCardProps) {
   const bounced = a.lastInviteDelivery?.status === 'FAILED';
   return (
@@ -1490,7 +1580,7 @@ function ApplicationCard({
           className="flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
           data-no-row-click
         >
-          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+          {canManage && !isTerminal(a) && (
             <Button
               asChild
               variant="ghost"
@@ -1513,25 +1603,58 @@ function ApplicationCard({
               e.stopPropagation();
               onNudge();
             }}
-            disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}
+            disabled={isTerminal(a)}
             title="Send nudge email"
           >
             <MessageCircle className="h-3.5 w-3.5" />
             Nudge
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onResend();
-            }}
-            loading={resending}
-            title="Resend invite"
-          >
-            <Send className="h-3.5 w-3.5" />
-            Resend
-          </Button>
+          {a.status === 'CANCELLED' ? (
+            canManage && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onReopen();
+                }}
+                loading={reopening}
+                title="Reopen with a fresh invite link"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reopen
+              </Button>
+            )
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onResend();
+              }}
+              loading={resending}
+              disabled={isTerminal(a)}
+              title="Resend invite"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Resend
+            </Button>
+          )}
+          {canManage && !isTerminal(a) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancel();
+              }}
+              title="Cancel this invite — sent by mistake, or not joining"
+            >
+              <Ban className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          )}
         </div>
       )}
     </div>

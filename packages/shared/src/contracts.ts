@@ -38,6 +38,8 @@ export const ApplicationStatusSchema = z.enum([
   'IN_REVIEW',
   'APPROVED',
   'REJECTED',
+  // Called off by us — sent by mistake, a hire undone, an invite expired.
+  'CANCELLED',
 ]);
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
 /** Every status value — for seeding total Record<ApplicationStatus, T> maps. */
@@ -245,6 +247,10 @@ export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
   approvedAt: z.string().datetime().nullable(),
   rejectedAt: z.string().datetime().nullable(),
   rejectionReason: z.string().nullable(),
+  /** Called off (sent in error, a hire undone, an invite that expired): when and why. */
+  cancelledAt: z.string().datetime().nullable().optional(),
+  cancelReason: z.string().nullable().optional(),
+  cancelNote: z.string().nullable().optional(),
   hireDate: z.string().date().nullable(),
   /** The store the application names (the approve dialog asks for one when
    *  this is null and the client has several). */
@@ -4332,6 +4338,12 @@ export const CandidateHireResponseSchema = CandidateSchema.extend({
   inviteUrl: z.string().nullable(),
   /** Whether the accepted offer's pay was recorded as their starting rate. */
   payRecorded: z.boolean(),
+  /**
+   * When the onboarding invite email goes out — it waits a few seconds so
+   * the hire can be undone before it does. Null when it went out already
+   * (or email isn't configured).
+   */
+  emailDueAt: z.string().nullable().optional(),
 });
 export type CandidateHireResponse = z.infer<typeof CandidateHireResponseSchema>;
 
@@ -4354,6 +4366,9 @@ export const CandidateEventKindSchema = z.enum([
   'SUBMITTED_TO_CLIENT',
   'CLIENT_FEEDBACK',
   'HIRED',
+  'HIRE_UNDONE',
+  'REMOVED',
+  'RESTORED',
 ]);
 export type CandidateEventKind = z.infer<typeof CandidateEventKindSchema>;
 
@@ -4627,6 +4642,14 @@ export const RecruiterHomeSchema = z.object({
         acceptedAt: z.string().nullable(),
       }),
     ),
+    /**
+     * Quiet candidates who close on their own within a few days unless
+     * something happens — the warning before the clean-up.
+     */
+    closingSoon: z.object({
+      total: z.number().int(),
+      items: z.array(z.object({ ...HomeCandidateRef, stage: z.string(), closesAt: z.string() })),
+    }),
     /** Held for pay approval, drafted by someone else — yours to approve. */
     offersToApprove: z.array(
       z.object({
@@ -4675,6 +4698,11 @@ export const RecruiterHomeSchema = z.object({
           clientName: z.string(),
           invitedAt: z.string(),
           days: z.number().int(),
+          /**
+           * About when the onboarding clean-up closes it (and takes the
+           * hire back) if they still haven't started.
+           */
+          closesAt: z.string().nullable(),
         }),
       ),
     }),

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { Prisma, type CandidateStage } from '@prisma/client';
 import {
@@ -35,6 +35,8 @@ import { getBlobStore } from '../lib/blobStore.js';
 import { notifyUser } from '../lib/notify.js';
 import { computeRecruitingAnalytics, sourceKey } from '../lib/recruitingAnalytics.js';
 import { computeRecruiterHome } from '../lib/recruiterHome.js';
+import { undoHire } from '../lib/onboardingUndo.js';
+import { INVITE_UNDO_SECONDS } from '../lib/inviteDelivery.js';
 
 export const recruitingRouter = Router();
 
@@ -601,6 +603,15 @@ recruitingRouter.post('/candidates', MANAGE, async (req, res, next) => {
     const i = parsed.data;
     const email = i.email.trim().toLowerCase();
     await assertPosting(i.jobPostingId);
+    const removed = await prisma.candidate.findFirst({ where: { email, deletedAt: { not: null } }, select: { id: true } });
+    if (removed) {
+      throw new HttpError(
+        409,
+        'candidate_removed',
+        'Someone with this email was removed from the pipeline — restore them from Recently removed.',
+        { candidateId: removed.id },
+      );
+    }
 
     try {
       const created = await prisma.$transaction(async (tx) => {
@@ -792,6 +803,9 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
       ...(input.startDate ? { startDate: input.startDate } : {}),
       ...(input.employmentType ? { employmentType: input.employmentType } : {}),
       ...(input.hireRole ? { hireRole: input.hireRole } : {}),
+      // Held a few seconds so a mistaken hire can be undone before the
+      // person is emailed a link.
+      holdEmailSeconds: INVITE_UNDO_SECONDS,
     });
 
     const pay =
@@ -887,24 +901,133 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
       applicationId: invite.applicationId,
       inviteUrl: invite.inviteUrl,
       payRecorded,
+      emailDueAt: invite.emailDueAt,
     });
   } catch (err) {
     next(err);
   }
 });
 
+/**
+ * POST /recruiting/candidates/:id/undo-hire — take a hire back before the
+ * person has started (see lib/onboardingUndo). Their onboarding invite is
+ * cancelled and its link revoked, and they return to Offer with the
+ * reason on their timeline. After they've started it's a separation.
+ */
+const UndoHireSchema = z.object({ reason: z.string().trim().min(1, 'Say why.').max(500) });
+
+recruitingRouter.post('/candidates/:id/undo-hire', MANAGE, async (req, res, next) => {
+  try {
+    const { reason } = UndoHireSchema.parse(req.body);
+    const result = await undoHire({ candidateId: req.params.id, actorUserId: req.user!.id, reason, req });
+    auditRecruiting(req, 'hire_undone', 'Candidate', req.params.id, { reason, mode: result.mode });
+    res.json({ ...toCandidate(await findLive(req.params.id)), mode: result.mode });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Remove and restore ================================================ */
+
+/** How long a removed candidate stays in "Recently removed" to restore. */
+const RESTORE_WINDOW_DAYS = 30;
+const RemoveInputSchema = z.object({ reason: z.string().trim().max(500).optional() });
+
+/**
+ * Take a candidate off the pipeline — a duplicate, a test entry, spam from
+ * the careers page. Soft: they're kept, on the timeline and in the audit
+ * log, and can be restored from "Recently removed" for 30 days. A hired
+ * candidate can't be removed; undo the hire first.
+ */
+async function removeCandidate(req: Request, id: string, reason: string | null) {
+  const existing = await findLive(id);
+  if (existing.stage === 'HIRED') {
+    throw new HttpError(409, 'already_hired', 'A hired candidate can’t be removed — undo the hire first.');
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.candidate.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
+    await recordCandidateEvent(tx, {
+      candidateId: existing.id,
+      kind: 'REMOVED',
+      actorUserId: req.user!.id,
+      body: reason,
+    });
+  });
+  auditRecruiting(req, 'candidate_deleted', 'Candidate', existing.id, { reason });
+}
+
+recruitingRouter.post('/candidates/:id/remove', MANAGE, async (req, res, next) => {
+  try {
+    const { reason } = RemoveInputSchema.parse(req.body ?? {});
+    await removeCandidate(req, req.params.id, reason || null);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Kept for older clients: the same removal, without a reason.
 recruitingRouter.delete('/candidates/:id', MANAGE, async (req, res, next) => {
   try {
-    const existing = await findLive(req.params.id);
-    if (existing.stage === 'HIRED') {
-      throw new HttpError(409, 'already_hired', 'Cannot delete a HIRED candidate');
-    }
-    await prisma.candidate.update({
-      where: { id: existing.id },
-      data: { deletedAt: new Date() },
-    });
-    auditRecruiting(req, 'candidate_deleted', 'Candidate', existing.id);
+    await removeCandidate(req, req.params.id, null);
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /recruiting/removed — removed in the last 30 days, newest first, restorable. */
+recruitingRouter.get('/removed', async (_req, res, next) => {
+  try {
+    const since = new Date(Date.now() - RESTORE_WINDOW_DAYS * DAY_MS);
+    const rows = await prisma.candidate.findMany({
+      where: { deletedAt: { gte: since } },
+      orderBy: { deletedAt: 'desc' },
+      take: 200,
+      include: {
+        events: {
+          where: { kind: 'REMOVED' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { actor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } } },
+        },
+      },
+    });
+    res.json({
+      removed: rows.map((c) => {
+        const e = c.events[0];
+        return {
+          id: c.id,
+          name: `${c.firstName} ${c.lastName}`,
+          email: c.email,
+          position: c.position,
+          stage: c.stage,
+          removedAt: c.deletedAt!.toISOString(),
+          restorableUntil: new Date(c.deletedAt!.getTime() + RESTORE_WINDOW_DAYS * DAY_MS).toISOString(),
+          removedBy: e?.actor ? (e.actor.associate ? `${e.actor.associate.firstName} ${e.actor.associate.lastName}` : e.actor.email) : null,
+          reason: e?.body ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+recruitingRouter.post('/candidates/:id/restore', MANAGE, async (req, res, next) => {
+  try {
+    const c = await prisma.candidate.findUnique({ where: { id: req.params.id } });
+    if (!c || !c.deletedAt) throw new HttpError(404, 'not_found', 'Not a removed candidate.');
+    if (c.deletedAt.getTime() < Date.now() - RESTORE_WINDOW_DAYS * DAY_MS) {
+      throw new HttpError(409, 'restore_window_passed', `Removed more than ${RESTORE_WINDOW_DAYS} days ago — add them again instead.`);
+    }
+    const restored = await prisma.$transaction(async (tx) => {
+      const row = await tx.candidate.update({ where: { id: c.id }, data: { deletedAt: null } });
+      await recordCandidateEvent(tx, { candidateId: c.id, kind: 'RESTORED', actorUserId: req.user!.id });
+      return row;
+    });
+    auditRecruiting(req, 'candidate_restored', 'Candidate', c.id);
+    res.json(toCandidate(restored));
   } catch (err) {
     next(err);
   }

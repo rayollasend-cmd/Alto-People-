@@ -48,6 +48,8 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
+import { INVITE_UNDO_SECONDS, invitesAreEmailed, scheduleInviteDelivery, sendInviteEmail } from '../lib/inviteDelivery.js';
+import { CANCEL_REASONS, cancelApplication, reopenApplication } from '../lib/onboardingUndo.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { runStaleNudgeSweep } from '../lib/staleNudge.js';
@@ -113,7 +115,6 @@ import {
   applicationRejectedTemplate,
   esignCopyTemplate,
   i9Section2Template,
-  inviteTemplate,
 } from '../lib/emailTemplates.js';
 import {
   renderCompliancePacket,
@@ -241,6 +242,12 @@ export interface InviteApplicantInput {
     | 'WORKFORCE_MANAGER'
     | 'MARKETING_MANAGER'
     | 'FINANCE_ACCOUNTANT';
+  /**
+   * Hold the invite email this many seconds for an Undo (see
+   * lib/inviteDelivery). Ignored when email isn't configured — the link
+   * is shown instead, so there is nothing to hold.
+   */
+  holdEmailSeconds?: number;
 }
 
 export interface InviteApplicantResult {
@@ -248,6 +255,8 @@ export interface InviteApplicantResult {
   invitedUserId: string;
   associateId: string;
   inviteUrl: string | null; // dev-stub only
+  /** When a held invite email goes out; null when it went out already. */
+  emailDueAt: string | null;
 }
 
 /**
@@ -264,6 +273,9 @@ export async function inviteOneApplicant(
   const email = input.associateEmail.trim().toLowerCase();
   const invite = generateInviteToken();
   const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
+  // A held invite gets its link when it is sent, not now.
+  const holdSeconds = input.holdEmailSeconds && invitesAreEmailed() ? input.holdEmailSeconds : 0;
+  const emailDueAt = holdSeconds ? new Date(Date.now() + holdSeconds * 1000) : null;
 
   const result = await prisma.$transaction(async (tx) => {
     let associate = await tx.associate.findUnique({ where: { email } });
@@ -413,9 +425,11 @@ export async function inviteOneApplicant(
       });
     }
 
-    await tx.inviteToken.create({
-      data: { tokenHash: invite.hash, userId: user.id, expiresAt },
-    });
+    if (!emailDueAt) {
+      await tx.inviteToken.create({
+        data: { tokenHash: invite.hash, userId: user.id, expiresAt },
+      });
+    }
 
     const isContractor = associate.employmentType !== 'W2_EMPLOYEE';
     const tasksForChecklist = template.tasks.filter(
@@ -443,6 +457,7 @@ export async function inviteOneApplicant(
         status: 'DRAFT',
         position: input.position ?? null,
         startDate: input.startDate ? new Date(input.startDate) : null,
+        inviteEmailDueAt: emailDueAt,
         checklist: {
           create: {
             tasks: {
@@ -475,56 +490,27 @@ export async function inviteOneApplicant(
     return { application, client, user, associate };
   }, TX_OPTS);
 
-  // Email — non-fatal; HR can resend later.
-  const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
-  const tpl = inviteTemplate({
-    firstName: result.associate.firstName,
-    clientName: result.client.name,
-    hireDate: result.associate.hireDate ? result.associate.hireDate.toISOString().slice(0, 10) : null,
-    magicLink: acceptUrl,
-    linkExpiresAt: expiresAt.toISOString().slice(0, 10),
-  });
-  const subject = tpl.subject;
-  const body = tpl.text;
-
+  // Email — non-fatal; HR can resend later. Held for the Undo window
+  // when asked; the timer (or the due-invite sweep) sends it.
+  let acceptUrl: string | null = null;
   let emailRef: string | null = null;
   let emailFailed: string | null = null;
-  try {
-    const r = await send({
-      channel: 'EMAIL',
-      // This caller writes its own Notification row for the attempt.
-      audit: false,
-      recipient: { userId: result.user.id, phone: null, email },
-      subject,
-      body,
-      html: tpl.html,
+  if (emailDueAt) {
+    scheduleInviteDelivery(result.application.id, emailDueAt);
+  } else {
+    const sent = await sendInviteEmail({
+      userId: result.user.id,
+      email,
+      firstName: result.associate.firstName,
+      clientName: result.client.name,
+      hireDate: result.associate.hireDate,
+      rawToken: invite.raw,
+      expiresAt,
+      actorUserId,
     });
-    emailRef = r.externalRef;
-  } catch (err) {
-    emailFailed = err instanceof Error ? err.message : String(err);
-  }
-  // Best-effort bookkeeping: the invite (user + application + token) has
-  // already committed. A transient failure writing the Notification row
-  // used to 500 the request — HR retried and minted a DUPLICATE
-  // application for the same hire.
-  try {
-    await prisma.notification.create({
-      data: {
-        channel: 'EMAIL',
-        status: emailFailed ? 'FAILED' : 'SENT',
-        recipientUserId: result.user.id,
-        recipientEmail: email,
-        subject,
-        body,
-        category: 'onboarding.invite',
-        externalRef: emailRef,
-        failureReason: emailFailed,
-        sentAt: emailFailed ? null : new Date(),
-        senderUserId: actorUserId,
-      },
-    });
-  } catch (err) {
-    console.error('[onboarding] invite notification row failed to persist', err);
+    acceptUrl = sent.acceptUrl;
+    emailRef = sent.emailRef;
+    emailFailed = sent.emailFailed;
   }
 
   await recordOnboardingEvent({
@@ -538,6 +524,7 @@ export async function inviteOneApplicant(
       invitedUserId: result.user.id,
       emailQueued: emailRef !== null || emailFailed !== null,
       emailFailed,
+      emailDueAt: emailDueAt?.toISOString() ?? null,
     },
     req: reqForAudit,
   });
@@ -546,7 +533,8 @@ export async function inviteOneApplicant(
     applicationId: result.application.id,
     invitedUserId: result.user.id,
     associateId: result.associate.id,
-    inviteUrl: env.RESEND_API_KEY && env.RESEND_FROM ? null : acceptUrl,
+    inviteUrl: invitesAreEmailed() ? null : acceptUrl,
+    emailDueAt: emailDueAt?.toISOString() ?? null,
   };
 }
 
@@ -599,7 +587,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
     if (status === 'ACTIVE') {
       statusWhere = { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } };
     } else if (status === 'ARCHIVED') {
-      statusWhere = { status: { in: ['APPROVED', 'REJECTED'] } };
+      statusWhere = { status: { in: ['APPROVED', 'REJECTED', 'CANCELLED'] } };
     } else if (status && status !== 'ALL') {
       statusWhere = {
         status: status as Prisma.ApplicationWhereInput['status'],
@@ -759,7 +747,7 @@ export function fetchInFlightApplications(
     take: 500,
     where: {
       ...(user ? scopeApplications(user) : { deletedAt: null }),
-      status: { notIn: ['APPROVED', 'REJECTED'] },
+      status: { notIn: ['APPROVED', 'REJECTED', 'CANCELLED'] },
     },
     orderBy: { invitedAt: 'desc' },
     include: {
@@ -816,7 +804,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
     for (const g of grouped) {
       byStatus[g.status] = g._count._all;
       total += g._count._all;
-      if (g.status !== 'APPROVED' && g.status !== 'REJECTED') {
+      if (g.status !== 'APPROVED' && g.status !== 'REJECTED' && g.status !== 'CANCELLED') {
         inFlight += g._count._all;
       }
     }
@@ -933,6 +921,9 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
       rejectedAt: row.rejectedAt ? row.rejectedAt.toISOString() : null,
       rejectionReason: row.rejectionReason,
+      cancelledAt: row.cancelledAt ? row.cancelledAt.toISOString() : null,
+      cancelReason: row.cancelReason,
+      cancelNote: row.cancelNote,
       hireDate: row.associate.hireDate
         ? row.associate.hireDate.toISOString().slice(0, 10)
         : null,
@@ -1033,7 +1024,7 @@ async function approveOneApplication(
       'Application not found'
     );
   }
-  if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+  if (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') {
     throw new HttpError(
       409,
       'application_already_decided',
@@ -1324,7 +1315,7 @@ onboardingRouter.post(
           'Application not found'
         );
       }
-      if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+      if (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') {
         throw new HttpError(
           409,
           'application_already_decided',
@@ -1926,11 +1917,13 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const result = await inviteOneApplicant(req.user!.id, req, parsed.data);
+    // Held a few seconds, so a mistake can be undone before it's emailed.
+    const result = await inviteOneApplicant(req.user!.id, req, { ...parsed.data, holdEmailSeconds: INVITE_UNDO_SECONDS });
     res.status(201).json({
       id: result.applicationId,
       invitedUserId: result.invitedUserId,
       inviteUrl: result.inviteUrl,
+      emailDueAt: result.emailDueAt,
     });
   } catch (err) {
     next(err);
@@ -3972,6 +3965,43 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'agreement';
 }
 
+/* CANCEL / REOPEN ------------------------------------------------------- */
+// Cancel is for a mistake — the wrong person, the wrong client, a
+// duplicate — or someone no longer joining. Unlike Reject it is not a
+// decision about the person: no "declined" email goes out, and the link
+// stops working. A never-started invite is removed outright; anyone with
+// history is kept and marked CANCELLED. See lib/onboardingUndo.
+const CancelApplicationSchema = z.object({
+  reason: z.enum(CANCEL_REASONS),
+  note: z.string().trim().max(500).optional(),
+});
+
+onboardingRouter.post('/applications/:id/cancel', MANAGE, async (req, res, next) => {
+  try {
+    const input = CancelApplicationSchema.parse(req.body);
+    await assertCanModifyApplication(prisma, req.user!, req.params.id, { intent: 'invite' });
+    const r = await cancelApplication({
+      applicationId: req.params.id,
+      actorUserId: req.user!.id,
+      reason: input.reason,
+      note: input.note || null,
+      req,
+    });
+    res.json(r);
+  } catch (err) {
+    next(err);
+  }
+});
+
+onboardingRouter.post('/applications/:id/reopen', MANAGE, async (req, res, next) => {
+  try {
+    await assertCanModifyApplication(prisma, req.user!, req.params.id, { intent: 'invite' });
+    res.json(await reopenApplication({ applicationId: req.params.id, actorUserId: req.user!.id, req }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* RESEND INVITE (HR/Ops only) ------------------------------------------ */
 // Rotates the invite token for the application's associate user, sends a
 // fresh "your new onboarding link" email, and kills the previous link. Use
@@ -3985,6 +4015,10 @@ onboardingRouter.post(
       const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, {
         intent: 'invite',
       });
+      // A cancelled invite stays dead until someone reopens it on purpose.
+      if (app.status === 'CANCELLED') {
+        throw new HttpError(409, 'application_cancelled', 'This invite was cancelled — reopen it to send a new link.');
+      }
       const user = await prisma.user.findFirst({
         where: { associateId: app.associateId },
       });
@@ -4265,6 +4299,9 @@ onboardingRouter.post(
           ) {
             throw new HttpError(404, 'application_not_found', 'Application not found');
           }
+          if (app.status === 'CANCELLED') {
+            throw new HttpError(409, 'application_cancelled', 'This invite was cancelled — reopen it to send a new link.');
+          }
           const user = userByAssociateId.get(app.associateId);
           if (!user) {
             throw new HttpError(404, 'no_invited_user', 'No user found for this associate');
@@ -4365,7 +4402,7 @@ onboardingRouter.post(
             skipped.push({ applicationId, reason: 'not_found' });
             continue;
           }
-          if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+          if (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') {
             skipped.push({ applicationId, reason: 'already_decided' });
             continue;
           }

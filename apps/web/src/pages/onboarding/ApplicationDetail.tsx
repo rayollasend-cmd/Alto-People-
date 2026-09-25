@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  Ban,
   CalendarDays,
   CheckCircle2,
   Circle,
@@ -16,6 +17,7 @@ import {
   ExternalLink,
   MinusCircle,
   PartyPopper,
+  RotateCcw,
   Send,
   ShieldCheck,
   Sparkles,
@@ -42,6 +44,7 @@ import {
   type InviteDeliveryInfo,
 } from '@alto-people/shared';
 import {
+  CANCEL_REASON_LABEL,
   approveApplication,
   compliancePacketUrl,
   getApplication,
@@ -52,6 +55,7 @@ import {
   getW4,
   nextReviewApplication,
   rejectApplication,
+  reopenApplication,
   resendInvite,
   skipTask,
   skipTaskWithReason,
@@ -100,6 +104,7 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
+import { CancelInviteDialog, cancelledToast, type AfterCancel, type CancelledInvite } from './CancelInviteDialog';
 import { cn } from '@/lib/cn';
 
 const EMPLOYMENT_LABEL: Record<string, string> = {
@@ -180,6 +185,11 @@ interface ApplicationDetailBodyProps {
    *            the body. Slightly tighter typographic scale.
    */
   mode: 'page' | 'drawer';
+  /**
+   * The invite was cancelled here. The list's drawer passes this to close
+   * itself and open the corrected invite; the page handles it on its own.
+   */
+  onCancelled?: (result: CancelledInvite, next: AfterCancel) => void;
 }
 
 /**
@@ -188,7 +198,7 @@ interface ApplicationDetailBodyProps {
  * loading + skip/resend handlers; they differ only in how the title row
  * is laid out.
  */
-export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetailBodyProps) {
+export function ApplicationDetailBody({ applicationId, mode, onCancelled }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -210,6 +220,8 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   // "Approve anyway" (which resubmits with acknowledgeWarnings: true).
   const [approveWarnings, setApproveWarnings] = useState<string[] | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [reopening, setReopening] = useState(false);
   // In-flight flag for the header's one-click approve (no dialog to own it).
   const [directApproving, setDirectApproving] = useState(false);
   // Task pending the required-reason skip confirmation (sensitive kinds only).
@@ -380,6 +392,51 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     }
   };
 
+  const handleCancelled = (r: CancelledInvite, next: AfterCancel) => {
+    if (onCancelled) {
+      onCancelled(r, next);
+      return;
+    }
+    cancelledToast(r);
+    if (next !== 'none') {
+      // The list owns the invite dialog; hand it the person to correct.
+      navigate('/onboarding?new=invite', {
+        state: { invitePrefill: next === 'corrected' ? r.associate : null },
+      });
+    } else if (r.mode === 'removed') {
+      // Nothing is left to show here.
+      navigate('/onboarding');
+    } else {
+      void refresh();
+    }
+  };
+
+  const handleReopen = async () => {
+    setReopening(true);
+    try {
+      const r = await reopenApplication(detail.id);
+      if (r.inviteUrl) {
+        await navigator.clipboard.writeText(r.inviteUrl).catch(() => {});
+        toast.success('Reopened — fresh invite link copied.', {
+          icon: <Copy className="h-4 w-4" />,
+        });
+      } else {
+        toast.success(
+          r.emailed
+            ? `Reopened — a new invite link is on its way to ${detail.associateName}.`
+            : `Reopened — ${detail.associateName} already has a login and signs in as before.`,
+        );
+      }
+      await refresh();
+    } catch (err) {
+      toast.error('Could not reopen it.', {
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
+      });
+    } finally {
+      setReopening(false);
+    }
+  };
+
   const handleReject = async (reason: string | undefined) => {
     if (!reason) return;
     try {
@@ -448,6 +505,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
                 onResend={handleResend}
                 onApprove={() => setApproveOpen(true)}
                 onReject={() => setRejectOpen(true)}
+                onCancel={() => setCancelOpen(true)}
+                onReopen={() => void handleReopen()}
+                reopening={reopening}
                 directApproveDate={directApproveDate}
                 directApproving={directApproving}
                 onDirectApprove={handleDirectApprove}
@@ -464,6 +524,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
                 onResend={handleResend}
                 onApprove={() => setApproveOpen(true)}
                 onReject={() => setRejectOpen(true)}
+                onCancel={() => setCancelOpen(true)}
+                onReopen={() => void handleReopen()}
+                reopening={reopening}
                 directApproveDate={directApproveDate}
                 directApproving={directApproving}
                 onDirectApprove={handleDirectApprove}
@@ -476,9 +539,12 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         {canManage &&
           detail.lastInviteDelivery &&
           detail.status !== 'APPROVED' &&
-          detail.status !== 'REJECTED' && (
+          detail.status !== 'REJECTED' &&
+          detail.status !== 'CANCELLED' && (
             <DeliverabilityStrip info={detail.lastInviteDelivery} />
           )}
+
+        {detail.status === 'CANCELLED' && <CancelledStrip detail={detail} />}
 
         {/* Review assembly line: jump straight to the next waiting
             application instead of a list round-trip per hire. */}
@@ -565,7 +631,8 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           <TaskTile
             key={t.id}
             task={t}
-            canSkip={canManage}
+            // A cancelled invite has nothing left to complete — reopen it first.
+            canSkip={canManage && detail.status !== 'CANCELLED'}
             // Payroll/compliance kinds detour through the required-reason
             // confirmation; the historical stub kinds keep one-click skip.
             quietSkip={!STUB_KINDS.has(t.kind)}
@@ -674,6 +741,11 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         completedTasks={detail.tasks.filter((t) => t.status === 'DONE').length}
         totalTasks={detail.tasks.length}
       />
+      <CancelInviteDialog
+        target={cancelOpen ? { id: detail.id, name: detail.associateName } : null}
+        onOpenChange={setCancelOpen}
+        onCancelled={handleCancelled}
+      />
       <ConfirmDialog
         open={rejectOpen}
         onOpenChange={setRejectOpen}
@@ -751,6 +823,9 @@ function DetailActions({
   onResend,
   onApprove,
   onReject,
+  onCancel,
+  onReopen,
+  reopening,
   directApproveDate,
   directApproving,
   onDirectApprove,
@@ -761,6 +836,11 @@ function DetailActions({
   /** Opens the hire-date dialog (also the fallback when no usable date). */
   onApprove: () => void;
   onReject: () => void;
+  /** Call the invite off — sent by mistake, or they aren't joining. */
+  onCancel: () => void;
+  /** Bring a cancelled invite back with a fresh link. */
+  onReopen: () => void;
+  reopening: boolean;
   /** YYYY-MM-DD when the record's start date is today-or-future — enables
    *  the one-click approve; null falls back to the dialog. */
   directApproveDate: string | null;
@@ -769,10 +849,11 @@ function DetailActions({
   compact?: boolean;
 }) {
   // Approve / Reject only shown while the application is still under review.
-  // After APPROVED or REJECTED the buttons disappear — the API also rejects
-  // re-decisions with 409, but hiding them avoids a confusing dead button.
-  // Approve also requires the checklist at 100%.
-  const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED';
+  // After APPROVED, REJECTED or CANCELLED the buttons disappear — the API
+  // also rejects re-decisions with 409, but hiding them avoids a confusing
+  // dead button. Approve also requires the checklist at 100%.
+  const decided =
+    detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
   // Checklist-less applications (pre-fix CSV migrations, legacy rows) have
   // nothing to complete — the API lets them through to the approve-anyway
   // warning flow, so the button must not dead-end at a permanent 0%.
@@ -823,6 +904,23 @@ function DetailActions({
           Resend invite
         </Button>
       )}
+      {detail.status === 'CANCELLED' && (
+        <Button variant="outline" size="sm" onClick={onReopen} loading={reopening} title="Reopen with a fresh invite link">
+          <RotateCcw className="h-4 w-4" />
+          Reopen
+        </Button>
+      )}
+      {!decided && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          title="Sent by mistake, or not joining — no email goes to them, and their link stops working"
+        >
+          <Ban className="h-4 w-4" />
+          {compact ? 'Cancel' : 'Cancel invite'}
+        </Button>
+      )}
       {!decided && (
         <Button
           variant="outline"
@@ -871,6 +969,26 @@ function DetailActions({
             : 'Approve'}
         </Button>
       )}
+    </div>
+  );
+}
+
+/** Why and when a cancelled invite was called off. */
+function CancelledStrip({ detail }: { detail: ApplicationDetailType }) {
+  const reason = detail.cancelReason
+    ? (CANCEL_REASON_LABEL[detail.cancelReason as keyof typeof CANCEL_REASON_LABEL] ?? detail.cancelReason)
+    : null;
+  return (
+    <div role="status" className="mt-3 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-sm">
+      <div className="flex items-center gap-2 text-white">
+        <Ban className="h-4 w-4 text-silver" aria-hidden />
+        <span>
+          Invite cancelled{detail.cancelledAt ? ` ${fmtRelativeDate(detail.cancelledAt)}` : ''}
+          {reason ? ` — ${reason}` : ''}
+        </span>
+      </div>
+      {detail.cancelNote && <p className="mt-1 text-silver">{detail.cancelNote}</p>}
+      <p className="mt-1 text-xs text-silver/80">Their invite link no longer works. Reopen sends a fresh one.</p>
     </div>
   );
 }

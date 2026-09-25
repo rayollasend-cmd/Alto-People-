@@ -21,6 +21,10 @@ vi.mock('@/lib/recruitingApi', () => ({
   listSubmittals: vi.fn(async () => ({ submittals: [] })),
   submitToClient: vi.fn(async () => ({ clientName: 'Northside Grill' })),
   withdrawSubmittal: vi.fn(async () => ({ ok: true })),
+  removeCandidate: vi.fn(async () => undefined),
+  restoreCandidate: vi.fn(async () => ({})),
+  listRemovedCandidates: vi.fn(async () => ({ removed: [] })),
+  undoHire: vi.fn(async () => ({ mode: 'removed' })),
 }));
 
 vi.mock('@/lib/recruiting90Api', () => ({
@@ -68,6 +72,12 @@ vi.mock('@/lib/savedViewsApi', () => ({
   deleteSavedView: vi.fn(),
 }));
 
+// The undo window is a toast; here it only has to be offered.
+vi.mock('@/lib/undoToast', async (orig) => ({
+  ...(await orig<typeof import('@/lib/undoToast')>()),
+  undoWindowToast: vi.fn(),
+}));
+
 vi.mock('@/lib/auth', async (orig) => ({
   ...(await orig<typeof import('@/lib/auth')>()),
   useAuth: () => ({ can: () => true, user: { id: 'me-1' } }),
@@ -83,11 +93,16 @@ import {
   hireCandidate,
   listCandidateEvents,
   listCandidates,
+  listRemovedCandidates,
   listSubmittals,
+  removeCandidate,
+  restoreCandidate,
   submitToClient,
+  undoHire,
   updateCandidate,
   withdrawSubmittal,
 } from '@/lib/recruitingApi';
+import { undoWindowToast } from '@/lib/undoToast';
 import {
   createInterview,
   deleteInterview,
@@ -841,5 +856,103 @@ describe('<RecruitingHome> at enterprise scale', () => {
     const drawer = within(await screen.findByRole('dialog'));
     expect(await drawer.findByText('zed@example.com')).toBeInTheDocument();
     expect(getCandidate).toHaveBeenCalledWith('cand-9');
+  });
+});
+
+/**
+ * The recruiter couldn't take anything back: a hire made by mistake stayed
+ * Hired, and a duplicate or test candidate stayed on the board for good.
+ */
+describe('<RecruitingHome> taking it back', () => {
+  it('removes a candidate from the drawer, with an optional reason', async () => {
+    vi.mocked(removeCandidate).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(drawer.getByRole('button', { name: 'More actions' }));
+    // Not hired: nothing to undo, only remove.
+    expect(screen.queryByRole('menuitem', { name: /undo hire/i })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('menuitem', { name: /remove from pipeline/i }));
+
+    const confirm = within(await screen.findByRole('dialog', { name: 'Remove Maria Lopez from the pipeline?' }));
+    expect(confirm.getByText(/restore them from recently removed for 30 days/i)).toBeInTheDocument();
+    await user.type(confirm.getByRole('textbox'), 'Duplicate');
+    await user.click(confirm.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(removeCandidate).toHaveBeenCalledWith('cand-1', 'Duplicate'));
+  });
+
+  it('undoes a hire, and says why', async () => {
+    vi.mocked(listCandidates).mockResolvedValue({
+      candidates: [{ ...MARIA, stage: 'HIRED', hiredAssociateId: 'assoc-9', hiredAt: '2026-07-20T12:00:00.000Z' }],
+    } as never);
+    vi.mocked(undoHire).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(drawer.getByRole('button', { name: 'More actions' }));
+    // A hire isn't removed — it's undone, which also withdraws the invite.
+    expect(screen.queryByRole('menuitem', { name: /remove from pipeline/i })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('menuitem', { name: /undo hire/i }));
+
+    const confirm = within(await screen.findByRole('dialog', { name: 'Undo hiring Maria Lopez?' }));
+    expect(confirm.getByText(/only possible before they start/i)).toBeInTheDocument();
+    await user.type(confirm.getByRole('textbox'), 'Hired the wrong Maria');
+    await user.click(confirm.getByRole('button', { name: 'Undo hire' }));
+
+    await waitFor(() => expect(undoHire).toHaveBeenCalledWith('cand-1', 'Hired the wrong Maria'));
+  });
+
+  it('lists who was removed lately, and restores them', async () => {
+    vi.mocked(listRemovedCandidates).mockResolvedValue({
+      removed: [
+        {
+          id: 'cand-5',
+          name: 'Tess Test',
+          stage: 'APPLIED',
+          removedAt: '2026-09-20T12:00:00.000Z',
+          removedBy: 'Rae Recruiter',
+          reason: 'Test record',
+        },
+      ],
+    } as never);
+    vi.mocked(restoreCandidate).mockClear();
+    const user = renderHome();
+    await user.click(await screen.findByRole('button', { name: /recently removed/i }));
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Recently removed' }));
+    expect(await dialog.findByText(/Tess Test/)).toBeInTheDocument();
+    expect(dialog.getByText(/by Rae Recruiter — Test record/)).toBeInTheDocument();
+    await user.click(dialog.getByRole('button', { name: 'Restore' }));
+
+    await waitFor(() => expect(restoreCandidate).toHaveBeenCalledWith('cand-5'));
+  });
+
+  it('after a hire, the invite waits — and Undo takes the hire back before it goes', async () => {
+    vi.mocked(listCandidates).mockResolvedValue({ candidates: [{ ...MARIA, stage: 'OFFER' }] } as never);
+    vi.mocked(hireCandidate).mockResolvedValue({
+      ...MARIA,
+      stage: 'HIRED',
+      applicationId: 'app-1',
+      inviteUrl: null,
+      payRecorded: false,
+      emailDueAt: new Date(Date.now() + 20_000).toISOString(),
+    } as never);
+    vi.mocked(undoWindowToast).mockClear();
+    vi.mocked(undoHire).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(drawer.getByRole('button', { name: /^hire$/i }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Hire Maria Lopez' }));
+    await user.selectOptions(await dialog.findByLabelText(/^client/i), 'c1');
+    const template = await dialog.findByLabelText(/onboarding template/i);
+    await waitFor(() => expect(template).not.toBeDisabled());
+    await user.selectOptions(template, 't1');
+    await user.type(dialog.getByLabelText('Position'), '{selectall}Line Cook');
+    await user.click(dialog.getByRole('button', { name: /hire & send invite/i }));
+
+    await waitFor(() => expect(undoWindowToast).toHaveBeenCalled());
+    const opts = vi.mocked(undoWindowToast).mock.calls[0]![0];
+    expect(opts.message).toMatch(/Maria Lopez hired — their onboarding invite goes out in \d+ seconds/);
+    await expect(opts.onUndo()).resolves.toMatch(/no invite was sent/);
+    expect(undoHire).toHaveBeenCalledWith('cand-1', 'Undone right after hiring');
   });
 });

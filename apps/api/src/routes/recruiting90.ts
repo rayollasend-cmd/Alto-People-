@@ -1319,6 +1319,37 @@ recruiting90Router.post(
     // now the application lands on their timeline where a recruiter sees
     // it. Nothing on their record is overwritten.
     const existing = await prisma.candidate.findUnique({ where: { email } });
+    // Someone removed from the pipeline (a duplicate, a mistake) who applies
+    // again is back as a new applicant. They used to be told "we received
+    // your application" while nothing was recorded at all.
+    if (existing?.deletedAt) {
+      await prisma.$transaction(async (tx) => {
+        await tx.candidate.update({
+          where: { id: existing.id },
+          data: {
+            deletedAt: null,
+            stage: 'APPLIED',
+            stageChangedAt: new Date(),
+            position: posting.title,
+            jobPostingId: posting.id,
+            rejectedReason: null,
+            withdrawnReason: null,
+          },
+        });
+        await recordCandidateEvent(tx, {
+          candidateId: existing.id,
+          kind: 'RESTORED',
+          actorUserId: null,
+          fromStage: existing.stage,
+          toStage: 'APPLIED',
+          body: `Applied again on the careers page: ${posting.title}`,
+          metadata: { postingSlug: posting.slug },
+        });
+      });
+      confirmApplication(email, input.firstName, posting.title);
+      res.status(201).json({ id: existing.id, alreadyApplied: false });
+      return;
+    }
     if (existing) {
       if (!existing.deletedAt) {
         // Tie them to this posting if nothing ties them to one yet.

@@ -78,7 +78,7 @@ everifyRouter.get('/', async (_req, res, next) => {
       where: {
         deletedAt: null,
         // Onboarded or onboarding: any application that wasn't declined.
-        applications: { some: { deletedAt: null, status: { not: 'REJECTED' } } },
+        applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       take: EVERIFY_ROSTER_MAX + 1,

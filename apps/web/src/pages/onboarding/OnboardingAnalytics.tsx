@@ -24,11 +24,12 @@ const STATUS_LABEL: Record<string, string> = {
   IN_REVIEW: 'In review',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
 };
 
 // Status order in the funnel — left-to-right matches the associate's
 // journey, which is what HR expects to read.
-const STATUS_ORDER = ['DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED'];
+const STATUS_ORDER = ['DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'];
 
 const fmtDays = (n: number | null): string => {
   if (n === null) return '—';

@@ -1,4 +1,5 @@
 import { toast } from 'sonner';
+import { ApiError } from '@/lib/api';
 
 const UNDO_WINDOW_MS = 5_000;
 
@@ -49,4 +50,38 @@ export function performWithUndo(opts: {
       },
     },
   });
+}
+
+/**
+ * The other kind of undo: the server has already done it, but holds the
+ * consequence (an invite email) until `dueAt`. Undo calls the reverse
+ * endpoint inside that window, so the email never goes out; closing the
+ * tab changes nothing — unlike performWithUndo, the action still stands.
+ * The toast stays up exactly as long as the window is open.
+ */
+export function undoWindowToast(opts: {
+  message: string;
+  dueAt: string;
+  /** Undo it; resolves with what to say when it worked. */
+  onUndo: () => Promise<string>;
+  description?: string;
+}): void {
+  const ms = Math.max(3_000, Date.parse(opts.dueAt) - Date.now());
+  toast.success(opts.message, {
+    description: opts.description,
+    duration: ms,
+    action: {
+      label: 'Undo',
+      onClick: () =>
+        void opts
+          .onUndo()
+          .then((done) => toast.success(done))
+          .catch((err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Could not undo it.')),
+    },
+  });
+}
+
+/** Whole seconds from now until `dueAt`. */
+export function secondsUntil(dueAt: string): number {
+  return Math.max(1, Math.round((Date.parse(dueAt) - Date.now()) / 1000));
 }

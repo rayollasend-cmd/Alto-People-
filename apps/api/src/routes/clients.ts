@@ -172,7 +172,7 @@ clientsRouter.get('/', async (req, res, next) => {
             by: ['clientId'],
             where: {
               clientId: { in: ids },
-              status: { not: 'REJECTED' },
+              status: { notIn: ['REJECTED', 'CANCELLED'] },
               deletedAt: null,
             },
             _count: { _all: true },

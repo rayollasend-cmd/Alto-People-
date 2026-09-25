@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Building2, CalendarClock, FileText, Link2, Mail, Pencil, Phone, Send, Star } from 'lucide-react';
+import { Building2, CalendarClock, FileText, Link2, Mail, MoreHorizontal, Pencil, Phone, Send, Star, Trash2, Undo2 } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {
@@ -15,7 +15,21 @@ import {
   type InterviewRecord,
   type OfferRecord,
 } from '@/lib/recruiting90Api';
-import { listSubmittals, withdrawSubmittal, type CandidateSubmittal } from '@/lib/recruitingApi';
+import {
+  listSubmittals,
+  removeCandidate,
+  restoreCandidate,
+  undoHire,
+  withdrawSubmittal,
+  type CandidateSubmittal,
+} from '@/lib/recruitingApi';
+import { usePrompt } from '@/lib/confirm';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -205,6 +219,7 @@ export function CandidateDetailDrawer({
   onChanged?: () => void;
 }) {
   const { can } = useAuth();
+  const prompt = usePrompt();
   const [interviews, setInterviews] = useState<InterviewRecord[] | null>(null);
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -255,6 +270,71 @@ export function CandidateDetailDrawer({
     void interviewsQuery.refetch();
     void submittalsQuery.refetch();
     onChanged?.();
+  };
+
+  /**
+   * Off the pipeline — a duplicate, a test, spam. Restorable for 30 days,
+   * and straight away from the toast.
+   */
+  const remove = async () => {
+    const reason = await prompt({
+      title: `Remove ${candidate.firstName} ${candidate.lastName} from the pipeline?`,
+      description: 'They leave the board and every list. You can restore them from Recently removed for 30 days.',
+      reasonLabel: 'Why (optional)',
+      reasonPlaceholder: 'e.g. Duplicate of another candidate',
+      required: false,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (reason === null) return;
+    const c = candidate;
+    try {
+      await removeCandidate(c.id, reason.trim() || null);
+      onOpenChange(false);
+      onChanged?.();
+      toast.success(`${c.firstName} ${c.lastName} removed.`, {
+        action: {
+          label: 'Undo',
+          onClick: () =>
+            void restoreCandidate(c.id)
+              .then(() => onChanged?.())
+              .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Could not restore.')),
+        },
+      });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not remove the candidate.');
+    }
+  };
+
+  /**
+   * Take the hire back — before the person has started. Their onboarding
+   * invite is withdrawn (the link stops working) and they return to Offer;
+   * after they've started, the server says it's a separation instead.
+   */
+  const undo = async () => {
+    const reason = await prompt({
+      title: `Undo hiring ${candidate.firstName} ${candidate.lastName}?`,
+      description:
+        'Their onboarding invite is withdrawn — the link stops working — and they go back to Offer. Only possible before they start.',
+      reasonLabel: 'Why',
+      reasonPlaceholder: 'e.g. Hired the wrong person, or the client withdrew the role',
+      confirmLabel: 'Undo hire',
+      destructive: true,
+    });
+    if (!reason) return;
+    try {
+      const r = await undoHire(candidate.id, reason.trim());
+      toast.success(
+        r.mode === 'cancelled'
+          ? 'Hire undone — their invite is cancelled; their earlier record with us is kept.'
+          : r.mode === 'candidate_only'
+            ? 'Back at Offer — their onboarding had already closed.'
+            : 'Hire undone — their onboarding invite is withdrawn and they’re back at Offer.',
+      );
+      onChanged?.();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not undo the hire.');
+    }
   };
 
   const withdraw = async () => {
@@ -333,10 +413,34 @@ export function CandidateDetailDrawer({
           </div>
           {canManage && (
             // Clear of the drawer's own close button in the top corner.
-            <Button size="sm" variant="outline" className="mr-10 shrink-0" onClick={() => setEditing(true)}>
-              <Pencil className="h-3.5 w-3.5" />
-              Edit
-            </Button>
+            <div className="mr-10 flex shrink-0 items-center gap-1.5">
+              {/* Icon-only on a phone, so the name keeps the width. */}
+              <Button size="sm" variant="outline" onClick={() => setEditing(true)} aria-label="Edit">
+                <Pencil className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Edit</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label="More actions">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {candidate.stage === 'HIRED' && (
+                    <DropdownMenuItem onSelect={() => void undo()}>
+                      <Undo2 className="mr-2 h-3.5 w-3.5" />
+                      Undo hire…
+                    </DropdownMenuItem>
+                  )}
+                  {candidate.stage !== 'HIRED' && (
+                    <DropdownMenuItem onSelect={() => void remove()} className="text-alert focus:text-alert">
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Remove from pipeline…
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
         </div>
         <div className="mt-3 overflow-x-auto">

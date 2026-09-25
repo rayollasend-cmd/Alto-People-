@@ -739,7 +739,10 @@ authRouter.get('/invite/:token', async (req, res, next) => {
         },
       },
     });
-    if (!invite || invite.consumedAt || invite.expiresAt <= new Date()) {
+    // A disabled account's link is dead even if the token itself is
+    // unused — a cancelled invite or an undone hire must not be revivable
+    // from an old email.
+    if (!invite || invite.consumedAt || invite.expiresAt <= new Date() || invite.user.status === 'DISABLED') {
       throw new HttpError(404, 'invite_not_found', 'Invitation not found or expired');
     }
     const payload: InviteSummary = {
@@ -807,7 +810,7 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
       where: { tokenHash },
       include: { user: true },
     });
-    if (!invite || invite.consumedAt || invite.expiresAt <= new Date()) {
+    if (!invite || invite.consumedAt || invite.expiresAt <= new Date() || invite.user.status === 'DISABLED') {
       throw new HttpError(404, 'invite_not_found', 'Invitation not found or expired');
     }
     if (invite.user.status === 'ACTIVE' && invite.user.passwordHash) {

@@ -114,7 +114,7 @@ async function syncPhotoTask(associateId: string, hasPhoto: boolean): Promise<vo
       checklist: {
         application: {
           associateId,
-          status: { notIn: ['APPROVED', 'REJECTED'] },
+          status: { notIn: ['APPROVED', 'REJECTED', 'CANCELLED'] },
           deletedAt: null,
         },
       },

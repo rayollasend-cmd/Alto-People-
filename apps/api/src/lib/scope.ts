@@ -468,7 +468,7 @@ export async function assertCanModifyApplication(
   // blocked — pass write: true only on mutating routes.
   if (
     opts.write &&
-    (app.status === 'APPROVED' || app.status === 'REJECTED') &&
+    (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') &&
     !hasCapability(user.role, 'manage:onboarding')
   ) {
     throw new HttpError(

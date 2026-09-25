@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowRight,
+  ArchiveRestore,
   Building2,
   CalendarClock,
   CheckCircle2,
@@ -9,6 +10,8 @@ import {
   Pencil,
   RotateCcw,
   Send,
+  Trash2,
+  Undo2,
   Star,
   UserPlus,
   XCircle,
@@ -45,6 +48,9 @@ export const EVENT_ICON: Record<CandidateEvent['kind'], LucideIcon> = {
   SUBMITTED_TO_CLIENT: Send,
   CLIENT_FEEDBACK: Building2,
   HIRED: CheckCircle2,
+  HIRE_UNDONE: Undo2,
+  REMOVED: Trash2,
+  RESTORED: ArchiveRestore,
 };
 
 /**
@@ -97,6 +103,12 @@ export function eventText(e: EventLike): string {
       return e.body?.split('\n')[0] ?? 'The client answered';
     case 'HIRED':
       return 'Hired — invited to onboarding';
+    case 'HIRE_UNDONE':
+      return 'Hire undone — onboarding invite cancelled';
+    case 'REMOVED':
+      return 'Removed from the pipeline';
+    case 'RESTORED':
+      return e.body ?? 'Restored to the pipeline';
   }
 }
 
@@ -108,6 +120,10 @@ export function eventText(e: EventLike): string {
 export function actorOf(e: EventLike): string | null {
   if (e.actorName) return e.actorName;
   if (e.kind === 'APPLIED_AGAIN') return 'Careers page';
+  if (e.kind === 'RESTORED' && e.body?.startsWith('Applied again')) return 'Careers page';
+  // The clean-up closes quiet candidates with no one's name on it.
+  if (e.kind === 'STAGE_CHANGED' && e.body?.includes('closed automatically')) return 'Automatic';
+  if (e.kind === 'HIRE_UNDONE' && e.body?.includes('automatically')) return 'Automatic';
   if (e.kind === 'CREATED' && e.body?.startsWith('Applied on the careers page')) return 'Careers page';
   return null;
 }
@@ -118,6 +134,8 @@ export function eventDetail(e: EventLike): string | null {
   if (e.kind === 'STAGE_CHANGED') return e.body;
   // The band it fell outside, or why it wasn't approved.
   if (e.kind === 'OFFER_APPROVAL_REQUESTED' || e.kind === 'OFFER_APPROVAL_DECLINED') return e.body;
+  // Why it was removed, or why the hire was taken back.
+  if (e.kind === 'REMOVED' || e.kind === 'HIRE_UNDONE') return e.body;
   // The client's own words.
   if (e.kind === 'CLIENT_FEEDBACK') return e.body?.split('\n').slice(1).join('\n') || null;
   return null;

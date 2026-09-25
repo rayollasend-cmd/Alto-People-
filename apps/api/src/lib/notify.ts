@@ -616,7 +616,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       });
       if (!app) return;
       if (app.submittedAt) return; // already fired once
-      if (app.status === 'APPROVED' || app.status === 'REJECTED') return;
+      if (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') return;
 
       const tasks = app.checklist?.tasks ?? [];
       if (tasks.length === 0) return;

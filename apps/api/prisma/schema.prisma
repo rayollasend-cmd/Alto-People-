@@ -91,6 +91,10 @@ enum ApplicationStatus {
   IN_REVIEW
   APPROVED
   REJECTED
+  /// Called off by us — sent by mistake, a hire undone, or an invite that
+  /// expired unanswered. Not a decision about the person: no "declined"
+  /// email goes out, and their link stops working.
+  CANCELLED
 }
 
 enum TaskKind {
@@ -1933,6 +1937,15 @@ model Application {
   approvedAt          DateTime?            @db.Timestamptz(6)
   rejectedAt          DateTime?            @db.Timestamptz(6)
   rejectionReason     String?
+  cancelledAt         DateTime?            @db.Timestamptz(6)
+  /// SENT_IN_ERROR, WRONG_PERSON, WRONG_CLIENT, DUPLICATE, NOT_JOINING,
+  /// HIRE_UNDONE, EXPIRED or OTHER.
+  cancelReason        String?
+  cancelNote          String?
+  cancelledById       String?              @db.Uuid
+  /// Set while the invite email is held back for the Undo window; the
+  /// due-invite sweep sends it (with a fresh link) once this passes.
+  inviteEmailDueAt    DateTime?            @db.Timestamptz(6)
   // Progress-reminder sweep bookkeeping: when the associate was last
   // nagged about incomplete tasks and how many times (2nd+ escalates
   // to HR).
@@ -3525,6 +3538,11 @@ enum CandidateEventKind {
   SUBMITTED_TO_CLIENT
   CLIENT_FEEDBACK
   HIRED
+  /// A hire taken back before the person started.
+  HIRE_UNDONE
+  /// Taken off the pipeline (a duplicate, a test, spam) — restorable.
+  REMOVED
+  RESTORED
 }
 
 enum CandidateSubmittalStatus {

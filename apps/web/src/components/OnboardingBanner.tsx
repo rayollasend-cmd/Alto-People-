@@ -25,7 +25,7 @@ export function OnboardingBanner() {
     const res = itemQuery.data;
     if (res === undefined) return;
     const open = res.applications.find(
-      (a) => a.percentComplete < 100 && a.status !== 'REJECTED'
+      (a) => a.percentComplete < 100 && a.status !== 'REJECTED' && a.status !== 'CANCELLED'
     );
     setItem(open ?? null);
   }, [itemQuery.data]);

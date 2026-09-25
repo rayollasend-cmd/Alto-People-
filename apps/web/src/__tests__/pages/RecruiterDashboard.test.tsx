@@ -38,6 +38,7 @@ const EMPTY: RecruiterHome = {
   waitingOnYou: {
     toScore: { total: 0, mine: 0, items: [] },
     stuck: { total: 0, afterDays: 7, items: [] },
+    closingSoon: { total: 0, items: [] },
     clientApproved: [],
     readyToHire: [],
     offersToApprove: [],
@@ -68,6 +69,7 @@ const FULL: RecruiterHome = {
   waitingOnYou: {
     toScore: { total: 4, mine: 1, items: [{ interviewId: id(2), candidateId: id(12), candidateName: 'Ana Diaz', scheduledFor: at(-1), interviewerName: 'Dana Reyes', mine: true }] },
     stuck: { total: 9, afterDays: 7, items: [{ candidateId: id(15), candidateName: 'Stale Person', position: null, stage: 'SCREENING', daysInStage: 12 }] },
+    closingSoon: { total: 1, items: [{ candidateId: id(25), candidateName: 'Going Cold', stage: 'APPLIED', closesAt: '2026-10-01T12:00:00.000Z' }] },
     clientApproved: [{ submittalId: id(21), candidateId: id(16), candidateName: 'Yes Candidate', clientName: 'Walmart', storeName: 'Destin #1234', feedback: 'Send her Monday.', decidedAt: at(-20) }],
     readyToHire: [{ offerId: id(31), candidateId: id(17), candidateName: 'Signed Person', jobTitle: 'Cashier', clientName: 'Walmart', startDate: '2026-10-05', acceptedAt: at(-5) }],
     offersToApprove: [{ offerId: id(32), candidateId: id(18), candidateName: 'Held Offer', jobTitle: 'Cashier', approvalNote: '$19.00/hr is above the Cashier band.' }],
@@ -75,7 +77,7 @@ const FULL: RecruiterHome = {
   waitingOnOthers: {
     withClients: { total: 2, items: [{ submittalId: id(22), candidateId: id(19), candidateName: 'With Client', clientName: 'Target', storeName: null, sentAt: at(-72), days: 3 }] },
     awaitingSignature: { total: 1, items: [{ offerId: id(33), candidateId: id(20), candidateName: 'Out Signing', jobTitle: 'Stocker', sentAt: at(-24), expiresAt: at(20), expiringSoon: true }] },
-    onboardingNotStarted: { total: 1, items: [{ applicationId: id(41), candidateId: id(24), candidateName: 'Idle Hire', clientName: 'Walmart', invitedAt: at(-96), days: 4 }] },
+    onboardingNotStarted: { total: 1, items: [{ applicationId: id(41), candidateId: id(24), candidateName: 'Idle Hire', clientName: 'Walmart', invitedAt: at(-96), days: 4, closesAt: at(30) }] },
   },
   pipeline: { APPLIED: 40, SCREENING: 12, INTERVIEW: 5, OFFER: 2 },
   postings: { total: 1, items: [{ id: id(51), title: 'Cashier — Destin', clientName: 'Walmart', openings: 4, hired: 1, applicants: 30, applicants7d: 6, daysOpen: 18 }] },
@@ -129,6 +131,9 @@ describe('<RecruiterDashboard>', () => {
     expect(screen.getByText('Offers to approve (1)')).toBeInTheDocument();
     expect(screen.getByText('$19.00/hr is above the Cashier band.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /See all 9/ })).toHaveAttribute('href', '/recruiting?view=list&stage=ALL&stuck=1&sort=waiting');
+    // The warning before the clean-up closes anyone.
+    expect(screen.getByText('Closing soon — no response (1)')).toBeInTheDocument();
+    expect(screen.getByText('closes Oct 1, 2026')).toBeInTheDocument();
   });
 
   it('and what is waiting on others — with a way to nudge a new hire', async () => {

@@ -129,6 +129,14 @@ const STATUS_BANNER: Record<
     body: 'ob.check.rejectedBody',
     cls: 'border-alert/40 bg-alert/[0.07] text-silver',
   },
+  // Called off by us — sent by mistake, or no longer going ahead. Not a
+  // verdict on them, so it doesn't read like one.
+  CANCELLED: {
+    icon: AlertTriangle,
+    title: 'ob.check.cancelledTitle',
+    body: 'ob.check.cancelledBody',
+    cls: 'border-navy-secondary bg-navy-secondary/30 text-silver',
+  },
 };
 
 const TASK_LABEL_KEY: Record<string, MessageKey> = {

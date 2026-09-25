@@ -159,3 +159,39 @@ export function deleteSourceSpend(id: string): Promise<void> {
 export function getRecruiterHome(): Promise<RecruiterHome> {
   return apiFetch<RecruiterHome>('/recruiting/home');
 }
+
+/* ----- Remove and restore -------------------------------------------------- */
+
+export interface RemovedCandidate {
+  id: string;
+  name: string;
+  email: string;
+  position: string | null;
+  stage: CandidateStage;
+  removedAt: string;
+  restorableUntil: string;
+  removedBy: string | null;
+  reason: string | null;
+}
+
+/** Take a candidate off the pipeline — restorable for 30 days. */
+export function removeCandidate(id: string, reason?: string | null): Promise<void> {
+  return apiFetch<void>(`/recruiting/candidates/${id}/remove`, { method: 'POST', body: reason ? { reason } : {} });
+}
+
+export function restoreCandidate(id: string): Promise<Candidate> {
+  return apiFetch<Candidate>(`/recruiting/candidates/${id}/restore`, { method: 'POST' });
+}
+
+/** Removed in the last 30 days, newest first. */
+export function listRemovedCandidates(): Promise<{ removed: RemovedCandidate[] }> {
+  return apiFetch<{ removed: RemovedCandidate[] }>('/recruiting/removed');
+}
+
+/**
+ * Take a hire back before the person has started: their onboarding invite
+ * is cancelled and its link revoked, and they return to Offer.
+ */
+export function undoHire(candidateId: string, reason: string): Promise<Candidate & { mode: 'removed' | 'cancelled' | 'candidate_only' }> {
+  return apiFetch(`/recruiting/candidates/${candidateId}/undo-hire`, { method: 'POST', body: { reason } });
+}

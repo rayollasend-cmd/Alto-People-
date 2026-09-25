@@ -273,7 +273,8 @@ export function InPersonOnboarding() {
   );
 
   const checklistComplete = detail.percentComplete === 100;
-  const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED';
+  const decided =
+    detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
 
   return (
     <div className="mx-auto">
@@ -523,7 +524,9 @@ export function InPersonOnboarding() {
             title={
               detail.status === 'APPROVED'
                 ? 'Already approved'
-                : 'Already rejected'
+                : detail.status === 'CANCELLED'
+                  ? 'This invite was cancelled'
+                  : 'Already rejected'
             }
             description="This application is closed. Open it from the onboarding list if you need to review the timeline."
             action={
@@ -593,6 +596,7 @@ const STATUS_LABELS: Record<string, string> = {
   IN_REVIEW: 'In review',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
 };
 
 function statusVariant(

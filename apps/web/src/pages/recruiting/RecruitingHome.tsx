@@ -26,7 +26,13 @@ import {
   getRecruitingSummary,
   listAllCandidates,
   listCandidates,
+  listRemovedCandidates,
+  removeCandidate,
+  restoreCandidate,
+  undoHire,
 } from '@/lib/recruitingApi';
+import { secondsUntil, undoWindowToast } from '@/lib/undoToast';
+import { usePrompt } from '@/lib/confirm';
 import { listJobPostings, listOffers, type OfferRecord } from '@/lib/recruiting90Api';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { listPositions } from '@/lib/positionsApi';
@@ -197,6 +203,8 @@ export function RecruitingHome() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [removedOpen, setRemovedOpen] = useState(false);
+  const prompt = usePrompt();
 
   // Layout, filters, search, sort, the saved view and the open candidate
   // all live in the URL (same source-of-truth pattern as ComplianceHome's
@@ -457,6 +465,21 @@ export function RecruitingHome() {
     // No email configured (local/dev): the dialog stays open with the invite
     // link to copy and says so itself — "invite sent" would be untrue.
     if (hired.inviteUrl) return;
+    // The invite waits a few seconds: a mistaken hire can be taken back
+    // before the person is emailed anything.
+    if (hired.emailDueAt) {
+      undoWindowToast({
+        message: `${hired.firstName} ${hired.lastName} hired — their onboarding invite goes out in ${secondsUntil(hired.emailDueAt)} seconds.`,
+        dueAt: hired.emailDueAt,
+        description: hired.payRecorded ? 'Starting pay set from their accepted offer.' : undefined,
+        onUndo: async () => {
+          await undoHire(hired.id, 'Undone right after hiring');
+          await refresh();
+          return `Undone — ${hired.firstName} is back at Offer, and no invite was sent.`;
+        },
+      });
+      return;
+    }
     toast.success(
       `${hired.firstName} ${hired.lastName} hired — onboarding invite sent.`,
       {
@@ -569,6 +592,35 @@ export function RecruitingHome() {
     await refresh();
   };
 
+  // Duplicates, tests, spam — off the pipeline together, restorable for 30 days.
+  const bulkRemove = async () => {
+    if (bulkBusy || selectedRows.length === 0) return;
+    const reason = await prompt({
+      title: `Remove ${selectedRows.length} candidate${selectedRows.length === 1 ? '' : 's'} from the pipeline?`,
+      description: 'They leave the board and every list. You can restore them from Recently removed for 30 days.',
+      reasonLabel: 'Why (optional)',
+      reasonPlaceholder: 'e.g. Test entries',
+      required: false,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (reason === null) return;
+    setBulkBusy(true);
+    const targets = selectedRows;
+    const results = await Promise.allSettled(targets.map((c) => removeCandidate(c.id, reason.trim() || null)));
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    results.forEach((res, i) => {
+      if (res.status === 'rejected') {
+        const c = targets[i]!;
+        toast.error(`${c.firstName} ${c.lastName}: ${res.reason instanceof ApiError ? res.reason.message : 'could not remove.'}`);
+      }
+    });
+    if (ok > 0) toast.success(`Removed ${ok} candidate${ok === 1 ? '' : 's'} — restore them from Recently removed.`);
+    clearSelection();
+    setBulkBusy(false);
+    await refresh();
+  };
+
   // Everyone matching the filters — not just the page on screen.
   const onExportCsv = async () => {
     setExporting(true);
@@ -639,6 +691,9 @@ export function RecruitingHome() {
           <>
             <Button asChild variant="ghost" size="sm">
               <Link to="/recruiting/analytics">Analytics</Link>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setRemovedOpen(true)}>
+              Recently removed
             </Button>
             <Button asChild variant="ghost" size="sm">
               <Link to="/recruiting/extras">Interviewing &amp; offers</Link>
@@ -992,6 +1047,9 @@ export function RecruitingHome() {
           >
             Reject selected ({selectedRows.length})
           </Button>
+          <Button size="sm" variant="ghost" onClick={() => void bulkRemove()} disabled={bulkBusy}>
+            Remove selected
+          </Button>
           <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkBusy}>
             Clear
           </Button>
@@ -1010,6 +1068,8 @@ export function RecruitingHome() {
         busy={bulkBusy}
         onConfirm={bulkReject}
       />
+
+      <RemovedDialog open={removedOpen} onOpenChange={setRemovedOpen} onRestored={() => void refresh()} />
 
       <CreateCandidateDialog
         open={showCreate}
@@ -1082,6 +1142,79 @@ export function RecruitingHome() {
         }
       />
     </div>
+  );
+}
+
+/**
+ * Removed in the last 30 days — a duplicate, a test, a mistake — with a
+ * way back. Opened by state, never mounted open.
+ */
+function RemovedDialog({
+  open,
+  onOpenChange,
+  onRestored,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onRestored: () => void;
+}) {
+  const q = useQuery({ queryKey: ['RecruitingHome', 'removed'], queryFn: () => listRemovedCandidates(), enabled: open });
+  const [busy, setBusy] = useState<string | null>(null);
+  const restore = async (id: string, name: string) => {
+    setBusy(id);
+    try {
+      await restoreCandidate(id);
+      toast.success(`${name} is back in the pipeline.`);
+      await q.refetch();
+      onRestored();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not restore.');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const rows = q.data?.removed ?? [];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Recently removed</DialogTitle>
+          <DialogDescription>Removed in the last 30 days. Restoring puts them back where they were.</DialogDescription>
+        </DialogHeader>
+        {q.isLoading ? (
+          <SkeletonRows count={3} rowHeight="h-12" />
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-silver/70">Nobody removed in the last 30 days.</p>
+        ) : (
+          <ul className="max-h-[60vh] divide-y divide-navy-secondary/60 overflow-y-auto">
+            {rows.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="min-w-0 text-sm">
+                  <div className="truncate text-white">
+                    {r.name} <span className="text-silver">· {STAGE_LABEL[r.stage]}</span>
+                  </div>
+                  <div className="truncate text-xs text-silver">
+                    Removed {fmtDate(r.removedAt)}
+                    {r.removedBy ? ` by ${r.removedBy}` : ''}
+                    {r.reason ? ` — ${r.reason}` : ''}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  loading={busy === r.id}
+                  disabled={busy !== null}
+                  onClick={() => void restore(r.id, r.name)}
+                >
+                  Restore
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
