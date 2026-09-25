@@ -2,10 +2,13 @@ import type {
   Candidate,
   CandidateAdvanceInput,
   CandidateCreateInput,
+  CandidateEventListResponse,
   CandidateHireInput,
+  CandidateHireResponse,
   CandidateListResponse,
   CandidateStage,
   CandidateUpdateInput,
+  RecruitingSummary,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -33,12 +36,27 @@ export function advanceCandidate(id: string, body: CandidateAdvanceInput): Promi
   });
 }
 
-export function hireCandidate(
-  id: string,
-  body: CandidateHireInput = {}
-): Promise<Candidate & { applicationId: string | null }> {
-  return apiFetch<Candidate & { applicationId: string | null }>(
-    `/recruiting/candidates/${id}/hire`,
-    { method: 'POST', body }
-  );
+/** Hire = invite to onboarding; client and template are required. */
+export function hireCandidate(id: string, body: CandidateHireInput): Promise<CandidateHireResponse> {
+  return apiFetch<CandidateHireResponse>(`/recruiting/candidates/${id}/hire`, {
+    method: 'POST',
+    body,
+  });
+}
+
+/** The candidate's timeline, newest first. */
+export function listCandidateEvents(id: string): Promise<CandidateEventListResponse> {
+  return apiFetch<CandidateEventListResponse>(`/recruiting/candidates/${id}/events`);
+}
+
+export function addCandidateNote(id: string, body: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/recruiting/candidates/${id}/notes`, {
+    method: 'POST',
+    body: { body },
+  });
+}
+
+/** The recruiter's dashboard: pipeline counts and what's waiting. */
+export function getRecruitingSummary(): Promise<RecruitingSummary> {
+  return apiFetch<RecruitingSummary>('/recruiting/summary');
 }

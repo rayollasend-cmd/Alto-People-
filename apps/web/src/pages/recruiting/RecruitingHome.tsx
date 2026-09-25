@@ -15,15 +15,16 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import type { Candidate, CandidateStage } from '@alto-people/shared';
+import type { Candidate, CandidateHireResponse, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import {
   advanceCandidate,
   createCandidate,
-  hireCandidate,
   listCandidates,
 } from '@/lib/recruitingApi';
+import { listOffers, type OfferRecord } from '@/lib/recruiting90Api';
+import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { listPositions } from '@/lib/positionsApi';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
@@ -123,8 +124,9 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: 'Manual',
 };
 
-/** Whole days since an ISO timestamp; the pipeline-age badge. The DTO only
- *  carries createdAt (no per-stage stamp), so this is days since applied. */
+/** Whole days since an ISO timestamp; the days-in-stage badge reads the
+ *  candidate's stageChangedAt. (It used to read createdAt — "days in
+ *  stage" was really days since they applied.) */
 function daysSince(iso: string): number {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return 0;
@@ -316,37 +318,57 @@ export function RecruitingHome() {
     }
   };
 
-  const onConfirmHire = async () => {
-    if (!dialog || dialog.kind !== 'hire') return;
-    setPendingId(dialog.candidate.id);
-    try {
-      const hired = await hireCandidate(dialog.candidate.id);
-      // Finish the handoff the dialog promises ("onboarding can begin from
-      // there"): the hire response carries the created application/associate
-      // ids, so offer the jump instead of dead-ending on a toast.
-      const dest = hired.applicationId
-        ? `/onboarding/applications/${hired.applicationId}`
-        : hired.hiredAssociateId
-          ? `/people?associateId=${hired.hiredAssociateId}`
-          : null;
-      toast.success(
-        'Hired — associate record created.',
-        dest
-          ? {
-              action: {
-                label: hired.applicationId ? 'Open onboarding' : 'Open profile',
-                onClick: () => navigate(dest),
-              },
-            }
-          : undefined,
-      );
-      setDialog(null);
-      await Promise.all([refresh(), refreshKpis()]);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Hire failed.');
-    } finally {
-      setPendingId(null);
+  // Hire opens the onboarding invite, filled in from the candidate and
+  // their accepted offer. The offer is looked up first so its job, start
+  // date and pay arrive with the dialog rather than a beat after it.
+  // undefined = still looking; null = no accepted offer.
+  const [hireOffer, setHireOffer] = useState<OfferRecord | null | undefined>(undefined);
+  const hiringId = dialog?.kind === 'hire' ? dialog.candidate.id : null;
+  useEffect(() => {
+    if (!hiringId) {
+      setHireOffer(undefined);
+      return;
     }
+    let live = true;
+    listOffers(hiringId)
+      .then((r) => {
+        if (!live) return;
+        const accepted = r.offers
+          .filter((o) => o.status === 'ACCEPTED')
+          .sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt));
+        setHireOffer(accepted[0] ?? null);
+      })
+      // No offer on file is still a hire — just without prefilled pay.
+      .catch(() => live && setHireOffer(null));
+    return () => {
+      live = false;
+    };
+  }, [hiringId]);
+
+  // Who the invite dialog is hiring. Kept after it closes so the dialog
+  // doesn't flip back to "New application" while it animates out.
+  const [hireCtx, setHireCtx] = useState<{ candidate: Candidate; offer: OfferRecord | null } | null>(null);
+  useEffect(() => {
+    if (dialog?.kind === 'hire' && hireOffer !== undefined) {
+      setHireCtx({ candidate: dialog.candidate, offer: hireOffer });
+    }
+  }, [dialog, hireOffer]);
+
+  const onHired = (hired: CandidateHireResponse) => {
+    void Promise.all([refresh(), refreshKpis()]);
+    // No email configured (local/dev): the dialog stays open with the invite
+    // link to copy and says so itself — "invite sent" would be untrue.
+    if (hired.inviteUrl) return;
+    toast.success(
+      `${hired.firstName} ${hired.lastName} hired — onboarding invite sent.`,
+      {
+        description: hired.payRecorded ? 'Starting pay set from their accepted offer.' : undefined,
+        action: {
+          label: 'Open onboarding',
+          onClick: () => navigate(`/onboarding/applications/${hired.applicationId}`),
+        },
+      },
+    );
   };
 
   // Resolved from the lists rather than fetched: GET /candidates/:id returns
@@ -370,9 +392,11 @@ export function RecruitingHome() {
     ).length;
     const interviewing = allCandidates.filter((c) => c.stage === 'INTERVIEW').length;
     const outstandingOffers = allCandidates.filter((c) => c.stage === 'OFFER').length;
+    // By the hire date. It used to test createdAt, so a candidate who
+    // applied in August and was hired today never counted.
     const hiredThisMonth = allCandidates.filter((c) => {
-      if (c.stage !== 'HIRED') return false;
-      const d = new Date(c.createdAt);
+      if (c.stage !== 'HIRED' || !c.hiredAt) return false;
+      const d = new Date(c.hiredAt);
       const now = new Date();
       return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
     }).length;
@@ -733,16 +757,16 @@ export function RecruitingHome() {
                   key: 'applied',
                   header: 'Applied',
                   accessor: (c) => c.createdAt,
-                  csv: (c) => `${fmtDate(c.createdAt)} (${daysSince(c.createdAt)}d)`,
+                  csv: (c) => `${fmtDate(c.createdAt)} (${daysSince(c.stageChangedAt)}d in stage)`,
                   sortable: true,
                   searchable: false,
                   className: 'text-silver whitespace-nowrap',
                   cell: (c) => (
                     <>
                       {fmtDate(c.createdAt)}
-                      <span title="Days in stage (since applied)">
+                      <span title={`Days in ${STAGE_LABEL[c.stage]}`}>
                         <Badge variant="outline" className="ml-2 tabular-nums">
-                          {daysSince(c.createdAt)}d
+                          {daysSince(c.stageChangedAt)}d
                         </Badge>
                       </span>
                     </>
@@ -872,23 +896,21 @@ export function RecruitingHome() {
         onConfirm={onConfirmWithdraw}
       />
 
-      <ConfirmDialog
-        open={dialog?.kind === 'hire'}
+      {/* Always mounted and opened by state — never mounted already open.
+          A dialog mounted open parks its Back-button history entry in the
+          same tick as the drawer's, and closing it then walked Back one
+          entry too far and shut the candidate drawer behind it. */}
+      <NewApplicationDialog
+        open={dialog?.kind === 'hire' && hireOffer !== undefined && hireCtx !== null}
         onOpenChange={(o) => !o && setDialog(null)}
-        title={
-          dialog?.kind === 'hire'
-            ? `Hire ${dialog.candidate.firstName} ${dialog.candidate.lastName}?`
-            : 'Hire candidate'
-        }
-        description="An Associate record will be created and onboarding can begin from there."
-        confirmLabel="Confirm hire"
-        busy={pendingId !== null}
-        onConfirm={onConfirmHire}
+        onCreated={() => undefined}
+        hire={hireCtx ? { ...hireCtx, onHired } : undefined}
       />
 
       <CandidateDetailDrawer
         candidate={detailCandidate}
         onOpenChange={(o) => !o && setDetailId(null)}
+        onChanged={() => void Promise.all([refresh(), refreshKpis()])}
         actions={
           canManage && detailCandidate ? (
             <CandidateActions

@@ -21,6 +21,13 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/** Hiring is inviting to onboarding, so it always names a client and template. */
+async function hireBody() {
+  const client = await createClient();
+  const template = await createStandardTemplate();
+  return { clientId: client.id, templateId: template.id };
+}
+
 async function loginAs(email: string): Promise<TestAgent<Test>> {
   const a = request.agent(app());
   const r = await a.post('/auth/login').send({ email, password: DEFAULT_TEST_PASSWORD });
@@ -90,11 +97,11 @@ describe('Pipeline transitions', () => {
     expect(directHire.status).toBe(400);
 
     // Use /hire instead
-    const hire = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({});
+    const hire = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send(await hireBody());
     expect(hire.status).toBe(200);
     expect(hire.body.stage).toBe('HIRED');
     expect(hire.body.hiredAssociateId).not.toBeNull();
-    expect(hire.body.applicationId).toBeNull();
+    expect(hire.body.applicationId).not.toBeNull();
 
     // The new associate exists
     const associate = await prisma.associate.findUnique({
@@ -127,37 +134,102 @@ describe('Pipeline transitions', () => {
     const c = await a.post('/recruiting/candidates').send({
       firstName: 'Pat', lastName: 'X', email: 'pat@example.com',
     });
-    await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({});
+    await a.post(`/recruiting/candidates/${c.body.id}/hire`).send(await hireBody());
     const r = await a.post(`/recruiting/candidates/${c.body.id}/advance`).send({ stage: 'INTERVIEW' });
     expect(r.status).toBe(409);
   });
 });
 
-describe('Hire → Application handoff', () => {
-  it('with clientId+templateId, /hire creates an Application + checklist', async () => {
+describe('Hire → onboarding invite', () => {
+  // Hire used to create a bare associate and — only if the caller sent a
+  // client and template, which the UI never did — a DRAFT application with
+  // no invite. HR re-typed the candidate into a separate invite. Now Hire
+  // IS the invite.
+  it('invites them to onboarding with what the candidate already carries', async () => {
     const client = await createClient();
     const template = await createStandardTemplate();
+    const location = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
     const c = await a.post('/recruiting/candidates').send({
-      firstName: 'Pat', lastName: 'X', email: 'pat@example.com',
+      firstName: 'Pat', lastName: 'Hopeful', email: 'pat@example.com', phone: '850-555-0100',
     });
     const hire = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({
       clientId: client.id,
       templateId: template.id,
+      locationId: location.id,
+      position: 'Cashier',
+      startDate: '2026-10-05T00:00:00.000Z',
     });
     expect(hire.status).toBe(200);
-    expect(hire.body.applicationId).not.toBeNull();
+    expect(hire.body.stage).toBe('HIRED');
 
     const app = await prisma.application.findUniqueOrThrow({
       where: { id: hire.body.applicationId },
       include: { checklist: { include: { tasks: true } } },
     });
     expect(app.associateId).toBe(hire.body.hiredAssociateId);
+    expect(app.clientId).toBe(client.id);
+    expect(app.locationId).toBe(location.id);
+    expect(app.position).toBe('Cashier');
+    expect(app.startDate?.toISOString().slice(0, 10)).toBe('2026-10-05');
     expect(app.checklist?.tasks.length).toBeGreaterThan(0);
+
+    // A real invite: a login waiting to be accepted, not a bare record.
+    const invited = await prisma.user.findFirstOrThrow({ where: { associateId: app.associateId } });
+    expect(invited.status).toBe('INVITED');
+    // The one number HR already had for them came along.
+    const associate = await prisma.associate.findUniqueOrThrow({ where: { id: app.associateId } });
+    expect(associate.phone).toBe('850-555-0100');
   });
 
-  it('/hire with unknown clientId → 404', async () => {
+  it('the accepted offer becomes their starting pay', async () => {
+    const { clientId, templateId } = await hireBody();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const c = await a.post('/recruiting/candidates').send({
+      firstName: 'Pat', lastName: 'X', email: 'pat@example.com',
+    });
+    const offer = await a.post('/offers').send({
+      candidateId: c.body.id, clientId, jobTitle: 'Front End Lead', startDate: '2026-10-05', hourlyRate: 16.5,
+    });
+    await a.post(`/offers/${offer.body.id}/send`);
+
+    // Not yet accepted: it can't set anyone's pay.
+    const early = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({
+      clientId, templateId, offerId: offer.body.id,
+    });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('offer_not_accepted');
+
+    await a.post(`/offers/${offer.body.id}/decision`).send({ decision: 'ACCEPTED' });
+    const hire = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({
+      clientId, templateId, offerId: offer.body.id, startDate: '2026-10-05T00:00:00.000Z',
+    });
+    expect(hire.status).toBe(200);
+    expect(hire.body.payRecorded).toBe(true);
+    const pay = await prisma.compensationRecord.findFirstOrThrow({
+      where: { associateId: hire.body.hiredAssociateId, effectiveTo: null },
+    });
+    expect(pay.payType).toBe('HOURLY');
+    expect(pay.amount.toString()).toBe('16.5');
+    expect(pay.reason).toBe('HIRE');
+    expect(pay.effectiveFrom.toISOString().slice(0, 10)).toBe('2026-10-05');
+  });
+
+  it('client and template are required — no more half-hires', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const c = await a.post('/recruiting/candidates').send({
+      firstName: 'Pat', lastName: 'X', email: 'pat@example.com',
+    });
+    const r = await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({});
+    expect(r.status).toBe(400);
+    expect(await prisma.associate.count()).toBe(0);
+    expect((await a.get(`/recruiting/candidates/${c.body.id}`)).body.stage).toBe('APPLIED');
+  });
+
+  it('/hire with unknown clientId → 404, and the candidate is untouched', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
     const c = await a.post('/recruiting/candidates').send({
@@ -168,6 +240,7 @@ describe('Hire → Application handoff', () => {
       templateId: '00000000-0000-4000-8000-000000000001',
     });
     expect(r.status).toBe(404);
+    expect((await a.get(`/recruiting/candidates/${c.body.id}`)).body.stage).toBe('APPLIED');
   });
 });
 
@@ -190,7 +263,7 @@ describe('Soft delete', () => {
     const c = await a.post('/recruiting/candidates').send({
       firstName: 'Pat', lastName: 'X', email: 'pat@example.com',
     });
-    await a.post(`/recruiting/candidates/${c.body.id}/hire`).send({});
+    await a.post(`/recruiting/candidates/${c.body.id}/hire`).send(await hireBody());
     const del = await a.delete(`/recruiting/candidates/${c.body.id}`);
     expect(del.status).toBe(409);
   });

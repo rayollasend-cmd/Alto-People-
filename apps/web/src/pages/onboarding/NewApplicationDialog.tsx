@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Copy, Mail, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
+  Candidate,
+  CandidateHireResponse,
   ClientSummary,
   EmploymentType,
   HireableRole,
@@ -17,6 +19,9 @@ import {
   listTemplates,
 } from '@/lib/onboardingApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { hireCandidate } from '@/lib/recruitingApi';
+import type { OfferRecord } from '@/lib/recruiting90Api';
+import { fmtMoney } from '@/lib/format';
 import { listShiftPositions } from '@/lib/orgApi';
 import { Button } from '@/components/ui/Button';
 import {
@@ -69,11 +74,25 @@ const HIRE_ROLE_POSITION: Record<HireableRole, string | null> = {
   FINANCE_ACCOUNTANT: 'Finance / Accountant',
 };
 
+/**
+ * Hiring a recruiting candidate: the same invite, filled in from their
+ * record. The recruiter's Hire button used to create a bare associate and
+ * leave HR to re-type the person into this dialog; now it opens it.
+ */
+export interface HireMode {
+  candidate: Candidate;
+  /** Their accepted offer — prefills the job and sets their starting pay. */
+  offer: OfferRecord | null;
+  onHired: (res: CandidateHireResponse) => void;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   /** Called after a successful create so the parent can refetch. */
   onCreated: () => void;
+  /** Set to hire a candidate instead of inviting someone new. */
+  hire?: HireMode;
 }
 
 const NO_TEMPLATES: OnboardingTemplate[] = [];
@@ -88,7 +107,7 @@ const NO_LOCATIONS: LocationSummary[] = [];
  * If the API isn't configured with Resend, the response includes the
  * raw `inviteUrl` so HR can copy it into Slack / a manual email.
  */
-export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
+export function NewApplicationDialog({ open, onOpenChange, onCreated, hire }: Props) {
   // Pickers, read when the dialog opens and kept for later opens in the
   // session — clients/templates don't change often. "Load failed" stays
   // distinct from "no clients exist": an empty Select with no explanation
@@ -169,6 +188,26 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     });
   }, [open]);
+
+  // Hire mode: everything the candidate and their offer already say, so
+  // nothing is typed twice. The client comes from the offer when there is
+  // one; otherwise the last-used pick stands.
+  const hireCandidateId = hire?.candidate.id;
+  useEffect(() => {
+    if (!open || !hire) return;
+    const { candidate, offer } = hire;
+    setFirstName(candidate.firstName);
+    setLastName(candidate.lastName);
+    setEmail(candidate.email);
+    setPosition(offer?.jobTitle ?? candidate.position ?? '');
+    if (offer) {
+      setStartDate(offer.startDate);
+      setClientId(offer.clientId);
+    }
+    // Keyed on the candidate, not the object: a parent re-render must not
+    // wipe what the recruiter has changed since opening.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, hireCandidateId]);
 
   // A persisted client can be stale (deleted / out of scope) — fall back
   // to '' rather than submitting a ghost id.
@@ -266,6 +305,37 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
       return;
     }
     setSubmitting(true);
+    if (hire) {
+      try {
+        const res = await hireCandidate(hire.candidate.id, {
+          clientId,
+          templateId,
+          employmentType,
+          position: position.trim() || undefined,
+          startDate: startDate ? new Date(`${startDate}T00:00:00.000Z`).toISOString() : undefined,
+          ...(hireRole !== 'ASSOCIATE' ? { hireRole } : {}),
+          ...(locationId ? { locationId } : {}),
+          ...(hire.offer ? { offerId: hire.offer.id } : {}),
+        });
+        setLastUsed({ clientId, locationId, templateId, employmentType });
+        hire.onHired(res);
+        if (res.inviteUrl) {
+          setInviteLink(res.inviteUrl);
+          toast.success(`${hire.candidate.firstName} hired — invite link ready to copy.`);
+        } else {
+          // The page says so, with a way into the new application.
+          reset();
+          onOpenChange(false);
+        }
+      } catch (err) {
+        toast.error('Could not hire.', {
+          description: err instanceof ApiError ? err.message : 'Check your connection and try again.',
+        });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       const res = await createApplication({
         associateFirstName: firstName.trim(),
@@ -333,9 +403,15 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     >
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>New onboarding application</DialogTitle>
+          <DialogTitle>
+            {hire
+              ? `Hire ${hire.candidate.firstName} ${hire.candidate.lastName}`
+              : 'New onboarding application'}
+          </DialogTitle>
           <DialogDescription>
-            Creates the application and sends a magic-link invite to the associate.
+            {hire
+              ? `Invites them to onboarding and moves them to Hired. Filled in from their record${hire.offer ? ' and accepted offer' : ''} — check it and send.`
+              : 'Creates the application and sends a magic-link invite to the associate.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -343,6 +419,10 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
           <InviteLinkPanel inviteLink={inviteLink} onCopy={copyLink} />
         ) : (
           <div className="space-y-3">
+            {hire ? (
+              <HireSummary candidate={hire.candidate} offer={hire.offer} />
+            ) : (
+            <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="First name" required>
                 {(p) => (
@@ -381,6 +461,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                 />
               )}
             </Field>
+            </>
+            )}
 
             <Field
               label="Hire as"
@@ -578,6 +660,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         <DialogFooter>
           {inviteLink ? (
             <>
+              {!hire && (
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -590,6 +673,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                 <UserPlus className="h-4 w-4" />
                 Invite another
               </Button>
+              )}
               <Button onClick={() => onOpenChange(false)}>Close</Button>
             </>
           ) : (
@@ -597,23 +681,48 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button
-                variant="secondary"
-                onClick={() => submit(true)}
-                loading={submitting}
-              >
-                <UserPlus className="h-4 w-4" />
-                Create &amp; invite another
-              </Button>
+              {!hire && (
+                <Button
+                  variant="secondary"
+                  onClick={() => submit(true)}
+                  loading={submitting}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  Create &amp; invite another
+                </Button>
+              )}
               <Button onClick={() => submit(false)} loading={submitting}>
                 <Mail className="h-4 w-4" />
-                Create &amp; invite
+                {hire ? 'Hire & send invite' : 'Create & invite'}
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Who is being hired, and on what pay — the part not typed again. */
+function HireSummary({ candidate, offer }: { candidate: Candidate; offer: OfferRecord | null }) {
+  const rate = offer?.hourlyRate ?? offer?.salary ?? null;
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
+      <div className="text-white font-medium">
+        {candidate.firstName} {candidate.lastName}
+      </div>
+      <div className="text-silver">{candidate.email}</div>
+      {offer && rate && (
+        <div className="mt-2 text-silver">
+          Starting pay{' '}
+          <span className="text-white tabular-nums">
+            {fmtMoney(rate, { currency: offer.currency })}
+            {offer.hourlyRate ? '/hr' : '/yr'}
+          </span>{' '}
+          from their accepted offer, effective the start date.
+        </div>
+      )}
+    </div>
   );
 }
 

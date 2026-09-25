@@ -219,7 +219,7 @@ async function fetchLatestInviteDeliveryByAssociate(
 
 /* ===== Phase 58 — shared invite helper used by single + bulk endpoints === */
 
-interface InviteApplicantInput {
+export interface InviteApplicantInput {
   associateFirstName: string;
   associateLastName: string;
   associateEmail: string;
@@ -243,18 +243,20 @@ interface InviteApplicantInput {
     | 'FINANCE_ACCOUNTANT';
 }
 
-interface InviteApplicantResult {
+export interface InviteApplicantResult {
   applicationId: string;
   invitedUserId: string;
+  associateId: string;
   inviteUrl: string | null; // dev-stub only
 }
 
 /**
  * Invite one applicant. Same flow as POST /applications, factored out so the
- * bulk endpoint doesn't duplicate it. Throws HttpError on hard failures
- * (duplicate ACTIVE user, missing client/template, etc.).
+ * bulk endpoint — and a recruiter's Hire — don't duplicate it. Throws
+ * HttpError on hard failures (duplicate ACTIVE user, missing
+ * client/template, etc.).
  */
-async function inviteOneApplicant(
+export async function inviteOneApplicant(
   actorUserId: string,
   reqForAudit: import('express').Request,
   input: InviteApplicantInput
@@ -543,6 +545,7 @@ async function inviteOneApplicant(
   return {
     applicationId: result.application.id,
     invitedUserId: result.user.id,
+    associateId: result.associate.id,
     inviteUrl: env.RESEND_API_KEY && env.RESEND_FROM ? null : acceptUrl,
   };
 }

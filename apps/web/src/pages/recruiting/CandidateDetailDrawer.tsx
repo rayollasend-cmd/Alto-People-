@@ -1,12 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarClock, FileText, Link2, Mail, Phone, Send } from 'lucide-react';
+import { CalendarClock, FileText, Link2, Mail, Pencil, Phone, Send, Star } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {
+  listInterviewKits,
   listInterviews,
   listOffers,
+  type InterviewKit,
   type InterviewRecord,
   type OfferRecord,
 } from '@/lib/recruiting90Api';
@@ -28,6 +30,13 @@ import {
   ErrorBanner,
   SkeletonRows,
 } from '@/components/ui';
+import {
+  CandidateTimeline,
+  EditCandidateDialog,
+  ScheduleInterviewDialog,
+  ScoreInterviewDialog,
+} from './CandidateWorkPanels';
+import { SOURCE_LABEL, STAGE_LABEL, daysSince, ratingLabel } from './recruitingLabels';
 
 /**
  * The full picture for one candidate: profile, where they came from, their
@@ -40,17 +49,11 @@ import {
  * Interviews and offers are fetched per-candidate on open rather than being
  * threaded down from the list, so the drawer stays correct after someone
  * schedules an interview elsewhere in Recruiting.
+ *
+ * It is also where the work happens: edit the record, schedule and score
+ * interviews, and keep notes on the timeline — each of which had an API
+ * and no screen.
  */
-
-const STAGE_LABEL: Record<CandidateStage, string> = {
-  APPLIED: 'Applied',
-  SCREENING: 'Screening',
-  INTERVIEW: 'Interview',
-  OFFER: 'Offer',
-  HIRED: 'Hired',
-  WITHDRAWN: 'Withdrawn',
-  REJECTED: 'Rejected',
-};
 
 const STAGE_VARIANT: Record<
   CandidateStage,
@@ -63,17 +66,6 @@ const STAGE_VARIANT: Record<
   HIRED: 'success',
   WITHDRAWN: 'outline',
   REJECTED: 'destructive',
-};
-
-const SOURCE_LABEL: Record<string, string> = {
-  referral: 'Referral',
-  'careers-page': 'Careers page',
-  indeed: 'Indeed',
-  linkedin: 'LinkedIn',
-  'walk-in': 'Walk-in',
-  agency: 'Agency',
-  other: 'Other',
-  manual: 'Manual',
 };
 
 /** The forward path a candidate walks. Terminal stages sit outside it. */
@@ -108,10 +100,22 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  /** A control that belongs to this section, beside its heading. */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-2">
-      <h3 className="text-2xs uppercase tracking-widest text-silver">{title}</h3>
+      <div className="flex min-h-8 items-center justify-between gap-2">
+        <h3 className="text-2xs uppercase tracking-widest text-silver">{title}</h3>
+        {action}
+      </div>
       {children}
     </section>
   );
@@ -166,6 +170,7 @@ function StageTracker({ stage }: { stage: CandidateStage }) {
 export function CandidateDetailDrawer({
   candidate,
   onOpenChange,
+  onChanged,
   actions,
 }: {
   /** null closes the drawer; the caller owns which candidate is open. */
@@ -177,10 +182,17 @@ export function CandidateDetailDrawer({
    * instead of growing a second copy of that logic.
    */
   actions?: ReactNode;
+  /** Something on the record changed here — the page should refetch it. */
+  onChanged?: () => void;
 }) {
   const { can } = useAuth();
   const [interviews, setInterviews] = useState<InterviewRecord[] | null>(null);
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const [scoring, setScoring] = useState<{ interview: InterviewRecord; kit: InterviewKit | null } | null>(null);
+  // Bumped by every write made from the drawer, so the timeline reloads.
+  const [bump, setBump] = useState(0);
 
   const candidateId = candidate?.id ?? null;
 
@@ -205,6 +217,24 @@ export function CandidateDetailDrawer({
 
   if (!candidate) return null;
 
+  const changed = () => {
+    setBump((n) => n + 1);
+    void interviewsQuery.refetch();
+    onChanged?.();
+  };
+
+  const openScore = async (i: InterviewRecord) => {
+    let kit: InterviewKit | null = null;
+    if (i.kitId) {
+      try {
+        kit = (await listInterviewKits()).kits.find((k) => k.id === i.kitId) ?? null;
+      } catch {
+        // No kit questions to show — the overall score still works.
+      }
+    }
+    setScoring({ interview: i, kit });
+  };
+
   const fullName = `${candidate.firstName} ${candidate.lastName}`;
   const outcome = candidate.rejectedReason ?? candidate.withdrawnReason;
   // The empty interviews/offers sections were dead ends; the offer one now
@@ -215,20 +245,35 @@ export function CandidateDetailDrawer({
     candidate.stage === 'HIRED' ||
     candidate.stage === 'REJECTED' ||
     candidate.stage === 'WITHDRAWN';
-  const canExtendOffer = can('manage:recruiting') && !isTerminal;
+  const canManage = can('manage:recruiting');
+  const canExtendOffer = canManage && !isTerminal;
+  const inStage = daysSince(candidate.stageChangedAt);
 
   return (
     <Drawer open={candidate !== null} onOpenChange={onOpenChange} width="max-w-xl">
       <DrawerHeader>
         <div className="flex items-start gap-3">
           <Avatar name={fullName} email={candidate.email} size="md" />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <DrawerTitle>{fullName}</DrawerTitle>
             <DrawerDescription>
               {candidate.position ?? 'No position recorded'} · applied{' '}
               {fmtDate(candidate.createdAt)}
+              {!isTerminal && (
+                <>
+                  {' '}
+                  · in {STAGE_LABEL[candidate.stage]} for {inStage === 0 ? 'under a day' : `${inStage} day${inStage === 1 ? '' : 's'}`}
+                </>
+              )}
             </DrawerDescription>
           </div>
+          {canManage && (
+            // Clear of the drawer's own close button in the top corner.
+            <Button size="sm" variant="outline" className="mr-10 shrink-0" onClick={() => setEditing(true)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
         </div>
         <div className="mt-3 overflow-x-auto">
           <StageTracker stage={candidate.stage} />
@@ -328,7 +373,7 @@ export function CandidateDetailDrawer({
         </Section>
 
         {candidate.notes && (
-          <Section title="Notes">
+          <Section title="About">
             <p className="whitespace-pre-wrap text-sm text-silver">
               {candidate.notes}
             </p>
@@ -337,7 +382,17 @@ export function CandidateDetailDrawer({
 
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
-        <Section title="Interviews">
+        <Section
+          title="Interviews"
+          action={
+            canManage && !isTerminal ? (
+              <Button size="sm" variant="outline" onClick={() => setScheduling(true)}>
+                <CalendarClock className="h-3.5 w-3.5" />
+                Schedule
+              </Button>
+            ) : null
+          }
+        >
           {interviews === null && !error ? (
             <SkeletonRows count={2} />
           ) : !interviews?.length ? (
@@ -354,16 +409,30 @@ export function CandidateDetailDrawer({
                       <CalendarClock className="h-3.5 w-3.5 shrink-0 text-silver" />
                       {fmtDateTime(i.scheduledFor)}
                     </span>
-                    {i.rating !== null && (
-                      <Badge variant="outline" className="tabular-nums">
-                        {i.rating}/5
+                    {i.rating !== null ? (
+                      <Badge
+                        variant={i.rating > 0 ? 'success' : i.rating < 0 ? 'destructive' : 'outline'}
+                      >
+                        {ratingLabel(i.rating)}
                       </Badge>
+                    ) : (
+                      canManage &&
+                      !i.completedAt && (
+                        <Button size="sm" variant="ghost" onClick={() => void openScore(i)}>
+                          <Star className="h-3.5 w-3.5" />
+                          Score
+                        </Button>
+                      )
                     )}
                   </div>
                   <div className="mt-1 text-xs2 text-silver">
                     {i.kitName ?? 'No kit'}
                     {i.interviewerEmail ? ` · ${i.interviewerEmail}` : ''}
-                    {i.completedAt ? ' · completed' : ' · scheduled'}
+                    {i.completedAt
+                      ? ' · scored'
+                      : new Date(i.scheduledFor).getTime() < Date.now()
+                        ? ' · needs a score'
+                        : ' · scheduled'}
                   </div>
                 </li>
               ))}
@@ -414,9 +483,36 @@ export function CandidateDetailDrawer({
             </ul>
           )}
         </Section>
+
+        <Section title="Activity">
+          <CandidateTimeline
+            candidateId={candidate.id}
+            canManage={canManage}
+            // A stage move made by the page's own buttons lands here too.
+            refreshKey={`${candidate.stage}|${candidate.stageChangedAt}|${bump}`}
+          />
+        </Section>
       </DrawerBody>
 
       {actions && <DrawerFooter>{actions}</DrawerFooter>}
+
+      {canManage && (
+        <>
+          <EditCandidateDialog candidate={candidate} open={editing} onOpenChange={setEditing} onSaved={changed} />
+          <ScheduleInterviewDialog
+            candidate={candidate}
+            open={scheduling}
+            onOpenChange={setScheduling}
+            onScheduled={changed}
+          />
+          <ScoreInterviewDialog
+            interview={scoring?.interview ?? null}
+            kit={scoring?.kit ?? null}
+            onOpenChange={(o) => !o && setScoring(null)}
+            onScored={changed}
+          />
+        </>
+      )}
     </Drawer>
   );
 }

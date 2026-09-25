@@ -4156,6 +4156,8 @@ export const CandidateSchema = z.object({
   hiredAt: z.string().datetime().nullable(),
   rejectedReason: z.string().nullable(),
   withdrawnReason: z.string().nullable(),
+  /** When they entered their current stage — "days in stage" reads this. */
+  stageChangedAt: z.string().datetime(),
   createdAt: z.string().datetime(),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;
@@ -4228,12 +4230,113 @@ export const CandidateAdvanceInputSchema = z
   );
 export type CandidateAdvanceInput = z.infer<typeof CandidateAdvanceInputSchema>;
 
+/**
+ * Hiring a candidate IS inviting them to onboarding: the same fields as
+ * ApplicationCreateInput, minus the name and email the candidate already
+ * carries. Client and template are required — a hire with neither used to
+ * create a bare associate record and leave HR to re-type everything into
+ * a separate invite.
+ */
 export const CandidateHireInputSchema = z.object({
-  /** Optional clientId to associate the new hire with via an Application. */
-  clientId: UuidSchema.optional(),
-  templateId: UuidSchema.optional(),
+  clientId: UuidSchema,
+  templateId: UuidSchema,
+  locationId: UuidSchema.optional(),
+  position: z.string().min(1).max(120).optional(),
+  startDate: z.string().datetime().optional(),
+  employmentType: EmploymentTypeSchema.optional(),
+  hireRole: HireableRoleSchema.optional(),
+  /** The accepted offer whose pay becomes their starting rate. */
+  offerId: UuidSchema.optional(),
 });
 export type CandidateHireInput = z.infer<typeof CandidateHireInputSchema>;
+
+export const CandidateHireResponseSchema = CandidateSchema.extend({
+  applicationId: UuidSchema,
+  /** Dev-stub only: the invite link when email isn't configured. */
+  inviteUrl: z.string().nullable(),
+  /** Whether the accepted offer's pay was recorded as their starting rate. */
+  payRecorded: z.boolean(),
+});
+export type CandidateHireResponse = z.infer<typeof CandidateHireResponseSchema>;
+
+export const CandidateEventKindSchema = z.enum([
+  'CREATED',
+  'APPLIED_AGAIN',
+  'EDITED',
+  'STAGE_CHANGED',
+  'NOTE',
+  'INTERVIEW_SCHEDULED',
+  'INTERVIEW_SCORED',
+  'INTERVIEW_CANCELLED',
+  'OFFER_CREATED',
+  'OFFER_SENT',
+  'OFFER_DECIDED',
+  'HIRED',
+]);
+export type CandidateEventKind = z.infer<typeof CandidateEventKindSchema>;
+
+/** One entry on a candidate's timeline. */
+export const CandidateEventSchema = z.object({
+  id: UuidSchema,
+  kind: CandidateEventKindSchema,
+  fromStage: CandidateStageSchema.nullable(),
+  toStage: CandidateStageSchema.nullable(),
+  body: z.string().nullable(),
+  actorName: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type CandidateEvent = z.infer<typeof CandidateEventSchema>;
+
+export const CandidateEventListResponseSchema = z.object({
+  events: z.array(CandidateEventSchema),
+});
+export type CandidateEventListResponse = z.infer<typeof CandidateEventListResponseSchema>;
+
+export const CandidateNoteInputSchema = z.object({
+  body: z.string().trim().min(1).max(4000),
+});
+export type CandidateNoteInput = z.infer<typeof CandidateNoteInputSchema>;
+
+/** A candidate named on the recruiter's dashboard. */
+const RecruitingSummaryCandidateSchema = z.object({
+  id: UuidSchema,
+  name: z.string(),
+  position: z.string().nullable(),
+  stage: CandidateStageSchema,
+  daysInStage: z.number().int(),
+});
+
+/** The recruiter's dashboard: what's in the pipeline and what's waiting. */
+export const RecruitingSummarySchema = z.object({
+  /** Open candidates per stage (Applied → Offer). */
+  byStage: z.object({
+    APPLIED: z.number().int(),
+    SCREENING: z.number().int(),
+    INTERVIEW: z.number().int(),
+    OFFER: z.number().int(),
+  }),
+  /** Days a candidate may sit in one stage before they count as stuck. */
+  stuckAfterDays: z.number().int(),
+  stuckCount: z.number().int(),
+  /** Longest-waiting first. */
+  stuck: z.array(RecruitingSummaryCandidateSchema),
+  interviewsToday: z.array(
+    z.object({
+      id: UuidSchema,
+      candidateId: UuidSchema,
+      candidateName: z.string(),
+      scheduledFor: z.string().datetime(),
+    }),
+  ),
+  interviewsNext7Days: z.number().int(),
+  /** Interviews that have happened but have no score yet. */
+  unscoredInterviews: z.number().int(),
+  offersAwaitingReply: z.number().int(),
+  hiredThisMonth: z.number().int(),
+  /** Median days from applying to hired, over hires in the last 90 days. */
+  medianDaysToHire: z.number().nullable(),
+});
+export type RecruitingSummary = z.infer<typeof RecruitingSummarySchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 15 — Time / Scheduling depth (Rippling-grade)

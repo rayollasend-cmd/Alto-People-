@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { send } from '../lib/notifications.js';
+import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import {
   careersApplyEmailLimiter,
   careersApplyIpLimiter,
@@ -119,6 +120,23 @@ const InterviewScoreSchema = z.object({
   rating: z.number().int().min(-2).max(2).nullable().optional(),
 });
 
+/** The -2..2 recommendation scale, as the timeline says it. */
+const RATING_LABEL: Record<number, string> = {
+  [-2]: 'Strong no',
+  [-1]: 'No',
+  0: 'Neutral',
+  1: 'Yes',
+  2: 'Strong yes',
+};
+
+/**
+ * Interview events carry the instant, not a formatted time. The server's
+ * zone (Eastern) is not every reader's — a 10:00 interview booked from a
+ * Central-time store read "11:00 AM" on its own timeline — so the viewer's
+ * screen formats it.
+ */
+const when = (d: Date) => d.toISOString();
+
 recruiting90Router.get('/interviews', VIEW, async (req, res) => {
   const candidateId = z.string().uuid().optional().parse(req.query.candidateId);
   const rows = await prisma.interview.findMany({
@@ -154,32 +172,75 @@ recruiting90Router.post('/interviews', MANAGE, async (req, res) => {
     where: { id: input.candidateId, deletedAt: null },
   });
   if (!candidate) throw new HttpError(404, 'not_found', 'Candidate not found.');
-  const created = await prisma.interview.create({
-    data: {
-      candidateId: input.candidateId,
-      kitId: input.kitId ?? null,
-      interviewerUserId: input.interviewerUserId ?? null,
-      scheduledFor: new Date(input.scheduledFor),
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.interview.create({
+      data: {
+        candidateId: input.candidateId,
+        kitId: input.kitId ?? null,
+        interviewerUserId: input.interviewerUserId ?? null,
+        scheduledFor: new Date(input.scheduledFor),
+      },
+    });
+    await recordCandidateEvent(tx, {
+      candidateId: row.candidateId,
+      kind: 'INTERVIEW_SCHEDULED',
+      actorUserId: req.user!.id,
+      body: when(row.scheduledFor),
+      metadata: { interviewId: row.id },
+    });
+    return row;
+  });
+  auditRecruiting(req, 'interview_scheduled', 'Interview', created.id, {
+    candidateId: created.candidateId,
+    scheduledFor: created.scheduledFor.toISOString(),
   });
   res.status(201).json({ id: created.id });
 });
 
 recruiting90Router.post('/interviews/:id/score', MANAGE, async (req, res) => {
   const input = InterviewScoreSchema.parse(req.body);
-  await prisma.interview.update({
-    where: { id: req.params.id },
-    data: {
-      scorecard: (input.scorecard ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      rating: input.rating ?? null,
-      completedAt: new Date(),
-    },
+  const existing = await prisma.interview.findUnique({ where: { id: req.params.id } });
+  if (!existing) throw new HttpError(404, 'not_found', 'Interview not found.');
+  const rating = input.rating ?? null;
+  await prisma.$transaction(async (tx) => {
+    await tx.interview.update({
+      where: { id: existing.id },
+      data: {
+        scorecard: (input.scorecard ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        rating,
+        completedAt: new Date(),
+      },
+    });
+    await recordCandidateEvent(tx, {
+      candidateId: existing.candidateId,
+      kind: 'INTERVIEW_SCORED',
+      actorUserId: req.user!.id,
+      body: rating === null ? 'Scored, no recommendation' : `Recommendation: ${RATING_LABEL[rating]}`,
+      metadata: { interviewId: existing.id, rating },
+    });
+  });
+  auditRecruiting(req, 'interview_scored', 'Interview', existing.id, {
+    candidateId: existing.candidateId,
+    rating,
   });
   res.json({ ok: true });
 });
 
 recruiting90Router.delete('/interviews/:id', MANAGE, async (req, res) => {
-  await prisma.interview.delete({ where: { id: req.params.id } });
+  const existing = await prisma.interview.findUnique({ where: { id: req.params.id } });
+  if (!existing) throw new HttpError(404, 'not_found', 'Interview not found.');
+  await prisma.$transaction(async (tx) => {
+    await tx.interview.delete({ where: { id: existing.id } });
+    await recordCandidateEvent(tx, {
+      candidateId: existing.candidateId,
+      kind: 'INTERVIEW_CANCELLED',
+      actorUserId: req.user!.id,
+      body: when(existing.scheduledFor),
+    });
+  });
+  auditRecruiting(req, 'interview_cancelled', 'Interview', existing.id, {
+    candidateId: existing.candidateId,
+  });
   res.status(204).end();
 });
 
@@ -244,6 +305,10 @@ recruiting90Router.get('/offers', VIEW, async (req, res) => {
 
 recruiting90Router.post('/offers', MANAGE, async (req, res) => {
   const input = OfferInputSchema.parse(req.body);
+  const candidate = await prisma.candidate.findFirst({
+    where: { id: input.candidateId, deletedAt: null },
+  });
+  if (!candidate) throw new HttpError(404, 'not_found', 'Candidate not found.');
   const created = await prisma.offer.create({
     data: {
       candidateId: input.candidateId,
@@ -259,7 +324,16 @@ recruiting90Router.post('/offers', MANAGE, async (req, res) => {
       createdById: req.user!.id,
       status: 'DRAFT',
     },
+    include: { client: { select: { name: true } } },
   });
+  await recordCandidateEvent(prisma, {
+    candidateId: created.candidateId,
+    kind: 'OFFER_CREATED',
+    actorUserId: req.user!.id,
+    body: `${created.jobTitle} · ${created.client.name}`,
+    metadata: { offerId: created.id },
+  });
+  auditRecruiting(req, 'offer_created', 'Offer', created.id, { candidateId: created.candidateId });
   res.status(201).json({ id: created.id });
 });
 
@@ -274,10 +348,20 @@ recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
   if (o.status !== 'DRAFT') {
     throw new HttpError(409, 'invalid_state', `Cannot send offer in ${o.status} state.`);
   }
-  await prisma.offer.update({
-    where: { id: o.id },
-    data: { status: 'SENT', sentAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.offer.update({
+      where: { id: o.id },
+      data: { status: 'SENT', sentAt: new Date() },
+    });
+    await recordCandidateEvent(tx, {
+      candidateId: o.candidateId,
+      kind: 'OFFER_SENT',
+      actorUserId: req.user!.id,
+      body: o.jobTitle,
+      metadata: { offerId: o.id },
+    });
   });
+  auditRecruiting(req, 'offer_sent', 'Offer', o.id, { candidateId: o.candidateId });
 
   // Actually email the candidate the offer. Candidates are usually not
   // Users yet, so this is a raw email — fire-and-forget after the write.
@@ -323,10 +407,20 @@ recruiting90Router.post('/offers/:id/decision', MANAGE, async (req, res) => {
   if (o.status !== 'SENT' && o.status !== 'DRAFT') {
     throw new HttpError(409, 'invalid_state', `Offer already ${o.status}.`);
   }
-  await prisma.offer.update({
-    where: { id: o.id },
-    data: { status: decision, decidedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.offer.update({
+      where: { id: o.id },
+      data: { status: decision, decidedAt: new Date() },
+    });
+    await recordCandidateEvent(tx, {
+      candidateId: o.candidateId,
+      kind: 'OFFER_DECIDED',
+      actorUserId: req.user!.id,
+      body: `${decision.charAt(0)}${decision.slice(1).toLowerCase()}: ${o.jobTitle}`,
+      metadata: { offerId: o.id, decision },
+    });
   });
+  auditRecruiting(req, 'offer_decided', 'Offer', o.id, { candidateId: o.candidateId, decision });
   res.json({ ok: true });
 });
 
@@ -517,6 +611,7 @@ recruiting90Router.post('/job-postings', MANAGE, async (req, res) => {
         createdById: req.user!.id,
       },
     });
+    auditRecruiting(req, 'posting_created', 'JobPosting', created.id, { slug: created.slug });
     res.status(201).json({ id: created.id });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -531,6 +626,7 @@ recruiting90Router.post('/job-postings/:id/open', MANAGE, async (req, res) => {
     where: { id: req.params.id },
     data: { status: 'OPEN', openedAt: new Date(), closedAt: null },
   });
+  auditRecruiting(req, 'posting_opened', 'JobPosting', req.params.id);
   res.json({ ok: true });
 });
 
@@ -539,11 +635,13 @@ recruiting90Router.post('/job-postings/:id/close', MANAGE, async (req, res) => {
     where: { id: req.params.id },
     data: { status: 'CLOSED', closedAt: new Date() },
   });
+  auditRecruiting(req, 'posting_closed', 'JobPosting', req.params.id);
   res.json({ ok: true });
 });
 
 recruiting90Router.delete('/job-postings/:id', MANAGE, async (req, res) => {
   await prisma.jobPosting.delete({ where: { id: req.params.id } });
+  auditRecruiting(req, 'posting_deleted', 'JobPosting', req.params.id);
   res.status(204).end();
 });
 
@@ -614,27 +712,77 @@ recruiting90Router.post(
     }
     const email = input.email.trim().toLowerCase();
 
-    // Reuse an existing candidate row by email if one exists; otherwise
-    // create. Either way, the application surfaces in /candidates for HR.
+    // One candidate per email. Someone already on file who applies again
+    // (often to a different posting) used to be dropped without a trace;
+    // now the application lands on their timeline where a recruiter sees
+    // it. Nothing on their record is overwritten.
     const existing = await prisma.candidate.findUnique({ where: { email } });
     if (existing) {
+      if (!existing.deletedAt) {
+        await recordCandidateEvent(prisma, {
+          candidateId: existing.id,
+          kind: 'APPLIED_AGAIN',
+          actorUserId: null,
+          body: posting.title,
+          metadata: { postingSlug: posting.slug },
+        });
+      }
+      confirmApplication(email, input.firstName, posting.title);
       res.status(200).json({ id: existing.id, alreadyApplied: true });
       return;
     }
-    const created = await prisma.candidate.create({
-      data: {
-        firstName: input.firstName,
-        lastName: input.lastName,
-        email,
-        phone: input.phone ?? null,
-        position: posting.title,
-        source: input.source?.trim() || 'CAREERS_PAGE',
-        notes: input.notes ?? null,
-        resumeUrl: input.resumeUrl ?? null,
-        linkedinUrl: input.linkedinUrl ?? null,
-        stage: 'APPLIED',
-      },
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.candidate.create({
+        data: {
+          firstName: input.firstName,
+          lastName: input.lastName,
+          email,
+          phone: input.phone ?? null,
+          position: posting.title,
+          source: input.source?.trim() || 'careers-page',
+          notes: input.notes ?? null,
+          resumeUrl: input.resumeUrl ?? null,
+          linkedinUrl: input.linkedinUrl ?? null,
+          stage: 'APPLIED',
+        },
+      });
+      await recordCandidateEvent(tx, {
+        candidateId: row.id,
+        kind: 'CREATED',
+        actorUserId: null,
+        toStage: 'APPLIED',
+        body: `Applied on the careers page: ${posting.title}`,
+        metadata: { postingSlug: posting.slug },
+      });
+      return row;
     });
+    confirmApplication(email, input.firstName, posting.title);
     res.status(201).json({ id: created.id, alreadyApplied: false });
   },
 );
+
+/**
+ * "We got it." Applicants heard nothing after pressing Apply — no email,
+ * no reference, no idea whether it worked — which on an hourly job is the
+ * moment they go apply somewhere else. Fire-and-forget: the application
+ * is already saved, so a mail hiccup must not turn it into an error.
+ */
+function confirmApplication(email: string, firstName: string, title: string): void {
+  void send({
+    channel: 'EMAIL',
+    category: 'careers_application',
+    recipient: { userId: null, phone: null, email },
+    subject: `We received your application: ${title}`,
+    body: [
+      `Hi ${firstName},`,
+      '',
+      `Thanks for applying for ${title} with Alto. Your application is in, and a recruiter will review it and contact you by email or phone about next steps.`,
+      '',
+      'You do not need to apply again. If you have questions, reply to this email.',
+      '',
+      '— The Alto recruiting team',
+    ].join('\n'),
+  }).catch(() => {
+    /* fire-and-forget — the application is already saved */
+  });
+}
