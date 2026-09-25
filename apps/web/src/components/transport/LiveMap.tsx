@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl/dist/maplibre-gl-csp.js';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-csp-worker.js?url';
+import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl';
+// `?worker&url`, not `?url`: the dist worker imports its sibling shared
+// chunk, and only Vite's worker pipeline emits it self-contained (a plain
+// `?url` copies the file verbatim and the worker dies on its first import).
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { cn } from '@/lib/cn';
 
 /**
  * The vans' map. MapLibre (open source) on OpenFreeMap tiles — no API key.
  *
- * MapLibre's CSP build: its web worker is a same-origin file, so the page's
- * Content-Security-Policy never has to allow blob: workers; the only
- * outside host is tiles.openfreemap.org (connect-src).
+ * MapLibre 6 is ESM-only and spawns its worker from a URL we hand it; Vite
+ * bundles that worker as a same-origin file, so the page's Content-
+ * Security-Policy never has to allow blob: workers; the only outside host
+ * is tiles.openfreemap.org (connect-src). v6 needs WebGL2 — a device
+ * without it lands in the catch below and keeps the text view.
  *
  * Markers are kept by id and moved in place, so a van gliding along on
  * each refresh doesn't tear the map down. The view fits everything once,

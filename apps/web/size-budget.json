@@ -10,9 +10,9 @@
     "style-utils": 12,
     "recharts": 130,
     "heic2any": 350,
-    "LiveMap": 270,
+    "LiveMap": 290,
     "face-api": 175,
-    "maplibre-gl-csp-worker": 135,
-    "SchedulingHome": 65
+    "SchedulingHome": 65,
+    "maplibre-gl-worker": 150
   }
 }

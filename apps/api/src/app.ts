@@ -302,8 +302,9 @@ export function createApp() {
             'https://*.ingest.de.sentry.io',
             // The vans' live map: OpenFreeMap serves the map style, vector
             // tiles, fonts and icons (fetched by MapLibre). The map's web
-            // worker is served from our own origin (MapLibre's CSP build),
-            // so no blob: workers are needed.
+            // worker is a Vite-bundled file on our own origin (MapLibre 6's
+            // ESM build, pointed at it with setWorkerUrl), so worker-src
+            // falls through to script-src 'self' and no blob: is needed.
             'https://tiles.openfreemap.org',
           ],
         },
