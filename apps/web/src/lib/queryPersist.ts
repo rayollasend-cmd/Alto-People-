@@ -46,7 +46,8 @@ const THROTTLE_MS = 3_000;
  * merely stale — restoring a renamed field as `undefined` is a bug that
  * only reproduces for users who were here before the deploy.
  */
-const APP_CACHE_VERSION = 'v2';
+// v3: the People prefetch had persisted ['directory', {}] as a bare array.
+const APP_CACHE_VERSION = 'v3';
 
 /**
  * Queries that never touch the disk.

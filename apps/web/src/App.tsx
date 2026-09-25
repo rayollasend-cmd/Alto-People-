@@ -22,7 +22,7 @@ import { RequireCapability } from '@/lib/RequireCapability';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
 import { queryClient } from '@/lib/queryClient';
 import { trackChunk } from '@/lib/chunkLoading';
-import { listDirectory } from '@/lib/directoryApi';
+import { directoryQuery } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
@@ -260,10 +260,9 @@ registerPrefetch('/hotline', () => import('@/pages/hotline/HotlinePage'));
 // render. queryKey strings here MUST match the ones in the page
 // components or the cache write won't hit. Failures are swallowed.
 registerDataPrefetch('/people', () => {
-  void queryClient.prefetchQuery({
-    queryKey: ['directory', {}],
-    queryFn: async () => (await listDirectory({})).associates,
-  });
+  // Same query the page runs with no filters set — an infinite query, so
+  // the cache holds { pages, pageParams }, never a bare array.
+  void queryClient.prefetchInfiniteQuery(directoryQuery({}));
   void queryClient.prefetchQuery({
     queryKey: ['clients', 'list'],
     // Full response object — must match useClients()'s cache shape, or a

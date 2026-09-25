@@ -52,7 +52,7 @@ import type {
   DocumentVaultResponse,
   DocumentVaultSummary,
 } from '@alto-people/shared';
-import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { directoryQuery, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
@@ -416,11 +416,7 @@ export function PeopleDirectory() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['directory', filters],
-    queryFn: ({ pageParam }) =>
-      listDirectory({ ...filters, ...(pageParam ? { cursor: pageParam } : {}) }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    ...directoryQuery(filters),
     placeholderData: keepPreviousData,
     // A minute of freshness: back-navigating to the directory (or re-
     // applying a recent filter combo) renders instantly from cache instead
