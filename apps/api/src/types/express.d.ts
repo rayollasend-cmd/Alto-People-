@@ -30,7 +30,8 @@ export interface SessionUser {
   lastName: string | null;
   photoUrl: string | null;
   timezone: string | null;
-  language: string | null;
+  /** Email language preference (en/es/tr); null or absent means English. */
+  language?: string | null;
   mfaEnabled: boolean;
 }
 

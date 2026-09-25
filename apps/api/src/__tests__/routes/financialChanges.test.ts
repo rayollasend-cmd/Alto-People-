@@ -6,7 +6,7 @@ import { createApp } from '../../app.js';
 import { encryptString } from '../../lib/crypto.js';
 import { flushPendingAudits } from '../../lib/audit.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
-import { _setAdapterForTesting, type DisbursementAdapter } from '../../lib/disbursement.js';
+import { _setAdapterForTesting, type DisbursementAdapter, type DisbursementResult } from '../../lib/disbursement.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -251,9 +251,9 @@ describe('verify-before-pay', () => {
     const seen: string[] = [];
     const spy: DisbursementAdapter = {
       provider: 'STUB',
-      async disburse(input) {
+      async disburse(input): Promise<DisbursementResult> {
         seen.push(JSON.stringify(input.recipient));
-        return { provider: 'STUB', externalRef: 'STUB-1', status: 'SUCCESS' };
+        return { provider: 'STUB', externalRef: 'STUB-1', status: 'SUCCESS', failureReason: null };
       },
     };
     _setAdapterForTesting(spy);
@@ -296,9 +296,9 @@ describe('verify-before-pay', () => {
     let calls = 0;
     _setAdapterForTesting({
       provider: 'STUB',
-      async disburse() {
+      async disburse(): Promise<DisbursementResult> {
         calls += 1;
-        return { provider: 'STUB', externalRef: 'STUB-1', status: 'SUCCESS' };
+        return { provider: 'STUB', externalRef: 'STUB-1', status: 'SUCCESS', failureReason: null };
       },
     });
     const { hrAgent, runId } = await runFor(associate.id, client.id);
@@ -401,7 +401,7 @@ describe('the payroll packet', () => {
     expect(acked.acknowledgedById).toBe(hr.id);
 
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(ok.body as Buffer);
+    await wb.xlsx.load(ok.body);
     const changes = wb.getWorksheet('Changes since last packet')!;
     expect(changes).toBeDefined();
     const line = changes.getRow(5);
