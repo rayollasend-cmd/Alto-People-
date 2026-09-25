@@ -16,6 +16,9 @@ export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
    * visually. For a VISIBLE caption, use <TableCaption> instead.
    */
   caption?: string;
+  /** Classes for the scroll wrapper around the <table> — a virtualized grid
+   *  passes `overflow-visible` so its own box is the one scrollport. */
+  wrapperClassName?: string;
 }
 
 // overflow-x only: `overflow-auto` made the wrapper div the sticky
@@ -24,8 +27,8 @@ export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
 // table. With x-only overflow the page (or an outer max-h wrapper) is the
 // vertical scrollport and the sticky header actually sticks.
 export const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, caption, children, ...props }, ref) => (
-    <div className="relative w-full overflow-x-auto">
+  ({ className, caption, wrapperClassName, children, ...props }, ref) => (
+    <div className={cn('relative w-full overflow-x-auto', wrapperClassName)}>
       <table
         ref={ref}
         className={cn('w-full caption-bottom text-sm', className)}

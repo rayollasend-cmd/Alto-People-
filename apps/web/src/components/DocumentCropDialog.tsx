@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
+import { trackChunk } from '@/lib/chunkLoading';
 import type { Quad } from '@/lib/docScan';
 
 /**
@@ -157,7 +158,7 @@ export function DocumentCropDialog({
     let objectUrl: string | null = null;
     (async () => {
       try {
-        const { loadImageFile } = await import('@/lib/loadImageFile');
+        const { loadImageFile } = await trackChunk(() => import('@/lib/loadImageFile'));
         // eslint-disable-next-line no-restricted-syntax -- decodes a local File into a bitmap; nothing to cache or refetch
         const el = await loadImageFile(file);
         objectUrl = el.src.startsWith('blob:') ? el.src : null;
@@ -190,7 +191,7 @@ export function DocumentCropDialog({
       try {
         const found = await Promise.race([
           (async () => {
-            const scan = await import('@/lib/docScan');
+            const scan = await trackChunk(() => import('@/lib/docScan'));
             return scan.detectDocumentQuad(sourceCanvas);
           })(),
           new Promise<null>((resolve) =>
@@ -316,7 +317,7 @@ export function DocumentCropDialog({
     if (!sourceCanvas || !quad || exporting) return;
     setExporting(true);
     try {
-      const scan = await import('@/lib/docScan');
+      const scan = await trackChunk(() => import('@/lib/docScan'));
       const outW = spec.outW;
       const outH = Math.round(outW / spec.ratio);
       const margin = Math.round(outW * MARGIN_FRAC);

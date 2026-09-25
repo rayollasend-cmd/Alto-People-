@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
+import { trackChunk } from '@/lib/chunkLoading';
 
 /**
  * Square crop step for profile photos — the fix for "I uploaded a picture
@@ -56,7 +57,7 @@ export function PhotoCropDialog({
     let objectUrl: string | null = null;
     (async () => {
       try {
-        const { loadImageFile } = await import('@/lib/loadImageFile');
+        const { loadImageFile } = await trackChunk(() => import('@/lib/loadImageFile'));
         // eslint-disable-next-line no-restricted-syntax -- decodes a local File into a bitmap; nothing to cache or refetch
         const el = await loadImageFile(file);
         objectUrl = el.src.startsWith('blob:') ? el.src : null;

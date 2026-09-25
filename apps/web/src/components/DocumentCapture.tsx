@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera, RotateCcw, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { trackChunk } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
 
@@ -81,7 +82,7 @@ export function DocumentCapture({
     let timer: number | undefined;
     (async () => {
       try {
-        const scan = await import('@/lib/docScan');
+        const scan = await trackChunk(() => import('@/lib/docScan'));
         await scan.cvReady();
         const tick = async () => {
           if (cancelled) return;

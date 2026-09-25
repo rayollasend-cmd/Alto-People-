@@ -6,6 +6,7 @@ import { initSentry } from '@/lib/sentry';
 import { watchHistoryChurn } from '@/lib/historyChurn';
 import { readOfflineSession } from '@/lib/offlineSession';
 import { restorePersistedQueries } from '@/lib/queryPersist';
+import { installStaleBuildGuard } from '@/lib/chunkLoading';
 
 // Initialise error tracking before any render path can throw. No-op
 // when VITE_SENTRY_DSN is unset; safe in dev.
@@ -111,6 +112,20 @@ try {
 // an old one is running, we toast "New version available" and only skip
 // waiting (then reload) when the user opts in — deploys used to swap the
 // bundle silently mid-session.
+// A chunk that vanished with a deploy reloads the tab once, wherever the
+// failure surfaces — a route import, a preloaded dependency, a component's
+// own import(). Installed before anything can load a chunk.
+installStaleBuildGuard();
+
+// The shell loads a few hundred small chunks; the default resource-timing
+// buffer (250) drops the later ones, and the service-worker warm-up below
+// reads that buffer.
+try {
+  performance.setResourceTimingBufferSize(2000);
+} catch {
+  // Not supported — the warm-up just sees fewer entries.
+}
+
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
@@ -156,6 +171,49 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
       .catch(() => {
         // Silent fail — SW is best-effort enhancement.
       });
+    // Everything this page fetched before the worker took control went
+    // around its fetch handler, so on a first install the cache held the
+    // precache list and nothing else — the shell's own chunks (Layout, the
+    // command palette) were missing, and the offline fallback booted the
+    // shell straight into "Something went wrong". Hand the worker the list.
+    // Only a page that started uncontrolled has anything to hand over; a
+    // controlled page's fetches already pass through the worker. Entries
+    // keep arriving while the worker installs (the route chunk lands about
+    // then), so this watches for a minute rather than snapshotting once.
+    if (!navigator.serviceWorker.controller && 'PerformanceObserver' in window) {
+      navigator.serviceWorker.ready
+        .then((reg) => {
+          const sent = new Set<string>();
+          let pending: string[] = [];
+          let timer: number | undefined;
+          const flush = () => {
+            timer = undefined;
+            const urls = pending;
+            pending = [];
+            if (urls.length > 0) reg.active?.postMessage({ type: 'CACHE_URLS', urls });
+          };
+          const observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+              let pathname: string;
+              try {
+                pathname = new URL(entry.name).pathname;
+              } catch {
+                continue;
+              }
+              if (!pathname.startsWith('/assets/') || sent.has(pathname)) continue;
+              sent.add(pathname);
+              pending.push(pathname);
+            }
+            if (pending.length > 0 && timer === undefined) timer = window.setTimeout(flush, 500);
+          });
+          observer.observe({ type: 'resource', buffered: true });
+          window.setTimeout(() => {
+            observer.disconnect();
+            flush();
+          }, 60_000);
+        })
+        .catch(() => {});
+    }
     // The moment the new worker takes over, load the new bundle. The
     // hadController guard matters: sw.js calls clients.claim() on
     // activate, so the very FIRST installation also fires

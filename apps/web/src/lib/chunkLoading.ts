@@ -72,6 +72,32 @@ function reloadOnceForNewBuild(): boolean {
   return true;
 }
 
+/**
+ * The same reload-once rule for chunk failures `trackChunk` never sees.
+ *
+ * Vite preloads a chunk's dependencies before the import resolves and
+ * reports a failed dependency as a cancelable `vite:preloadError`; a bare
+ * `import()` in a component (document scanning, image decoding) rejects
+ * into whatever `catch` is nearest. Both are the same stale-build story,
+ * so both get the same answer: reload once into the new build, and only
+ * then let the error stand.
+ */
+export function installStaleBuildGuard(): void {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('vite:preloadError', (event) => {
+    const payload = (event as Event & { payload?: unknown }).payload;
+    const message = payload instanceof Error ? payload.message : String(payload ?? '');
+    if ((STALE_BUILD.test(message) || /preload/i.test(message)) && reloadOnceForNewBuild()) {
+      event.preventDefault();
+    }
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const message = reason instanceof Error ? reason.message : String(reason ?? '');
+    if (STALE_BUILD.test(message) && reloadOnceForNewBuild()) event.preventDefault();
+  });
+}
+
 /** Wrap a dynamic import so the chrome can see it. */
 export function trackChunk<T>(load: () => Promise<T>): Promise<T> {
   beginChunk();

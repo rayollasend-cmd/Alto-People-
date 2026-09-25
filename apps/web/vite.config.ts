@@ -65,11 +65,13 @@ function preloadLatinFonts(): Plugin {
 }
 
 function emitAssetManifest(): Plugin {
+  let version = 0;
+  let outDir = path.resolve(__dirname, 'dist');
   return {
     name: 'alto-asset-manifest',
     apply: 'build',
     writeBundle(options, bundle) {
-      const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+      outDir = options.dir ?? path.resolve(__dirname, 'dist');
       // PERF: allowlist, not "everything". The SW used to precache all
       // ~166 chunks (~4 MB — face-api, every admin route, both chart
       // bundles) on every visitor's FIRST load. Precache only the shell +
@@ -80,6 +82,11 @@ function emitAssetManifest(): Plugin {
         /^assets\/react-vendor-/,
         /^assets\/radix-/,
         /^assets\/style-utils-/,
+        // The shell's own lazy pieces: without these the offline fallback
+        // shell boots and then fails on its first import.
+        /^assets\/Layout-/,
+        /^assets\/CommandPalette-/,
+        /^assets\/Tooltip-/,
         // Highest-traffic role surfaces.
         /^assets\/AssociateScheduleView-/,
         /^assets\/AssociateTimeOffView-/,
@@ -101,14 +108,26 @@ function emitAssetManifest(): Plugin {
       // Sort so successive builds with the same inputs produce a stable
       // diff — easier to reason about whether the SW cache should bust.
       chunks.sort();
+      version = Date.now();
       const manifest = {
-        version: Date.now(),
+        version,
         chunks,
       };
       fs.writeFileSync(
         path.join(outDir, 'asset-manifest.json'),
         JSON.stringify(manifest, null, 2),
       );
+    },
+    // Stamp the service worker with the same version, AFTER Vite has copied
+    // public/ into dist. A worker whose bytes never change is never
+    // reinstalled, so its precache stayed frozen at whatever build was live
+    // the day it first installed; stamping makes every deploy a new worker
+    // that precaches its own build and drops the previous one on activate.
+    closeBundle() {
+      const swPath = path.join(outDir, 'sw.js');
+      if (!version || !fs.existsSync(swPath)) return;
+      const src = fs.readFileSync(swPath, 'utf8');
+      fs.writeFileSync(swPath, src.replace('__ALTO_BUILD__', String(version)));
     },
   };
 }

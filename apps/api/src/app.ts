@@ -598,7 +598,20 @@ export function createApp() {
     // Everything else in dist (manifest, icons, face-models) isn't hashed —
     // keep the shorter TTL. `index: false` so we explicitly hand `/` to the
     // SPA fallback below.
-    app.use(express.static(WEB_DIST, { maxAge: '1d', index: false }));
+    // ...except the two files a deploy rewrites under the SAME name: the
+    // service worker and the precache manifest it reads. Those revalidate
+    // on every request, so a new build is seen the moment it is live.
+    app.use(
+      express.static(WEB_DIST, {
+        maxAge: '1d',
+        index: false,
+        setHeaders: (res, filePath) => {
+          if (/[\\/](sw\.js|asset-manifest\.json)$/.test(filePath)) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      })
+    );
     app.get('*', (req, res, next) => {
       // If the original URL was /api/*, the request was tagged by
       // stripApiPrefix. Skip the SPA fallback so unmatched API endpoints

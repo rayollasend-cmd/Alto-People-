@@ -1,24 +1,33 @@
 // Phase 98 — PWA service worker.
 // Strategy:
-//   - Navigation requests (HTML documents): NETWORK-FIRST, cache only
-//     as offline fallback. The HTML references content-hashed JS/CSS
-//     bundles, and serving a stale HTML after a deploy points the
-//     browser at chunk filenames that no longer exist on the server —
-//     which manifests as "Something went wrong" because the lazy
-//     import returns the SPA-fallback HTML instead of JS.
-//   - Other static assets (hashed JS/CSS, icons, fonts): cache-first
-//     with background revalidate. Safe because the filename embeds a
-//     content hash; old entries naturally evict when the activate
-//     handler wipes the prior cache.
-//   - API requests (/api, /clients, /onboarding, etc): network-only —
-//     never cache business data, since it'd diverge from the source of
-//     truth and potentially leak across user sessions.
+//   - Navigation requests (HTML documents): NETWORK-FIRST. The HTML
+//     references content-hashed JS/CSS bundles, and serving a stale HTML
+//     after a deploy points the browser at chunk filenames that no longer
+//     exist on the server — which manifests as "Something went wrong"
+//     because the lazy import returns a 404 instead of JS. Offline, the
+//     fallback is the shell THIS worker precached at install, never a
+//     copy of some other build's page, so its chunks are in the cache too.
+//   - Other static assets (hashed JS/CSS, icons, fonts): cache-first.
+//     Safe because the filename embeds a content hash; the previous
+//     build's cache is dropped whole when the next worker activates.
+//   - API requests (/api/*): network-only — never cache business data,
+//     since it'd diverge from the source of truth and potentially leak
+//     across user sessions.
 
-// Bumped when the SHELL list or caching strategy changes so the
-// activate handler evicts the previous cache instead of leaving stale
-// entries (e.g. an old index.html with chunk hashes from a prior
-// deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v17';
+// Stamped at build time (vite.config.ts, alto-asset-manifest plugin) with
+// the asset-manifest version, so every deploy ships a byte-different
+// worker: the browser installs it, it precaches THAT build, and the
+// activate handler drops the previous build's cache. A worker whose bytes
+// never changed was never reinstalled, so its precache stayed frozen at
+// whatever build was live the day it first installed. Unstamped (dev, a
+// build without the plugin) this is a fixed string, i.e. one long-lived
+// cache — which is what it always was.
+const BUILD = '__ALTO_BUILD__';
+const CACHE_NAME = 'alto-shell-v18-' + BUILD;
+// Every lookup is scoped to this worker's own cache. While a newer worker
+// waits, two caches coexist; a global match could hand this worker the
+// other build's shell, whose chunks it does not have.
+const OWN = { cacheName: CACHE_NAME };
 const SHELL = [
   '/',
   '/index.html',
@@ -76,6 +85,27 @@ async function precacheChunksFromManifest(cache) {
   }
 }
 
+// Asset URLs the page loaded on its own — before this worker controlled
+// it, so they never went through the fetch handler. The page posts them
+// once the worker is ready (main.tsx); anything already cached is skipped.
+async function cacheUrls(urls) {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const wanted = urls
+      .filter((u) => typeof u === 'string' && u.startsWith('/assets/'))
+      .slice(0, 400);
+    await Promise.all(
+      wanted.map(async (url) => {
+        if (await cache.match(url)) return;
+        const res = await fetch(url, { credentials: 'same-origin' }).catch(() => null);
+        if (res && res.ok && !isHtml(res)) await cache.put(url, res);
+      }),
+    );
+  } catch {
+    // Best effort — the next controlled load caches them on fetch.
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
@@ -97,7 +127,14 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  const data = event.data;
+  if (data === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  if (data && data.type === 'CACHE_URLS' && Array.isArray(data.urls)) {
+    event.waitUntil(cacheUrls(data.urls));
+  }
 });
 
 // The share-target stash is transient user data, not a build artifact —
@@ -150,6 +187,13 @@ function isApiPath(url) {
   // an offline associate refreshing /scheduling got the browser error
   // page instead of the shell the offline-roster feature depends on.
   return url.pathname.startsWith('/api');
+}
+
+/** The precached HTML entry a page URL belongs to. The kiosk has its own
+ *  HTML entry (with the kiosk manifest in its head), so /kiosk navigations
+ *  fall back to it rather than the main index.html. */
+function shellFor(pathname) {
+  return pathname === '/kiosk' || pathname.startsWith('/kiosk/') ? '/kiosk.html' : '/index.html';
 }
 
 // ---- Web push -------------------------------------------------------------
@@ -250,28 +294,23 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (isApiPath(url)) return; // Network-only — let the page handle it.
 
-  // Navigation requests (HTML documents) use network-first. A successful
-  // network response always replaces the cached copy so post-deploy
-  // refreshes pick up the new chunk hashes. Cached HTML only kicks in
-  // when the network is unreachable, giving the SPA an offline shell.
+  // Navigation requests (HTML documents) use network-first, so every
+  // page load sees the build the server has now. Nothing a navigation
+  // returns is stored: the only HTML this worker ever serves from cache
+  // is the shell it precached at install, which is the one build whose
+  // chunks it is sure to hold.
   if (req.mode === 'navigate' || req.destination === 'document') {
+    const shell = () => caches.match(shellFor(url.pathname), OWN).then((r) => r || caches.match('/', OWN));
     event.respondWith(
       fetch(req)
         .then(async (res) => {
-          // Only ever cache HTML against a page URL. Store JSON and the
-          // page is poisoned for good: every later offline refresh
-          // replays raw data where the app should be.
-          if (res && res.ok && isHtml(res)) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(req, clone));
-            return res;
-          }
+          if (res && res.ok && isHtml(res)) return res;
           // The server handed a page load its API resource. Don't render
           // it — give the browser the app shell and let the SPA route
           // itself, which is what the URL meant.
           if (res && isApiJson(res)) {
-            const shell = await caches.match('/index.html').then((r) => r || caches.match('/'));
-            if (shell) return shell;
+            const cached = await shell();
+            if (cached) return cached;
             // No cached shell yet (first run): ask for the document
             // explicitly, which the server answers with the SPA.
             const retry = await fetch('/', { credentials: 'same-origin' }).catch(() => null);
@@ -279,37 +318,25 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => {
-          // Offline: serve the matching cached shell. The kiosk has its own
-          // HTML entry (with the kiosk manifest in its head), so /kiosk
-          // navigations fall back to it rather than the main index.html.
-          const fallback =
-            url.pathname === '/kiosk' || url.pathname.startsWith('/kiosk/')
-              ? '/kiosk.html'
-              : '/';
-          // Same rule on the way out: a cached entry that isn't HTML (one
-          // stored by an older worker, before the check above) is not a
-          // page, so fall through to the shell and let the SPA render.
-          return caches
-            .match(req)
-            .then((cached) => (cached && isHtml(cached) ? cached : caches.match(fallback)))
-            .then((res) => res || Response.error());
-        }),
+        .catch(() => shell().then((res) => res || Response.error())),
     );
     return;
   }
 
   event.respondWith(
-    caches.match(req).then((cached) => {
+    caches.match(req, OWN).then((cached) => {
       if (cached) {
-        // Background revalidate so a stale entry refreshes on next load.
-        fetch(req)
-          .then((res) => {
-            if (res && res.ok) {
-              caches.open(CACHE_NAME).then((c) => c.put(req, res.clone()));
-            }
-          })
-          .catch(() => {});
+        // Hashed bundles never change under their name; only the
+        // unhashed shell files (icons, manifests) are worth revalidating.
+        if (!url.pathname.startsWith('/assets/')) {
+          fetch(req)
+            .then((res) => {
+              if (res && res.ok) {
+                caches.open(CACHE_NAME).then((c) => c.put(req, res.clone()));
+              }
+            })
+            .catch(() => {});
+        }
         return cached;
       }
       return fetch(req)

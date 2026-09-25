@@ -526,6 +526,16 @@ function GridCore<T>({
     estimateSize: () => rowHeight,
     overscan: 12,
   });
+  // The rows stay ORDINARY table rows. The first cut made the <tbody>
+  // `display:block` and each row `position:absolute` at a fixed 48px pitch;
+  // Chromium wraps a block tbody in an anonymous cell in column 1, so the
+  // whole body rendered 32px wide and every row taller than the estimate
+  // overlapped the next (the "Users & access collapsed" bug). Instead, two
+  // spacer rows hold the place of the rows above and below the window, and
+  // every rendered row reports its real height back to the virtualizer.
+  const vItems = virtualize ? virtualizer.getVirtualItems() : [];
+  const padTop = vItems.length ? vItems[0]!.start : 0;
+  const padBottom = vItems.length ? virtualizer.getTotalSize() - vItems[vItems.length - 1]!.end : 0;
 
   /* ---- phones: cards ------------------------------------------------- */
   const primary = primaryOf(columns);
@@ -556,7 +566,7 @@ function GridCore<T>({
     return out;
   };
   const items: GridItem<T>[] = virtualize
-    ? virtualizer.getVirtualItems().map((v) => ({ kind: 'row', row: sorted[v.index]!, child: false, v }))
+    ? vItems.map((v) => ({ kind: 'row', row: sorted[v.index]!, child: false, v }))
     : groups
       ? groups.flatMap((g) => [
           { kind: 'group', group: g } as GridItem<T>,
@@ -830,15 +840,17 @@ function GridCore<T>({
             </ul>
           )}
 
-          {/* The table. Scrolls inside its own box only when virtualized. */}
+          {/* The table. Scrolls inside its own box only when virtualized —
+              and then the box is the ONLY scrollport, so the sticky header
+              stays put instead of scrolling away with the rows. */}
           {!showCards && (
             <div
               ref={scrollRef}
               className={cn(
-                virtualize && 'max-h-[70vh] overflow-y-auto rounded-md border border-navy-secondary',
+                virtualize && 'max-h-[70vh] overflow-auto rounded-md border border-navy-secondary',
               )}
             >
-              <Table caption={caption}>
+              <Table caption={caption} wrapperClassName={virtualize ? 'overflow-visible' : undefined}>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     {selectable && (
@@ -882,13 +894,12 @@ function GridCore<T>({
                     )}
                   </TableRow>
                 </TableHeader>
-                <TableBody
-                  style={
-                    virtualize
-                      ? { height: virtualizer.getTotalSize(), position: 'relative', display: 'block' }
-                      : undefined
-                  }
-                >
+                <TableBody>
+                  {padTop > 0 && (
+                    <tr aria-hidden="true" style={{ height: padTop }}>
+                      <td colSpan={colSpan} className="p-0" />
+                    </tr>
+                  )}
                   {items.map((item) => {
                     if (item.kind === 'group') {
                       // A heading row where the group changes — one table, so
@@ -935,19 +946,8 @@ function GridCore<T>({
                           child && 'bg-navy-secondary/[0.15] text-xs text-silver',
                           !child && rowClassName?.(row),
                         )}
-                        style={
-                          v
-                            ? {
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                display: 'table',
-                                tableLayout: 'fixed',
-                                transform: `translateY(${v.start}px)`,
-                              }
-                            : undefined
-                        }
+                        data-index={v ? v.index : undefined}
+                        ref={v ? virtualizer.measureElement : undefined}
                       >
                         {selectable && (
                           <TableCell className="w-8 pr-0" onClick={(e) => e.stopPropagation()}>
@@ -992,6 +992,11 @@ function GridCore<T>({
                       </TableRow>
                     );
                   })}
+                  {padBottom > 0 && (
+                    <tr aria-hidden="true" style={{ height: padBottom }}>
+                      <td colSpan={colSpan} className="p-0" />
+                    </tr>
+                  )}
                 </TableBody>
               </Table>
             </div>

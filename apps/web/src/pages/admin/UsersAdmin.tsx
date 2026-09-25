@@ -191,13 +191,19 @@ export function UsersAdmin() {
   };
 
 
+  // The filters are PART of the key. With a filter-less key one cache entry
+  // served every combination: a role-filtered fetch overwrote the unfiltered
+  // list (and vice versa), the persisted cache painted whichever fetch came
+  // last, and changing a filter fetched nothing until Refresh — on the page
+  // that decides who can sign in.
+  const listFilters: ListUsersFilters = {
+    q: appliedQ.trim() || undefined,
+    role: role || undefined,
+    status: status || undefined,
+  };
   const loadQuery = useQuery({
-    queryKey: ['UsersAdmin', 'rows'],
-    queryFn: () => listAdminUsers({
-        q: appliedQ.trim() || undefined,
-        role: role || undefined,
-        status: status || undefined,
-      }),
+    queryKey: ['UsersAdmin', 'rows', listFilters],
+    queryFn: () => listAdminUsers(listFilters),
   });
   const total: number | null = loadQuery.data?.total ?? null;
   const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load users.' : null;
