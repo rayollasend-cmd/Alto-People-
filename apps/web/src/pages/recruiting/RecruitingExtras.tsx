@@ -1376,7 +1376,25 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
               exportCsv={{ filename: 'job-postings' }}
               columns={[
                 { key: 'title', header: 'Title', accessor: (po) => po.title, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'slug', header: 'Slug', accessor: (po) => `/careers/${po.slug}`, sortable: true, className: 'font-mono text-xs' },
+                {
+                  key: 'slug',
+                  header: 'Slug',
+                  accessor: (po) => `/careers/${po.slug}`,
+                  sortable: true,
+                  className: 'font-mono text-xs',
+                  stopRowClick: true,
+                  // The address used to be printed with nowhere to go; the
+                  // careers page now exists, so it's a link. Only an open
+                  // posting renders publicly.
+                  cell: (po) =>
+                    po.status === 'OPEN' ? (
+                      <a href={`/careers/${po.slug}`} target="_blank" rel="noopener noreferrer" className="text-gold hover:underline">
+                        /careers/{po.slug}
+                      </a>
+                    ) : (
+                      <span className="text-silver">/careers/{po.slug}</span>
+                    ),
+                },
                 { key: 'location', header: 'Location', accessor: (po) => po.location, sortable: true, cardMeta: true, cell: (po) => po.location ?? '—' },
                 {
                   key: 'pay',

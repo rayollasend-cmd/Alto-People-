@@ -212,6 +212,8 @@ const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'Repo
 const KioskPage = lazyNamed(() => import('@/pages/kiosk/KioskPage'), 'KioskPage');
 const KioskAdmin = lazyNamed(() => import('@/pages/kiosk/KioskAdmin'), 'KioskAdmin');
 const HotlinePage = lazyNamed(() => import('@/pages/hotline/HotlinePage'), 'HotlinePage');
+const CareersListPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareersListPage');
+const CareerPostingPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareerPostingPage');
 
 // Hover-prefetch registry. The Sidebar (and any other navigator) looks
 // up the user's hovered link here and fires the chunk loader before the
@@ -546,6 +548,26 @@ export const router = createBrowserRouter([
     element: (
       <Suspense fallback={<PublicRouteFallback />}>
         <HotlinePage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // The public careers site — the address every job posting shows. No
+  // auth and no Layout: an applicant has no account.
+  {
+    path: '/careers',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <CareersListPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  {
+    path: '/careers/:slug',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <CareerPostingPage />
       </Suspense>
     ),
     errorElement: <RouterErrorPage />,
