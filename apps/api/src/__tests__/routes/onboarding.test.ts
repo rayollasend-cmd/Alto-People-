@@ -265,7 +265,9 @@ describe('DIRECT_DEPOSIT encrypts the account number', () => {
     expect(acct[0]).toBe(1);
     expect(decryptString(acct)).toBe('987654321');
     // Routing number stored plain (it's printed on every check)
-    expect((payout.routingNumberEnc as Buffer).toString('utf8')).toBe('121000248');
+    // Prisma 6 hands Bytes back as a Uint8Array, whose toString() ignores an
+    // encoding — decode through Buffer the way the routes do.
+    expect(Buffer.from(payout.routingNumberEnc!).toString('utf8')).toBe('121000248');
   });
 
   it('persists bankName and returns it unredacted from the status endpoint', async () => {

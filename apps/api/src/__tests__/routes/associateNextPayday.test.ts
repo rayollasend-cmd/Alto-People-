@@ -10,6 +10,8 @@ import {
   prisma,
   truncateAll,
 } from '../../../test/db.js';
+import { dateKeyInZone } from '../../lib/timeAnomalies.js';
+import { DEFAULT_TIMEZONE } from '../../lib/timezone.js';
 
 /**
  * GET /payroll/me/next-payday — the associate's next check and the days it
@@ -61,7 +63,9 @@ describe('GET /payroll/me/next-payday', () => {
     expect(nextPayday.schedule).toBe('Weekly (org)');
     const pay = new Date(`${nextPayday.payDate}T12:00:00Z`);
     expect(pay.getUTCDay()).toBe(5);
-    const today = new Date().toISOString().slice(0, 10);
+    // "Today" the way the route means it — the org calendar day, not UTC
+    // (between 8pm and midnight Eastern the UTC date is already tomorrow).
+    const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
     expect(nextPayday.payDate > today).toBe(true);
     const end = new Date(`${nextPayday.periodEnd}T12:00:00Z`);
     expect((pay.getTime() - end.getTime()) / 86_400_000).toBe(5);
