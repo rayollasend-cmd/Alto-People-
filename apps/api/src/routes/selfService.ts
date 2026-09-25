@@ -10,6 +10,7 @@ import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js
 import { enqueueAudit } from '../lib/audit.js';
 import { send } from '../lib/notifications.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from '../lib/notify.js';
+import { readyToWorkForAssociate } from '../lib/readyToWork.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
@@ -127,6 +128,15 @@ selfServiceRouter.put('/me/profile', async (req, res) => {
 });
 
 // ----- Employee number ----------------------------------------------------
+
+// The first-day kit: the store, its shift supervisors, and what happens
+// next — from the ready-to-work handoff that ran when the clock-in number
+// was issued (lib/readyToWork). Null until then, and null again once the
+// associate has punched in for the first time.
+selfServiceRouter.get('/me/ready-to-work', async (req, res) => {
+  const id = requireAssociate(req);
+  res.json({ kit: await readyToWorkForAssociate(id) });
+});
 
 selfServiceRouter.get('/me/employee-number', async (req, res) => {
   const id = requireAssociate(req);

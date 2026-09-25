@@ -34,6 +34,7 @@ import { startNoShowRiskCron } from './lib/noShowRisk.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
 import { startExecutiveDigestCron } from './lib/executiveDigest.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
+import { startReadyToWorkNudgeCron } from './lib/readyToWork.js';
 import { startWeekAheadCron } from './lib/weekAheadDigest.js';
 import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { startOfferLetterCron } from './lib/offerLetters.js';
@@ -93,6 +94,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startUploadsBackupCron();
   startShiftReminderCron();
   startScheduleDigestCron();
+  startReadyToWorkNudgeCron();
   startExecutiveDigestCron();
   startExecutiveAlertsCron();
   startRelayEscalationCron();

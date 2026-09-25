@@ -24,6 +24,7 @@ import {
 } from '../lib/kioskRateLimit.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
+import { startReadyToWorkHandoff } from '../lib/readyToWork.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
@@ -573,6 +574,18 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
           createdById: req.user!.id,
         },
       });
+      // The number is the moment a hire becomes deployable: hand them to
+      // their store and tell them who to call (lib/readyToWork). A handoff
+      // hiccup is logged, never surfaced — the number IS issued.
+      try {
+        await startReadyToWorkHandoff({
+          associateId: input.associateId,
+          clientId: input.clientId,
+          issuedById: req.user!.id,
+        });
+      } catch (err) {
+        console.warn('[kiosk] ready-to-work handoff failed:', err instanceof Error ? err.message : err);
+      }
       res.status(201).json({ id: created.id, employeeNumber: pin });
       return;
     } catch (err) {

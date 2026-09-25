@@ -61,6 +61,7 @@ import { teamRouter } from './routes/team.js';
 import { workflowsRouter } from './routes/workflows.js';
 import { customFieldsRouter } from './routes/customFields.js';
 import { selfServiceRouter } from './routes/selfService.js';
+import { readyToWorkRouter } from './routes/readyToWork.js';
 import { compensationRouter } from './routes/compensation.js';
 import { qualificationsRouter } from './routes/qualifications.js';
 import { projectsAndPayRouter } from './routes/projectsAndPay.js';
@@ -476,6 +477,9 @@ export function createApp() {
   // Phase 82 — associate self-service (no capability gate; uses
   // req.user.associateId on every route).
   app.use('/self', selfServiceRouter);
+  // Ready-to-work handoffs: a supervisor's queue of hires awaiting a first
+  // shift, and HR's view of who was told. Routes self-gate.
+  app.use('/ready-to-work', readyToWorkRouter);
   // Phase 83 — compensation: routes self-gate per-handler with view:comp
   // / manage:comp.
   app.use('/comp', compensationRouter);

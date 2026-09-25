@@ -45,6 +45,7 @@ import {
 import { hapticConfirm } from '@/lib/haptics';
 import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
+import { ReadyToWorkCard } from '@/components/ReadyToWorkCard';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
@@ -172,6 +173,9 @@ export function AssociateDashboard() {
           ActionNeededCard below already say, in ops jargon. */}
       <CelebrationRibbon />
       <OnboardingBanner />
+      {/* From the clock-in number to the first punch: where they work, who
+          runs the floor, and how to reach them. */}
+      <ReadyToWorkCard className="mb-4" />
 
       {/* The hero: their shift, in the tone of the moment — on the clock,
           late, coming up, or nothing scheduled. It replaced two cards

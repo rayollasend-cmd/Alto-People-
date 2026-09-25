@@ -122,7 +122,7 @@ export function nextReviewApplication(
 
 export function approveApplication(
   applicationId: string,
-  body: { hireDate: string }
+  body: { hireDate: string; acknowledgeWarnings?: boolean; locationId?: string }
 ): Promise<void> {
   return apiFetch<void>(
     `/onboarding/applications/${applicationId}/approve`,

@@ -563,6 +563,7 @@ model User {
   // Phase 99 — kiosk authorship (devices registered, PINs assigned).
   kioskDevicesCreated               KioskDevice[]                 @relation("KioskDeviceCreator")
   kioskPinsCreated                  KioskPin[]                    @relation("KioskPinCreator")
+  readyToWorkHandoffsIssued         ReadyToWorkHandoff[]          @relation("ReadyToWorkIssuer")
   kioskPunchesReviewed              KioskPunch[]                  @relation("KioskPunchReviewer")
   assetAssignmentsAssigned          AssetAssignment[]             @relation("AssetAssigner")
   assetAssignmentsReturned          AssetAssignment[]             @relation("AssetReturner")
@@ -693,6 +694,7 @@ model Client {
   users                  User[]
   policies               Policy[]
   templates              OnboardingTemplate[]
+  readyToWorkHandoffs    ReadyToWorkHandoff[]
   shifts                 Shift[]
   statements             ClientStatement[]
   fieldglassRegistrations FieldglassRegistration[]
@@ -826,6 +828,7 @@ model Location {
   @@index([clientId, isActive])
   @@index([deletedAt])
   rides                  Ride[]
+  readyToWorkHandoffs    ReadyToWorkHandoff[]
 }
 
 // A standing crew at a work site — "Front Beach Morning", "Overnight team".
@@ -1731,6 +1734,7 @@ model Associate {
   signatures               Signature[]               @relation("AssociateSignatures")
   backgroundChecks         BackgroundCheck[]
   drugTests                DrugTest[]
+  readyToWorkHandoff       ReadyToWorkHandoff?
   policyAcks               PolicyAcknowledgment[]
   i9Verification           I9Verification?
   w4Submission             W4Submission?
@@ -7998,4 +8002,35 @@ model UserKnownIp {
 
   @@unique([userId, ip])
   @@index([userId, lastSeenAt(sort: Desc)])
+}
+
+/// The ready-to-work handoff: the moment an associate's clock-in number was
+/// issued, the store it was issued for, and the shift supervisors who were
+/// told. One row per associate — re-issuing the number (a transfer) re-runs
+/// the handoff and rewrites the row. Closure is not stored: it is the
+/// associate's first assigned shift or first kiosk punch after issuedAt.
+model ReadyToWorkHandoff {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId           String    @unique @db.Uuid
+  clientId              String    @db.Uuid
+  locationId            String?   @db.Uuid
+  issuedById            String?   @db.Uuid
+  issuedAt              DateTime  @default(now()) @db.Timestamptz(6)
+  /// SHIFT_SUPERVISOR user ids the handoff reached.
+  supervisorUserIds     String[]  @default([])
+  /// No supervisor leads this store: every supervisor at the client was paged instead.
+  fallbackToClient      Boolean   @default(false)
+  associateNotifiedAt   DateTime? @db.Timestamptz(6)
+  supervisorsNotifiedAt DateTime? @db.Timestamptz(6)
+  nudgedAt              DateTime? @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  location  Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  issuedBy  User?     @relation("ReadyToWorkIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, locationId, issuedAt(sort: Desc)])
+  @@index([nudgedAt, supervisorsNotifiedAt])
 }

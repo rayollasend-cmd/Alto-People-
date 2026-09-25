@@ -871,6 +871,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
           },
         },
         client: { select: { name: true } },
+        location: { select: { name: true } },
         checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
       },
     });
@@ -919,6 +920,8 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       hireDate: row.associate.hireDate
         ? row.associate.hireDate.toISOString().slice(0, 10)
         : null,
+      locationId: row.locationId,
+      locationName: row.location?.name ?? null,
     };
     res.json(detail);
   } catch (err) {
@@ -1001,6 +1004,7 @@ async function approveOneApplication(
   applicationId: string,
   hireDate: string,
   acknowledgeWarnings: boolean,
+  locationId: string | null = null,
 ): Promise<void> {
   const app = await prisma.application.findFirst({
     where: { ...scopeApplications(req.user!), id: applicationId },
@@ -1090,6 +1094,36 @@ async function approveOneApplication(
   // Date-only — strip the time so a midday approval doesn't accidentally
   // backdate the hireDate to the previous day in some timezones.
   const hireDateValue = new Date(`${hireDate}T00:00:00.000Z`);
+  // The store must be known at approval when the client has more than one.
+  // The ready-to-work handoff (issued with the clock-in number) pages the
+  // supervisors of THAT store; a hire with no store pages nobody. A single
+  // store needs no choice; a chosen store is stamped on the application.
+  let storeId = app.locationId;
+  if (locationId) {
+    const chosen = await prisma.location.findFirst({
+      where: { id: locationId, clientId: app.clientId, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    if (!chosen) {
+      throw new HttpError(400, 'invalid_location', 'That store does not belong to this client.');
+    }
+    storeId = chosen.id;
+  }
+  if (!storeId) {
+    const stores = await prisma.location.findMany({
+      where: { clientId: app.clientId, deletedAt: null, isActive: true },
+      select: { id: true },
+      take: 2,
+    });
+    if (stores.length > 1) {
+      throw new HttpError(
+        409,
+        'store_required',
+        'Pick the store this associate will work at before approving.',
+      );
+    }
+    storeId = stores[0]?.id ?? null;
+  }
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
@@ -1112,7 +1146,10 @@ async function approveOneApplication(
     // Application has a Location. We close any pre-existing open
     // row first (re-hire / re-onboarding edge case) so the partial
     // unique index never trips.
-    if (app.locationId) {
+    if (storeId) {
+      if (storeId !== app.locationId) {
+        await tx.application.update({ where: { id: app.id }, data: { locationId: storeId } });
+      }
       // Guarded close: a hire date earlier than an assignment already open
       // (a re-hire approved with a backdated start, say) would otherwise
       // end that row before it began and trip the dates CHECK constraint.
@@ -1124,7 +1161,7 @@ async function approveOneApplication(
       await tx.associateAssignment.create({
         data: {
           associateId: app.associateId,
-          locationId: app.locationId,
+          locationId: storeId,
           startedAt: hireDateValue,
           reason: 'Onboarding approved',
           notedById: req.user!.id,
@@ -1237,6 +1274,7 @@ onboardingRouter.post(
         req.params.id,
         parsed.data.hireDate,
         parsed.data.acknowledgeWarnings ?? false,
+        parsed.data.locationId ?? null,
       );
       res.status(204).end();
     } catch (err) {

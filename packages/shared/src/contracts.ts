@@ -246,6 +246,10 @@ export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
   rejectedAt: z.string().datetime().nullable(),
   rejectionReason: z.string().nullable(),
   hireDate: z.string().date().nullable(),
+  /** The store the application names (the approve dialog asks for one when
+   *  this is null and the client has several). */
+  locationId: UuidSchema.nullable().optional(),
+  locationName: z.string().nullable().optional(),
 });
 export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 
@@ -254,6 +258,10 @@ export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 // approve dialog.
 export const ApproveApplicationInputSchema = z.object({
   hireDate: z.string().date(),
+  /** The store the hire will work at. Required (409 `store_required`) when
+   *  the application names none and the client has more than one store —
+   *  the ready-to-work handoff pages that store's supervisors. */
+  locationId: UuidSchema.optional(),
   /** Verification gaps (skipped tasks, unreviewed documents, incomplete
    *  I-9) make approval return 409 `approval_warnings` with the list —
    *  pass true to approve anyway. Forces a human to SEE what was never

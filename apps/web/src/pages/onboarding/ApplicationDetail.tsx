@@ -95,6 +95,9 @@ import {
 } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
+import { Select } from '@/components/ui/Select';
+import { listClientLocations } from '@/lib/clientsApi';
+import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
@@ -334,15 +337,17 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     }
   };
 
-  const handleApprove = async (hireDate: string, acknowledgeWarnings: boolean) => {
+  const handleApprove = async (
+    hireDate: string,
+    acknowledgeWarnings: boolean,
+    locationId?: string,
+  ) => {
     try {
-      // Widened variable (not a fresh literal) so the extra optional flag is
-      // structurally assignable to the client fn's `{ hireDate }` parameter —
-      // the API contract (ApproveApplicationInputSchema) accepts it.
-      const body: { hireDate: string; acknowledgeWarnings?: boolean } = {
+      const body: { hireDate: string; acknowledgeWarnings?: boolean; locationId?: string } = {
         hireDate,
       };
       if (acknowledgeWarnings) body.acknowledgeWarnings = true;
+      if (locationId) body.locationId = locationId;
       await approveApplication(detail.id, body);
       setApproveOpen(false);
       setApproveWarnings(null);
@@ -360,6 +365,13 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         // so open it too (no-op when the dialog triggered the attempt).
         setApproveWarnings(extractApprovalWarnings(err.details));
         setApproveOpen(true);
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'store_required') {
+        // A multi-store client with no store on the application: the
+        // dialog asks for one. The one-click header approve lands here.
+        setApproveOpen(true);
+        toast.message('Pick the store first.', { description: err.message });
         return;
       }
       const msg =
@@ -643,6 +655,8 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           if (!o) setApproveWarnings(null);
         }}
         defaultDate={detail.startDate ? detail.startDate.slice(0, 10) : null}
+        clientId={detail.clientId}
+        locationId={detail.locationId ?? null}
         warnings={approveWarnings}
         onConfirm={handleApprove}
       />
@@ -718,6 +732,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
       >
         {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
       </Badge>
+      {detail.status === 'APPROVED' && <ReadyToWorkLine associateId={detail.associateId} />}
       {detail.updatedAfterSubmitAt &&
         (detail.status === 'SUBMITTED' || detail.status === 'IN_REVIEW') && (
           <Badge
@@ -881,6 +896,8 @@ function ApproveDialog({
   onOpenChange,
   defaultDate,
   warnings,
+  clientId,
+  locationId,
   onConfirm,
 }: {
   open: boolean;
@@ -889,7 +906,10 @@ function ApproveDialog({
   /** Non-null after a 409 `approval_warnings` — switches the dialog into
    *  "Approve anyway" mode. */
   warnings: string[] | null;
-  onConfirm: (hireDate: string, acknowledgeWarnings: boolean) => Promise<void>;
+  /** The client, and the store the application already names (null = none). */
+  clientId: string;
+  locationId: string | null;
+  onConfirm: (hireDate: string, acknowledgeWarnings: boolean, locationId?: string) => Promise<void>;
 }) {
   // LOCAL today — the UTC slice prefilled tomorrow's date as the official
   // hire date for anyone approving after ~5-8pm west of UTC, and the hire
@@ -897,21 +917,35 @@ function ApproveDialog({
   const today = ymdLocal();
   const [hireDate, setHireDate] = useState(defaultDate ?? today);
   const [submitting, setSubmitting] = useState(false);
+  // A multi-store client needs the store named at approval: the ready-to-
+  // work handoff pages that store's supervisors when the clock-in number is
+  // issued. One store needs no choice; a named store is not asked again.
+  const [storeId, setStoreId] = useState('');
+  const storesQuery = useQuery({
+    queryKey: ['ApproveDialog', 'stores', clientId],
+    queryFn: () => listClientLocations(clientId),
+    enabled: open && !locationId,
+  });
+  const stores = storesQuery.data?.locations ?? [];
+  const needsStore = !locationId && stores.length > 1;
 
   // Re-seed when the dialog re-opens for a different application or after
   // the parent's defaultDate changes (e.g. picked a new application).
   useEffect(() => {
-    if (open) setHireDate(defaultDate ?? today);
+    if (open) {
+      setHireDate(defaultDate ?? today);
+      setStoreId('');
+    }
   }, [open, defaultDate, today]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (submitting || !hireDate) return;
+    if (submitting || !hireDate || (needsStore && !storeId)) return;
     setSubmitting(true);
     try {
       // Once warnings are on screen, resubmitting means the admin has read
       // and accepted them.
-      await onConfirm(hireDate, warnings !== null);
+      await onConfirm(hireDate, warnings !== null, needsStore ? storeId : undefined);
     } finally {
       setSubmitting(false);
     }
@@ -937,6 +971,25 @@ function ApproveDialog({
               />
             )}
           </Field>
+          {needsStore && (
+            <Field
+              label="Store"
+              required
+              hint="The store's shift supervisors are told when the clock-in number is issued."
+            >
+              {(p) => (
+                <Select value={storeId} onChange={(e) => setStoreId(e.target.value)} {...p}>
+                  <option value="">Pick a store…</option>
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.city ? ` — ${s.city}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
           {warnings && (
             <div
               role="alert"

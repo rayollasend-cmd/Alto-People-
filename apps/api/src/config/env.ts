@@ -133,6 +133,11 @@ const EnvSchema = z.object({
   // and 3 ever — the manual button stays uncapped. On by default (6h
   // scan). Set 0 to disable.
   STALE_NUDGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  /** Ready-to-work handoffs: how often to look for hires still without a
+   *  first shift (0 = off), and how long the store gets before it is nudged
+   *  again and Workforce is told. */
+  READY_TO_WORK_NUDGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  READY_TO_WORK_NUDGE_AFTER_HOURS: z.coerce.number().int().min(1).default(48),
   // Dormancy auto-deactivation (lib/dormancySweep.ts): associates with no
   // clock-ins, worked shifts, or upcoming schedule for DEACTIVATE_DAYS are
   // auto-deactivated (same pause as the manual button — one-click
