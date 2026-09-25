@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   CalendarClock,
@@ -219,18 +220,21 @@ export function ScheduleInterviewDialog({
   const [when, setWhen] = useState(defaultSlot);
   const [kitId, setKitId] = useState('');
   const [mine, setMine] = useState(true);
-  const [kits, setKits] = useState<InterviewKit[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const kitsQuery = useQuery({
+    queryKey: ['recruiting', 'interview-kits'],
+    queryFn: listInterviewKits,
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+  // A failed kit load still lets them schedule — just without a kit.
+  const kits: InterviewKit[] | null = kitsQuery.isError ? [] : (kitsQuery.data?.kits ?? null);
 
   useEffect(() => {
     if (!open) return;
     setWhen(defaultSlot());
     setMine(true);
-    if (kits) return;
-    listInterviewKits()
-      .then((r) => setKits(r.kits))
-      .catch(() => setKits([]));
-  }, [open, kits]);
+  }, [open]);
 
   const schedule = async () => {
     const at = new Date(when);
@@ -535,22 +539,18 @@ export function CandidateTimeline({
   /** Changes whenever something elsewhere in the drawer wrote an event. */
   refreshKey: string;
 }) {
-  const [events, setEvents] = useState<CandidateEvent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
-  const [reload, setReload] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    listCandidateEvents(candidateId)
-      .then((r) => live && setEvents(r.events))
-      .catch((err) => live && setError(why(err, 'Could not load the timeline.')));
-    return () => {
-      live = false;
-    };
-  }, [candidateId, refreshKey, reload]);
+  // refreshKey is part of the key: a write elsewhere in the drawer is a
+  // new timeline to read. The previous one stays up meanwhile, so the list
+  // doesn't blink to a skeleton on every change.
+  const eventsQuery = useQuery({
+    queryKey: ['recruiting', 'candidate', candidateId, 'events', refreshKey],
+    queryFn: () => listCandidateEvents(candidateId),
+    placeholderData: keepPreviousData,
+  });
+  const events: CandidateEvent[] | null = eventsQuery.data?.events ?? null;
+  const error = eventsQuery.error ? why(eventsQuery.error, 'Could not load the timeline.') : null;
 
   const addNote = async () => {
     if (!note.trim()) return;
@@ -558,7 +558,7 @@ export function CandidateTimeline({
     try {
       await addCandidateNote(candidateId, note.trim());
       setNote('');
-      setReload((n) => n + 1);
+      await eventsQuery.refetch();
     } catch (err) {
       toast.error(why(err, 'Could not save the note.'));
     } finally {

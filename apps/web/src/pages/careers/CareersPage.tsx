@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Briefcase, CheckCircle2, MapPin } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -6,7 +7,6 @@ import {
   applyToPosting,
   getCareerPosting,
   listCareerPostings,
-  type CareerPosting,
   type CareerPostingSummary,
 } from '@/lib/careersApi';
 import { fmtMoney } from '@/lib/format';
@@ -82,16 +82,14 @@ function Meta({ p }: { p: CareerPostingSummary }) {
 /* ===== /careers =========================================================== */
 
 export function CareersListPage() {
-  const [postings, setPostings] = useState<CareerPostingSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search] = useSearchParams();
   const source = search.get('source');
+  const q = useQuery({ queryKey: ['careers', 'postings'], queryFn: listCareerPostings });
+  const postings = q.data?.postings ?? null;
+  const error = q.error ? (q.error instanceof ApiError ? q.error.message : 'Could not load open jobs.') : null;
 
   useEffect(() => {
     document.title = 'Jobs at Alto';
-    listCareerPostings()
-      .then((r) => setPostings(r.postings))
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load open jobs.'));
   }, []);
 
   return (
@@ -138,24 +136,20 @@ export function CareersListPage() {
 export function CareerPostingPage() {
   const { slug = '' } = useParams();
   const [search] = useSearchParams();
-  const [posting, setPosting] = useState<CareerPosting | null>(null);
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ['careers', 'posting', slug],
+    queryFn: () => getCareerPosting(slug),
+    // A 404 is an answer — the job closed — not a blip to retry.
+    retry: (n, err) => !(err instanceof ApiError && err.status === 404) && n < 2,
+  });
+  const posting = q.data ?? null;
+  const missing = q.error instanceof ApiError && q.error.status === 404;
+  const loadError =
+    q.error && !missing ? (q.error instanceof ApiError ? q.error.message : 'Could not load this job.') : null;
 
   useEffect(() => {
-    setPosting(null);
-    setMissing(false);
-    setLoadError(null);
-    getCareerPosting(slug)
-      .then((p) => {
-        setPosting(p);
-        document.title = `${p.title} — Jobs at Alto`;
-      })
-      .catch((err) => {
-        if (err instanceof ApiError && err.status === 404) setMissing(true);
-        else setLoadError(err instanceof ApiError ? err.message : 'Could not load this job.');
-      });
-  }, [slug]);
+    if (posting) document.title = `${posting.title} — Jobs at Alto`;
+  }, [posting]);
 
   return (
     <Shell>

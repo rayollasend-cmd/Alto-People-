@@ -322,28 +322,22 @@ export function RecruitingHome() {
   // their accepted offer. The offer is looked up first so its job, start
   // date and pay arrive with the dialog rather than a beat after it.
   // undefined = still looking; null = no accepted offer.
-  const [hireOffer, setHireOffer] = useState<OfferRecord | null | undefined>(undefined);
   const hiringId = dialog?.kind === 'hire' ? dialog.candidate.id : null;
-  useEffect(() => {
-    if (!hiringId) {
-      setHireOffer(undefined);
-      return;
-    }
-    let live = true;
-    listOffers(hiringId)
-      .then((r) => {
-        if (!live) return;
-        const accepted = r.offers
-          .filter((o) => o.status === 'ACCEPTED')
-          .sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt));
-        setHireOffer(accepted[0] ?? null);
-      })
-      // No offer on file is still a hire — just without prefilled pay.
-      .catch(() => live && setHireOffer(null));
-    return () => {
-      live = false;
-    };
-  }, [hiringId]);
+  const hireOffersQuery = useQuery({
+    queryKey: ['recruiting', 'offers', hiringId],
+    queryFn: () => listOffers(hiringId!),
+    enabled: Boolean(hiringId),
+  });
+  const hireOffer: OfferRecord | null | undefined = !hiringId
+    ? undefined
+    : hireOffersQuery.isError
+      ? // No offer on file is still a hire — just without prefilled pay.
+        null
+      : hireOffersQuery.data === undefined
+        ? undefined
+        : (hireOffersQuery.data.offers
+            .filter((o) => o.status === 'ACCEPTED')
+            .sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt))[0] ?? null);
 
   // Who the invite dialog is hiring. Kept after it closes so the dialog
   // doesn't flip back to "New application" while it animates out.

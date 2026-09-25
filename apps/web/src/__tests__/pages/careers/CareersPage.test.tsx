@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/careersApi', () => ({
   listCareerPostings: vi.fn(),
@@ -32,12 +33,14 @@ const STOCKER = {
 
 function renderAt(path: string) {
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/careers" element={<CareersListPage />} />
-        <Route path="/careers/:slug" element={<CareerPostingPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/careers" element={<CareersListPage />} />
+          <Route path="/careers/:slug" element={<CareerPostingPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   return userEvent.setup();
 }
