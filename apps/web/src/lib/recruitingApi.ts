@@ -10,6 +10,7 @@ import type {
   CandidateListResponse,
   CandidateStage,
   CandidateUpdateInput,
+  RecruiterHome,
   RecruitingAnalytics,
   RecruitingSourceSpend,
   RecruitingSourceSpendInput,
@@ -152,4 +153,9 @@ export function saveSourceSpend(body: RecruitingSourceSpendInput): Promise<{ id:
 
 export function deleteSourceSpend(id: string): Promise<void> {
   return apiFetch<void>(`/recruiting/source-spend/${id}`, { method: 'DELETE' });
+}
+
+/** The recruiter's dashboard: today, new, waiting on you and on others, the numbers. */
+export function getRecruiterHome(): Promise<RecruiterHome> {
+  return apiFetch<RecruiterHome>('/recruiting/home');
 }

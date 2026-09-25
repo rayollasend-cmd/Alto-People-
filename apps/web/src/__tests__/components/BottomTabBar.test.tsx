@@ -74,6 +74,16 @@ describe('<BottomTabBar>', () => {
     expect(screen.getByRole('navigation', { name: /primary/i }).className).toContain('lg:hidden');
   });
 
+  it('gives the recruiter their pipeline, messages and onboarding — not the scheduler’s tabs', () => {
+    renderBar([...ROLE_CAPABILITIES.INTERNAL_RECRUITER], 'INTERNAL_RECRUITER');
+    expect(screen.getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: /^recruiting$/i })).toHaveAttribute('href', '/recruiting');
+    expect(screen.getByRole('link', { name: /messages/i })).toHaveAttribute('href', '/messages');
+    expect(screen.getByRole('link', { name: /^onboarding$/i })).toHaveAttribute('href', '/onboarding');
+    expect(screen.queryByRole('link', { name: /schedule/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^time$/i })).not.toBeInTheDocument();
+  });
+
   it('gives the driver their runs and messages', () => {
     renderBar([...ROLE_CAPABILITIES.DRIVER], 'DRIVER');
     expect(screen.getByRole('link', { name: /my runs/i })).toHaveAttribute('href', '/');

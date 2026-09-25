@@ -4542,6 +4542,186 @@ export const RecruitingAnalyticsSchema = z.object({
 });
 export type RecruitingAnalytics = z.infer<typeof RecruitingAnalyticsSchema>;
 
+/* ----- The recruiter's home ------------------------------------------------ *
+ * One round trip for the recruiter's dashboard: today's interviews, who
+ * applied, what is waiting on the recruiter and what is waiting on someone
+ * else, the pipeline and open postings, the numbers, and recent activity.
+ * Lists are the first few; `total` counts all of them.
+ * ------------------------------------------------------------------------- */
+
+const HomeCandidateRef = {
+  candidateId: z.string().uuid(),
+  candidateName: z.string(),
+};
+
+export const RecruiterHomeSchema = z.object({
+  interviewsToday: z.array(
+    z.object({
+      id: z.string().uuid(),
+      ...HomeCandidateRef,
+      position: z.string().nullable(),
+      scheduledFor: z.string(),
+      durationMinutes: z.number().int(),
+      location: z.string().nullable(),
+      interviewerName: z.string().nullable(),
+      mine: z.boolean(),
+      /** upcoming; done (scored); needs_score (its time has passed, no scorecard). */
+      state: z.enum(['upcoming', 'done', 'needs_score']),
+    }),
+  ),
+  newApplicants: z.object({
+    last24h: z.number().int(),
+    last7d: z.number().int(),
+    /** The last 7 days, by source (null = not recorded). */
+    bySource: z.array(z.object({ source: z.string().nullable(), count: z.number().int() })),
+    recent: z.array(
+      z.object({
+        ...HomeCandidateRef,
+        position: z.string().nullable(),
+        source: z.string().nullable(),
+        postingTitle: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
+  }),
+  waitingOnYou: z.object({
+    toScore: z.object({
+      total: z.number().int(),
+      mine: z.number().int(),
+      items: z.array(
+        z.object({
+          interviewId: z.string().uuid(),
+          ...HomeCandidateRef,
+          scheduledFor: z.string(),
+          interviewerName: z.string().nullable(),
+          mine: z.boolean(),
+        }),
+      ),
+    }),
+    stuck: z.object({
+      total: z.number().int(),
+      afterDays: z.number().int(),
+      items: z.array(
+        z.object({ ...HomeCandidateRef, position: z.string().nullable(), stage: z.string(), daysInStage: z.number().int() }),
+      ),
+    }),
+    /** A client approved them and no offer has gone out since. */
+    clientApproved: z.array(
+      z.object({
+        submittalId: z.string().uuid(),
+        ...HomeCandidateRef,
+        clientName: z.string(),
+        storeName: z.string().nullable(),
+        feedback: z.string().nullable(),
+        decidedAt: z.string(),
+      }),
+    ),
+    /** Signed their offer; not hired yet. */
+    readyToHire: z.array(
+      z.object({
+        offerId: z.string().uuid(),
+        ...HomeCandidateRef,
+        jobTitle: z.string(),
+        clientName: z.string(),
+        startDate: z.string(),
+        acceptedAt: z.string().nullable(),
+      }),
+    ),
+    /** Held for pay approval, drafted by someone else — yours to approve. */
+    offersToApprove: z.array(
+      z.object({
+        offerId: z.string().uuid(),
+        ...HomeCandidateRef,
+        jobTitle: z.string(),
+        approvalNote: z.string().nullable(),
+      }),
+    ),
+  }),
+  waitingOnOthers: z.object({
+    withClients: z.object({
+      total: z.number().int(),
+      items: z.array(
+        z.object({
+          submittalId: z.string().uuid(),
+          ...HomeCandidateRef,
+          clientName: z.string(),
+          storeName: z.string().nullable(),
+          sentAt: z.string(),
+          days: z.number().int(),
+        }),
+      ),
+    }),
+    awaitingSignature: z.object({
+      total: z.number().int(),
+      items: z.array(
+        z.object({
+          offerId: z.string().uuid(),
+          ...HomeCandidateRef,
+          jobTitle: z.string(),
+          sentAt: z.string().nullable(),
+          expiresAt: z.string().nullable(),
+          /** Expires within three days. */
+          expiringSoon: z.boolean(),
+        }),
+      ),
+    }),
+    /** Hired, invited to onboarding, not started. */
+    onboardingNotStarted: z.object({
+      total: z.number().int(),
+      items: z.array(
+        z.object({
+          applicationId: z.string().uuid(),
+          ...HomeCandidateRef,
+          clientName: z.string(),
+          invitedAt: z.string(),
+          days: z.number().int(),
+        }),
+      ),
+    }),
+  }),
+  pipeline: z.object({
+    APPLIED: z.number().int(),
+    SCREENING: z.number().int(),
+    INTERVIEW: z.number().int(),
+    OFFER: z.number().int(),
+  }),
+  postings: z.object({
+    total: z.number().int(),
+    items: z.array(
+      z.object({
+        id: z.string().uuid(),
+        title: z.string(),
+        clientName: z.string().nullable(),
+        openings: z.number().int(),
+        hired: z.number().int(),
+        applicants: z.number().int(),
+        applicants7d: z.number().int(),
+        daysOpen: z.number().int().nullable(),
+      }),
+    ),
+  }),
+  numbers: z.object({
+    hiresThisMonth: z.number().int(),
+    hiresLastMonth: z.number().int(),
+    medianDaysToHire: z.number().nullable(),
+    offerAcceptancePct: z.number().nullable(),
+    offersDecided: z.number().int(),
+  }),
+  activity: z.array(
+    z.object({
+      id: z.string().uuid(),
+      ...HomeCandidateRef,
+      kind: CandidateEventKindSchema,
+      fromStage: CandidateStageSchema.nullable(),
+      toStage: CandidateStageSchema.nullable(),
+      body: z.string().nullable(),
+      actorName: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+export type RecruiterHome = z.infer<typeof RecruiterHomeSchema>;
+
 export const RecruitingSourceSpendSchema = z.object({
   id: z.string().uuid(),
   source: z.string(),

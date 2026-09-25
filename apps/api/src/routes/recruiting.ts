@@ -13,6 +13,7 @@ import {
   CandidateFiltersSchema,
   RecruitingAnalyticsSchema,
   RecruitingSourceSpendInputSchema,
+  RecruiterHomeSchema,
   RecruitingSummarySchema,
   hasCapability,
   type Candidate,
@@ -33,6 +34,7 @@ import { inviteOneApplicant } from './onboarding.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { notifyUser } from '../lib/notify.js';
 import { computeRecruitingAnalytics, sourceKey } from '../lib/recruitingAnalytics.js';
+import { computeRecruiterHome } from '../lib/recruiterHome.js';
 
 export const recruitingRouter = Router();
 
@@ -193,6 +195,15 @@ recruitingRouter.get('/candidates/board', async (req, res, next) => {
 
 /* ===== The recruiter's dashboard ======================================== */
 
+
+/** GET /recruiting/home — the recruiter's dashboard (see lib/recruiterHome). */
+recruitingRouter.get('/home', async (req, res, next) => {
+  try {
+    res.json(RecruiterHomeSchema.parse(await computeRecruiterHome(req.user!)));
+  } catch (err) {
+    next(err);
+  }
+});
 
 recruitingRouter.get('/summary', async (_req, res, next) => {
   try {

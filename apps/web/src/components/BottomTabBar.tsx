@@ -9,12 +9,14 @@ import {
   Bus,
   Calendar,
   CalendarOff,
+  ClipboardList,
   DollarSign,
   Inbox,
   Menu,
   MessageSquare,
   Store,
   Timer,
+  UserPlus,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -92,6 +94,17 @@ const SCHEDULER_TABS: TabDef[] = [
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/approvals', label: 'Approvals', icon: Inbox, requires: 'manage:scheduling' },
   { path: '/time-attendance', label: 'Time', icon: Timer, requires: 'view:time' },
+];
+
+/** The recruiter: their day on Home, the pipeline, messages, and the new
+ *  hires they hand to onboarding. They hold scheduling rights, so they
+ *  used to get the scheduler's tabs — Schedule, Approvals, Time — and
+ *  their own pipeline was behind More. */
+const RECRUITER_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/recruiting', label: 'Recruiting', icon: UserPlus, requires: 'view:recruiting' },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+  { path: '/onboarding', label: 'Onboarding', icon: ClipboardList, requires: 'view:onboarding' },
 ];
 
 /** The shift supervisor's floor, the store manager's grammar: the floor
@@ -182,6 +195,8 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
             ? user.regionId && !user.clientId
               ? REGION_TABS
               : PORTAL_TABS
+            : user?.role === 'INTERNAL_RECRUITER'
+            ? RECRUITER_TABS
             : can('manage:scheduling')
             ? SCHEDULER_TABS
             : DEFAULT_TABS;

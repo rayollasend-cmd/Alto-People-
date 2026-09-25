@@ -250,6 +250,13 @@ export function RecruitingHome() {
     [setParam],
   );
 
+  // ?new=1 — "New candidate" from the dashboard — opens the form, once.
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return;
+    if (canManage) setShowCreate(true);
+    setParam('new', null, { replace: true });
+  }, [searchParams, canManage, setParam]);
+
   const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);

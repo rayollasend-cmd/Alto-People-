@@ -27,6 +27,9 @@ const RegionHome = lazy(() => import('./region/RegionHome').then((m) => ({ defau
 const FinanceDashboard = lazy(() =>
   import('./FinanceDashboard').then((m) => ({ default: m.FinanceDashboard })),
 );
+const RecruiterDashboard = lazy(() =>
+  import('./RecruiterDashboard').then((m) => ({ default: m.RecruiterDashboard })),
+);
 const WorkforceDashboard = lazy(() =>
   import('./WorkforceDashboard').then((m) => ({ default: m.WorkforceDashboard })),
 );
@@ -56,6 +59,8 @@ function DashboardFallback() {
  *   FLOOR_SUPERVISOR → the same floor, watch-only (no scheduling reads)
  *   DRIVER           → their van runs today: on board / no-show
  *   TRANSPORTATION_DIRECTOR → the transportation command center
+ *   INTERNAL_RECRUITER → the recruiter's day: interviews, applicants,
+ *                      what's waiting on them and on others
  *   anyone else      → org-wide AdminDashboard, role-filtered internally
  */
 export function Dashboard() {
@@ -77,6 +82,8 @@ export function Dashboard() {
                 ? FinanceDashboard
                 : user?.role === 'WORKFORCE_MANAGER'
                   ? WorkforceDashboard
+                  : user?.role === 'INTERNAL_RECRUITER'
+                    ? RecruiterDashboard
                   : user?.role === 'DRIVER'
                     ? DriverHome
                     : user?.role === 'TRANSPORTATION_DIRECTOR'

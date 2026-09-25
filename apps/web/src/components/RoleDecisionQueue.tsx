@@ -75,7 +75,18 @@ function ageTone(ageDays: number | null): string {
   return 'text-silver/60';
 }
 
-export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: string }) {
+export function RoleDecisionQueue({
+  title = 'Needs your decision',
+  hideWhenEmpty = false,
+}: {
+  title?: string;
+  /**
+   * Render nothing when the queue is empty. A page with its own "waiting
+   * on you" (the recruiter's) must not also say "nothing needs your
+   * decision" — this queue only knows its own kinds of decision.
+   */
+  hideWhenEmpty?: boolean;
+}) {
   const { user } = useAuth();
   const [rows, setRows] = useState<RoleDecision[] | null>(null);
   const [error, setError] = useState(false);
@@ -211,6 +222,7 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
   if (error) return null;
   if (user?.role === 'CLIENT_PORTAL') return null;
   if (rows !== null && rows.length === 0) {
+    if (hideWhenEmpty) return null;
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
         <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />

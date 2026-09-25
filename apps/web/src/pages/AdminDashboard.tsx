@@ -53,7 +53,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
-import { RecruitingPulse } from '@/components/RecruitingPulse';
 import { ClockStrip } from '@/components/ClockStrip';
 
 /**
@@ -107,10 +106,16 @@ const firstNameFromEmail = (email: string): string => {
  * to a humanized version of the dotted code when the verb isn't mapped.
  */
 const ACTION_VERB: Record<string, string> = {
+  // The server writes `auth.login`; `auth.login_succeeded` was its old
+  // name, and the feed had been printing a bare "login" ever since.
+  'auth.login': 'signed in',
   'auth.login_succeeded': 'signed in',
   'auth.login_failed': 'failed to sign in',
   'auth.logout': 'signed out',
+  'auth.role_switched': 'switched roles',
   'auth.password_changed': 'changed their password',
+  'auth.password_reset_completed': 'reset their password',
+  'auth.sessions_revoked': 'signed out everywhere',
   'application.created': 'opened a new application',
   'application.submitted': 'submitted an application',
   'application.approved': 'approved an application',
@@ -238,10 +243,6 @@ export function AdminDashboard() {
 
       <RoleDecisionQueue />
       <MyPlanCard />
-
-      {/* The recruiter's day is the pipeline; the subtitle promised it and
-          the page used to show none of it. */}
-      {role === 'INTERNAL_RECRUITER' && can('view:recruiting') && <RecruitingPulse />}
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
@@ -383,21 +384,21 @@ function ActionRequiredSection({
   const items: ActionItem[] = useMemo(() => {
     if (!kpis) return [];
     const xs: ActionItem[] = [];
-    if (canManageOnboarding && kpis.pendingOnboardingApplications > 0) {
+    // Submitted and waiting for HR. It used to count drafts too — new
+    // hires who haven't started their paperwork, nothing to review — and
+    // the link then opened the submitted list, empty.
+    const toReview = kpis.applicationStatusCounts.SUBMITTED ?? 0;
+    if (canManageOnboarding && toReview > 0) {
       xs.push({
-        count: kpis.pendingOnboardingApplications,
-        label:
-          kpis.pendingOnboardingApplications === 1
-            ? 'Application to review'
-            : 'Applications to review',
-        hint: 'Move them through onboarding.',
+        count: toReview,
+        label: toReview === 1 ? 'Application to review' : 'Applications to review',
+        hint: 'Submitted and waiting on you.',
         // Straight to the review slice — the URL param beats the user's
         // persisted status chip on the applications list.
         to: '/onboarding?status=SUBMITTED',
         cta: 'Open onboarding',
         icon: ClipboardList,
-        severity:
-          kpis.pendingOnboardingApplications > 10 ? 'urgent' : 'attention',
+        severity: toReview > 10 ? 'urgent' : 'attention',
       });
     }
     if (canManageCompliance && openIncidents > 0) {
