@@ -13,6 +13,7 @@ import {
   Store,
   Users,
 } from 'lucide-react';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { onLiveEvent } from '@/lib/liveEvents';
@@ -49,6 +50,15 @@ import {
 } from '@/components/ui/Dialog';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 
+
+/**
+ * What a failed send says. A reason the server gave on purpose ("Write
+ * something.") is shown as is; a crash or a lost connection isn't the
+ * user's to read — they're told their message is still there to retry.
+ */
+function failureText(err: unknown, fallback: string): string {
+  return err instanceof ApiError && err.status < 500 ? err.message : fallback;
+}
 /**
  * Messages — the store manager texts the supervisor on the floor and the
  * thread is the record. Two panes on iPad and web (inbox left, thread
@@ -62,10 +72,16 @@ import { downloadStatementFile } from '@/pages/clients/statementsShared';
 const photoUrl = (p: MessagePerson) => p.photoUrl;
 
 /**
- * The messenger fills the shell's <main> exactly. Phone chrome (topbar +
- * notch, safe areas, the tab bar) varies by device, so the height is
- * measured off <main> instead of a magic calc — the composer can never
- * fall below the fold behind a nested scroller.
+ * The messenger fills what's left of the shell's <main> exactly. Phone
+ * chrome (topbar + notch, safe areas, the tab bar) varies by device, so
+ * the height is measured off <main> instead of a magic calc — the
+ * composer can never fall below the fold behind a nested scroller.
+ *
+ * "What's left": anything above the messenger in <main> — the "Install
+ * Alto" banner, on a phone that hasn't installed the app — is taken off.
+ * It used to fill <main>'s whole height from wherever it started, so the
+ * banner pushed the composer down under the tab bar, reachable only by
+ * scrolling the page — and a swipe in a chat scrolls the messages.
  */
 function useFillMain() {
   const ref = useRef<HTMLDivElement>(null);
@@ -76,12 +92,21 @@ function useFillMain() {
     if (!el || !main) return;
     const apply = () => {
       const cs = getComputedStyle(main);
-      const h = main.clientHeight - parseFloat(cs.paddingTop || '0') - parseFloat(cs.paddingBottom || '0');
-      if (Number.isFinite(h) && h > 0) setHeight(Math.max(360, Math.floor(h)));
+      // How far into <main>'s content the messenger starts: its top
+      // padding plus whatever sits above it.
+      const above = el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+      const h = main.clientHeight - above - parseFloat(cs.paddingBottom || '0');
+      if (Number.isFinite(h) && h > 0) setHeight(Math.max(320, Math.floor(h)));
     };
     apply();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
     ro?.observe(main);
+    // What sits above the messenger — the install banner's slot, beside
+    // the page in <main> — grows when a banner shows and collapses when
+    // it's dismissed; watch every sibling along the way up.
+    for (let a: Element = el; a.parentElement && a !== main; a = a.parentElement) {
+      for (const sib of Array.from(a.parentElement.children)) if (sib !== a) ro?.observe(sib);
+    }
     window.addEventListener('resize', apply);
     return () => {
       ro?.disconnect();
@@ -346,7 +371,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
       setDraft('');
       await queryClient.invalidateQueries({ queryKey: ['messages'] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('msg.sendFailed'));
+      toast.error(failureText(err, t('msg.sendFailed')));
     } finally {
       setBusy(false);
     }
@@ -359,7 +384,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
       setDraft('');
       await queryClient.invalidateQueries({ queryKey: ['messages'] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('msg.sendFailed'));
+      toast.error(failureText(err, t('msg.sendFailed')));
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -511,7 +536,7 @@ function Bubble({ m, showSender }: { m: MessageRow; showSender: boolean }) {
           </a>
         )}
         {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
-        <div className={cn('mt-0.5 text-2xs tabular-nums', m.mine ? 'text-right text-white/50' : 'text-silver/50')} title={fmtDateTime(m.createdAt)}>
+        <div className={cn('mt-0.5 text-2xs tabular-nums text-silver', m.mine && 'text-right')} title={fmtDateTime(m.createdAt)}>
           {fmtTime(m.createdAt)}
         </div>
       </div>
@@ -569,7 +594,7 @@ function ComposeDialog({
       });
       onStarted(r.id);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('msg.startFailed'));
+      toast.error(failureText(err, t('msg.startFailed')));
     } finally {
       setBusy(false);
     }
