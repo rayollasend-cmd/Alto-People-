@@ -3,7 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import type { CandidateStage } from '@prisma/client';
 import { createApp } from '../../app.js';
-import { AUTO_CLOSE_REASON, closeQuietCandidates } from '../../lib/recruitingCleanup.js';
+import { AUTO_CLOSE_REASON, GRACE_DAYS, closeQuietCandidates, runRecruitingCleanup } from '../../lib/recruitingCleanup.js';
 import { DEFAULT_TEST_PASSWORD, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -72,6 +72,8 @@ describe('quiet candidates close on their own', () => {
   });
 
   it('warns on the dashboard a few days first, and reopening is moving them back', async () => {
+    // Long past the first sweep's grace period.
+    await prisma.orgSetting.create({ data: { id: 'singleton', recruitingCleanupSince: ago(60) } });
     const { user } = await createUser({ role: 'INTERNAL_RECRUITER' });
     const a = await loginAs(user.email);
     const soon = await cand('Soon', 'SCREENING', 27);
@@ -87,6 +89,40 @@ describe('quiet candidates close on their own', () => {
     const back = await a.post(`/recruiting/candidates/${gone.id}/advance`).send({ stage: 'APPLIED' });
     expect(back.status).toBe(200);
     expect(back.body.stage).toBe('APPLIED');
+  });
+});
+
+describe('the first sweep closes nothing without warning', () => {
+  it('starts a grace period: the overdue show as closing when it ends, and close after', async () => {
+    const { user } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    const a = await loginAs(user.email);
+    const overdue = await cand('Overdue', 'APPLIED', 90);
+    const soon = await cand('Soon', 'SCREENING', 27);
+
+    // Day one: the clock starts, nothing closes.
+    const first = await runRecruitingCleanup();
+    expect(first).toMatchObject({ candidatesClosed: 0, invitesExpired: 0 });
+    expect(first.graceUntil).not.toBeNull();
+    expect((await prisma.candidate.findUniqueOrThrow({ where: { id: overdue.id } })).stage).toBe('APPLIED');
+    const since = (await prisma.orgSetting.findUniqueOrThrow({ where: { id: 'singleton' } })).recruitingCleanupSince!;
+
+    // Both are on the dashboard, and neither closes before the grace ends.
+    const home = (await a.get('/recruiting/home')).body;
+    expect(home.waitingOnYou.closingSoon.total).toBe(2);
+    const graceEnds = since.getTime() + GRACE_DAYS * DAY;
+    for (const item of home.waitingOnYou.closingSoon.items) {
+      expect(Date.parse(item.closesAt)).toBe(graceEnds);
+    }
+
+    // A later sweep doesn't restart the clock.
+    await runRecruitingCleanup(new Date(Date.now() + 2 * DAY));
+    expect((await prisma.orgSetting.findUniqueOrThrow({ where: { id: 'singleton' } })).recruitingCleanupSince).toEqual(since);
+    expect((await prisma.candidate.findUniqueOrThrow({ where: { id: overdue.id } })).stage).toBe('APPLIED');
+
+    // Once it's over, both close.
+    const after = await runRecruitingCleanup(new Date(graceEnds + 60_000));
+    expect(after.candidatesClosed).toBe(2);
+    expect((await prisma.candidate.findUniqueOrThrow({ where: { id: soon.id } })).stage).toBe('WITHDRAWN');
   });
 });
 

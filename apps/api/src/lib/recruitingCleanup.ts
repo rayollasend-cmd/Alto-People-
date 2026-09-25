@@ -21,13 +21,41 @@ import { expireStaleInvites } from './onboardingUndo.js';
  *
  * The recruiter sees who is CLOSING_SOON_DAYS from closing on their
  * dashboard first, so nobody closes without warning.
+ *
+ * That includes the day the clean-up first runs somewhere: everyone
+ * already past the limit would close at once, unannounced. So the first
+ * sweep starts a GRACE_DAYS clock (OrgSetting.recruitingCleanupSince);
+ * until it runs out nothing closes, and the overdue show as closing when
+ * it ends. Expired onboarding invites wait for the same clock.
  */
 
 export const QUIET_AFTER_DAYS = 30;
 export const CLOSING_SOON_DAYS = 5;
 export const AUTO_CLOSE_REASON = `No response for ${QUIET_AFTER_DAYS} days — closed automatically`;
+/** How long the first sweep waits before closing anything. */
+export const GRACE_DAYS = CLOSING_SOON_DAYS;
 
 const DAY = 86_400_000;
+
+/**
+ * The earliest anything may close: GRACE_DAYS after the first sweep here —
+ * or after now, when no sweep has run yet (the first one is about to).
+ */
+export async function closingStartsAt(now: Date): Promise<Date> {
+  const row = await prisma.orgSetting.findUnique({ where: { id: 'singleton' }, select: { recruitingCleanupSince: true } });
+  const since = row?.recruitingCleanupSince ?? now;
+  return new Date(since.getTime() + GRACE_DAYS * DAY);
+}
+
+/** Start the grace clock on the first sweep; later sweeps leave it be. Safe to race. */
+async function startGraceClock(now: Date): Promise<Date> {
+  await prisma.orgSetting.createMany({ data: [{ id: 'singleton' }], skipDuplicates: true });
+  await prisma.orgSetting.updateMany({
+    where: { id: 'singleton', recruitingCleanupSince: null },
+    data: { recruitingCleanupSince: now },
+  });
+  return closingStartsAt(now);
+}
 const OPEN: CandidateStage[] = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER'];
 
 export interface QuietCandidate {
@@ -43,10 +71,16 @@ export interface QuietCandidate {
 }
 
 /**
- * Open-stage candidates whose last activity is before `before` (and, when
- * given, on or after `after`), with nothing pending. Oldest first.
+ * Open-stage candidates whose last activity is before `before`, with
+ * nothing pending. Oldest first. `closingStartsAt` holds everyone's close
+ * date back to the end of the grace period.
  */
-export async function quietCandidates(opts: { now: Date; before: Date; after?: Date; take?: number }): Promise<QuietCandidate[]> {
+export async function quietCandidates(opts: {
+  now: Date;
+  before: Date;
+  closingStartsAt?: Date;
+  take?: number;
+}): Promise<QuietCandidate[]> {
   const rows = await prisma.candidate.findMany({
     // A stage change is activity, so anyone who moved since `before` is
     // out already; the timeline decides for the rest.
@@ -71,7 +105,7 @@ export async function quietCandidates(opts: { now: Date; before: Date; after?: D
     if (c.interviews.length || c.offers.length || c.submittals.length) continue;
     const last = c.events[0] && c.events[0].createdAt > c.stageChangedAt ? c.events[0].createdAt : c.stageChangedAt;
     if (last >= opts.before) continue;
-    if (opts.after && last < opts.after) continue;
+    const due = last.getTime() + QUIET_AFTER_DAYS * DAY;
     out.push({
       id: c.id,
       firstName: c.firstName,
@@ -79,25 +113,35 @@ export async function quietCandidates(opts: { now: Date; before: Date; after?: D
       position: c.position,
       stage: c.stage,
       lastActivity: last,
-      closesAt: new Date(last.getTime() + QUIET_AFTER_DAYS * DAY),
+      closesAt: new Date(Math.max(due, opts.closingStartsAt?.getTime() ?? 0)),
     });
   }
   return out;
 }
 
-/** Who closes within CLOSING_SOON_DAYS — the recruiter's warning. */
-export function closingSoon(now: Date, take = 1000): Promise<QuietCandidate[]> {
+/**
+ * Who closes within CLOSING_SOON_DAYS — the recruiter's warning. Anyone
+ * already past the limit is on it too: during the grace period they close
+ * when it ends, and after it the next sweep takes them.
+ */
+export async function closingSoon(now: Date, take = 1000): Promise<QuietCandidate[]> {
   return quietCandidates({
     now,
     before: new Date(now.getTime() - (QUIET_AFTER_DAYS - CLOSING_SOON_DAYS) * DAY),
-    after: new Date(now.getTime() - QUIET_AFTER_DAYS * DAY),
+    closingStartsAt: await closingStartsAt(now),
     take,
   });
 }
 
-/** Close everyone quiet for QUIET_AFTER_DAYS. Returns how many closed. */
-export async function closeQuietCandidates(now = new Date()): Promise<number> {
-  const due = await quietCandidates({ now, before: new Date(now.getTime() - QUIET_AFTER_DAYS * DAY) });
+/**
+ * Close everyone quiet for QUIET_AFTER_DAYS whose close date has come.
+ * The sweep passes `closingStartsAt`; without it there's no grace period.
+ * Returns how many closed.
+ */
+export async function closeQuietCandidates(now = new Date(), startsAt?: Date): Promise<number> {
+  const due = (
+    await quietCandidates({ now, before: new Date(now.getTime() - QUIET_AFTER_DAYS * DAY), closingStartsAt: startsAt })
+  ).filter((c) => c.closesAt <= now);
   let closed = 0;
   for (const c of due) {
     const done = await prisma.$transaction(async (tx) => {
@@ -139,20 +183,32 @@ export async function closeQuietCandidates(now = new Date()): Promise<number> {
 
 let timer: NodeJS.Timeout | null = null;
 
-/** Close quiet candidates and expire invites nobody answered. */
-export async function runRecruitingCleanup(now = new Date()): Promise<{ candidatesClosed: number; invitesExpired: number }> {
-  const candidatesClosed = await closeQuietCandidates(now);
+/**
+ * Close quiet candidates and expire invites nobody answered — once the
+ * grace period that the first sweep starts has run out.
+ */
+export async function runRecruitingCleanup(
+  now = new Date(),
+): Promise<{ candidatesClosed: number; invitesExpired: number; graceUntil: Date | null }> {
+  const startsAt = await startGraceClock(now);
+  if (now < startsAt) return { candidatesClosed: 0, invitesExpired: 0, graceUntil: startsAt };
+  const candidatesClosed = await closeQuietCandidates(now, startsAt);
   const invitesExpired = await expireStaleInvites(now);
-  return { candidatesClosed, invitesExpired };
+  return { candidatesClosed, invitesExpired, graceUntil: null };
 }
 
 export function startRecruitingCleanupCron(): void {
   if (timer) return;
   const seconds = env.RECRUITING_CLEANUP_INTERVAL_SECONDS;
   if (seconds <= 0) return;
+  let announcedGrace = false;
   const run = () => {
     void runRecruitingCleanup()
       .then((r) => {
+        if (r.graceUntil && !announcedGrace) {
+          announcedGrace = true;
+          console.log(`[alto-people/api] recruiting clean-up: grace period — nothing closes before ${r.graceUntil.toISOString()}`);
+        }
         if (r.candidatesClosed || r.invitesExpired) {
           console.log(`[alto-people/api] recruiting clean-up: ${r.candidatesClosed} candidates closed, ${r.invitesExpired} invites expired`);
         }

@@ -3,7 +3,7 @@ import { hasCapability, type RecruiterHome } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
-import { closingSoon } from './recruitingCleanup.js';
+import { closingSoon, closingStartsAt } from './recruitingCleanup.js';
 import { INVITE_EXPIRE_AFTER_DAYS } from './onboardingUndo.js';
 import { IDLE_PURGE_AFTER_DAYS, INVITE_PURGE_AFTER_DAYS, hasProtectedHistory } from './onboardingPurge.js';
 
@@ -207,6 +207,8 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     }),
     closingSoon(now, 500),
   ]);
+  // Nothing the clean-up closes closes before its grace period ends.
+  const cleanupStarts = await closingStartsAt(now);
 
   /* ----- Today ----- */
   const today = interviewsToday.map((i) => ({
@@ -292,10 +294,8 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     } else if (!protectedHistory && u?.passwordHash) {
       closesAt.set(a.id, plus(latest([a.updatedAt, a.checklist?.tasks[0]?.completedAt]), IDLE_PURGE_AFTER_DAYS));
     } else {
-      closesAt.set(
-        a.id,
-        plus(latest([a.invitedAt, a.updatedAt, a.progressRemindedAt, u?.inviteTokens[0]?.createdAt]), INVITE_EXPIRE_AFTER_DAYS),
-      );
+      const expires = plus(latest([a.invitedAt, a.updatedAt, a.progressRemindedAt, u?.inviteTokens[0]?.createdAt]), INVITE_EXPIRE_AFTER_DAYS);
+      closesAt.set(a.id, expires < cleanupStarts ? cleanupStarts : expires);
     }
   }
 

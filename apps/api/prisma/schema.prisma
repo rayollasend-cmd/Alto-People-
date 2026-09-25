@@ -7420,6 +7420,9 @@ model OrgSetting {
   /// What payroll does with a bank change Finance has not verified by the
   /// cutoff: pay the previous verified account, or hold the pay.
   unverifiedPayoutPolicy UnverifiedPayoutPolicy @default(PREVIOUS_VERIFIED)
+  // When the automatic recruiting clean-up first ran here. Nothing it
+  // closes closes before a grace period after this — see recruitingCleanup.
+  recruitingCleanupSince DateTime? @db.Timestamptz(6)
   updatedAt          DateTime       @updatedAt @db.Timestamptz(6)
 }
 
