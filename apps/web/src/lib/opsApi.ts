@@ -762,3 +762,44 @@ export function setStoreShiftSop(body: {
 }): Promise<{ ok: true }> {
   return apiFetch('/ops/store-shifts', { method: 'PUT', body });
 }
+
+/* ---- the Store Operations Report ---------------------------------------- */
+
+export type OpsReportPreset = 'yesterday' | 'last-week' | 'last-7' | 'custom';
+
+export interface OpsReportRecipient {
+  userId: string;
+  name: string;
+  email: string;
+  /** A store account, or the client's market account. */
+  scope: 'store' | 'client';
+}
+
+/** The report as a download URL (a browser navigation, like the packet). */
+export function opsReportUrl(q: { locationId?: string; clientId?: string; from: string; to: string }): string {
+  const params = new URLSearchParams({ from: q.from, to: q.to });
+  if (q.locationId) params.set('locationId', q.locationId);
+  if (q.clientId) params.set('clientId', q.clientId);
+  return `/api/ops/report.pdf?${params.toString()}`;
+}
+
+/** The store's portal accounts — who an emailed report can go to. */
+export function listOpsReportRecipients(q: { locationId?: string; clientId?: string }): Promise<{ recipients: OpsReportRecipient[] }> {
+  const params = new URLSearchParams();
+  if (q.locationId) params.set('locationId', q.locationId);
+  if (q.clientId) params.set('clientId', q.clientId);
+  const qs = params.toString();
+  return apiFetch(`/ops/report/recipients${qs ? `?${qs}` : ''}`);
+}
+
+export function emailOpsReport(body: {
+  locationId?: string;
+  clientId?: string;
+  from: string;
+  to: string;
+  recipientUserIds: string[];
+  extraEmails?: string[];
+  note?: string;
+}): Promise<{ sent: number; filename: string }> {
+  return apiFetch('/ops/report/email', { method: 'POST', body });
+}

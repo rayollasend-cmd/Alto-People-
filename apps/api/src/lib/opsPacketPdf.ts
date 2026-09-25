@@ -44,6 +44,7 @@ const KIND_TITLE = {
   shift: 'Shift Packet',
   day: 'Daily Operations Packet',
   month: 'Monthly Operations Packet',
+  range: 'Operations Packet',
 } as const;
 
 const LABEL = { size: T.label, caps: true, bold: true, color: C.ink3 } as const;

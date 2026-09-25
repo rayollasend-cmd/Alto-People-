@@ -33,6 +33,16 @@ import { personName, validLead } from '../lib/floorLeads.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import { buildOpsPacket, type PacketKind } from '../lib/opsPacket.js';
 import { renderOpsPacketPdf } from '../lib/opsPacketPdf.js';
+import {
+  buildOpsStoreReport,
+  presetRange,
+  reportSlug,
+  type OpsStoreReport,
+  type StoreReportQuery,
+} from '../lib/opsStoreReport.js';
+import { renderOpsStoreReportPdf } from '../lib/opsStoreReportPdf.js';
+import { send } from '../lib/notifications.js';
+import { genericNotificationTemplate } from '../lib/emailTemplates.js';
 
 /**
  * Store Operations — the shift supervisor's floor tool and the leadership
@@ -3088,6 +3098,214 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       weekly,
       metricTrends,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== The Store Operations Report ========================================
+ * What a store manager takes into planning (lib/opsStoreReport): one store
+ * or every store, any range, as a PDF — downloaded, or emailed to the
+ * store's own portal accounts with a note. Board-only, like the packet: a
+ * store account reads its week in the portal's service report instead.
+ */
+function reportQueryFrom(query: Record<string, unknown>): StoreReportQuery {
+  const str = (k: string) => (typeof query[k] === 'string' ? (query[k] as string) : undefined);
+  const preset = str('range');
+  const pre = preset ? presetRange(preset) : null;
+  return {
+    clientId: str('clientId') ?? null,
+    locationId: str('locationId') ?? null,
+    from: pre?.from ?? str('from') ?? '',
+    to: pre?.to ?? str('to') ?? '',
+  };
+}
+
+async function reportRecipients(
+  clientId: string | null,
+  locationId: string | null,
+): Promise<{ userId: string; name: string; email: string; scope: 'store' | 'client' }[]> {
+  if (!clientId) return [];
+  const users = await prisma.user.findMany({
+    where: {
+      role: 'CLIENT_PORTAL',
+      status: 'ACTIVE',
+      deletedAt: null,
+      clientId,
+      ...(locationId ? { OR: [{ locationId }, { locationId: null, regionId: null }] } : {}),
+    },
+    select: { id: true, email: true, displayName: true, locationId: true },
+    orderBy: { email: 'asc' },
+  });
+  return users.map((u) => ({
+    userId: u.id,
+    name: u.displayName?.trim() || u.email.split('@')[0] || u.email,
+    email: u.email,
+    scope: u.locationId ? 'store' : 'client',
+  }));
+}
+
+async function buildReportForRequest(
+  q: StoreReportQuery,
+  clamp: string | undefined,
+): Promise<{ report: OpsStoreReport; pdf: Buffer; filename: string }> {
+  const branding = await ensureBrandingLoaded(prisma);
+  const report = await buildOpsStoreReport(q, branding.orgName, clamp);
+  if (!report) {
+    throw new HttpError(
+      404,
+      'store_not_found',
+      'That store is not on this account, or the range is too long (92 days at most).',
+    );
+  }
+  const pdf = await renderOpsStoreReportPdf(report);
+  const who = report.store?.name ?? report.clientName;
+  const span = report.to !== report.from ? `-to-${report.to}` : '';
+  const filename = `store-ops-report-${reportSlug(who)}-${report.from}${span}.pdf`;
+  return { report, pdf, filename };
+}
+
+opsRouter.get('/report.pdf', BOARD, async (req, res, next) => {
+  try {
+    const clamp = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    if (clamp === null) {
+      throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
+    }
+    const q = reportQueryFrom(req.query as Record<string, unknown>);
+    const { report, pdf, filename } = await buildReportForRequest(q, clamp);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'ops.report_exported',
+        entityType: report.store ? 'Location' : 'Client',
+        entityId: report.store?.id ?? q.clientId ?? clamp ?? 'all',
+        metadata: { from: report.from, to: report.to, shifts: report.packet.rollup.shifts, filename },
+      },
+      'ops.report_exported',
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+opsRouter.get('/report/recipients', BOARD, async (req, res, next) => {
+  try {
+    const clamp = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    if (clamp === null) {
+      throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
+    }
+    const locationId = req.query.locationId?.toString() || null;
+    let clientId = clamp ?? req.query.clientId?.toString() ?? null;
+    if (locationId) {
+      const loc = await prisma.location.findFirst({
+        where: { id: locationId, ...(clamp !== undefined ? { clientId: clamp } : {}) },
+        select: { clientId: true },
+      });
+      if (!loc) throw new HttpError(404, 'store_not_found', 'That store is not on this account.');
+      clientId = loc.clientId;
+    }
+    res.json({ recipients: await reportRecipients(clientId, locationId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const EmailReportSchema = z.object({
+  locationId: z.string().uuid().optional(),
+  clientId: z.string().uuid().optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  recipientUserIds: z.array(z.string().uuid()).max(20).default([]),
+  extraEmails: z.array(z.string().email()).max(5).default([]),
+  note: z.string().max(300).optional(),
+});
+
+opsRouter.post('/report/email', BOARD, async (req, res, next) => {
+  try {
+    const input = EmailReportSchema.parse(req.body);
+    const clamp = effectiveClientIdFilter(req.user!, input.clientId);
+    if (clamp === null) {
+      throw new HttpError(403, 'no_client', 'This account is not attached to a client.');
+    }
+    const q: StoreReportQuery = {
+      clientId: input.clientId ?? null,
+      locationId: input.locationId ?? null,
+      from: input.from,
+      to: input.to,
+    };
+    const { report, pdf, filename } = await buildReportForRequest(q, clamp);
+    // Only the store's own portal accounts (or the client's) can be chosen —
+    // a user id from anywhere else is ignored, never mailed.
+    const clientId = report.store
+      ? ((await prisma.location.findUnique({ where: { id: report.store.id }, select: { clientId: true } }))
+          ?.clientId ?? null)
+      : (clamp ?? input.clientId ?? null);
+    const allowed = await reportRecipients(clientId, report.store?.id ?? null);
+    const targets = allowed.filter((r) => input.recipientUserIds.includes(r.userId));
+    if (targets.length === 0 && input.extraEmails.length === 0) {
+      throw new HttpError(400, 'no_recipients', 'Pick at least one account or add an address.');
+    }
+    const where = report.store?.name ?? report.clientName;
+    const subject = `Store Operations Report — ${where} · ${report.periodLabel}`;
+    const body = [
+      input.note?.trim() || null,
+      `Attached is the Store Operations Report for ${where}, ${report.periodLabel}.`,
+      '',
+      ...report.kpis.slice(0, 4).map((k) => `${k.label}: ${k.value}${k.delta ? ` (${k.delta})` : ''}`),
+      '',
+      'Inside: department-by-shift completion, every temperature reading against its range, production by day, the exceptions ledger, photo evidence, and a plan for next week.',
+      '',
+      `Questions go to your Alto lead. This report is confidential to ${report.clientName}.`,
+    ]
+      .filter((l): l is string => l !== null)
+      .join('\n');
+    const attachments = [{ filename, content: pdf, contentType: 'application/pdf' }];
+    await Promise.all(
+      targets.map((t) =>
+        notifyUser(t.userId, { subject, body, category: 'portal.ops_report', attachments }),
+      ),
+    );
+    const tpl = genericNotificationTemplate({ subject, body, linkUrl: null });
+    let extraSent = 0;
+    for (const email of input.extraEmails) {
+      try {
+        await send({
+          channel: 'EMAIL',
+          recipient: { userId: null, phone: null, email },
+          subject,
+          body: tpl.text,
+          html: tpl.html,
+          attachments,
+          category: 'portal.ops_report',
+        });
+        extraSent += 1;
+      } catch (err) {
+        console.warn('[ops] report email to an address failed:', err instanceof Error ? err.message : err);
+      }
+    }
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId,
+        action: 'ops.report_emailed',
+        entityType: report.store ? 'Location' : 'Client',
+        entityId: report.store?.id ?? clientId ?? 'all',
+        metadata: {
+          from: report.from,
+          to: report.to,
+          filename,
+          recipients: targets.map((t) => t.email),
+          extraEmails: input.extraEmails,
+          note: input.note ?? null,
+        },
+      },
+      'ops.report_emailed',
+    );
+    res.json({ sent: targets.length + extraSent, filename });
   } catch (err) {
     next(err);
   }

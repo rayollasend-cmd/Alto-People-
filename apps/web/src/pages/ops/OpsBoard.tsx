@@ -52,6 +52,7 @@ import { OpsFloorFeed, OpsPhotoWall } from './OpsFloorFeed';
 import { OpsStandards } from './OpsStandards';
 import { OpsProduction } from './OpsProduction';
 import { OpsPacketButton } from './OpsPacketButton';
+import { OpsReportButton } from './OpsReportButton';
 import {
   fmtAgo,
   fmtClock,
@@ -481,7 +482,10 @@ export function OpsBoard() {
             {' · times in '}
             {OPS_TZ.split('/')[1]?.replace('_', ' ')}
           </p>
-          <OpsPacketButton scope={packetScope} storeName={storeName} dateKey={to || undefined} />
+          <div className="flex flex-wrap items-center gap-2">
+            <OpsReportButton stores={stores?.stores ?? []} storeId={storeId || undefined} />
+            <OpsPacketButton scope={packetScope} storeName={storeName} dateKey={to || undefined} />
+          </div>
         </div>
         <OpsHistory
           query={{
@@ -566,9 +570,10 @@ export function OpsBoard() {
                 ? `${headline.live} shift${headline.live === 1 ? '' : 's'} running across ${headline.stores} store${headline.stores === 1 ? '' : 's'}`
                 : 'All floors quiet'}
             </div>
-            <div className="mt-2.5">
-              {/* The board is a screen; the packet is the document that
-                  leaves the room with whoever asked for it. */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {/* The board is a screen; the packet and the report are the
+                  documents that leave the room with whoever asked for them. */}
+              <OpsReportButton stores={stores?.stores ?? []} storeId={storeId || undefined} />
               <OpsPacketButton
                 scope={packetScope}
                 storeName={storeName}

@@ -4749,7 +4749,8 @@ export function bucketForCategory(
   if (raw === 'portal.digest') return 'store_daily';
   if (raw === 'portal.coverage') return 'store_alerts';
   if (raw === 'client-request') return 'store_requests';
-  if (raw === 'portal.service_report' || raw === 'portal.statement') return 'store_reports';
+  if (raw === 'portal.service_report' || raw === 'portal.statement' || raw === 'portal.ops_report')
+    return 'store_reports';
   // Staff-side operational sweeps. They resolved to no bucket at all, which
   // meant isEmailMuted() always answered false for them — so they were
   // unmutable, and a mute check added to their senders would have been a

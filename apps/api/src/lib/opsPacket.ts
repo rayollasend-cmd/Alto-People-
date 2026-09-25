@@ -32,7 +32,7 @@ import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 const OPS_TZ = 'America/New_York';
 const DAY_MS = 24 * 3_600_000;
 
-export type PacketKind = 'shift' | 'day' | 'month';
+export type PacketKind = 'shift' | 'day' | 'month' | 'range';
 
 export interface PacketQuery {
   kind: PacketKind;
@@ -42,6 +42,9 @@ export interface PacketQuery {
   dateKey?: string;
   /** kind=month — YYYY-MM. */
   month?: string;
+  /** kind=range — inclusive org day keys (the store report's "last week"). */
+  from?: string;
+  to?: string;
   clientId?: string | null;
   locationId?: string | null;
   period?: string | null;
@@ -398,6 +401,12 @@ export async function buildOpsPacket(
     from = `${month}-01`;
     to = monthEnd(month);
     periodLabelText = monthLabel(month);
+  } else if (q.kind === 'range') {
+    const ok = (k?: string) => (k && /^\d{4}-\d{2}-\d{2}$/.test(k) ? k : null);
+    from = ok(q.from) ?? orgDateKey(new Date(generatedAt.getTime() - 6 * DAY_MS));
+    to = ok(q.to) ?? orgDateKey(generatedAt);
+    if (from > to) [from, to] = [to, from];
+    periodLabelText = from === to ? dayLabel(from) : `${dayLabel(from)} – ${dayLabel(to)}`;
   } else {
     const key = q.dateKey && /^\d{4}-\d{2}-\d{2}$/.test(q.dateKey) ? q.dateKey : orgDateKey(generatedAt);
     from = key;
