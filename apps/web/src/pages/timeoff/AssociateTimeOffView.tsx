@@ -533,7 +533,7 @@ function CreateRequestDialog({
   const yearsValid =
     Number.isFinite(sy) && Number.isFinite(ey) && ey >= sy && ey - sy <= 2;
   const holidaysQuery = useQuery({
-    queryKey: ['TimeOffRequestForm', 'holidays', startYear, endYear],
+    queryKey: ['TimeOffRequestForm', 'holidays', sy, ey],
     queryFn: () => {
       const years: number[] = [];
       for (let y = sy; y <= ey; y++) years.push(y);

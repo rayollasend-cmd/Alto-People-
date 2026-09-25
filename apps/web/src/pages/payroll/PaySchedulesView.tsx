@@ -124,7 +124,7 @@ export function PaySchedulesView({ canProcess }: Props) {
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['PaySchedulesView', 'schedules'],
+    queryKey: ['PaySchedulesView', 'schedules', includeInactive],
     queryFn: () => listPayrollSchedules({ includeInactive }),
   });
   useEffect(() => {

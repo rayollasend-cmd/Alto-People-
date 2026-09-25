@@ -103,7 +103,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['AdminReviewsView', 'reviews'],
+    queryKey: ['AdminReviewsView', 'reviews', filter],
     queryFn: () => listReviews(filter === 'ALL' ? {} : { status: filter }),
   });
   const reviews: PerformanceReview[] | null = refreshQuery.data?.reviews ?? null;

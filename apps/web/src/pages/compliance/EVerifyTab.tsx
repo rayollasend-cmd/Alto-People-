@@ -731,7 +731,10 @@ function CaseDrawer({
 }) {
 
   const loadQuery = useQuery({
-    queryKey: ['CaseDrawer', 'detail'],
+    // Keyed by the person: with a fixed key, opening a second case within
+    // the stale window showed the first person's detail under the second
+    // person's name.
+    queryKey: ['CaseDrawer', 'detail', associateId],
     queryFn: () => getEVerifyCase(associateId),
   });
   const detail: EVerifyCaseDetail | null = loadQuery.data ?? null;

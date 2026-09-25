@@ -199,13 +199,14 @@ export function HolidaysHome() {
   const [editing, setEditing] = useState<HolidayRow | null>(null);
   const [importing, setImporting] = useState(false);
 
+  const listParams = {
+    year,
+    type: typeFilter === 'ALL' ? undefined : typeFilter,
+    clientId: clientFilter === 'ALL' ? undefined : clientFilter,
+  };
   const refreshQuery = useQuery({
-    queryKey: ['HolidaysHome', 'rows'],
-    queryFn: () => listHolidays({
-      year,
-      type: typeFilter === 'ALL' ? undefined : typeFilter,
-      clientId: clientFilter === 'ALL' ? undefined : clientFilter,
-    }),
+    queryKey: ['HolidaysHome', 'rows', listParams],
+    queryFn: () => listHolidays(listParams),
   });
   const rows: HolidayRow[] | null = refreshQuery.data?.holidays ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load holidays.' : null;

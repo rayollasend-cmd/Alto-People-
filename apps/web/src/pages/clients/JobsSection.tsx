@@ -52,7 +52,7 @@ export function JobsSection({ clientId }: Props) {
   const [busy, setBusy] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['JobsSection', 'items'],
+    queryKey: ['JobsSection', 'items', clientId, includeInactive],
     queryFn: () => listJobs({ clientId, includeInactive }),
   });
   const items: Job[] | null = refreshQuery.data?.jobs ?? null;

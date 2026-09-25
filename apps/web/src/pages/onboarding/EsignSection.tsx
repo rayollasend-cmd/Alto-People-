@@ -55,7 +55,7 @@ export function EsignSection({ applicationId, canManage, esignTasks, associateId
   const [expanded, setExpanded] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['EsignSection', 'items'],
+    queryKey: ['EsignSection', 'items', applicationId],
     queryFn: () => listEsignAgreements(applicationId),
   });
   const items: EsignAgreement[] | null = refreshQuery.data?.agreements ?? null;

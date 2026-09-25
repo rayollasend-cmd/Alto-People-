@@ -3,6 +3,7 @@ import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 import reactHooks from 'eslint-plugin-react-hooks';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
+import tanstackQuery from '@tanstack/eslint-plugin-query';
 
 /**
  * Design-system guardrails — NOT a general lint preset.
@@ -28,6 +29,18 @@ export default [
    * unlinted. Held at zero findings.
    */
   { ignores: ['dist/**', 'node_modules/**', 'public/**'] },
+  /**
+   * A query key must name every input its fetch reads (2026-09-25). The
+   * query-layer conversion left keys like ['ApplicationsList', 'items']
+   * over fetches that read five filters: changing a filter fetched
+   * nothing, and the persisted cache painted whichever fetch came last.
+   * An error, so a missing input fails CI instead of shipping.
+   */
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    plugins: { '@tanstack/query': tanstackQuery },
+    rules: { '@tanstack/query/exhaustive-deps': 'error' },
+  },
   js.configs.recommended,
   ...tsPlugin.configs['flat/recommended'],
   {

@@ -72,7 +72,7 @@ export function BenefitsPlansSection({ clientId }: Props) {
   const [creating, setCreating] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['BenefitsPlansSection', 'plans'],
+    queryKey: ['BenefitsPlansSection', 'plans', clientId, includeInactive],
     queryFn: () => listPlans({ clientId, includeInactive }),
   });
   const plans: BenefitsPlan[] | null = refreshQuery.data?.plans ?? null;

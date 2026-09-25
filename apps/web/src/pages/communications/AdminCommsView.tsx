@@ -102,12 +102,13 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   const [statusFilter, setStatusFilter] = useState<NotificationStatus | ''>('');
   const [resendingId, setResendingId] = useState<string | null>(null);
 
+  const listParams = {
+    channel: channelFilter || undefined,
+    status: statusFilter || undefined,
+  };
   const refreshQuery = useQuery({
-    queryKey: ['AdminCommsView', 'items'],
-    queryFn: () => listAdmin({
-        channel: channelFilter || undefined,
-        status: statusFilter || undefined,
-      }),
+    queryKey: ['AdminCommsView', 'items', listParams],
+    queryFn: () => listAdmin(listParams),
   });
   const items: Notification[] | null = refreshQuery.data?.notifications ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;

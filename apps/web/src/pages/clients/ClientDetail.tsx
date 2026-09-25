@@ -110,7 +110,9 @@ export function ClientDetail() {
   };
 
   const refreshQuery = useQuery({
-    queryKey: ['ClientDetail', 'client'],
+    // Keyed by the route id: this element stays mounted from one client's
+    // URL to the next, and a fixed key showed the previous client's record.
+    queryKey: ['ClientDetail', 'client', id ?? ''],
     queryFn: () => getClient(id!),
     enabled: Boolean(id),
   });

@@ -1115,7 +1115,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Keyed on the request identity: a newer window supersedes any in-flight
   // read (rapid week paging, a mutation's refresh racing a navigation's),
   // and the previous rows stay up until the new ones land.
-  const shiftsKey = ['scheduling', 'shifts', requestKey] as const;
+  // requestArgs is memoised on requestKey, so it adds no movement to the
+  // key — it is there so the key names the exact object the fetch sends.
+  const shiftsKey = ['scheduling', 'shifts', requestKey, requestArgs] as const;
   const shiftsQuery = useQuery({
     queryKey: shiftsKey,
     queryFn: () => listShifts(requestArgs),

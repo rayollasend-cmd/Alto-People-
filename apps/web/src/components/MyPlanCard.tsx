@@ -115,7 +115,7 @@ export function MyPlanCard() {
   const [selectedDay, setSelectedDay] = useState(todayKey);
 
   const loadQuery = useQuery({
-    queryKey: ['MyPlanCard', 'items'],
+    queryKey: ['MyPlanCard', 'items', todayKey, days[6].key],
     queryFn: () => apiFetch<{ items: PlanItem[] }>(`/me/plan?from=${todayKey}&to=${days[6].key}`),
   });
   const failed = loadQuery.isError;

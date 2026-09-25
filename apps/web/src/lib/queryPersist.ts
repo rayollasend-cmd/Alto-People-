@@ -46,7 +46,24 @@ const THROTTLE_MS = 3_000;
  * merely stale — restoring a renamed field as `undefined` is a bug that
  * only reproduces for users who were here before the deploy.
  */
-const APP_CACHE_VERSION = 'v1';
+const APP_CACHE_VERSION = 'v2';
+
+/**
+ * Queries that never touch the disk.
+ *
+ * The persisted cache exists so a schedule survives a basement; it is not
+ * a place for E-Verify cases, I-9 records, uploaded documents,
+ * garnishments, pay, tax forms or anything holding an SSN or bank detail.
+ * Those load fresh every time. Matched against every string segment of the
+ * key, so a domain prefix ('payroll', 'documents') and a component name
+ * ('GarnishmentsView', 'CaseDrawer') are both caught; erring wide is the
+ * safe direction. APP_CACHE_VERSION moved to v2 with this rule so caches
+ * written before it are dropped on restore rather than read.
+ */
+const SENSITIVE_KEY = /everify|casedrawer|i-?9\b|i9(tab|task|docs)|document|garnish|pay|ssn|w-?4|tax|comp-records|compensation|external-payments|bank|payout|direct-?deposit|paystub/i;
+export function isSensitiveQueryKey(queryKey: readonly unknown[]): boolean {
+  return queryKey.some((part) => typeof part === 'string' && SENSITIVE_KEY.test(part));
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -151,7 +168,9 @@ export function startQueryPersistence(userId: string): () => void {
       buster: APP_CACHE_VERSION,
       dehydrateOptions: {
         shouldDehydrateQuery: (query: Query) =>
-          query.state.status === 'success' && query.state.data !== undefined,
+          query.state.status === 'success' &&
+          query.state.data !== undefined &&
+          !isSensitiveQueryKey(query.queryKey),
       },
     });
   } catch {
@@ -160,8 +179,14 @@ export function startQueryPersistence(userId: string): () => void {
   }
 }
 
-/** Drop every persisted cache on this device — sign-out, or a dead session. */
+/**
+ * Drop every cached answer on this device — sign-out, a dead session, a
+ * role switch. The in-memory cache goes too: the next person on a shared
+ * tablet signs in without a reload, and a warm cache would show them the
+ * previous person's pages until each query refetched.
+ */
 export function clearPersistedQueries(): Promise<void> {
+  queryClient.clear();
   return new Promise((resolve) => {
     try {
       const req = indexedDB.deleteDatabase(DB_NAME);

@@ -88,7 +88,7 @@ export function SwapMarketplace({
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refreshQuery = useQuery({
-    queryKey: ['SwapMarketplace', 'items', refreshToken],
+    queryKey: ['SwapMarketplace', 'items', tab, refreshToken],
     queryFn: () => tab === 'incoming' ? listSwapsIncoming() : listSwapsOutgoing(),
   });
   const items: ShiftSwapRequest[] | null = refreshQuery.data?.requests ?? null;

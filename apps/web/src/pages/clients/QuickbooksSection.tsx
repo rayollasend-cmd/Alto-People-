@@ -68,7 +68,7 @@ export function QuickbooksSection({ clientId }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const refreshQuery = useQuery({
-    queryKey: ['QuickbooksSection', 'status'],
+    queryKey: ['QuickbooksSection', 'status', clientId],
     queryFn: () => getStatus(clientId),
   });
   const status: QboStatus | null = refreshQuery.data ? refreshQuery.data : null;

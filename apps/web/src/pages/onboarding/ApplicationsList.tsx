@@ -393,16 +393,21 @@ export function ApplicationsList() {
   // page 1). Without the guard, whichever response lands LAST wins — a
   // stale page-5 result could blank the list with "no applications match"
   // even though page 1 has rows. Same pattern as AdminTimeView.
+  // Every input the fetch reads is in the key. The move to the query layer
+  // (9fab056f) left a fixed key over five filters and the page number, so
+  // changing any of them fetched nothing until an action refreshed the
+  // list, and the persisted cache painted whichever fetch came last.
+  const listParams = {
+    status,
+    q: urlQ,
+    clientId: clientId || undefined,
+    ...invitedRange(invitedWindow),
+    page,
+    pageSize: PAGE_SIZE,
+  };
   const refreshQuery = useQuery({
-    queryKey: ['ApplicationsList', 'items'],
-    queryFn: () => listApplications({
-      status,
-      q: urlQ,
-      clientId: clientId || undefined,
-      ...invitedRange(invitedWindow),
-      page,
-      pageSize: PAGE_SIZE,
-    }),
+    queryKey: ['ApplicationsList', 'items', listParams],
+    queryFn: () => listApplications(listParams),
   });
   const items: ApplicationSummary[] | null = refreshQuery.data?.applications ?? null;
   const filteredTotal = refreshQuery.data?.total ?? 0;

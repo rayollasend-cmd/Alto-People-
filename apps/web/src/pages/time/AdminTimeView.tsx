@@ -752,6 +752,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // new question, an answer to an old one can never land last (the
   // sequence guard this replaces), and the previous rows stay on screen
   // until the new ones arrive.
+  const focusAssociateId = focusAssociate?.id ?? null;
   const entriesQuery = useQuery({
     queryKey: [
       'time',
@@ -761,7 +762,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         from: fromYmd,
         to: toYmd,
         search: appliedSearch,
-        associateId: focusAssociate?.id ?? null,
+        associateId: focusAssociateId,
         clientId: clientFilter,
         locationId: locationFilter,
       },
@@ -772,7 +773,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         ...(appliedSearch ? { search: appliedSearch } : {}),
-        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(focusAssociateId ? { associateId: focusAssociateId } : {}),
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(locationFilter ? { locationId: locationFilter } : {}),
       }),

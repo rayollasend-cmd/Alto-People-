@@ -239,7 +239,7 @@ export function RecruitingHome() {
   }, []);
 
   const refreshQuery = useQuery({
-    queryKey: ['RecruitingHome', 'candidates'],
+    queryKey: ['RecruitingHome', 'candidates', filter],
     queryFn: () => listCandidates(filter === 'ALL' ? {} : { stage: filter }),
   });
   const candidates: Candidate[] | null = refreshQuery.data?.candidates ?? null;

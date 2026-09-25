@@ -80,6 +80,10 @@ export function usePinnedModules(): {
     initialDataUpdatedAt: 0, // always refetch — initialData is just paint
     queryFn: async () => {
       const server = await getNavPins();
+      // The local mirror's key is derived from userId, which IS in the
+      // query key; derived here again so the fetch reads nothing the key
+      // does not name.
+      const mirrorKey = userId ? `${PIN_CACHE_PREFIX}${userId}` : null;
       // One-time migration: a device carrying legacy local-only pins for
       // a user with no server pins seeds the server from them, so nobody
       // loses the favorites they had before pins went server-side.
@@ -91,10 +95,10 @@ export function usePinnedModules(): {
         } catch {
           /* best-effort */
         }
-        if (cacheKey) writeList(cacheKey, legacy);
+        if (mirrorKey) writeList(mirrorKey, legacy);
         return { pinned: legacy };
       }
-      if (cacheKey) writeList(cacheKey, server.pinned);
+      if (mirrorKey) writeList(mirrorKey, server.pinned);
       return server;
     },
   });

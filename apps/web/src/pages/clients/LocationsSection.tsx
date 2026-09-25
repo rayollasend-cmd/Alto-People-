@@ -65,7 +65,7 @@ export function LocationsSection({ clientId }: Props) {
   const [busy, setBusy] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['LocationsSection', 'items'],
+    queryKey: ['LocationsSection', 'items', clientId, includeInactive],
     queryFn: () => listClientLocations(clientId, { includeInactive }),
   });
   const items: LocationSummary[] | null = refreshQuery.data?.locations ?? null;

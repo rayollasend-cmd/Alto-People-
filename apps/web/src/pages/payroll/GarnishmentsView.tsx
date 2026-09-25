@@ -90,7 +90,7 @@ export function GarnishmentsView({ canProcess }: Props) {
   >(null);
 
   const refreshQuery = useQuery({
-    queryKey: ['GarnishmentsView', 'rows'],
+    queryKey: ['GarnishmentsView', 'rows', filter],
     queryFn: () => listGarnishments(filter === 'ALL' ? {} : { status: filter }),
   });
   useEffect(() => {
