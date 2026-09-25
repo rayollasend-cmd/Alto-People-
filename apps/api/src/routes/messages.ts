@@ -50,7 +50,18 @@ export const messagesRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: UPLOAD_MAX_BYTES } });
 const PHOTO_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+/** Conversation.lastPreview is VARCHAR(160) — the sender's name and the text together. */
 const PREVIEW = 160;
+
+/**
+ * At most `max` characters, with an ellipsis when cut. Counted in code
+ * points — what a Postgres VARCHAR counts — so an emoji is one character
+ * and is never split in half.
+ */
+function clip(s: string, max: number): string {
+  const chars = Array.from(s);
+  return chars.length <= max ? s : `${chars.slice(0, max - 1).join('').trimEnd()}…`;
+}
 
 /** RFC-4180 cell: quote when needed, double embedded quotes. */
 function csvCell(v: string): string {
@@ -240,6 +251,7 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
     }
     // A direct thread between two people is unique: reuse it.
     let conversationId: string | null = null;
+    let createdNow = false;
     if (targets.length === 1) {
       const existing = await prisma.conversation.findFirst({
         where: {
@@ -268,9 +280,17 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
         select: { id: true },
       });
       conversationId = created.id;
+      createdNow = true;
     }
     if (input.body) {
-      await appendMessage(user, conversationId, { body: input.body });
+      try {
+        await appendMessage(user, conversationId, { body: input.body });
+      } catch (err) {
+        // A new thread whose first message didn't go through is removed,
+        // so trying again doesn't leave an empty group behind each time.
+        if (createdNow) await prisma.conversation.delete({ where: { id: conversationId } }).catch(() => undefined);
+        throw err;
+      }
     }
     res.status(201).json({ id: conversationId });
   } catch (err) {
@@ -347,7 +367,7 @@ async function appendMessage(
   const body = input.body.trim();
   if (!body && !input.attachment) throw new HttpError(400, 'empty', 'Write something.');
   const sender = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: USER_SELECT });
-  const preview = (body || `📷 ${input.attachment?.name ?? 'photo'}`).slice(0, PREVIEW);
+  const preview = clip(body || `📷 ${input.attachment?.name ?? 'photo'}`, PREVIEW);
   const created = await prisma.$transaction(async (tx) => {
     const m = await tx.message.create({
       data: {
@@ -362,7 +382,11 @@ async function appendMessage(
     });
     await tx.conversation.update({
       where: { id: conversationId },
-      data: { lastMessageAt: m.createdAt, lastPreview: `${displayName(sender)}: ${preview}` },
+      // The name and the text share the column's 160 characters. It was
+      // the text alone that was cut to 160, so with the name in front any
+      // message over ~150 characters — two or three sentences — overflowed
+      // the column, and the whole send failed.
+      data: { lastMessageAt: m.createdAt, lastPreview: clip(`${displayName(sender)}: ${preview}`, PREVIEW) },
     });
     await tx.conversationParticipant.update({
       where: { conversationId_userId: { conversationId, userId: user.id } },

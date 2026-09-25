@@ -197,3 +197,58 @@ describe('messages', () => {
     expect((await sup.post('/messages/conversations').send({ participantIds: [s.otherManager.id] })).status).toBe(403);
   });
 });
+
+
+describe('long messages', () => {
+  // Every message over ~150 characters — two or three sentences — failed
+  // with a 500: the inbox preview is the sender's name and the text in a
+  // 160-character column, and only the text was cut to 160.
+  it('sends two or three sentences, and a full 4,000 characters', async () => {
+    const s = await seed();
+    const { user: longName } = await createUser({ role: 'WORKFORCE_MANAGER', email: 'maximiliana.featherstonehaugh-montgomery@example.com' });
+    const sup = await loginAs(s.supervisor.email);
+    const wfm = await loginAs(longName.email);
+    const start = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id] });
+    expect(start.status).toBe(201);
+    const id = start.body.id as string;
+
+    const three =
+      'Good morning. The deli cooler was reading 44 degrees when I opened, so I moved the milk to the back cooler. ' +
+      'Can someone from maintenance check it before the afternoon delivery arrives?';
+    expect(three.length).toBeGreaterThan(160);
+    expect((await wfm.post(`/messages/conversations/${id}/messages`).send({ body: three })).status).toBe(201);
+    const max = 'All good here. '.repeat(267).slice(0, 4000);
+    expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: max })).status).toBe(201);
+    // Past the limit is a clear 400, not a crash.
+    expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: `${max}!` })).status).toBe(400);
+
+    const thread = (await sup.get(`/messages/conversations/${id}`)).body;
+    expect(thread.messages.map((m: { body: string }) => m.body)).toEqual([three, max]);
+    // The inbox preview is cut to fit, and says so.
+    const row = await prisma.conversation.findUniqueOrThrow({ where: { id } });
+    expect(Array.from(row.lastPreview!).length).toBeLessThanOrEqual(160);
+    expect(row.lastPreview!.endsWith('…')).toBe(true);
+  });
+
+  it('never splits an emoji when cutting the preview', async () => {
+    const s = await seed();
+    const sup = await loginAs(s.supervisor.email);
+    const start = await sup.post('/messages/conversations').send({ participantIds: [s.manager.id], body: '🙂'.repeat(300) });
+    expect(start.status).toBe(201);
+    const row = await prisma.conversation.findUniqueOrThrow({ where: { id: start.body.id } });
+    expect(row.lastPreview).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it('a group whose first message fails is not left behind', async () => {
+    const s = await seed();
+    const wfm = await loginAs(s.wfm.email);
+    // A first message over the limit is refused before anything is made.
+    const r = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id, s.manager.id], body: 'x'.repeat(4001) });
+    expect(r.status).toBe(400);
+    expect(await prisma.conversation.count({ where: { kind: 'GROUP' } })).toBe(0);
+    // And a long one that fits goes through, once.
+    const ok = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id, s.manager.id], title: 'Weekend', body: 'Three sentences here. '.repeat(10) });
+    expect(ok.status).toBe(201);
+    expect(await prisma.conversation.count({ where: { kind: 'GROUP' } })).toBe(1);
+  });
+});
