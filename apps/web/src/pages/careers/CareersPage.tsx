@@ -7,6 +7,7 @@ import {
   applyToPosting,
   getCareerPosting,
   listCareerPostings,
+  type CareerPosting,
   type CareerPostingSummary,
 } from '@/lib/careersApi';
 import { fmtMoney } from '@/lib/format';
@@ -44,19 +45,27 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 /**
- * "$15.00 – $18.00 an hour". The posting stores one range; a range under a
- * few hundred can only be hourly pay, anything above it annual.
+ * "$15.00 – $18.00 an hour". A posting says whether its range is hourly or
+ * yearly; an older one that doesn't is read by size — a range under a few
+ * hundred can only be hourly pay, anything above it annual.
  */
 function payLine(p: CareerPostingSummary): string | null {
   const min = p.minSalary ? Number(p.minSalary) : null;
   const max = p.maxSalary ? Number(p.maxSalary) : null;
   if (min === null && max === null) return null;
   const top = max ?? min ?? 0;
-  const per = top < 500 ? 'an hour' : 'a year';
+  const per = p.payUnit ? (p.payUnit === 'HOUR' ? 'an hour' : 'a year') : top < 500 ? 'an hour' : 'a year';
   const f = (n: number) => fmtMoney(n, { currency: p.currency });
   if (min !== null && max !== null && min !== max) return `${f(min)} – ${f(max)} ${per}`;
   return `${f((min ?? max)!)} ${per}`;
 }
+
+const SCHEDULE_WORD: Record<NonNullable<CareerPostingSummary['schedule']>, string> = {
+  FULL_TIME: 'Full-time',
+  PART_TIME: 'Part-time',
+  TEMPORARY: 'Temporary',
+  SEASONAL: 'Seasonal',
+};
 
 function Meta({ p }: { p: CareerPostingSummary }) {
   const pay = payLine(p);
@@ -74,6 +83,7 @@ function Meta({ p }: { p: CareerPostingSummary }) {
           {p.clientName}
         </span>
       )}
+      {p.schedule && <span>{SCHEDULE_WORD[p.schedule]}</span>}
       {pay && <span className="text-white">{pay}</span>}
     </div>
   );
@@ -181,10 +191,65 @@ export function CareerPostingPage() {
           </div>
           <div className="mt-6 whitespace-pre-wrap leading-relaxed text-silver">{posting.description}</div>
           <ApplyForm slug={posting.slug} title={posting.title} source={search.get('source')} />
+          <JobPostingStructuredData posting={posting} />
         </>
       )}
     </Shell>
   );
+}
+
+/**
+ * Google for Jobs: schema.org JobPosting markup on the posting page puts
+ * the job in Google's job search — no feed, no account. Only fields the
+ * posting really has are given; a guessed salary unit or location would
+ * get the listing flagged.
+ */
+function JobPostingStructuredData({ posting }: { posting: CareerPosting }) {
+  const loc = (posting.location ?? '').trim();
+  const m = loc.match(/^(.+?),\s*([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
+  const address = m
+    ? { addressLocality: m[1]!.trim(), addressRegion: m[2]!.toUpperCase(), ...(m[3] ? { postalCode: m[3] } : {}) }
+    : loc
+      ? { addressLocality: loc }
+      : null;
+  const lo = posting.minSalary ? Number(posting.minSalary) : null;
+  const hi = posting.maxSalary ? Number(posting.maxSalary) : null;
+  const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const data = {
+    '@context': 'https://schema.org/',
+    '@type': 'JobPosting',
+    title: posting.title,
+    description: posting.description
+      .trim()
+      .split(/\n{2,}/)
+      .map((p) => `<p>${escape(p).replace(/\n/g, '<br>')}</p>`)
+      .join(''),
+    ...(posting.openedAt ? { datePosted: posting.openedAt.slice(0, 10) } : {}),
+    ...(posting.schedule ? { employmentType: posting.schedule === 'SEASONAL' ? 'TEMPORARY' : posting.schedule } : {}),
+    hiringOrganization: { '@type': 'Organization', name: posting.orgName, sameAs: window.location.origin },
+    identifier: { '@type': 'PropertyValue', name: posting.orgName, value: posting.slug },
+    directApply: true,
+    ...(address
+      ? { jobLocation: { '@type': 'Place', address: { '@type': 'PostalAddress', addressCountry: 'US', ...address } } }
+      : {}),
+    ...(posting.payUnit && (lo !== null || hi !== null)
+      ? {
+          baseSalary: {
+            '@type': 'MonetaryAmount',
+            currency: posting.currency || 'USD',
+            value: {
+              '@type': 'QuantitativeValue',
+              ...(lo !== null ? { minValue: lo } : {}),
+              ...(hi !== null ? { maxValue: hi } : {}),
+              unitText: posting.payUnit,
+            },
+          },
+        }
+      : {}),
+  };
+  // `<` is escaped so text in the posting can never close the script tag.
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />;
 }
 
 function ApplyForm({ slug, title, source }: { slug: string; title: string; source: string | null }) {

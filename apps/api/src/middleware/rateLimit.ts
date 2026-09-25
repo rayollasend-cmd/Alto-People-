@@ -488,3 +488,22 @@ export const defaultApiLimiter = rateLimit({
     },
   },
 });
+
+// A candidate's offer link: a 32-byte token, so guessing is hopeless, but
+// the page renders a PDF on accept and should not be hammerable. Tests
+// bypass it.
+const OFFER_LETTER_IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 60;
+
+/** 60 requests / hour / IP for the public /offer-letters/:token routes. */
+export const offerLetterIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: OFFER_LETTER_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests for this offer. Try again later.',
+    },
+  },
+});

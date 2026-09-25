@@ -46,6 +46,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'portal-schedule': HolidayIcon,
   'portal-history': ReportsIcon,
   'portal-requests': HrCasesIcon,
+  'portal-candidates': FieldglassSetupIcon,
   'relay': RelayIcon,
   'statements': WalletIcon,
   'timesheets': ClipboardCheckIcon,

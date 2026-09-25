@@ -24,6 +24,7 @@ const QUIET: RecruitingSummary = {
   interviewsNext7Days: 0,
   unscoredInterviews: 0,
   offersAwaitingReply: 0,
+  offersAwaitingApproval: 0,
   hiredThisMonth: 3,
   medianDaysToHire: 6.5,
 };

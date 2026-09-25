@@ -4158,14 +4158,88 @@ export const CandidateSchema = z.object({
   withdrawnReason: z.string().nullable(),
   /** When they entered their current stage — "days in stage" reads this. */
   stageChangedAt: z.string().datetime(),
+  /** The posting they applied to or are hired against — what a hire fills. */
+  jobPostingId: UuidSchema.nullable(),
   createdAt: z.string().datetime(),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;
 
 export const CandidateListResponseSchema = z.object({
   candidates: z.array(CandidateSchema),
+  /** Everyone matching the filters — the page is `candidates`. */
+  total: z.number().int(),
+  offset: z.number().int(),
+  limit: z.number().int(),
 });
 export type CandidateListResponse = z.infer<typeof CandidateListResponseSchema>;
+
+export const CandidateSortSchema = z.enum(['newest', 'oldest', 'name', 'waiting', 'moved']);
+export type CandidateSort = z.infer<typeof CandidateSortSchema>;
+
+/**
+ * The candidate list's filters, as the page keeps them in its URL and a
+ * saved view stores them. All optional; the server does the filtering.
+ */
+export const CandidateFiltersSchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  /** One stage, or several comma-separated. */
+  stage: z.string().max(120).optional(),
+  source: z.string().trim().max(80).optional(),
+  jobPostingId: z.string().uuid().optional(),
+  /** In an open stage for a week or more. */
+  stuck: z.enum(['1']).optional(),
+  sort: CandidateSortSchema.optional(),
+});
+export type CandidateFilters = z.infer<typeof CandidateFiltersSchema>;
+
+/** The board: every stage's count, and the first page of each column. */
+export const CandidateBoardResponseSchema = z.object({
+  columns: z.array(
+    z.object({
+      stage: CandidateStageSchema,
+      total: z.number().int(),
+      candidates: z.array(CandidateSchema),
+    }),
+  ),
+});
+export type CandidateBoardResponse = z.infer<typeof CandidateBoardResponseSchema>;
+
+/* ----- Saved views ---------------------------------------------------------- */
+
+export const SavedViewScopeSchema = z.enum(['recruiting.candidates']);
+export type SavedViewScope = z.infer<typeof SavedViewScopeSchema>;
+
+/** A view's query: the list's own URL params — short strings only. */
+export const SavedViewQuerySchema = z
+  .record(z.string().max(40), z.string().max(200))
+  .refine((q) => Object.keys(q).length <= 20, 'Too many filters');
+
+export const SavedViewSchema = z.object({
+  id: z.string().uuid(),
+  scope: SavedViewScopeSchema,
+  name: z.string(),
+  query: SavedViewQuerySchema,
+  shared: z.boolean(),
+  mine: z.boolean(),
+  ownerName: z.string(),
+  updatedAt: z.string(),
+});
+export type SavedView = z.infer<typeof SavedViewSchema>;
+
+export const SavedViewInputSchema = z.object({
+  scope: SavedViewScopeSchema,
+  name: z.string().trim().min(1).max(60),
+  query: SavedViewQuerySchema,
+  shared: z.boolean().optional(),
+});
+export type SavedViewInput = z.infer<typeof SavedViewInputSchema>;
+
+export const SavedViewUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  query: SavedViewQuerySchema.optional(),
+  shared: z.boolean().optional(),
+});
+export type SavedViewUpdate = z.infer<typeof SavedViewUpdateSchema>;
 
 export const CandidateCreateInputSchema = z.object({
   firstName: z.string().min(1).max(80),
@@ -4177,6 +4251,7 @@ export const CandidateCreateInputSchema = z.object({
   notes: z.string().max(2000).optional(),
   resumeUrl: httpUrl(2000).optional(),
   linkedinUrl: httpUrl(2000).optional(),
+  jobPostingId: UuidSchema.nullable().optional(),
 });
 export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
 
@@ -4207,6 +4282,7 @@ export const CandidateUpdateInputSchema = z.object({
   position: z.string().max(120).nullable().optional(),
   source: z.string().max(80).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  jobPostingId: UuidSchema.nullable().optional(),
 });
 export type CandidateUpdateInput = z.infer<typeof CandidateUpdateInputSchema>;
 
@@ -4266,11 +4342,17 @@ export const CandidateEventKindSchema = z.enum([
   'STAGE_CHANGED',
   'NOTE',
   'INTERVIEW_SCHEDULED',
+  'INTERVIEW_RESCHEDULED',
   'INTERVIEW_SCORED',
   'INTERVIEW_CANCELLED',
   'OFFER_CREATED',
+  'OFFER_APPROVAL_REQUESTED',
+  'OFFER_APPROVED',
+  'OFFER_APPROVAL_DECLINED',
   'OFFER_SENT',
   'OFFER_DECIDED',
+  'SUBMITTED_TO_CLIENT',
+  'CLIENT_FEEDBACK',
   'HIRED',
 ]);
 export type CandidateEventKind = z.infer<typeof CandidateEventKindSchema>;
@@ -4291,6 +4373,33 @@ export const CandidateEventListResponseSchema = z.object({
   events: z.array(CandidateEventSchema),
 });
 export type CandidateEventListResponse = z.infer<typeof CandidateEventListResponseSchema>;
+
+/**
+ * A structured scorecard: every kit question rated on the same four-point
+ * scale, with notes, plus an overall summary. Ratings on one scale are
+ * what let several interviewers' scorecards be read side by side and
+ * averaged — free-text answers alone could only be read one at a time.
+ */
+export const SCORECARD_RATINGS = [
+  { value: 4, label: 'Strong' },
+  { value: 3, label: 'Good' },
+  { value: 2, label: 'Mixed' },
+  { value: 1, label: 'Weak' },
+] as const;
+
+export const InterviewScorecardSchema = z.object({
+  answers: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(1000),
+        rating: z.number().int().min(1).max(4).nullable(),
+        notes: z.string().max(4000),
+      }),
+    )
+    .max(50),
+  summary: z.string().max(8000),
+});
+export type InterviewScorecard = z.infer<typeof InterviewScorecardSchema>;
 
 export const CandidateNoteInputSchema = z.object({
   body: z.string().trim().min(1).max(4000),
@@ -4332,11 +4441,125 @@ export const RecruitingSummarySchema = z.object({
   /** Interviews that have happened but have no score yet. */
   unscoredInterviews: z.number().int(),
   offersAwaitingReply: z.number().int(),
+  /** Offers held because their pay is outside the client's band. */
+  offersAwaitingApproval: z.number().int(),
   hiredThisMonth: z.number().int(),
   /** Median days from applying to hired, over hires in the last 90 days. */
   medianDaysToHire: z.number().nullable(),
 });
 export type RecruitingSummary = z.infer<typeof RecruitingSummarySchema>;
+
+/* ----- Recruiting analytics ----------------------------------------------- *
+ * The recruiting dashboard: how candidates move through the funnel, how
+ * fast roles fill, where hires come from and what each source costs,
+ * how offers land and how each client's orders are filled — and whether
+ * the people hired stay 90 days, by source and by who hired them.
+ * Rates are 0–100, rounded; null when there is nothing to divide by.
+ * ------------------------------------------------------------------------- */
+
+const RateSchema = z.number().min(0).max(100).nullable();
+
+export const RecruitingFunnelStageSchema = z.object({
+  stage: z.enum(['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED']),
+  /** Candidates from the range who got at least this far. */
+  reached: z.number().int(),
+  /** Of those, the share who reached the next stage. */
+  toNextPct: RateSchema,
+});
+
+export const RecruitingSourceRowSchema = z.object({
+  /** The Candidate.source key; null when none was recorded. */
+  source: z.string().nullable(),
+  applicants: z.number().int(),
+  hires: z.number().int(),
+  /** Of the range's applicants from this source, the share hired so far. */
+  applicantToHirePct: RateSchema,
+  /** Spend recorded for the months the range touches; null when none. */
+  spend: z.number().nullable(),
+  costPerHire: z.number().nullable(),
+});
+
+export const RecruitingClientRowSchema = z.object({
+  clientId: z.string().uuid(),
+  clientName: z.string(),
+  hires: z.number().int(),
+  offersAccepted: z.number().int(),
+  /** Accepted + declined + expired. */
+  offersDecided: z.number().int(),
+  offerAcceptancePct: RateSchema,
+  /** Headcount on the client's postings opened in the range. */
+  openings: z.number().int(),
+  filled: z.number().int(),
+  fillRatePct: RateSchema,
+  medianDaysToFill: z.number().nullable(),
+});
+
+export const RecruitingRetentionRowSchema = z.object({
+  key: z.string().nullable(),
+  label: z.string(),
+  hires: z.number().int(),
+  stayed: z.number().int(),
+  stayedPct: RateSchema,
+});
+
+export const RecruitingAnalyticsSchema = z.object({
+  range: z.object({ from: z.string(), to: z.string() }),
+  funnel: z.object({
+    applicants: z.number().int(),
+    stages: z.array(RecruitingFunnelStageSchema),
+    rejected: z.number().int(),
+    withdrawn: z.number().int(),
+    inProgress: z.number().int(),
+  }),
+  speed: z.object({
+    hires: z.number().int(),
+    medianDaysToHire: z.number().nullable(),
+    postingsFilled: z.number().int(),
+    medianDaysToFill: z.number().nullable(),
+  }),
+  sources: z.array(RecruitingSourceRowSchema),
+  spendTotal: z.number().nullable(),
+  costPerHire: z.number().nullable(),
+  offers: z.object({
+    accepted: z.number().int(),
+    declined: z.number().int(),
+    expired: z.number().int(),
+    acceptancePct: RateSchema,
+  }),
+  fill: z.object({
+    openings: z.number().int(),
+    filled: z.number().int(),
+    fillRatePct: RateSchema,
+  }),
+  clients: z.array(RecruitingClientRowSchema),
+  retention: z.object({
+    /** The hires measured: those old enough to have had 90 days. */
+    window: z.object({ from: z.string(), to: z.string() }),
+    overall: RecruitingRetentionRowSchema,
+    bySource: z.array(RecruitingRetentionRowSchema),
+    byRecruiter: z.array(RecruitingRetentionRowSchema),
+  }),
+});
+export type RecruitingAnalytics = z.infer<typeof RecruitingAnalyticsSchema>;
+
+export const RecruitingSourceSpendSchema = z.object({
+  id: z.string().uuid(),
+  source: z.string(),
+  /** YYYY-MM. */
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  amount: z.number(),
+  note: z.string().nullable(),
+  updatedByEmail: z.string().nullable(),
+});
+export type RecruitingSourceSpend = z.infer<typeof RecruitingSourceSpendSchema>;
+
+export const RecruitingSourceSpendInputSchema = z.object({
+  source: z.string().trim().min(1).max(80),
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Month must be YYYY-MM'),
+  amount: z.number().nonnegative().max(10_000_000),
+  note: z.string().trim().max(500).nullable().optional(),
+});
+export type RecruitingSourceSpendInput = z.infer<typeof RecruitingSourceSpendInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 15 — Time / Scheduling depth (Rippling-grade)

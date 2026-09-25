@@ -52,7 +52,7 @@ export async function recordCandidateEvent(db: Db, e: CandidateEventInput): Prom
 export function auditRecruiting(
   req: Request,
   action: string,
-  entityType: 'Candidate' | 'Interview' | 'Offer' | 'JobPosting',
+  entityType: 'Candidate' | 'Interview' | 'Offer' | 'JobPosting' | 'CandidateSubmittal' | 'RecruitingSourceSpend',
   entityId: string,
   metadata: Record<string, unknown> = {},
 ): void {

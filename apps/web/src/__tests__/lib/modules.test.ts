@@ -62,6 +62,7 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
       'portal-schedule',
       'portal-history',
       'portal-requests',
+      'portal-candidates',
       'region',
     ] as ModuleKey[]) {
       expect(keys.has(portalKey)).toBe(false);

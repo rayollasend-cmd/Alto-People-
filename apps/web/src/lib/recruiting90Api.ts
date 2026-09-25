@@ -52,9 +52,17 @@ export interface InterviewRecord {
   interviewerUserId: string | null;
   interviewerEmail: string | null;
   scheduledFor: string;
+  durationMinutes: number;
+  location: string | null;
   completedAt: string | null;
   rating: number | null;
   scorecard: unknown;
+}
+
+/** Who a calendar invite went to. */
+export interface InviteResult {
+  candidate: boolean;
+  interviewer: boolean;
 }
 
 export const listInterviews = (candidateId?: string) =>
@@ -67,7 +75,23 @@ export const createInterview = (input: {
   kitId?: string | null;
   interviewerUserId?: string | null;
   scheduledFor: string;
-}) => apiFetch<{ id: string }>('/interviews', { method: 'POST', body: input });
+  durationMinutes?: number;
+  location?: string | null;
+  /** Email the calendar invite (default: yes). */
+  notify?: boolean;
+}) => apiFetch<{ id: string; invited: InviteResult }>('/interviews', { method: 'POST', body: input });
+
+/** Reschedule: the invite in their calendars is replaced, not duplicated. */
+export const updateInterview = (
+  id: string,
+  input: {
+    scheduledFor?: string;
+    durationMinutes?: number;
+    location?: string | null;
+    interviewerUserId?: string | null;
+    notify?: boolean;
+  },
+) => apiFetch<{ ok: true; invited: InviteResult }>(`/interviews/${id}`, { method: 'PATCH', body: input });
 
 export const scoreInterview = (
   id: string,
@@ -80,6 +104,8 @@ export const deleteInterview = (id: string) =>
 // ----- Offers ------------------------------------------------------------
 
 export type OfferStatus =
+  /** Pay outside the client's band — waiting on someone else's approval. */
+  | 'PENDING_APPROVAL'
   | 'DRAFT'
   | 'SENT'
   | 'ACCEPTED'
@@ -104,6 +130,17 @@ export interface OfferRecord {
   decidedAt: string | null;
   expiresAt: string | null;
   createdAt: string;
+  createdById: string | null;
+  /** Why it needed approval: the band it fell outside. */
+  approvalNote: string | null;
+  approvedByEmail: string | null;
+  approvedAt: string | null;
+  approvalDeclinedReason: string | null;
+  /** The candidate's typed signature, when they accepted through their link. */
+  signedName: string | null;
+  signedAt: string | null;
+  hasSignedPdf: boolean;
+  declineReason: string | null;
 }
 
 // candidateId mirrors listInterviews — the server has always supported the
@@ -124,14 +161,50 @@ export const createOffer = (input: {
   currency?: string;
   letterBody?: string | null;
   expiresAt?: string | null;
-}) => apiFetch<{ id: string }>('/offers', { method: 'POST', body: input });
+}) =>
+  apiFetch<{ id: string; status: OfferStatus; approvalNote: string | null }>('/offers', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Approve an offer held for its pay — not one you drafted. */
+export const approveOffer = (id: string) =>
+  apiFetch<{ ok: true }>(`/offers/${id}/approve`, { method: 'POST', body: {} });
+
+export const declineOfferApproval = (id: string, reason: string) =>
+  apiFetch<{ ok: true }>(`/offers/${id}/decline-approval`, { method: 'POST', body: { reason } });
+
+/** Published offer-letter templates: the client's own, then global ones. */
+export const listOfferLetterTemplates = (clientId?: string) =>
+  apiFetch<{ templates: Array<{ id: string; name: string; clientName: string | null }> }>(
+    `/offers/letter-templates${clientId ? `?clientId=${clientId}` : ''}`,
+  );
+
+/** The letter written from a template, ready to edit before saving. */
+export const previewOfferLetter = (input: {
+  candidateId: string;
+  clientId: string;
+  jobTitle: string;
+  startDate: string;
+  salary?: number | null;
+  hourlyRate?: number | null;
+  templateId?: string;
+}) =>
+  apiFetch<{ templateId: string; templateName: string; body: string; unresolvedTokens: string[] }>(
+    '/offers/letter-preview',
+    { method: 'POST', body: input },
+  );
+
+/** The signed letter, for opening in a new tab. */
+export const signedOfferUrl = (id: string) => `/api/offers/${id}/signed.pdf`;
 
 /**
- * Flip a DRAFT offer to SENT. `emailed: false` means the offer was marked
- * sent but no candidate email was on file — the UI should surface that.
+ * Flip a DRAFT offer to SENT and email the candidate their signing link.
+ * `emailed: false` means no candidate email was on file — the UI should
+ * say so. `link` comes back only where email isn't configured (dev).
  */
 export const sendOffer = (id: string) =>
-  apiFetch<{ ok: true; emailed: boolean }>(`/offers/${id}/send`, {
+  apiFetch<{ ok: true; emailed: boolean; link?: string }>(`/offers/${id}/send`, {
     method: 'POST',
     body: {},
   });
@@ -205,6 +278,15 @@ export const convertReferral = (id: string) =>
 
 export type JobPostingStatus = 'DRAFT' | 'OPEN' | 'CLOSED';
 
+export type JobPostingSchedule = 'FULL_TIME' | 'PART_TIME' | 'TEMPORARY' | 'SEASONAL';
+
+export const SCHEDULE_LABEL: Record<JobPostingSchedule, string> = {
+  FULL_TIME: 'Full-time',
+  PART_TIME: 'Part-time',
+  TEMPORARY: 'Temporary',
+  SEASONAL: 'Seasonal',
+};
+
 export interface JobPostingRecord {
   id: string;
   clientId: string | null;
@@ -217,6 +299,14 @@ export interface JobPostingRecord {
   currency: string;
   slug: string;
   status: JobPostingStatus;
+  /** How many people the client asked for. */
+  openings: number;
+  /** Hired against this posting so far. */
+  hired: number;
+  schedule: JobPostingSchedule | null;
+  payUnit: 'HOUR' | 'YEAR' | null;
+  /** In the job-board feeds while open. */
+  syndicate: boolean;
   openedAt: string | null;
   closedAt: string | null;
   createdAt: string;
@@ -233,8 +323,24 @@ export const createJobPosting = (input: {
   minSalary?: number | null;
   maxSalary?: number | null;
   currency?: string;
+  openings?: number;
+  schedule?: JobPostingSchedule | null;
+  payUnit?: 'HOUR' | 'YEAR' | null;
+  syndicate?: boolean;
   slug: string;
 }) => apiFetch<{ id: string }>('/job-postings', { method: 'POST', body: input });
+
+/** What changes after a posting is up: the headcount, and whether job boards carry it. */
+export const updateJobPosting = (
+  id: string,
+  body: { openings?: number; syndicate?: boolean; schedule?: JobPostingSchedule | null; payUnit?: 'HOUR' | 'YEAR' | null },
+) => apiFetch<{ ok: true }>(`/job-postings/${id}`, { method: 'PATCH', body });
+
+export const setJobPostingOpenings = (id: string, openings: number) => updateJobPosting(id, { openings });
+
+/** The public job-board feed for one board; its links credit applicants to it. */
+export const jobFeedUrl = (board: string) =>
+  `${window.location.origin}/api/careers/feed.xml?board=${encodeURIComponent(board)}`;
 
 export const openJobPosting = (id: string) =>
   apiFetch<{ ok: true }>(`/job-postings/${id}/open`, { method: 'POST', body: {} });
@@ -244,3 +350,34 @@ export const closeJobPosting = (id: string) =>
 
 export const deleteJobPosting = (id: string) =>
   apiFetch<void>(`/job-postings/${id}`, { method: 'DELETE' });
+
+// ----- The candidate's offer link (public) -------------------------------
+
+export interface PublicOfferLetter {
+  candidateFirstName: string;
+  candidateName: string;
+  jobTitle: string;
+  clientName: string;
+  startDate: string;
+  pay: string;
+  letterBody: string | null;
+  status: OfferStatus;
+  expiresAt: string | null;
+  signedName: string | null;
+  signedAt: string | null;
+}
+
+export const getOfferLetter = (token: string) =>
+  apiFetch<PublicOfferLetter>(`/offer-letters/${encodeURIComponent(token)}`);
+
+export const acceptOfferLetter = (token: string, typedName: string) =>
+  apiFetch<{ ok: true; signedAt: string }>(`/offer-letters/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
+    body: { typedName, agree: true },
+  });
+
+export const declineOfferLetter = (token: string, reason: string | null) =>
+  apiFetch<{ ok: true }>(`/offer-letters/${encodeURIComponent(token)}/decline`, {
+    method: 'POST',
+    body: reason ? { reason } : {},
+  });

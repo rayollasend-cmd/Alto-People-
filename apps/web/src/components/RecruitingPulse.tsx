@@ -131,7 +131,8 @@ export function RecruitingPulse() {
     s.stuckCount === 0 &&
     s.interviewsToday.length === 0 &&
     s.unscoredInterviews === 0 &&
-    s.offersAwaitingReply === 0;
+    s.offersAwaitingReply === 0 &&
+    s.offersAwaitingApproval === 0;
 
   return (
     <section aria-label="Recruiting" className="space-y-3">
@@ -207,6 +208,14 @@ export function RecruitingPulse() {
               tone="attention"
               title={`${s.unscoredInterviews} interview${s.unscoredInterviews === 1 ? ' needs' : 's need'} a score`}
               to="/recruiting?stage=INTERVIEW"
+            />
+          )}
+          {s.offersAwaitingApproval > 0 && (
+            <Waiting
+              icon={FileSignature}
+              tone="attention"
+              title={`${s.offersAwaitingApproval} offer${s.offersAwaitingApproval === 1 ? ' needs' : 's need'} approval — pay outside the band`}
+              to="/recruiting/extras?tab=offers"
             />
           )}
           {s.offersAwaitingReply > 0 && (

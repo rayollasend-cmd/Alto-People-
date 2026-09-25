@@ -8,20 +8,35 @@ import { fmtDateTime } from '@/lib/format';
 
 vi.mock('@/lib/recruitingApi', () => ({
   listCandidates: vi.fn(),
+  getCandidateBoard: vi.fn(),
+  getCandidate: vi.fn(),
+  getRecruitingSummary: vi.fn(),
+  listAllCandidates: vi.fn(async () => []),
   createCandidate: vi.fn(),
   advanceCandidate: vi.fn(async () => ({})),
   hireCandidate: vi.fn(async () => ({})),
   updateCandidate: vi.fn(async () => ({})),
   listCandidateEvents: vi.fn(async () => ({ events: [] })),
   addCandidateNote: vi.fn(async () => ({ ok: true })),
+  listSubmittals: vi.fn(async () => ({ submittals: [] })),
+  submitToClient: vi.fn(async () => ({ clientName: 'Northside Grill' })),
+  withdrawSubmittal: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('@/lib/recruiting90Api', () => ({
   listInterviews: vi.fn(async () => ({ interviews: [] })),
   listOffers: vi.fn(async () => ({ offers: [] })),
   listInterviewKits: vi.fn(async () => ({ kits: [] })),
-  createInterview: vi.fn(async () => ({ id: 'int-new' })),
+  createInterview: vi.fn(async () => ({ id: 'int-new', invited: { candidate: true, interviewer: true } })),
+  updateInterview: vi.fn(async () => ({ ok: true, invited: { candidate: true, interviewer: true } })),
+  deleteInterview: vi.fn(async () => undefined),
   scoreInterview: vi.fn(async () => ({ ok: true })),
+  listJobPostings: vi.fn(async () => ({
+    postings: [
+      { id: 'post-1', title: 'Line Cook', clientName: 'Northside Grill', status: 'OPEN', openings: 3, hired: 1 },
+      { id: 'post-2', title: 'Dishwasher', clientName: null, status: 'CLOSED', openings: 1, hired: 1 },
+    ],
+  })),
 }));
 
 // The hire dialog is the onboarding invite; its pickers load from these.
@@ -33,6 +48,7 @@ vi.mock('@/lib/onboardingApi', () => ({
   createApplication: vi.fn(),
 }));
 vi.mock('@/lib/clientsApi', () => ({
+  listClients: vi.fn(async () => ({ clients: [{ id: 'c1', name: 'Northside Grill', state: 'FL' }] })),
   listClientLocations: vi.fn(async () => ({ locations: [{ id: 'loc-1', name: 'Store 12', state: 'FL' }] })),
 }));
 vi.mock('@/lib/orgApi', () => ({
@@ -43,21 +59,49 @@ vi.mock('@/lib/positionsApi', () => ({
   listPositions: vi.fn(async () => ({ positions: [] })),
 }));
 
-vi.mock('@/lib/auth', () => ({
+vi.mock('@/lib/savedViewsApi', () => ({
+  listSavedViews: vi.fn(async () => ({ views: [] })),
+  createSavedView: vi.fn(async (body: { name: string; query: Record<string, string> }) => ({
+    id: 'sv-new', scope: 'recruiting.candidates', name: body.name, query: body.query, shared: false, mine: true, ownerName: 'me', updatedAt: '',
+  })),
+  updateSavedView: vi.fn(),
+  deleteSavedView: vi.fn(),
+}));
+
+vi.mock('@/lib/auth', async (orig) => ({
+  ...(await orig<typeof import('@/lib/auth')>()),
   useAuth: () => ({ can: () => true, user: { id: 'me-1' } }),
 }));
 
+import type { Candidate } from '@alto-people/shared';
 import {
   addCandidateNote,
   advanceCandidate,
+  getCandidate,
+  getCandidateBoard,
+  getRecruitingSummary,
   hireCandidate,
   listCandidateEvents,
   listCandidates,
+  listSubmittals,
+  submitToClient,
   updateCandidate,
+  withdrawSubmittal,
 } from '@/lib/recruitingApi';
-import { createInterview, listInterviews, listOffers, scoreInterview } from '@/lib/recruiting90Api';
+import {
+  createInterview,
+  deleteInterview,
+  listInterviewKits,
+  listInterviews,
+  listOffers,
+  scoreInterview,
+  updateInterview,
+} from '@/lib/recruiting90Api';
+import { listClientLocations } from '@/lib/clientsApi';
 import { RecruitingHome } from '@/pages/recruiting/RecruitingHome';
 import { TooltipProvider } from '@/components/ui/Tooltip';
+import { ConfirmProvider } from '@/lib/confirm';
+import { createSavedView, listSavedViews } from '@/lib/savedViewsApi';
 
 // The page reads through the query layer; every render gets a client.
 function withQueryClient({ children }: { children: ReactNode }) {
@@ -92,18 +136,48 @@ const MARIA = {
   createdAt: '2026-07-01T12:00:00.000Z',
 };
 
-function renderHome() {
+function renderHome(initialUrl = '/recruiting') {
   // Layout supplies TooltipProvider in the real app; a standalone page render
   // has to stand it up itself or every Tooltip throws on mount.
   render(
     <TooltipProvider>
-      <MemoryRouter>
-        <RecruitingHome />
-      </MemoryRouter>
+      <ConfirmProvider>
+        <MemoryRouter initialEntries={[initialUrl]}>
+          <RecruitingHome />
+        </MemoryRouter>
+      </ConfirmProvider>
     </TooltipProvider>,
   );
   return userEvent.setup();
 }
+
+const STAGE_ORDER = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED', 'WITHDRAWN', 'REJECTED'] as const;
+/** The pipeline each test set with listCandidates — read without counting as a call. */
+async function pipeline(): Promise<Candidate[]> {
+  const impl = vi.mocked(listCandidates).getMockImplementation();
+  return impl ? ((await impl({}, {})) as { candidates: Candidate[] }).candidates : [];
+}
+function boardOf(cands: Candidate[]) {
+  return {
+    columns: STAGE_ORDER.map((stage) => {
+      const inStage = cands.filter((c) => c.stage === stage);
+      return { stage, total: inStage.length, candidates: inStage };
+    }),
+  };
+}
+const SUMMARY = {
+  byStage: { APPLIED: 12, SCREENING: 5, INTERVIEW: 3, OFFER: 2 },
+  stuckAfterDays: 7,
+  stuckCount: 0,
+  stuck: [],
+  interviewsToday: [],
+  interviewsNext7Days: 0,
+  unscoredInterviews: 0,
+  offersAwaitingReply: 0,
+  offersAwaitingApproval: 0,
+  hiredThisMonth: 4,
+  medianDaysToHire: null,
+};
 
 /** Open Maria's drawer from the board card and return a scoped query set. */
 async function openMaria(user: ReturnType<typeof renderHome>) {
@@ -120,6 +194,10 @@ beforeEach(() => {
   vi.mocked(listOffers).mockResolvedValue({ offers: [] } as never);
   vi.mocked(advanceCandidate).mockClear();
   vi.mocked(listCandidateEvents).mockResolvedValue({ events: [] } as never);
+  vi.mocked(listSubmittals).mockResolvedValue({ submittals: [] } as never);
+  vi.mocked(getCandidateBoard).mockImplementation(async () => boardOf(await pipeline()) as never);
+  vi.mocked(getCandidate).mockImplementation(async (id: string) => (await pipeline()).find((c) => c.id === id) as never);
+  vi.mocked(getRecruitingSummary).mockResolvedValue(SUMMARY as never);
 });
 
 describe('<RecruitingHome> candidate detail', () => {
@@ -191,7 +269,8 @@ describe('<RecruitingHome> candidate detail', () => {
     // "x/5" — a strong no read "-2/5".
     expect(drawer.getByText('Yes')).toBeInTheDocument();
     expect(drawer.getByText(/northside grill/i)).toBeInTheDocument();
-    expect(drawer.getByText('SENT')).toBeInTheDocument();
+    // The status in words, not the enum.
+    expect(drawer.getByText('Sent')).toBeInTheDocument();
   });
 
   it('advances the candidate to the next stage from the drawer', async () => {
@@ -270,9 +349,19 @@ describe('<RecruitingHome> working a candidate', () => {
     const phone = dialog.getByLabelText('Phone');
     await user.clear(phone);
     await user.type(phone, '555-0199');
+    // The opening they'd fill: open postings only, with how far along each is.
+    const posting = dialog.getByLabelText(/^Job posting/);
+    await waitFor(() =>
+      expect(within(posting).getByRole('option', { name: 'Line Cook · Northside Grill · 1 of 3 filled' })).toBeInTheDocument(),
+    );
+    expect(within(posting).queryByRole('option', { name: /Dishwasher/ })).not.toBeInTheDocument();
+    await user.selectOptions(posting, 'post-1');
     await user.click(dialog.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(updateCandidate).toHaveBeenCalledWith('cand-1', expect.objectContaining({ phone: '555-0199' })),
+      expect(updateCandidate).toHaveBeenCalledWith(
+        'cand-1',
+        expect.objectContaining({ phone: '555-0199', jobPostingId: 'post-1' }),
+      ),
     );
   });
 
@@ -447,15 +536,310 @@ describe('<RecruitingHome> working a candidate', () => {
     );
   });
 
-  it('counts a hire in the month they were hired, not the month they applied', async () => {
-    vi.mocked(listCandidates).mockResolvedValue({
-      candidates: [
-        { ...MARIA, stage: 'HIRED', hiredAssociateId: 'a1', createdAt: '2026-01-05T12:00:00.000Z', hiredAt: new Date().toISOString() },
+  it('reads the tiles from the server’s count of the whole pipeline', async () => {
+    renderHome();
+    // Label → header row → the tile. In funnel is every open stage.
+    const tile = async (label: string) => (await screen.findByText(label)).parentElement!.parentElement!;
+    await waitFor(async () => expect(await tile('Hired this month')).toHaveTextContent('4'));
+    expect(await tile('In funnel')).toHaveTextContent('22');
+    expect(await tile('Open offers')).toHaveTextContent('2');
+  });
+});
+
+describe('<RecruitingHome> interviews in calendars, scorecards side by side', () => {
+  const upcoming = (over: Record<string, unknown> = {}) => ({
+    id: 'int-9',
+    candidateId: 'cand-1',
+    candidateName: 'Maria Lopez',
+    kitId: null,
+    kitName: null,
+    interviewerUserId: 'me-1',
+    interviewerEmail: 'me@example.com',
+    scheduledFor: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    durationMinutes: 45,
+    location: 'Destin #1234',
+    completedAt: null,
+    rating: null,
+    scorecard: null,
+    ...over,
+  });
+
+  it('schedules with a length and a place, and says who got the invite', async () => {
+    vi.mocked(createInterview).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(drawer.getByRole('button', { name: 'Schedule' }));
+    const dialog = within(await screen.findByRole('dialog', { name: /schedule an interview/i }));
+    await user.selectOptions(dialog.getByLabelText('Length'), '45');
+    await user.type(dialog.getByLabelText('Where'), 'Destin #1234');
+    expect(dialog.getByLabelText(/calendar invite/i)).toBeChecked();
+    await user.click(dialog.getByRole('button', { name: 'Schedule' }));
+    await waitFor(() =>
+      expect(createInterview).toHaveBeenCalledWith(
+        expect.objectContaining({ durationMinutes: 45, location: 'Destin #1234', notify: true }),
+      ),
+    );
+  });
+
+  it('an upcoming interview can be moved, keeping the invite in step', async () => {
+    vi.mocked(listInterviews).mockResolvedValue({ interviews: [upcoming()] } as never);
+    vi.mocked(updateInterview).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    expect(await drawer.findByText(/45 min · Destin #1234/)).toBeInTheDocument();
+    await user.click(drawer.getByRole('button', { name: 'Reschedule' }));
+    const dialog = within(await screen.findByRole('dialog', { name: /reschedule an interview/i }));
+    // It opens on the interview as it stands.
+    expect(dialog.getByLabelText('Where')).toHaveValue('Destin #1234');
+    await user.click(dialog.getByRole('button', { name: 'Move it' }));
+    await waitFor(() =>
+      expect(updateInterview).toHaveBeenCalledWith('int-9', expect.objectContaining({ durationMinutes: 45, notify: true })),
+    );
+  });
+
+  it('and called off, which withdraws the invites', async () => {
+    vi.mocked(listInterviews).mockResolvedValue({ interviews: [upcoming()] } as never);
+    vi.mocked(deleteInterview).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(await drawer.findByRole('button', { name: 'Cancel' }));
+    const confirm = within(await screen.findByRole('dialog', { name: /cancel this interview/i }));
+    await user.click(confirm.getByRole('button', { name: 'Cancel interview' }));
+    await waitFor(() => expect(deleteInterview).toHaveBeenCalledWith('int-9'));
+  });
+
+  it('rates each kit question on one scale', async () => {
+    vi.mocked(listInterviews).mockResolvedValue({
+      interviews: [upcoming({ id: 'int-p', kitId: 'kit-1', kitName: 'Cashier screen', scheduledFor: new Date(Date.now() - 3_600_000).toISOString() })],
+    } as never);
+    vi.mocked(listInterviewKits).mockResolvedValue({
+      kits: [{ id: 'kit-1', clientId: null, name: 'Cashier screen', description: null, updatedAt: '', questions: [{ prompt: 'Upset customer?' }] }],
+    } as never);
+    vi.mocked(scoreInterview).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.click(await drawer.findByRole('button', { name: 'Score' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Score the interview' }));
+    await user.click(within(dialog.getByRole('radiogroup', { name: 'Upset customer?' })).getByRole('radio', { name: 'Strong' }));
+    await user.type(dialog.getByLabelText('Notes: Upset customer?'), 'Calm, got a manager.');
+    await user.click(within(dialog.getByRole('radiogroup', { name: 'Recommendation' })).getByRole('radio', { name: 'Yes' }));
+    await user.click(dialog.getByRole('button', { name: 'Save scorecard' }));
+    await waitFor(() =>
+      expect(scoreInterview).toHaveBeenCalledWith('int-p', {
+        rating: 1,
+        scorecard: { answers: [{ prompt: 'Upset customer?', rating: 4, notes: 'Calm, got a manager.' }], summary: '' },
+      }),
+    );
+  });
+
+  it('reads every interviewer\'s scorecard together', async () => {
+    const card = (r: number) => ({ answers: [{ prompt: 'Upset customer?', rating: r, notes: '' }], summary: '' });
+    vi.mocked(listInterviews).mockResolvedValue({
+      interviews: [
+        upcoming({ id: 'a', completedAt: '2026-09-01T00:00:00.000Z', rating: 2, scorecard: card(4) }),
+        upcoming({ id: 'b', completedAt: '2026-09-02T00:00:00.000Z', rating: -1, scorecard: card(3) }),
       ],
     } as never);
-    renderHome();
-    // Label → header row → the tile.
-    const tile = (await screen.findByText('Hired this month')).parentElement!.parentElement!;
-    await waitFor(() => expect(tile).toHaveTextContent('1'));
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    expect(await drawer.findByText('2 scorecards:')).toBeInTheDocument();
+    expect(drawer.getByText('1 × Strong yes')).toBeInTheDocument();
+    expect(drawer.getByText('1 × No')).toBeInTheDocument();
+    const avg = within(drawer.getByRole('list', { name: 'Average rating by question' }));
+    expect(avg.getByText('3.5 / 4 · Strong')).toBeInTheDocument();
+  });
+});
+
+describe('<RecruitingHome> client review', () => {
+  it('puts a candidate in front of a client, for one store, with a pitch', async () => {
+    vi.mocked(submitToClient).mockClear();
+    vi.mocked(listClientLocations).mockResolvedValueOnce({
+      locations: [
+        { id: 'loc-1', name: 'Store 12', state: 'FL' },
+        { id: 'loc-2', name: 'Store 40', state: 'FL' },
+      ],
+    } as never);
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    expect(await drawer.findByText('Not put in front of a client yet.')).toBeInTheDocument();
+    await user.click(drawer.getByRole('button', { name: 'Put forward' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Put Maria forward' }));
+    // What the client will — and won't — see.
+    expect(dialog.getByText(/not their email, phone or résumé/)).toBeInTheDocument();
+    const client = dialog.getByLabelText(/^Client/);
+    await waitFor(() => expect(within(client).getByRole('option', { name: 'Northside Grill' })).toBeInTheDocument());
+    await user.selectOptions(client, 'c1');
+    const store = dialog.getByLabelText(/^Store/);
+    await waitFor(() => expect(store).toBeEnabled());
+    await user.selectOptions(store, 'loc-2');
+    await user.type(dialog.getByLabelText(/^Pitch/), 'Five years on the line.');
+    await user.click(dialog.getByRole('button', { name: 'Send to client' }));
+    await waitFor(() =>
+      expect(submitToClient).toHaveBeenCalledWith('cand-1', {
+        clientId: 'c1',
+        locationId: 'loc-2',
+        pitch: 'Five years on the line.',
+      }),
+    );
+  });
+
+  it('shows the client’s answer, in their words, and can withdraw one still waiting', async () => {
+    vi.mocked(listSubmittals).mockResolvedValue({
+      submittals: [
+        {
+          id: 'sub-1', clientId: 'c1', clientName: 'Northside Grill', locationName: 'Store 40', pitch: null,
+          status: 'PENDING', feedback: null, submittedByEmail: 'me@example.com', decidedByEmail: null,
+          decidedAt: null, createdAt: '2026-09-24T14:00:00.000Z',
+        },
+        {
+          id: 'sub-0', clientId: 'c2', clientName: 'Harbor Inn', locationName: null, pitch: null,
+          status: 'DECLINED', feedback: 'Needs weekend availability.', submittedByEmail: 'me@example.com',
+          decidedByEmail: 'gm@harbor.com', decidedAt: '2026-09-20T14:00:00.000Z', createdAt: '2026-09-18T14:00:00.000Z',
+        },
+      ],
+    } as never);
+    vi.mocked(withdrawSubmittal).mockClear();
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    expect(await drawer.findByText('Northside Grill · Store 40')).toBeInTheDocument();
+    expect(drawer.getByText('Waiting on client')).toBeInTheDocument();
+    expect(drawer.getByText('Passed')).toBeInTheDocument();
+    expect(drawer.getByText('Needs weekend availability.')).toBeInTheDocument();
+    expect(drawer.getByText(/answered .* by gm@harbor\.com/)).toBeInTheDocument();
+    await user.click(drawer.getByRole('button', { name: 'Withdraw from client' }));
+    const confirm = within(await screen.findByRole('dialog', { name: 'Withdraw from Northside Grill?' }));
+    await user.click(confirm.getByRole('button', { name: 'Withdraw' }));
+    await waitFor(() => expect(withdrawSubmittal).toHaveBeenCalledWith('sub-1'));
+  });
+});
+
+describe('<RecruitingHome> at enterprise scale', () => {
+  const BEN = { ...MARIA, id: 'cand-2', firstName: 'Ben', lastName: 'Okafor', email: 'ben@example.com', stage: 'SCREENING' as const };
+
+  it('the board is one Tab stop; arrows move between cards and M moves a candidate', async () => {
+    vi.mocked(listCandidates).mockResolvedValue({ candidates: [MARIA, BEN] } as never);
+    vi.mocked(advanceCandidate).mockClear();
+    const user = renderHome();
+    const maria = await screen.findByRole('button', { name: /open maria lopez's details/i });
+    const ben = screen.getByRole('button', { name: /open ben okafor's details/i });
+    expect(maria).toHaveAttribute('tabindex', '0');
+    expect(ben).toHaveAttribute('tabindex', '-1');
+    // Where it is, for a screen reader.
+    expect(maria).toHaveAccessibleName(/Line Cook, Applied, 1 of 1/);
+
+    maria.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(ben).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(maria).toHaveFocus();
+
+    await user.keyboard('m');
+    const menu = await screen.findByRole('menu');
+    await user.click(within(menu).getByRole('menuitem', { name: 'Interview' }));
+    await waitFor(() => expect(advanceCandidate).toHaveBeenCalledWith('cand-1', { stage: 'INTERVIEW' }));
+  });
+
+  it('rejecting from the Move menu asks for the reason first', async () => {
+    const user = renderHome();
+    await user.click(await screen.findByRole('button', { name: 'Move Maria Lopez' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Reject…' }));
+    expect(await screen.findByRole('dialog', { name: 'Reject Maria Lopez?' })).toBeInTheDocument();
+  });
+
+  it('a column shows its count and loads more from the server', async () => {
+    vi.mocked(getCandidateBoard).mockResolvedValue({
+      columns: STAGE_ORDER.map((stage) =>
+        stage === 'APPLIED' ? { stage, total: 30, candidates: [MARIA] } : { stage, total: 0, candidates: [] },
+      ),
+    } as never);
+    vi.mocked(listCandidates).mockClear();
+    const user = renderHome();
+    expect(await screen.findByRole('region', { name: 'Applied, 30 candidates' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show more (29 left)' }));
+    await waitFor(() =>
+      expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({ stage: 'APPLIED' }), { offset: 1, limit: 25 }),
+    );
+  });
+
+  it('an outcome shows its latest few and sends the rest to the list', async () => {
+    vi.mocked(getCandidateBoard).mockResolvedValue({
+      columns: STAGE_ORDER.map((stage) =>
+        stage === 'HIRED'
+          ? { stage, total: 10, candidates: [{ ...MARIA, stage: 'HIRED', hiredAt: '2026-09-01T12:00:00.000Z' }] }
+          : { stage, total: 0, candidates: [] },
+      ),
+    } as never);
+    vi.mocked(listCandidates).mockClear();
+    const user = renderHome();
+    await user.click(await screen.findByRole('button', { name: 'See all 10 in the list' }));
+    await waitFor(() =>
+      expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({ stage: 'HIRED' }), { limit: 50, offset: 0 }),
+    );
+  });
+
+  it('search and filters are applied on the server', async () => {
+    vi.mocked(getCandidateBoard).mockClear();
+    const user = renderHome();
+    await screen.findByRole('button', { name: /open maria lopez's details/i });
+    await user.selectOptions(screen.getByLabelText('Source'), 'indeed');
+    await user.click(screen.getByRole('button', { name: 'Stuck 7+ days' }));
+    await user.type(screen.getByLabelText('Search candidates'), 'kim cashier');
+    await waitFor(() =>
+      expect(getCandidateBoard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ q: 'kim cashier', source: 'indeed', stuck: '1', sort: 'newest' }),
+        25,
+      ),
+    );
+  });
+
+  it('the list pages on the server', async () => {
+    vi.mocked(listCandidates).mockResolvedValue({ candidates: [MARIA], total: 120, offset: 0, limit: 50 } as never);
+    const user = renderHome('/recruiting?view=list&stage=ALL');
+    expect(await screen.findByText('1–50 of 120')).toBeInTheDocument();
+    vi.mocked(listCandidates).mockClear();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({ sort: 'newest' }), { limit: 50, offset: 50 }));
+  });
+
+  it('saves the filters on screen as a view, and applies a saved one', async () => {
+    vi.mocked(listSavedViews).mockResolvedValue({
+      views: [
+        { id: 'sv-1', scope: 'recruiting.candidates', name: 'Stuck in screening', query: { view: 'list', stage: 'SCREENING', stuck: '1' }, shared: true, mine: false, ownerName: 'Dana Reyes', updatedAt: '' },
+      ],
+    } as never);
+    const user = renderHome('/recruiting?source=indeed');
+    await screen.findByRole('button', { name: /open maria lopez's details/i });
+
+    await user.click(screen.getByRole('button', { name: /Saved views: All candidates/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Save these filters as a view…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Save these filters as a view' }));
+    await user.type(dialog.getByLabelText(/^Name/), 'Indeed applicants');
+    await user.click(dialog.getByRole('button', { name: 'Save view' }));
+    await waitFor(() =>
+      expect(createSavedView).toHaveBeenCalledWith({
+        scope: 'recruiting.candidates',
+        name: 'Indeed applicants',
+        query: { view: 'board', source: 'indeed' },
+        shared: false,
+      }),
+    );
+
+    vi.mocked(listCandidates).mockClear();
+    await user.click(screen.getByRole('button', { name: /Saved views:/ }));
+    await user.click(await screen.findByRole('menuitem', { name: /Stuck in screening/ }));
+    await waitFor(() =>
+      expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({ stage: 'SCREENING', stuck: '1' }), { limit: 50, offset: 0 }),
+    );
+    // The source filter the view didn't have is gone.
+    expect(vi.mocked(listCandidates).mock.calls.at(-1)![0]).not.toHaveProperty('source');
+  });
+
+  it('a link to someone not on the current page still opens them', async () => {
+    const ZED = { ...MARIA, id: 'cand-9', firstName: 'Zed', lastName: 'Adams', email: 'zed@example.com' };
+    vi.mocked(getCandidate).mockResolvedValue(ZED as never);
+    renderHome('/recruiting?candidateId=cand-9');
+    const drawer = within(await screen.findByRole('dialog'));
+    expect(await drawer.findByText('zed@example.com')).toBeInTheDocument();
+    expect(getCandidate).toHaveBeenCalledWith('cand-9');
   });
 });

@@ -13,6 +13,7 @@ export type ModuleKey =
   | 'portal-history'
   | 'portal-ops'
   | 'portal-requests'
+  | 'portal-candidates'
   | 'floor-today'
   | 'relay'
   | 'statements'
@@ -194,6 +195,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal-history',
   'messages',
   'portal-requests',
+  'portal-candidates',
 ]);
 
 /** Finance's curated nav: the money cycle end-to-end — pay, tax, billing,
@@ -449,6 +451,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Requests',
     description:
       'Ask for coverage, flag an issue, or question a statement — and watch each request move to a named owner with a reply-by date.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'portal-candidates',
+    path: '/portal/candidates',
+    label: 'Candidates',
+    description:
+      'People Alto is putting forward for your team — who, for which store, why, and how Alto’s interviews went. Approve, or pass with a reason.',
     requires: 'view:dashboard',
     group: 'core',
   },

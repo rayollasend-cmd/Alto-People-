@@ -68,6 +68,7 @@ import { qualificationsRouter } from './routes/qualifications.js';
 import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { approvalsRouter } from './routes/approvals.js';
+import { savedViewsRouter } from './routes/savedViews.js';
 import { eventsRouter } from './routes/events.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
 import { docTemplatesRouter } from './routes/docTemplates.js';
@@ -454,6 +455,8 @@ export function createApp() {
   app.use('/jobs', requireCapability('view:scheduling'), jobsRouter);
   // Approvals inbox badge — counts only; the queues render via their own routers.
   app.use('/approvals', approvalsRouter);
+  // Named filter sets on lists (the candidate pipeline, first).
+  app.use('/saved-views', savedViewsRouter);
   // Live "something changed" SSE nudges (bell + badge instant refresh).
   app.use('/events', eventsRouter);
   app.use('/audit', requireCapability('view:audit'), auditRouter);

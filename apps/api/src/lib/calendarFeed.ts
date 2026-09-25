@@ -63,7 +63,7 @@ interface IcsEvent {
 }
 
 /** Format a Date as an iCal UTC timestamp: YYYYMMDDTHHMMSSZ. */
-function fmtUtc(d: Date): string {
+export function fmtUtc(d: Date): string {
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');
   return (
     `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
@@ -75,7 +75,7 @@ function fmtUtc(d: Date): string {
  * Escape per RFC 5545 §3.3.11: backslash, semicolon, comma, newline.
  * Order matters — backslash first so we don't double-escape what we add.
  */
-function escapeText(s: string): string {
+export function escapeText(s: string): string {
   return s
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
@@ -88,7 +88,7 @@ function escapeText(s: string): string {
  * with a single space. Folding by char count is fine for ASCII; our shift
  * fields are ASCII (position, location, client name) so this is safe.
  */
-function fold(line: string): string {
+export function fold(line: string): string {
   if (line.length <= 75) return line;
   const out: string[] = [];
   let i = 0;

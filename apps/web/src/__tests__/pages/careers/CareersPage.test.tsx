@@ -114,3 +114,49 @@ describe('/careers/:slug', () => {
     expect(await screen.findByText(/isn't open anymore/i)).toBeInTheDocument();
   });
 });
+
+describe('job boards and search engines', () => {
+  it('marks the posting up for Google for Jobs, with only what the posting says', async () => {
+    vi.mocked(getCareerPosting).mockResolvedValue({
+      ...STOCKER,
+      location: 'Destin, FL 32541',
+      description: 'Stock shelves overnight.\n\nMust lift 50 lbs </script><b>',
+      schedule: 'PART_TIME',
+      payUnit: 'HOUR',
+      orgName: 'Alto HR',
+    });
+    renderAt('/careers/overnight-stocker');
+    await screen.findByRole('heading', { name: 'Overnight Stocker' });
+    expect(screen.getByText('Part-time')).toBeInTheDocument();
+    const tag = document.querySelector('script[type="application/ld+json"]')!;
+    // Text from the posting can't close the tag early.
+    expect(tag.innerHTML).not.toContain('</script>');
+    const data = JSON.parse(tag.innerHTML);
+    expect(data).toMatchObject({
+      '@type': 'JobPosting',
+      title: 'Overnight Stocker',
+      datePosted: '2026-09-20',
+      employmentType: 'PART_TIME',
+      hiringOrganization: { name: 'Alto HR' },
+      directApply: true,
+      jobLocation: { address: { addressLocality: 'Destin', addressRegion: 'FL', postalCode: '32541', addressCountry: 'US' } },
+      baseSalary: { currency: 'USD', value: { minValue: 15, maxValue: 17.5, unitText: 'HOUR' } },
+    });
+    expect(data.description).toBe('<p>Stock shelves overnight.</p><p>Must lift 50 lbs &lt;/script&gt;&lt;b&gt;</p>');
+  });
+
+  it('leaves the salary out when the posting doesn’t say hourly or yearly', async () => {
+    vi.mocked(getCareerPosting).mockResolvedValue({ ...STOCKER, description: 'x', schedule: null, payUnit: null, orgName: 'Alto HR' });
+    renderAt('/careers/overnight-stocker');
+    await screen.findByRole('heading', { name: 'Overnight Stocker' });
+    const data = JSON.parse(document.querySelector('script[type="application/ld+json"]')!.innerHTML);
+    expect(data.baseSalary).toBeUndefined();
+    expect(data.employmentType).toBeUndefined();
+  });
+
+  it('a yearly range says so', async () => {
+    vi.mocked(listCareerPostings).mockResolvedValue({ postings: [{ ...STOCKER, minSalary: '300', maxSalary: '400', payUnit: 'YEAR' }] });
+    renderAt('/careers');
+    expect(await screen.findByRole('link', { name: /overnight stocker/i })).toHaveTextContent('$300.00 – $400.00 a year');
+  });
+});

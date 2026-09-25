@@ -139,7 +139,7 @@ describe('the timeline', () => {
     const client = await createClient();
     const c = await candidate(a);
     const iv = await a.post('/interviews').send({ candidateId: c.id, scheduledFor: new Date(Date.now() + 86_400_000).toISOString() });
-    await a.post(`/interviews/${iv.body.id}/score`).send({ scorecard: { notes: 'Great' }, rating: 2 });
+    await a.post(`/interviews/${iv.body.id}/score`).send({ scorecard: { answers: [], summary: 'Great' }, rating: 2 });
     const offer = await a.post('/offers').send({
       candidateId: c.id, clientId: client.id, jobTitle: 'Cashier', startDate: '2026-10-05', hourlyRate: 15,
     });

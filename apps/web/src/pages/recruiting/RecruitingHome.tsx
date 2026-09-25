@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -15,15 +15,19 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import type { Candidate, CandidateHireResponse, CandidateStage } from '@alto-people/shared';
+import type { Candidate, CandidateFilters, CandidateHireResponse, CandidateSort, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import {
   advanceCandidate,
   createCandidate,
+  getCandidate,
+  getCandidateBoard,
+  getRecruitingSummary,
+  listAllCandidates,
   listCandidates,
 } from '@/lib/recruitingApi';
-import { listOffers, type OfferRecord } from '@/lib/recruiting90Api';
+import { listJobPostings, listOffers, type OfferRecord } from '@/lib/recruiting90Api';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { listPositions } from '@/lib/positionsApi';
 import { downloadCsv } from '@/lib/csv';
@@ -34,6 +38,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { CandidateBoard } from './CandidateBoard';
 import { CandidateDetailDrawer } from './CandidateDetailDrawer';
+import { SavedViewsMenu } from './SavedViewsMenu';
 import {
   Avatar,
   Badge,
@@ -146,6 +151,21 @@ type DialogState =
 
 type ViewMode = 'list' | 'board';
 const VIEW_STORAGE_KEY = 'alto.recruiting.view';
+/** Rows per page in the list; cards per column on the board. */
+const LIST_PAGE = 50;
+const BOARD_PAGE = 25;
+
+const SORT_OPTIONS: Array<{ value: CandidateSort; label: string }> = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'waiting', label: 'Longest in stage' },
+  { value: 'moved', label: 'Recently moved' },
+  { value: 'name', label: 'Name' },
+];
+const SORTS = new Set<string>(SORT_OPTIONS.map((o) => o.value));
+
+/** The URL params a saved view keeps. */
+const VIEW_PARAMS = ['view', 'stage', 'q', 'source', 'posting', 'stuck', 'sort'] as const;
 
 function readViewMode(): ViewMode {
   if (typeof window === 'undefined') return 'board';
@@ -169,98 +189,167 @@ export function RecruitingHome() {
   const { can } = useAuth();
   const canManage = can('manage:recruiting');
   const navigate = useNavigate();
-  const [view, setView] = useState<ViewMode>(() => readViewMode());
+  const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-  // Stage filter, search, and the open candidate drawer all live in the
-  // URL (same source-of-truth pattern as ComplianceHome's ?tab= and the
-  // People directory's ?associateId=), so refresh / back / share keep the
-  // pipeline context instead of resetting to the default view.
+  // Layout, filters, search, sort, the saved view and the open candidate
+  // all live in the URL (same source-of-truth pattern as ComplianceHome's
+  // ?tab= and the People directory's ?associateId=), so refresh / back /
+  // share — and a saved view — keep the pipeline exactly as it was.
   const [searchParams, setSearchParams] = useSearchParams();
+  const view: ViewMode = searchParams.get('view') === 'list' ? 'list' : searchParams.get('view') === 'board' ? 'board' : readViewMode();
   const stageParam = searchParams.get('stage');
   const filter: CandidateStage | 'ALL' =
     stageParam === 'ALL' || (STAGES as string[]).includes(stageParam ?? '')
       ? (stageParam as CandidateStage | 'ALL')
       : 'APPLIED';
   const search = searchParams.get('q') ?? '';
+  const sourceFilter = searchParams.get('source') ?? '';
+  const postingFilter = searchParams.get('posting') ?? '';
+  const stuckOnly = searchParams.get('stuck') === '1';
+  const sort = (SORTS.has(searchParams.get('sort') ?? '') ? searchParams.get('sort') : 'newest') as CandidateSort;
+  const savedViewId = searchParams.get('sv');
   // The candidate whose detail drawer is open. Held by id rather than by
   // value so a refresh after an advance re-renders the drawer with the new
   // stage instead of leaving a stale snapshot on screen.
   const detailId = searchParams.get('candidateId');
 
-  const setFilter = useCallback(
-    (s: CandidateStage | 'ALL') =>
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (s === 'APPLIED') next.delete('stage'); // default stage keeps the URL clean
-        else next.set('stage', s);
-        return next;
-      }),
-    [setSearchParams],
-  );
-  // replace: keystrokes shouldn't each become a Back-button stop.
-  const setSearch = useCallback(
-    (q: string) =>
+  const setParam = useCallback(
+    (key: string, value: string | null, opts: { replace?: boolean } = {}) =>
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          if (q) next.set('q', q);
-          else next.delete('q');
+          if (value) next.set(key, value);
+          else next.delete(key);
           return next;
         },
-        { replace: true },
+        { replace: opts.replace },
       ),
     [setSearchParams],
   );
-  // push (not replace): Back closes the drawer instead of leaving the page.
-  const setDetailId = useCallback(
-    (id: string | null) =>
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (id) next.set('candidateId', id);
-        else next.delete('candidateId');
-        return next;
-      }),
-    [setSearchParams],
+  const setFilter = useCallback(
+    // The default stage keeps the URL clean.
+    (s: CandidateStage | 'ALL') => setParam('stage', s === 'APPLIED' ? null : s),
+    [setParam],
   );
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  // replace: keystrokes shouldn't each become a Back-button stop.
+  const setSearch = useCallback((q: string) => setParam('q', q || null, { replace: true }), [setParam]);
+  // push (not replace): Back closes the drawer instead of leaving the page.
+  const setDetailId = useCallback((id: string | null) => setParam('candidateId', id), [setParam]);
+  const setView = useCallback(
+    (v: ViewMode) => {
+      writeViewMode(v);
+      setParam('view', v, { replace: true });
+    },
+    [setParam],
+  );
 
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim().toLowerCase()), 250);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
     return () => clearTimeout(t);
   }, [search]);
 
-  const setViewPersisted = useCallback((v: ViewMode) => {
-    setView(v);
-    writeViewMode(v);
-  }, []);
+  // The filters the server applies — everything but the list's stage chip.
+  const filters: CandidateFilters = useMemo(
+    () => ({
+      ...(debouncedSearch ? { q: debouncedSearch } : {}),
+      ...(sourceFilter ? { source: sourceFilter } : {}),
+      ...(postingFilter ? { jobPostingId: postingFilter } : {}),
+      ...(stuckOnly ? { stuck: '1' as const } : {}),
+      sort,
+    }),
+    [debouncedSearch, sourceFilter, postingFilter, stuckOnly, sort],
+  );
+  const listFilters: CandidateFilters = useMemo(
+    () => ({ ...filters, ...(filter === 'ALL' ? {} : { stage: filter }) }),
+    [filters, filter],
+  );
+  const filtered = Boolean(debouncedSearch || sourceFilter || postingFilter || stuckOnly);
 
-  const refreshQuery = useQuery({
-    queryKey: ['RecruitingHome', 'candidates', filter],
-    queryFn: () => listCandidates(filter === 'ALL' ? {} : { stage: filter }),
+  /* ----- Data: the summary tiles, the board, the list ------------------ */
+
+  // The tiles count the whole pipeline on the server. They were counted
+  // from the list the page had loaded — the newest 200 — so past 200 they
+  // were quietly wrong.
+  const summaryQuery = useQuery({ queryKey: ['RecruitingHome', 'summary'], queryFn: getRecruitingSummary });
+  const kpis = summaryQuery.data
+    ? {
+        inFunnel: Object.values(summaryQuery.data.byStage).reduce((a, b) => a + b, 0),
+        interviewing: summaryQuery.data.byStage.INTERVIEW,
+        outstandingOffers: summaryQuery.data.byStage.OFFER,
+        hiredThisMonth: summaryQuery.data.hiredThisMonth,
+      }
+    : null;
+  const kpiError = summaryQuery.error
+    ? summaryQuery.error instanceof ApiError
+      ? summaryQuery.error.message
+      : 'Failed to load pipeline stats.'
+    : null;
+
+  const boardQuery = useQuery({
+    queryKey: ['RecruitingHome', 'board', filters],
+    queryFn: () => getCandidateBoard(filters, BOARD_PAGE),
+    enabled: view === 'board',
+    placeholderData: keepPreviousData,
   });
-  const candidates: Candidate[] | null = refreshQuery.data?.candidates ?? null;
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null);
-  const refresh = async () => {
-    await refreshQuery.refetch();
+  // A column's further pages, fetched with "Show more"; dropped whenever
+  // the filters change or the board reloads.
+  const [morePages, setMorePages] = useState<Partial<Record<CandidateStage, Candidate[]>>>({});
+  const [loadingMore, setLoadingMore] = useState<CandidateStage | null>(null);
+  useEffect(() => setMorePages({}), [boardQuery.data]);
+  const boardColumns = useMemo(
+    () =>
+      boardQuery.data?.columns.map((col) => {
+        const extra = morePages[col.stage] ?? [];
+        const seen = new Set(col.candidates.map((c) => c.id));
+        return { ...col, candidates: [...col.candidates, ...extra.filter((c) => !seen.has(c.id))] };
+      }) ?? null,
+    [boardQuery.data, morePages],
+  );
+  const loadMore = async (stage: CandidateStage) => {
+    const col = boardColumns?.find((c) => c.stage === stage);
+    if (!col || loadingMore) return;
+    setLoadingMore(stage);
+    try {
+      const page = await listCandidates({ ...filters, stage }, { offset: col.candidates.length, limit: BOARD_PAGE });
+      setMorePages((prev) => ({ ...prev, [stage]: [...(prev[stage] ?? []), ...page.candidates] }));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not load more candidates.');
+    } finally {
+      setLoadingMore(null);
+    }
   };
 
-  const refreshKpisQuery = useQuery({
-    queryKey: ['RecruitingHome', 'allCandidates'],
-    queryFn: () => listCandidates({}),
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [listFilters]);
+  const listQuery = useQuery({
+    queryKey: ['RecruitingHome', 'list', listFilters, page],
+    queryFn: () => listCandidates(listFilters, { limit: LIST_PAGE, offset: page * LIST_PAGE }),
+    enabled: view === 'list',
+    placeholderData: keepPreviousData,
   });
-  const allCandidates: Candidate[] | null = refreshKpisQuery.data?.candidates ?? null;
-  const kpiError = refreshKpisQuery.error ? refreshKpisQuery.error instanceof ApiError ? refreshKpisQuery.error.message : 'Failed to load pipeline stats.' : null;
-  const refreshKpis = async () => {
-    await refreshKpisQuery.refetch();
-  };
+  const candidates: Candidate[] | null = listQuery.data?.candidates ?? null;
+  const listTotal = listQuery.data?.total ?? 0;
 
+  const activeQuery = view === 'board' ? boardQuery : listQuery;
+  const error =
+    errorLocal ??
+    (activeQuery.error ? (activeQuery.error instanceof ApiError ? activeQuery.error.message : 'Failed to load.') : null);
 
+  // Everything on this page reads under one key; a move refreshes it all.
+  const refresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['RecruitingHome'] });
+  }, [queryClient]);
+
+  const postingsQuery = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings(), staleTime: 60_000 });
+  const postings = postingsQuery.data?.postings ?? [];
 
   const advance = async (c: Candidate, target: CandidateStage) => {
     if (pendingId) return;
@@ -270,12 +359,20 @@ export function RecruitingHome() {
       toast.success(
         `Moved ${c.firstName} ${c.lastName} to ${STAGE_LABEL[target]}.`,
       );
-      await Promise.all([refresh(), refreshKpis()]);
+      await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Advance failed.');
     } finally {
       setPendingId(null);
     }
+  };
+
+  /** A move from the board: outcomes open their dialogs. */
+  const moveTo = (c: Candidate, target: CandidateStage) => {
+    if (target === 'REJECTED') setDialog({ kind: 'reject', candidate: c });
+    else if (target === 'WITHDRAWN') setDialog({ kind: 'withdraw', candidate: c });
+    else if (target === 'HIRED') setDialog({ kind: 'hire', candidate: c });
+    else void advance(c, target);
   };
 
   const onConfirmReject = async (reason: string) => {
@@ -290,7 +387,7 @@ export function RecruitingHome() {
         `${dialog.candidate.firstName} ${dialog.candidate.lastName} rejected.`,
       );
       setDialog(null);
-      await Promise.all([refresh(), refreshKpis()]);
+      await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Reject failed.');
     } finally {
@@ -310,7 +407,7 @@ export function RecruitingHome() {
         `${dialog.candidate.firstName} ${dialog.candidate.lastName} marked withdrawn.`,
       );
       setDialog(null);
-      await Promise.all([refresh(), refreshKpis()]);
+      await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Withdraw failed.');
     } finally {
@@ -349,7 +446,7 @@ export function RecruitingHome() {
   }, [dialog, hireOffer]);
 
   const onHired = (hired: CandidateHireResponse) => {
-    void Promise.all([refresh(), refreshKpis()]);
+    void refresh();
     // No email configured (local/dev): the dialog stays open with the invite
     // link to copy and says so itself — "invite sent" would be untrue.
     if (hired.inviteUrl) return;
@@ -365,74 +462,43 @@ export function RecruitingHome() {
     );
   };
 
-  // Resolved from the lists rather than fetched: GET /candidates/:id returns
-  // the same shape the list already carries, so a second request would buy
-  // nothing. allCandidates is the unfiltered set, which keeps the drawer open
-  // when an advance moves someone out of the active stage filter.
-  const detailCandidate = useMemo(
+  // The open candidate: from what's on screen when it's there, fetched
+  // when it isn't — a link from a notification or email opens anyone,
+  // not only the people on the current page.
+  const onScreen = useMemo(
     () =>
       detailId
         ? (candidates?.find((c) => c.id === detailId) ??
-          allCandidates?.find((c) => c.id === detailId) ??
+          boardColumns?.flatMap((col) => col.candidates).find((c) => c.id === detailId) ??
           null)
         : null,
-    [detailId, candidates, allCandidates],
+    [detailId, candidates, boardColumns],
   );
+  const detailQuery = useQuery({
+    queryKey: ['RecruitingHome', 'candidate', detailId],
+    queryFn: () => getCandidate(detailId!),
+    enabled: Boolean(detailId),
+  });
+  const detailCandidate = detailId ? (detailQuery.data ?? onScreen) : null;
 
-  const kpis = useMemo(() => {
-    if (!allCandidates) return null;
-    const inFunnel = allCandidates.filter(
-      (c) => c.stage !== 'HIRED' && c.stage !== 'REJECTED' && c.stage !== 'WITHDRAWN',
-    ).length;
-    const interviewing = allCandidates.filter((c) => c.stage === 'INTERVIEW').length;
-    const outstandingOffers = allCandidates.filter((c) => c.stage === 'OFFER').length;
-    // By the hire date. It used to test createdAt, so a candidate who
-    // applied in August and was hired today never counted.
-    const hiredThisMonth = allCandidates.filter((c) => {
-      if (c.stage !== 'HIRED' || !c.hiredAt) return false;
-      const d = new Date(c.hiredAt);
-      const now = new Date();
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    }).length;
-    return { inFunnel, interviewing, outstandingOffers, hiredThisMonth };
-  }, [allCandidates]);
-
-  // Client-side name/email/position search, applied to both views.
-  const candidateMatches = useCallback(
-    (c: Candidate) =>
-      !debouncedSearch ||
-      `${c.firstName} ${c.lastName}`.toLowerCase().includes(debouncedSearch) ||
-      c.email.toLowerCase().includes(debouncedSearch) ||
-      (c.position ?? '').toLowerCase().includes(debouncedSearch),
-    [debouncedSearch],
-  );
-  const visibleCandidates = useMemo(
-    () => (candidates ? candidates.filter(candidateMatches) : null),
-    [candidates, candidateMatches],
-  );
-  const visibleAll = useMemo(
-    () => (allCandidates ? allCandidates.filter(candidateMatches) : null),
-    [allCandidates, candidateMatches],
-  );
-
-  // Bulk selection (list view only — the board keeps drag as its bulk
-  // mechanic). Only open-stage candidates are selectable; closed ones have
-  // no advance/reject path.
+  // Bulk selection (list view only — the board moves one card at a time).
+  // Only open-stage candidates are selectable; closed ones have no
+  // advance/reject path.
   const selectableIds = useMemo(
-    () => (visibleCandidates ?? []).filter(isOpenStage).map((c) => c.id),
-    [visibleCandidates],
+    () => (candidates ?? []).filter(isOpenStage).map((c) => c.id),
+    [candidates],
   );
   const sel = useSelection(canManage && view === 'list' ? selectableIds : []);
   const { clear: clearSelection } = sel;
-  // A filter/search change swaps the visible rows out from under the
+  // A filter/search/page change swaps the visible rows out from under the
   // selection — drop it rather than acting on rows no longer on screen.
   useEffect(() => {
     clearSelection();
-  }, [filter, debouncedSearch, view, clearSelection]);
+  }, [listFilters, page, view, clearSelection]);
 
   const selectedRows = useMemo(
-    () => (visibleCandidates ?? []).filter((c) => sel.selected.has(c.id)),
-    [visibleCandidates, sel.selected],
+    () => (candidates ?? []).filter((c) => sel.selected.has(c.id)),
+    [candidates, sel.selected],
   );
   const advanceableRows = useMemo(
     () => selectedRows.filter((c) => NEXT_STAGE[c.stage] !== undefined),
@@ -464,7 +530,7 @@ export function RecruitingHome() {
     }
     clearSelection();
     setBulkBusy(false);
-    await Promise.all([refresh(), refreshKpis()]);
+    await refresh();
   };
 
   const bulkReject = async (reason: string) => {
@@ -493,26 +559,65 @@ export function RecruitingHome() {
     setBulkRejectOpen(false);
     clearSelection();
     setBulkBusy(false);
-    await Promise.all([refresh(), refreshKpis()]);
+    await refresh();
   };
 
-  const onExportCsv = () => {
-    const rows = view === 'list' ? visibleCandidates : visibleAll;
-    if (!rows || rows.length === 0) return;
-    downloadCsv(`candidates-${ymdLocal()}.csv`, [
-      ['First name', 'Last name', 'Email', 'Phone', 'Position', 'Source', 'Stage', 'Applied'],
-      ...rows.map((c) => [
-        c.firstName,
-        c.lastName,
-        c.email,
-        c.phone ?? '',
-        c.position ?? '',
-        c.source ?? '',
-        c.stage,
-        c.createdAt.slice(0, 10),
-      ]),
-    ]);
+  // Everyone matching the filters — not just the page on screen.
+  const onExportCsv = async () => {
+    setExporting(true);
+    try {
+      const rows = await listAllCandidates(view === 'list' ? listFilters : filters);
+      if (rows.length === 0) {
+        toast.info('No candidates match these filters.');
+        return;
+      }
+      downloadCsv(`candidates-${ymdLocal()}.csv`, [
+        ['First name', 'Last name', 'Email', 'Phone', 'Position', 'Source', 'Stage', 'Applied', 'Days in stage'],
+        ...rows.map((c) => [
+          c.firstName,
+          c.lastName,
+          c.email,
+          c.phone ?? '',
+          c.position ?? '',
+          c.source ?? '',
+          c.stage,
+          c.createdAt.slice(0, 10),
+          String(daysSince(c.stageChangedAt)),
+        ]),
+      ]);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not export.');
+    } finally {
+      setExporting(false);
+    }
   };
+
+  /* ----- Saved views ---------------------------------------------------- */
+  const currentViewQuery = useMemo(() => {
+    const q: Record<string, string> = { view };
+    for (const k of VIEW_PARAMS) {
+      const v = searchParams.get(k);
+      if (v && k !== 'view') q[k] = v;
+    }
+    return q;
+  }, [searchParams, view]);
+  const applySavedView = (id: string | null, query: Record<string, string>) =>
+    setSearchParams((prev) => {
+      const next = new URLSearchParams();
+      // Keep the open drawer; replace every filter.
+      const cand = prev.get('candidateId');
+      if (cand) next.set('candidateId', cand);
+      for (const k of VIEW_PARAMS) if (query[k]) next.set(k, query[k]!);
+      if (id) next.set('sv', id);
+      if (query.view === 'list' || query.view === 'board') writeViewMode(query.view);
+      return next;
+    });
+  const clearFilters = () =>
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const k of ['q', 'source', 'posting', 'stuck', 'sv']) next.delete(k);
+      return next;
+    });
 
   return (
     <div className="mx-auto">
@@ -524,9 +629,14 @@ export function RecruitingHome() {
             : 'Read-only view of the candidate pipeline.'
         }
         secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/recruiting/extras">Interviewing &amp; offers</Link>
-          </Button>
+          <>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/recruiting/analytics">Analytics</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/recruiting/extras">Interviewing &amp; offers</Link>
+            </Button>
+          </>
         }
         primaryAction={
           canManage ? (
@@ -538,11 +648,11 @@ export function RecruitingHome() {
         }
       />
 
-      {kpiError && !allCandidates ? (
+      {kpiError && !kpis ? (
         <ErrorBanner
           className="mb-6"
           action={
-            <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
+            <Button size="sm" variant="secondary" onClick={() => void summaryQuery.refetch()}>
               Retry
             </Button>
           }
@@ -579,18 +689,25 @@ export function RecruitingHome() {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <CardTitle className="text-base">Candidates</CardTitle>
               <ViewToggle<ViewMode>
                 value={view}
-                onChange={setViewPersisted}
+                onChange={setView}
                 ariaLabel="Switch between board and list view"
                 options={[
                   { value: 'board', label: 'Board', icon: Kanban },
                   { value: 'list', label: 'List', icon: Rows3 },
                 ]}
+              />
+              <SavedViewsMenu
+                scope="recruiting.candidates"
+                current={currentViewQuery}
+                activeId={savedViewId}
+                onApply={applySavedView}
+                allLabel="All candidates"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -598,45 +715,93 @@ export function RecruitingHome() {
                 wrapperClassName="w-full sm:w-60"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, email, position…"
+                placeholder="Search name, email, phone, position…"
                 aria-label="Search candidates"
               />
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={onExportCsv}
-                disabled={
-                  view === 'list'
-                    ? !visibleCandidates || visibleCandidates.length === 0
-                    : !visibleAll || visibleAll.length === 0
-                }
+                onClick={() => void onExportCsv()}
+                loading={exporting}
+                disabled={exporting}
               >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </Button>
             </div>
-            {view === 'list' && (
-              <div className="flex flex-wrap gap-2">
-                {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
-                  <FilterChip
-                    key={s}
-                    active={filter === s}
-                    onClick={() => setFilter(s)}
-                  >
-                    {s === 'ALL' ? 'All' : STAGE_LABEL[s]}
-                  </FilterChip>
-                ))}
-              </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              aria-label="Source"
+              className="h-8 w-auto text-xs2"
+              value={sourceFilter}
+              onChange={(e) => setParam('source', e.target.value || null, { replace: true })}
+            >
+              <option value="">All sources</option>
+              {CANDIDATE_SOURCES.map((s) => (
+                <option key={s} value={s}>
+                  {SOURCE_LABEL[s] ?? s}
+                </option>
+              ))}
+              <option value="none">No source recorded</option>
+            </Select>
+            <Select
+              aria-label="Job posting"
+              className="h-8 w-auto max-w-[16rem] text-xs2"
+              value={postingFilter}
+              onChange={(e) => setParam('posting', e.target.value || null, { replace: true })}
+            >
+              <option value="">All job postings</option>
+              {postings.map((po) => (
+                <option key={po.id} value={po.id}>
+                  {po.title}
+                  {po.clientName ? ` · ${po.clientName}` : ''}
+                  {po.status !== 'OPEN' ? ` (${po.status.toLowerCase()})` : ''}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label="Sort"
+              className="h-8 w-auto text-xs2"
+              value={sort}
+              onChange={(e) => setParam('sort', e.target.value === 'newest' ? null : e.target.value, { replace: true })}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+            <FilterChip active={stuckOnly} aria-pressed={stuckOnly} onClick={() => setParam('stuck', stuckOnly ? null : '1', { replace: true })}>
+              Stuck 7+ days
+            </FilterChip>
+            {filtered && (
+              <Button size="sm" variant="ghost" onClick={clearFilters}>
+                Clear filters
+              </Button>
             )}
           </div>
+          {view === 'list' && (
+            <div className="flex flex-wrap gap-2">
+              {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
+                <FilterChip
+                  key={s}
+                  active={filter === s}
+                  onClick={() => setFilter(s)}
+                >
+                  {s === 'ALL' ? 'All' : STAGE_LABEL[s]}
+                </FilterChip>
+              ))}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="pt-0">
           {error && (
             <ErrorBanner
               className="mb-3"
               action={
-                <Button size="sm" variant="secondary" onClick={() => refresh()}>
+                <Button size="sm" variant="secondary" onClick={() => { setError(null); void refresh(); }}>
                   Retry
                 </Button>
               }
@@ -646,58 +811,52 @@ export function RecruitingHome() {
           )}
           {view === 'board' && (
             <>
-              {!visibleAll && kpiError && (
-                <ErrorBanner
-                  className="my-4"
-                  action={
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => refreshKpis()}
-                    >
-                      Retry
-                    </Button>
-                  }
-                >
-                  {kpiError}
-                </ErrorBanner>
-              )}
-              {!visibleAll && !kpiError && <SkeletonRows count={5} rowHeight="h-24" />}
-              {visibleAll && (
-                <CandidateBoard
-                  candidates={visibleAll}
-                  pendingId={pendingId}
-                  onAdvance={(c, target) => advance(c, target)}
-                  onRequestReject={(c) => setDialog({ kind: 'reject', candidate: c })}
-                  onRequestWithdraw={(c) => setDialog({ kind: 'withdraw', candidate: c })}
-                  onRequestHire={(c) => setDialog({ kind: 'hire', candidate: c })}
-                  onOpen={(c) => setDetailId(c.id)}
-                />
+              {!boardColumns && !boardQuery.error && <SkeletonRows count={5} rowHeight="h-24" />}
+              {boardColumns && (
+                <div className={cn('transition-opacity', boardQuery.isPlaceholderData && 'opacity-60')}>
+                  <CandidateBoard
+                    columns={boardColumns}
+                    pendingId={pendingId}
+                    canManage={canManage}
+                    onMove={moveTo}
+                    onOpen={(c) => setDetailId(c.id)}
+                    onLoadMore={(stage) => void loadMore(stage)}
+                    loadingMore={loadingMore}
+                    onSeeAll={(stage) =>
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.set('view', 'list');
+                        next.set('stage', stage);
+                        return next;
+                      })
+                    }
+                  />
+                </div>
               )}
             </>
           )}
-          {view === 'list' && !visibleCandidates && (
+          {view === 'list' && !candidates && !listQuery.error && (
             <SkeletonRows count={5} rowHeight="h-12" />
           )}
-          {view === 'list' && visibleCandidates && visibleCandidates.length === 0 && (
+          {view === 'list' && candidates && candidates.length === 0 && (
             <EmptyState
               icon={UserPlus}
               title={
-                debouncedSearch
-                  ? 'No candidates match your search'
-                  : 'No candidates match this filter'
+                filtered
+                  ? 'No candidates match these filters'
+                  : 'No candidates in this stage'
               }
               description={
-                debouncedSearch
-                  ? 'Try a different name, email, or position.'
+                filtered
+                  ? 'Try a different search, or clear the filters.'
                   : canManage
                     ? 'Add a candidate or switch to a different stage.'
                     : 'Switch to a different stage to see more candidates.'
               }
               action={
-                debouncedSearch ? (
-                  <Button variant="outline" onClick={() => setSearch('')}>
-                    Clear search
+                filtered ? (
+                  <Button variant="outline" onClick={clearFilters}>
+                    Clear filters
                   </Button>
                 ) : canManage ? (
                   <Button onClick={() => setShowCreate(true)}>
@@ -708,18 +867,19 @@ export function RecruitingHome() {
               }
             />
           )}
-          {view === 'list' && visibleCandidates && visibleCandidates.length > 0 && (
-            // The page owns search, the stage filter and the sticky bulk bar;
-            // the grid draws the checkboxes (open stages only) and hands the
-            // choice back. Phones get the same list as cards.
-            <DataGrid<NonNullable<typeof visibleCandidates>[number]>
+          {view === 'list' && candidates && candidates.length > 0 && (
+            <div className={cn('transition-opacity', listQuery.isPlaceholderData && 'opacity-60')}>
+            {/* The page owns search, filters, sort and paging (all on the
+                server); the grid draws the page, the checkboxes (open
+                stages only) and phones' cards. */}
+            <DataGrid<NonNullable<typeof candidates>[number]>
               id="candidates"
               caption="Candidates"
-              rows={visibleCandidates}
+              rows={candidates}
               rowKey={(c) => c.id}
               search={false}
               urlState={false}
-              exportCsv={{ filename: 'candidates' }}
+              exportCsv={false}
               onRowClick={(c) => setDetailId(c.id)}
               rowActionLabel={(c) => `Open ${c.firstName} ${c.lastName}`}
               selectable={
@@ -732,18 +892,16 @@ export function RecruitingHome() {
                   key: 'name',
                   header: 'Name',
                   accessor: (c) => `${c.firstName} ${c.lastName}`,
-                  sortable: true,
                   primary: true,
                   className: 'font-medium',
                   cell: (c) => <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />,
                 },
-                { key: 'email', header: 'Email', accessor: (c) => c.email, sortable: true, cardMeta: true, className: 'text-silver' },
-                { key: 'position', header: 'Position', accessor: (c) => c.position, sortable: true, cardMeta: true, className: 'text-silver', cell: (c) => c.position ?? '—' },
+                { key: 'email', header: 'Email', accessor: (c) => c.email, cardMeta: true, className: 'text-silver' },
+                { key: 'position', header: 'Position', accessor: (c) => c.position, cardMeta: true, className: 'text-silver', cell: (c) => c.position ?? '—' },
                 {
                   key: 'source',
                   header: 'Source',
                   accessor: (c) => (c.source ? (SOURCE_LABEL[c.source] ?? c.source) : null),
-                  sortable: true,
                   className: 'text-silver',
                   cell: (c) => (c.source ? (SOURCE_LABEL[c.source] ?? c.source) : '—'),
                 },
@@ -751,8 +909,6 @@ export function RecruitingHome() {
                   key: 'applied',
                   header: 'Applied',
                   accessor: (c) => c.createdAt,
-                  csv: (c) => `${fmtDate(c.createdAt)} (${daysSince(c.stageChangedAt)}d in stage)`,
-                  sortable: true,
                   searchable: false,
                   className: 'text-silver whitespace-nowrap',
                   cell: (c) => (
@@ -770,7 +926,6 @@ export function RecruitingHome() {
                   key: 'stage',
                   header: 'Stage',
                   accessor: (c) => STAGE_LABEL[c.stage],
-                  sortable: true,
                   cardMeta: true,
                   cell: (c) => (
                     <>
@@ -791,7 +946,7 @@ export function RecruitingHome() {
                         align: 'right' as const,
                         stopRowClick: true,
                         className: 'whitespace-nowrap',
-                        cell: (c: NonNullable<typeof visibleCandidates>[number]) => (
+                        cell: (c: NonNullable<typeof candidates>[number]) => (
                           <CandidateActions c={c} pendingId={pendingId} onAdvance={advance} onRequest={(kind) => setDialog({ kind, candidate: c })} />
                         ),
                       },
@@ -799,6 +954,8 @@ export function RecruitingHome() {
                   : []),
               ]}
             />
+            <Pager page={page} pageSize={LIST_PAGE} total={listTotal} onPage={setPage} />
+            </div>
           )}
         </CardContent>
       </Card>
@@ -852,8 +1009,7 @@ export function RecruitingHome() {
         onOpenChange={setShowCreate}
         onCreated={() => {
           setShowCreate(false);
-          refresh();
-          refreshKpis();
+          void refresh();
         }}
       />
 
@@ -904,7 +1060,7 @@ export function RecruitingHome() {
       <CandidateDetailDrawer
         candidate={detailCandidate}
         onOpenChange={(o) => !o && setDetailId(null)}
-        onChanged={() => void Promise.all([refresh(), refreshKpis()])}
+        onChanged={() => void refresh()}
         actions={
           canManage && detailCandidate ? (
             <CandidateActions
@@ -919,6 +1075,37 @@ export function RecruitingHome() {
         }
       />
     </div>
+  );
+}
+
+/** "1–50 of 205", with previous and next. */
+function Pager({
+  page,
+  pageSize,
+  total,
+  onPage,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPage: (p: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  const from = page * pageSize + 1;
+  const to = Math.min(total, from + pageSize - 1);
+  const last = Math.ceil(total / pageSize) - 1;
+  return (
+    <nav aria-label="Pages" className="mt-3 flex items-center justify-end gap-2 text-xs2 text-silver">
+      <span className="tabular-nums" aria-live="polite">
+        {from}–{to} of {total}
+      </span>
+      <Button size="sm" variant="outline" onClick={() => onPage(page - 1)} disabled={page === 0}>
+        Previous
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => onPage(page + 1)} disabled={page >= last}>
+        Next
+      </Button>
+    </nav>
   );
 }
 

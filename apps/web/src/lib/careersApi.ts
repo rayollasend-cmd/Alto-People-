@@ -12,10 +12,17 @@ export interface CareerPostingSummary {
   maxSalary: string | null;
   currency: string;
   openedAt: string | null;
+  schedule?: 'FULL_TIME' | 'PART_TIME' | 'TEMPORARY' | 'SEASONAL' | null;
+  /** Whether the pay range is hourly or yearly; null when the posting didn't say. */
+  payUnit?: 'HOUR' | 'YEAR' | null;
 }
 
 export interface CareerPosting extends CareerPostingSummary {
   description: string;
+  schedule: 'FULL_TIME' | 'PART_TIME' | 'TEMPORARY' | 'SEASONAL' | null;
+  payUnit: 'HOUR' | 'YEAR' | null;
+  /** Who is hiring, for search engines' job listings. */
+  orgName: string;
 }
 
 export const listCareerPostings = () =>

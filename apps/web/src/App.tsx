@@ -134,6 +134,7 @@ const PortalToday = lazyNamed(() => import('@/pages/portal/PortalToday'), 'Porta
 const PortalRequestsPage = lazyNamed(() => import('@/pages/portal/PortalRequestsPage'), 'PortalRequestsPage');
 const PortalHistory = lazyNamed(() => import('@/pages/portal/PortalHistory'), 'PortalHistory');
 const PortalOps = lazyNamed(() => import('@/pages/portal/PortalOps'), 'PortalOps');
+const PortalCandidates = lazyNamed(() => import('@/pages/portal/PortalCandidates'), 'PortalCandidates');
 const MessagesHome = lazyNamed(() => import('@/pages/messages/MessagesHome'), 'MessagesHome');
 const RegionHome = lazyNamed(() => import('@/pages/region/RegionHome'), 'RegionHome');
 const RegionsAdmin = lazyNamed(() => import('@/pages/admin/RegionsAdmin'), 'RegionsAdmin');
@@ -165,6 +166,7 @@ const PerformanceHome = lazyNamed(() => import('@/pages/performance/PerformanceH
 const PerformanceExtras = lazyNamed(() => import('@/pages/performance/PerformanceExtras'), 'PerformanceExtras');
 const RecruitingHome = lazyNamed(() => import('@/pages/recruiting/RecruitingHome'), 'RecruitingHome');
 const RecruitingExtras = lazyNamed(() => import('@/pages/recruiting/RecruitingExtras'), 'RecruitingExtras');
+const RecruitingAnalytics = lazyNamed(() => import('@/pages/recruiting/RecruitingAnalytics'), 'RecruitingAnalytics');
 const InternalJobsHome = lazyNamed(() => import('@/pages/internalJobs/InternalJobsHome'), 'InternalJobsHome');
 const LearningHome = lazyNamed(() => import('@/pages/learning/LearningHome'), 'LearningHome');
 const LearningPathsHome = lazyNamed(() => import('@/pages/learningPaths/LearningPathsHome'), 'LearningPathsHome');
@@ -214,6 +216,7 @@ const KioskAdmin = lazyNamed(() => import('@/pages/kiosk/KioskAdmin'), 'KioskAdm
 const HotlinePage = lazyNamed(() => import('@/pages/hotline/HotlinePage'), 'HotlinePage');
 const CareersListPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareersListPage');
 const CareerPostingPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareerPostingPage');
+const OfferLetterPage = lazyNamed(() => import('@/pages/offer/OfferLetterPage'), 'OfferLetterPage');
 
 // Hover-prefetch registry. The Sidebar (and any other navigator) looks
 // up the user's hovered link here and fires the chunk loader before the
@@ -397,6 +400,7 @@ const LAYOUT_ROUTES = [
   { path: 'portal/requests', element: <PortalRequestsPage /> },
   { path: 'portal/history', element: <PortalHistory /> },
   { path: 'portal/ops', element: <PortalOps /> },
+  { path: 'portal/candidates', element: <PortalCandidates /> },
   { path: 'region', element: <RegionHome /> },
   { path: 'messages', element: <MessagesHome /> },
   { path: 'messages/:id', element: <MessagesHome /> },
@@ -473,6 +477,7 @@ const LAYOUT_ROUTES = [
   { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
   { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
+  { path: 'recruiting/analytics', element: <RequireCapability cap="view:recruiting"><RecruitingAnalytics /></RequireCapability> },
   { path: 'payroll/tax', element: <RequireCapability cap="process:payroll"><PayrollTaxHome /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
@@ -568,6 +573,17 @@ export const router = createBrowserRouter([
     element: (
       <Suspense fallback={<PublicRouteFallback />}>
         <CareerPostingPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // A candidate's offer: read the letter, sign it. The link in the offer
+  // email is the key — no login, retired once used.
+  {
+    path: '/offer/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <OfferLetterPage />
       </Suspense>
     ),
     errorElement: <RouterErrorPage />,

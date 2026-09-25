@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Briefcase, ClipboardList, Download, Gift, Plus, Send, UserPlus, X } from 'lucide-react';
+import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus, X } from 'lucide-react';
 import type { Candidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
+  approveOffer,
   closeJobPosting,
   convertReferral,
   createInterviewKit,
@@ -12,15 +13,24 @@ import {
   createOffer,
   createReferral,
   decideOffer,
+  declineOfferApproval,
   deleteInterviewKit,
   deleteJobPosting,
   listInterviewKits,
   listJobPostings,
+  listOfferLetterTemplates,
   listOffers,
   listReferrals,
   markReferralBonusPaid,
   openJobPosting,
+  setJobPostingOpenings,
+  updateJobPosting,
+  jobFeedUrl,
+  SCHEDULE_LABEL,
+  type JobPostingSchedule,
+  previewOfferLetter,
   sendOffer,
+  signedOfferUrl,
   setReferralStatus,
   updateInterviewKit,
   type InterviewKit,
@@ -35,7 +45,7 @@ import { listClients } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth } from '@/lib/auth';
-import { useConfirm } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import {
@@ -124,9 +134,9 @@ interface PickedCandidate {
 
 /**
  * Candidate typeahead that resolves to {id, name} — same UX as
- * AssociatePicker, but over the recruiting candidate list (loaded once,
- * filtered client-side by name/email with a small debounce). Replaces the
- * raw-UUID input on the offer drawer.
+ * AssociatePicker, searched on the server as you type (it used to load
+ * the newest 200 candidates and filter those, so anyone older couldn't be
+ * found). Replaces the raw-UUID input on the offer drawer.
  */
 function CandidatePicker({
   value,
@@ -138,44 +148,37 @@ function CandidatePicker({
   placeholder?: string;
 }) {
   const [term, setTerm] = useState('');
-  const [results, setResults] = useState<Array<PickedCandidate & { email: string }>>([]);
+  const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(term.trim()), 250);
+    return () => clearTimeout(t);
+  }, [term]);
 
-  const candidatesQuery = useQuery({ queryKey: ['recruiting', 'candidates'], queryFn: () => listCandidates() });
-  const all: Candidate[] | null = candidatesQuery.data?.candidates ?? null;
+  const searching = !value && debounced.length >= 2;
+  const candidatesQuery = useQuery({
+    queryKey: ['recruiting', 'candidate-search', debounced],
+    queryFn: () => listCandidates({ q: debounced, sort: 'name' }, { limit: 8 }),
+    enabled: searching,
+    staleTime: 30_000,
+  });
+  const results: Array<PickedCandidate & { email: string }> = searching
+    ? (candidatesQuery.data?.candidates ?? []).map((c: Candidate) => ({
+        id: c.id,
+        name: `${c.firstName} ${c.lastName}`.trim(),
+        email: c.email,
+      }))
+    : [];
   const loadError = candidatesQuery.error
-    ? errMessage(candidatesQuery.error, 'Failed to load candidates.')
+    ? errMessage(candidatesQuery.error, 'Failed to search candidates.')
     : null;
   const { refetch: refetchCandidates } = candidatesQuery;
   const load = useCallback(() => {
     void refetchCandidates();
   }, [refetchCandidates]);
-
   useEffect(() => {
-    if (value || !all || term.trim().length < 2) {
-      setResults([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      const q = term.trim().toLowerCase();
-      setResults(
-        all
-          .filter(
-            (c) =>
-              `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
-              c.email.toLowerCase().includes(q),
-          )
-          .slice(0, 8)
-          .map((c) => ({
-            id: c.id,
-            name: `${c.firstName} ${c.lastName}`.trim(),
-            email: c.email,
-          })),
-      );
-      setOpen(true);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [term, value, all]);
+    if (searching && candidatesQuery.data) setOpen(true);
+  }, [searching, candidatesQuery.data]);
 
   if (value) {
     return (
@@ -611,7 +614,7 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 // the candidate's decision — an in-flight spotlight state (gold), not the
 // vocabulary's dispatched-successfully green. ACCEPTED is domain-only
 // terminal-good.
-const OFFER_STATUS_TONES = { SENT: 'accent', ACCEPTED: 'success' } as const;
+const OFFER_STATUS_TONES = { SENT: 'accent', ACCEPTED: 'success', PENDING_APPROVAL: 'pending' } as const;
 
 function OffersTab({
   canManage,
@@ -626,6 +629,11 @@ function OffersTab({
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [seedCandidateId, setSeedCandidateId] = useState<string | null>(null);
+  const { user, can } = useAuth();
+  const prompt = usePrompt();
+  // Maker-checker: approving takes the right to set pay, and it can't be
+  // your own offer — the server says the same.
+  const canApprove = (o: OfferRecord) => can('manage:comp') && o.createdById !== user?.id;
 
   useEffect(() => {
     if (!seed) return;
@@ -670,12 +678,47 @@ function OffersTab({
       const r = await sendOffer(id);
       if (r.emailed === false) {
         toast.warning('Marked sent — no candidate email on file.');
+      } else if (r.link) {
+        // No email configured (dev): hand over the signing link to pass on.
+        const link = r.link;
+        toast.success('Offer sent — email is off here, so copy the signing link.', {
+          action: { label: 'Copy link', onClick: () => void navigator.clipboard.writeText(link) },
+        });
       } else {
-        toast.success('Offer sent.');
+        toast.success('Offer sent — they can read and sign it from the email.');
       }
       refresh();
     } catch (err) {
       toast.error(errMessage(err, 'Could not send the offer.'));
+    }
+  };
+
+  const onApprove = async (id: string) => {
+    try {
+      await approveOffer(id);
+      toast.success('Approved — it can be sent.');
+      refresh();
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not approve the offer.'));
+    }
+  };
+
+  const onDeclineApproval = async (o: OfferRecord) => {
+    const reason = await prompt({
+      title: `Decline ${o.candidateName}'s offer?`,
+      description: o.approvalNote ?? undefined,
+      reasonLabel: 'Why',
+      reasonPlaceholder: 'e.g. Keep it inside the band — offer $17.00.',
+      confirmLabel: 'Decline',
+      destructive: true,
+    });
+    if (!reason) return;
+    try {
+      await declineOfferApproval(o.id, reason);
+      toast.success('Declined — whoever drafted it has been told why.');
+      refresh();
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not decline the offer.'));
     }
   };
 
@@ -761,7 +804,32 @@ function OffersTab({
                   className: 'tabular-nums whitespace-nowrap',
                   cell: (o) => (o.salary ? `${fmtMoney(o.salary, { currency: o.currency })}/yr` : o.hourlyRate ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr` : '—'),
                 },
-                { key: 'status', header: 'Status', accessor: (o) => o.status, sortable: true, cell: (o) => <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} /> },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (o) => o.status,
+                  sortable: true,
+                  cell: (o) => (
+                    <div className="space-y-0.5">
+                      <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} />
+                      {o.status === 'PENDING_APPROVAL' && o.approvalNote && (
+                        <div className="max-w-[16rem] text-2xs text-warning">{o.approvalNote}</div>
+                      )}
+                      {o.status === 'SENT' && <div className="text-2xs text-silver">Awaiting their signature</div>}
+                      {o.signedName && o.signedAt && (
+                        <div className="text-2xs text-silver">
+                          Signed by {o.signedName}, {fmtDate(o.signedAt)}
+                        </div>
+                      )}
+                      {o.approvalDeclinedReason && (
+                        <div className="max-w-[16rem] text-2xs text-alert">Not approved: {o.approvalDeclinedReason}</div>
+                      )}
+                      {o.declineReason && (
+                        <div className="max-w-[16rem] text-2xs text-silver">"{o.declineReason}"</div>
+                      )}
+                    </div>
+                  ),
+                },
                 {
                   key: 'actions',
                   header: 'Actions',
@@ -773,6 +841,26 @@ function OffersTab({
                   className: 'space-x-2',
                   cell: (o) => (
                     <>
+                      {o.status === 'PENDING_APPROVAL' &&
+                        (canApprove(o) ? (
+                          <>
+                            <Button size="sm" onClick={() => onApprove(o.id)}>
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => onDeclineApproval(o)}>
+                              Decline
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-xs text-silver">Waiting on approval</span>
+                        ))}
+                      {o.hasSignedPdf && (
+                        <Button asChild size="sm" variant="outline">
+                          <a href={signedOfferUrl(o.id)} target="_blank" rel="noopener noreferrer">
+                            Signed letter
+                          </a>
+                        </Button>
+                      )}
                       {canManage && o.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onSend(o.id)}>
                           Send
@@ -838,7 +926,42 @@ function NewOfferDrawer({
   const [hourlyRate, setHourlyRate] = useState('');
   const [letterBody, setLetterBody] = useState('');
   const [saving, setSaving] = useState(false);
+  const [templateId, setTemplateId] = useState('');
+  const [writing, setWriting] = useState(false);
+  const [unresolved, setUnresolved] = useState<string[]>([]);
   const { clients, error: clientsError, reload: reloadClients } = useClients();
+  // The client's published offer-letter templates, its own first.
+  const templatesQuery = useQuery({
+    queryKey: ['recruiting', 'offer-letter-templates', clientId],
+    queryFn: () => listOfferLetterTemplates(clientId || undefined),
+  });
+  const templates = templatesQuery.data?.templates ?? [];
+
+  const writeFromTemplate = async () => {
+    if (!candidate || !clientId || !jobTitle.trim() || !startDate || (!salary && !hourlyRate)) {
+      toast.error('Fill in the candidate, client, title, start date and pay first — the letter uses them.');
+      return;
+    }
+    setWriting(true);
+    try {
+      const r = await previewOfferLetter({
+        candidateId: candidate.id,
+        clientId,
+        jobTitle: jobTitle.trim(),
+        startDate,
+        salary: salary ? Number(salary) : null,
+        hourlyRate: hourlyRate ? Number(hourlyRate) : null,
+        ...(templateId ? { templateId } : {}),
+      });
+      setLetterBody(r.body);
+      setUnresolved(r.unresolvedTokens);
+      toast.success(`Letter written from “${r.templateName}” — edit it as you need.`);
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not write the letter.'));
+    } finally {
+      setWriting(false);
+    }
+  };
 
   // A remembered client that has since been archived would sit invisibly
   // selected (no matching <option>) — drop it once the list is in hand.
@@ -879,7 +1002,7 @@ function NewOfferDrawer({
     }
     setSaving(true);
     try {
-      await createOffer({
+      const created = await createOffer({
         candidateId: candidate.id,
         clientId,
         jobTitle: jobTitle.trim(),
@@ -889,7 +1012,13 @@ function NewOfferDrawer({
         letterBody: letterBody.trim() || null,
       });
       setLastClientId(clientId);
-      toast.success('Offer drafted.');
+      if (created.status === 'PENDING_APPROVAL') {
+        toast.warning('Drafted — and held for approval before it can be sent.', {
+          description: created.approvalNote ?? undefined,
+        });
+      } else {
+        toast.success('Offer drafted.');
+      }
       onSaved();
     } catch (err) {
       toast.error(errMessage(err, 'Could not create the offer.'));
@@ -994,12 +1123,48 @@ function NewOfferDrawer({
           </div>
         </div>
         <div>
-          <Label>Offer letter body (optional)</Label>
+          <Label>Offer letter</Label>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Select
+              aria-label="Letter template"
+              className="min-w-0 flex-1"
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              disabled={templates.length === 0}
+            >
+              <option value="">
+                {templates.length === 0 ? 'No offer-letter templates published yet' : "The client's template"}
+              </option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                  {t.clientName ? ` · ${t.clientName}` : ' · all clients'}
+                </option>
+              ))}
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void writeFromTemplate()}
+              loading={writing}
+              disabled={writing || templates.length === 0}
+            >
+              Write from template
+            </Button>
+          </div>
+          {unresolved.length > 0 && (
+            <p className="mt-1 text-xs text-warning">
+              The template asks for {unresolved.map((t) => `{{${t}}}`).join(', ')}, which the offer doesn't have — those
+              spots are blank. Fill them in below.
+            </p>
+          )}
           <Textarea
-            className="mt-1 min-h-32 font-mono text-xs"
+            aria-label="Offer letter body"
+            className="mt-2 min-h-32 font-mono text-xs"
             value={letterBody}
             onChange={(e) => setLetterBody(e.target.value)}
-            placeholder="Render a template first or paste the letter body here."
+            placeholder="Write it from a template above, or type the letter here. The candidate reads and signs this."
           />
         </div>
       </DrawerBody>
@@ -1300,6 +1465,7 @@ function NewReferralDrawer({
 
 function PostingsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
+  const prompt = usePrompt();
   const [showNew, setShowNew] = useState(false);
 
   const postingsQuery = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings() });
@@ -1327,6 +1493,39 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const onOpenings = async (po: JobPostingRecord) => {
+    const raw = await prompt({
+      title: `How many people for ${po.title}?`,
+      description: `${po.hired} hired against it so far. Fill rate counts hires against this number.`,
+      reasonLabel: 'Openings',
+      reasonPlaceholder: String(po.openings),
+      reasonMaxLength: 3,
+      confirmLabel: 'Save',
+    });
+    if (raw === null) return;
+    const n = Number(raw.trim());
+    if (!Number.isInteger(n) || n < 1 || n > 500) {
+      toast.error('Openings must be a whole number from 1 to 500.');
+      return;
+    }
+    try {
+      await setJobPostingOpenings(po.id, n);
+      refresh();
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not change the openings.'));
+    }
+  };
+
+  const onSyndicate = async (po: JobPostingRecord, on: boolean) => {
+    try {
+      await updateJobPosting(po.id, { syndicate: on });
+      toast.success(on ? `${po.title} is back in the job-board feeds.` : `${po.title} is on the careers page only.`);
+      refresh();
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not change it.'));
+    }
+  };
+
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this posting?', destructive: true }))) return;
     try {
@@ -1346,6 +1545,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
           </Button>
         </div>
       )}
+      <JobBoardsCard postings={postings} />
       <Card>
         <CardContent className="p-0">
           {error ? (
@@ -1406,7 +1606,55 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                   className: 'tabular-nums whitespace-nowrap',
                   cell: (po) => (po.minSalary && po.maxSalary ? `${fmtMoney(po.minSalary, { currency: po.currency })}–${fmtMoney(po.maxSalary, { currency: po.currency })}` : '—'),
                 },
+                {
+                  key: 'filled',
+                  header: 'Filled',
+                  accessor: (po) => `${Math.min(po.hired, po.openings)} of ${po.openings}`,
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  className: 'tabular-nums whitespace-nowrap',
+                  stopRowClick: true,
+                  cell: (po) =>
+                    canManage ? (
+                      <button
+                        type="button"
+                        className="underline decoration-dotted underline-offset-2 hover:text-white"
+                        aria-label={`${po.title}: ${Math.min(po.hired, po.openings)} of ${po.openings} filled — change openings`}
+                        onClick={() => void onOpenings(po)}
+                      >
+                        {Math.min(po.hired, po.openings)} of {po.openings}
+                      </button>
+                    ) : (
+                      `${Math.min(po.hired, po.openings)} of ${po.openings}`
+                    ),
+                },
                 { key: 'status', header: 'Status', accessor: (po) => po.status, sortable: true, cell: (po) => <StatusBadge status={po.status} /> },
+                {
+                  key: 'boards',
+                  header: 'Job boards',
+                  accessor: (po) => (po.syndicate ? 'In feeds' : 'Careers page only'),
+                  searchable: false,
+                  cardMeta: true,
+                  stopRowClick: true,
+                  cell: (po) =>
+                    canManage ? (
+                      <label className="inline-flex items-center gap-2 text-xs2 text-silver">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-gold"
+                          checked={po.syndicate}
+                          onChange={(e) => void onSyndicate(po, e.target.checked)}
+                          aria-label={`${po.title}: list on job boards`}
+                        />
+                        {po.syndicate ? 'In feeds' : 'Careers page only'}
+                      </label>
+                    ) : po.syndicate ? (
+                      'In feeds'
+                    ) : (
+                      'Careers page only'
+                    ),
+                },
                 ...(canManage
                   ? [
                       {
@@ -1456,6 +1704,75 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+const BOARDS: Array<{ key: string; name: string; how: string }> = [
+  { key: 'indeed', name: 'Indeed', how: 'Send it to your Indeed account manager, or add it under Employer → XML feed.' },
+  { key: 'ziprecruiter', name: 'ZipRecruiter', how: 'Send it to your ZipRecruiter rep as an XML job feed.' },
+  { key: 'glassdoor', name: 'Glassdoor', how: 'Glassdoor reads the same feed — send it to your rep.' },
+  { key: 'linkedin', name: 'LinkedIn', how: 'For LinkedIn Limited Listings, give it to your LinkedIn contact.' },
+];
+
+/**
+ * Where the postings go beyond the careers page. Open postings are
+ * published as a feed in Indeed's XML format — which ZipRecruiter,
+ * Glassdoor, LinkedIn and most aggregators also read — one link per
+ * board, so every applicant is credited to the board they came from and
+ * shows up in source of hire and cost per hire.
+ */
+function JobBoardsCard({ postings }: { postings: JobPostingRecord[] | null }) {
+  const open = (postings ?? []).filter((p) => p.status === 'OPEN');
+  const inFeeds = open.filter((p) => p.syndicate).length;
+  const copy = async (url: string, name: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success(`${name} feed link copied.`);
+    } catch {
+      toast.error('Could not copy — select the link and copy it.');
+    }
+  };
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4 md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-medium text-white">
+              <Rss className="h-4 w-4 text-gold" aria-hidden="true" />
+              Job boards
+            </h3>
+            <p className="mt-0.5 text-xs text-silver">
+              {inFeeds} of {open.length} open posting{open.length === 1 ? '' : 's'} in the feeds. Each board gets its own link,
+              so applicants are credited to the board they came from. Google for Jobs reads the careers page directly —
+              nothing to send.
+            </p>
+          </div>
+        </div>
+        <ul className="divide-y divide-navy-secondary/60">
+          {BOARDS.map((b) => {
+            const url = jobFeedUrl(b.key);
+            return (
+              <li key={b.key} className="flex flex-col gap-1.5 py-2.5 sm:flex-row sm:items-center sm:gap-3">
+                <div className="w-28 shrink-0 text-sm text-white">{b.name}</div>
+                <div className="min-w-0 flex-1">
+                  <input
+                    readOnly
+                    value={url}
+                    aria-label={`${b.name} feed link`}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full truncate rounded-md border border-navy-secondary bg-navy px-2 py-1 font-mono text-2xs text-silver"
+                  />
+                  <p className="mt-1 text-2xs text-silver/70">{b.how}</p>
+                </div>
+                <Button size="sm" variant="outline" className="self-start sm:self-center" onClick={() => void copy(url, b.name)}>
+                  <Copy className="h-3.5 w-3.5" /> Copy
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** "Senior Caregiver (NYC)" → "senior-caregiver-nyc". */
 function slugify(s: string): string {
   return s
@@ -1482,10 +1799,19 @@ function NewPostingDrawer({
   const [location, setLocation] = useState('');
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
+  const [openings, setOpenings] = useState('1');
+  const [schedule, setSchedule] = useState<JobPostingSchedule | ''>('');
+  const [payUnit, setPayUnit] = useState<'HOUR' | 'YEAR' | ''>('HOUR');
+  const [syndicate, setSyndicate] = useState(true);
   const [saving, setSaving] = useState(false);
   const { clients, error: clientsError, reload: reloadClients } = useClients();
 
   const onSubmit = async () => {
+    const headcount = Number(openings);
+    if (!Number.isInteger(headcount) || headcount < 1 || headcount > 500) {
+      toast.error('Openings must be a whole number from 1 to 500.');
+      return;
+    }
     if (!title.trim() || !slug.trim() || !description.trim()) {
       toast.error('Title, slug, and description are required.');
       return;
@@ -1504,6 +1830,10 @@ function NewPostingDrawer({
         location: location.trim() || null,
         minSalary: minSalary ? Number(minSalary) : null,
         maxSalary: maxSalary ? Number(maxSalary) : null,
+        openings: headcount,
+        schedule: schedule || null,
+        payUnit: minSalary || maxSalary ? payUnit || null : null,
+        syndicate,
       });
       toast.success('Posting drafted.');
       onSaved();
@@ -1596,17 +1926,46 @@ function NewPostingDrawer({
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
-        <div>
-          <Label>Location</Label>
-          <Input
-            className="mt-1"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[1fr_8rem] gap-3">
           <div>
-            <Label>Min salary</Label>
+            <Label>Location</Label>
+            <Input
+              className="mt-1"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>Openings</Label>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={500}
+              className="mt-1"
+              value={openings}
+              onChange={(e) => setOpenings(e.target.value)}
+              aria-describedby="openings-hint"
+            />
+          </div>
+        </div>
+        <p id="openings-hint" className="-mt-2 text-xs text-silver">
+          How many people the client asked for — hires against the posting count toward its fill rate.
+        </p>
+        <div>
+          <Label>Schedule</Label>
+          <Select className="mt-1" value={schedule} onChange={(e) => setSchedule(e.target.value as JobPostingSchedule | '')}>
+            <option value="">Not specified</option>
+            {(Object.keys(SCHEDULE_LABEL) as JobPostingSchedule[]).map((k) => (
+              <option key={k} value={k}>
+                {SCHEDULE_LABEL[k]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="grid grid-cols-[1fr_1fr_8rem] gap-3">
+          <div>
+            <Label>Min pay</Label>
             <Input
               type="number"
               className="mt-1"
@@ -1615,7 +1974,7 @@ function NewPostingDrawer({
             />
           </div>
           <div>
-            <Label>Max salary</Label>
+            <Label>Max pay</Label>
             <Input
               type="number"
               className="mt-1"
@@ -1623,7 +1982,26 @@ function NewPostingDrawer({
               onChange={(e) => setMaxSalary(e.target.value)}
             />
           </div>
+          <div>
+            <Label>Per</Label>
+            <Select className="mt-1" value={payUnit} onChange={(e) => setPayUnit(e.target.value as 'HOUR' | 'YEAR' | '')}>
+              <option value="HOUR">Hour</option>
+              <option value="YEAR">Year</option>
+            </Select>
+          </div>
         </div>
+        <label className="flex items-start gap-2 text-sm text-silver">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-gold"
+            checked={syndicate}
+            onChange={(e) => setSyndicate(e.target.checked)}
+          />
+          <span>
+            List it on job boards while it&rsquo;s open (Indeed, ZipRecruiter, Glassdoor, LinkedIn). Off keeps it on the
+            careers page only.
+          </span>
+        </label>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>

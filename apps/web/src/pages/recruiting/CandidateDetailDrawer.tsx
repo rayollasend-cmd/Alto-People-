@@ -1,26 +1,32 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarClock, FileText, Link2, Mail, Pencil, Phone, Send, Star } from 'lucide-react';
+import { toast } from 'sonner';
+import { Building2, CalendarClock, FileText, Link2, Mail, Pencil, Phone, Send, Star } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {
+  deleteInterview,
   listInterviewKits,
   listInterviews,
   listOffers,
+  signedOfferUrl,
   type InterviewKit,
   type InterviewRecord,
   type OfferRecord,
 } from '@/lib/recruiting90Api';
+import { listSubmittals, withdrawSubmittal, type CandidateSubmittal } from '@/lib/recruitingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { statusLabel } from '@/lib/status';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
   Button,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -34,7 +40,9 @@ import {
   CandidateTimeline,
   EditCandidateDialog,
   ScheduleInterviewDialog,
+  ScorecardSummary,
   ScoreInterviewDialog,
+  SubmitToClientDialog,
 } from './CandidateWorkPanels';
 import { SOURCE_LABEL, STAGE_LABEL, daysSince, ratingLabel } from './recruitingLabels';
 
@@ -68,6 +76,16 @@ const STAGE_VARIANT: Record<
   REJECTED: 'destructive',
 };
 
+const SUBMITTAL_BADGE: Record<
+  CandidateSubmittal['status'],
+  { label: string; variant: 'pending' | 'success' | 'destructive' | 'outline' }
+> = {
+  PENDING: { label: 'Waiting on client', variant: 'pending' },
+  APPROVED: { label: 'Approved', variant: 'success' },
+  DECLINED: { label: 'Passed', variant: 'destructive' },
+  WITHDRAWN: { label: 'Withdrawn', variant: 'outline' },
+};
+
 /** The forward path a candidate walks. Terminal stages sit outside it. */
 const PIPELINE: CandidateStage[] = [
   'APPLIED',
@@ -81,6 +99,7 @@ const OFFER_VARIANT: Record<
   OfferRecord['status'],
   'default' | 'success' | 'destructive' | 'outline' | 'accent' | 'pending'
 > = {
+  PENDING_APPROVAL: 'pending',
   DRAFT: 'default',
   SENT: 'accent',
   ACCEPTED: 'success',
@@ -190,7 +209,14 @@ export function CandidateDetailDrawer({
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
   const [editing, setEditing] = useState(false);
   const [scheduling, setScheduling] = useState(false);
+  // The interview being moved or called off, when there is one.
+  const [moving, setMoving] = useState<InterviewRecord | null>(null);
+  const [cancelling, setCancelling] = useState<InterviewRecord | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [scoring, setScoring] = useState<{ interview: InterviewRecord; kit: InterviewKit | null } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [withdrawing, setWithdrawing] = useState<CandidateSubmittal | null>(null);
+  const [withdrawBusy, setWithdrawBusy] = useState(false);
   // Bumped by every write made from the drawer, so the timeline reloads.
   const [bump, setBump] = useState(0);
 
@@ -204,6 +230,13 @@ export function CandidateDetailDrawer({
   const error = interviewsQuery.error ? interviewsQuery.error instanceof ApiError
             ? interviewsQuery.error.message
             : 'Could not load interviews and offers.' : null;
+  // Who it has been put in front of, and what they said.
+  const submittalsQuery = useQuery({
+    queryKey: ['CandidateDetailDrawer', 'submittals', candidateId],
+    queryFn: () => listSubmittals(candidateId!),
+    enabled: Boolean(candidateId),
+  });
+  const submittals = submittalsQuery.data?.submittals ?? null;
   useEffect(() => {
     setInterviews(null);
     setOffers(null);
@@ -220,7 +253,38 @@ export function CandidateDetailDrawer({
   const changed = () => {
     setBump((n) => n + 1);
     void interviewsQuery.refetch();
+    void submittalsQuery.refetch();
     onChanged?.();
+  };
+
+  const withdraw = async () => {
+    if (!withdrawing) return;
+    setWithdrawBusy(true);
+    try {
+      await withdrawSubmittal(withdrawing.id);
+      toast.success(`Withdrawn — ${withdrawing.clientName} no longer sees ${candidate.firstName}.`);
+      setWithdrawing(null);
+      changed();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not withdraw.');
+    } finally {
+      setWithdrawBusy(false);
+    }
+  };
+
+  const cancelInterview = async () => {
+    if (!cancelling) return;
+    setCancelBusy(true);
+    try {
+      await deleteInterview(cancelling.id);
+      toast.success('Interview cancelled — the calendar invites are withdrawn.');
+      setCancelling(null);
+      changed();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not cancel the interview.');
+    } finally {
+      setCancelBusy(false);
+    }
   };
 
   const openScore = async (i: InterviewRecord) => {
@@ -398,8 +462,12 @@ export function CandidateDetailDrawer({
           ) : !interviews?.length ? (
             <p className="text-sm text-silver/70">No interviews scheduled.</p>
           ) : (
+            <div className="space-y-2">
+            <ScorecardSummary interviews={interviews} />
             <ul className="space-y-2">
-              {interviews.map((i) => (
+              {interviews.map((i) => {
+                const upcoming = !i.completedAt && new Date(i.scheduledFor).getTime() > Date.now();
+                return (
                 <li
                   key={i.id}
                   className="rounded-md border border-navy-secondary bg-navy/60 px-3 py-2"
@@ -426,14 +494,84 @@ export function CandidateDetailDrawer({
                     )}
                   </div>
                   <div className="mt-1 text-xs2 text-silver">
+                    {i.durationMinutes} min
+                    {i.location ? ` · ${i.location}` : ''}
+                    {' · '}
                     {i.kitName ?? 'No kit'}
                     {i.interviewerEmail ? ` · ${i.interviewerEmail}` : ''}
-                    {i.completedAt
-                      ? ' · scored'
-                      : new Date(i.scheduledFor).getTime() < Date.now()
-                        ? ' · needs a score'
-                        : ' · scheduled'}
+                    {i.completedAt ? ' · scored' : upcoming ? ' · scheduled' : ' · needs a score'}
                   </div>
+                  {canManage && upcoming && (
+                    <div className="mt-2 flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setMoving(i)}>
+                        Reschedule
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-alert hover:text-alert"
+                        onClick={() => setCancelling(i)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </li>
+                );
+              })}
+            </ul>
+            </div>
+          )}
+        </Section>
+
+        <Section
+          title="Client review"
+          action={
+            canManage && !isTerminal ? (
+              <Button size="sm" variant="outline" onClick={() => setSubmitting(true)}>
+                <Building2 className="h-3.5 w-3.5" />
+                Put forward
+              </Button>
+            ) : null
+          }
+        >
+          {submittalsQuery.error ? (
+            <ErrorBanner>Could not load the client reviews.</ErrorBanner>
+          ) : submittals === null ? (
+            <SkeletonRows count={1} />
+          ) : submittals.length === 0 ? (
+            <p className="text-sm text-silver/70">Not put in front of a client yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {submittals.map((s) => (
+                <li key={s.id} className="rounded-md border border-navy-secondary bg-navy/60 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm text-white">
+                      {s.clientName}
+                      {s.locationName ? ` · ${s.locationName}` : ''}
+                    </span>
+                    <Badge variant={SUBMITTAL_BADGE[s.status].variant}>{SUBMITTAL_BADGE[s.status].label}</Badge>
+                  </div>
+                  <div className="mt-1 text-xs2 text-silver">
+                    Sent {fmtDate(s.createdAt)}
+                    {s.submittedByEmail ? ` by ${s.submittedByEmail}` : ''}
+                    {s.decidedAt ? ` · answered ${fmtDate(s.decidedAt)}${s.decidedByEmail ? ` by ${s.decidedByEmail}` : ''}` : ''}
+                  </div>
+                  {s.feedback && (
+                    <p className="mt-2 whitespace-pre-wrap rounded border border-navy-secondary bg-navy-secondary/30 px-2.5 py-1.5 text-sm text-silver">
+                      {s.feedback}
+                    </p>
+                  )}
+                  {canManage && s.status === 'PENDING' && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="mt-1 -ml-2 text-silver"
+                      onClick={() => setWithdrawing(s)}
+                    >
+                      Withdraw from client
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -468,7 +606,7 @@ export function CandidateDetailDrawer({
                     <span className="text-sm text-white truncate">
                       {o.jobTitle}
                     </span>
-                    <Badge variant={OFFER_VARIANT[o.status]}>{o.status}</Badge>
+                    <Badge variant={OFFER_VARIANT[o.status]}>{statusLabel(o.status)}</Badge>
                   </div>
                   <div className="mt-1 text-xs2 text-silver">
                     {o.clientName} · starts {o.startDate}
@@ -478,6 +616,25 @@ export function CandidateDetailDrawer({
                         ? ` · ${o.currency} ${o.hourlyRate}/hr`
                         : ''}
                   </div>
+                  {o.status === 'PENDING_APPROVAL' && o.approvalNote && (
+                    <div className="mt-1 text-xs2 text-warning">Held for approval — {o.approvalNote}</div>
+                  )}
+                  {o.status === 'SENT' && <div className="mt-1 text-xs2 text-silver">Awaiting their signature</div>}
+                  {o.signedName && o.signedAt && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs2 text-silver">
+                      Signed by {o.signedName}, {fmtDate(o.signedAt)}
+                      {o.hasSignedPdf && (
+                        <a
+                          href={signedOfferUrl(o.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-gold hover:underline"
+                        >
+                          Signed letter
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -501,9 +658,45 @@ export function CandidateDetailDrawer({
           <EditCandidateDialog candidate={candidate} open={editing} onOpenChange={setEditing} onSaved={changed} />
           <ScheduleInterviewDialog
             candidate={candidate}
-            open={scheduling}
-            onOpenChange={setScheduling}
+            interview={moving}
+            open={scheduling || moving !== null}
+            onOpenChange={(o) => {
+              if (o) return;
+              setScheduling(false);
+              setMoving(null);
+            }}
             onScheduled={changed}
+          />
+          <ConfirmDialog
+            open={cancelling !== null}
+            onOpenChange={(o) => !o && setCancelling(null)}
+            title="Cancel this interview?"
+            description={
+              cancelling
+                ? `${fmtDateTime(cancelling.scheduledFor)} — ${candidate.firstName} and the interviewer get a cancellation that takes it out of their calendars.`
+                : undefined
+            }
+            confirmLabel="Cancel interview"
+            cancelLabel="Keep it"
+            destructive
+            busy={cancelBusy}
+            onConfirm={cancelInterview}
+          />
+          <SubmitToClientDialog
+            candidate={candidate}
+            open={submitting}
+            onOpenChange={setSubmitting}
+            onSubmitted={changed}
+          />
+          <ConfirmDialog
+            open={withdrawing !== null}
+            onOpenChange={(o) => !o && setWithdrawing(null)}
+            title={withdrawing ? `Withdraw from ${withdrawing.clientName}?` : 'Withdraw?'}
+            description={`${candidate.firstName} comes off their review list. You can put them forward again later.`}
+            confirmLabel="Withdraw"
+            cancelLabel="Keep it"
+            busy={withdrawBusy}
+            onConfirm={withdraw}
           />
           <ScoreInterviewDialog
             interview={scoring?.interview ?? null}

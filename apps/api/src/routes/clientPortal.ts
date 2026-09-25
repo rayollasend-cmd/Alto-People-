@@ -12,7 +12,8 @@ import { ensureBrandingLoaded } from '../lib/branding.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
 import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../lib/portalDayReport.js';
 import { notePortalReportDownload } from '../lib/portalEngagement.js';
-import { trackNotificationWork } from '../lib/notify.js';
+import { notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import { buildStoreOps, opsShiftScope, scopedOpsPhoto } from '../lib/portalOps.js';
@@ -1765,3 +1766,157 @@ clientPortalRouter.post('/client-portal/acknowledge', requireAuth, async (req, r
     next(err);
   }
 });
+
+/* ===== Candidates to review ============================================== */
+
+/**
+ * GET /client-portal/candidates — the people Alto has put forward for this
+ * client to approve or pass on: waiting ones first, then the last 60 days
+ * of answers. A store account sees those for its store and those put to
+ * the whole client.
+ *
+ * PRIVACY: a candidate is not yet anyone's employee. The client sees the
+ * name, the position, Alto's pitch and how Alto's interviewers
+ * recommended them — never contact details, a résumé or interview notes.
+ */
+clientPortalRouter.get('/client-portal/candidates', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query);
+    const since = new Date(Date.now() - 60 * DAY);
+    const rows = await prisma.candidateSubmittal.findMany({
+      where: {
+        clientId: scope.clientId,
+        candidate: { deletedAt: null },
+        AND: [
+          { OR: [{ status: 'PENDING' }, { status: { in: ['APPROVED', 'DECLINED'] }, decidedAt: { gte: since } }] },
+          ...(scope.locationId ? [{ OR: [{ locationId: null }, { locationId: scope.locationId }] }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        pitch: true,
+        status: true,
+        feedback: true,
+        decidedAt: true,
+        createdAt: true,
+        location: { select: { name: true } },
+        submittedBy: { select: { email: true, associate: { select: { firstName: true } } } },
+        decidedBy: { select: { email: true, associate: { select: { firstName: true } } } },
+        candidate: {
+          select: {
+            firstName: true,
+            lastName: true,
+            position: true,
+            interviews: { where: { completedAt: { not: null } }, select: { rating: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    const view = rows.map((r) => ({
+      id: r.id,
+      name: `${r.candidate.firstName} ${r.candidate.lastName}`,
+      position: r.candidate.position,
+      storeName: r.location?.name ?? null,
+      pitch: r.pitch,
+      status: r.status,
+      feedback: r.feedback,
+      interviewRatings: r.candidate.interviews.flatMap((i) => (i.rating == null ? [] : [i.rating])),
+      submittedBy: reviewerName(r.submittedBy),
+      submittedAt: r.createdAt.toISOString(),
+      decidedBy: reviewerName(r.decidedBy),
+      decidedAt: r.decidedAt?.toISOString() ?? null,
+    }));
+    view.sort((a, b) => Number(b.status === 'PENDING') - Number(a.status === 'PENDING'));
+    res.json({
+      canDecide: req.user!.role === 'CLIENT_PORTAL',
+      candidates: view,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CandidateDecisionSchema = z.object({
+  decision: z.enum(['APPROVED', 'DECLINED']),
+  feedback: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * POST /client-portal/candidates/:id/decision — the client approves a
+ * candidate or passes, with feedback. Portal accounts only: a preview
+ * can't answer for the client. The answer lands on the candidate's
+ * timeline and tells the recruiter who put them forward.
+ */
+clientPortalRouter.post('/client-portal/candidates/:id/decision', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (user.role !== 'CLIENT_PORTAL') {
+      throw new HttpError(403, 'forbidden', 'Only a client account can answer for the client.');
+    }
+    const input = CandidateDecisionSchema.parse(req.body);
+    if (input.decision === 'DECLINED' && !input.feedback) {
+      throw new HttpError(400, 'feedback_required', 'Tell Alto why, so the next person is a better fit.');
+    }
+    const s = await prisma.candidateSubmittal.findUnique({
+      where: { id: req.params.id },
+      include: {
+        client: { select: { name: true } },
+        location: { select: { name: true, regionId: true } },
+        candidate: { select: { firstName: true, lastName: true, deletedAt: true } },
+      },
+    });
+    // Theirs to answer: their client, and — for a store account — their
+    // store or one put to the whole client. A region account answers for
+    // the stores in its region. Anything else is a 404, not a 403: it
+    // doesn't exist for them.
+    const theirs =
+      s &&
+      !s.candidate.deletedAt &&
+      (user.clientId
+        ? s.clientId === user.clientId && (!user.locationId || !s.locationId || s.locationId === user.locationId)
+        : Boolean(user.regionId && s.location?.regionId === user.regionId));
+    if (!s || !theirs) throw new HttpError(404, 'not_found', 'Candidate not found');
+    if (s.status !== 'PENDING') {
+      throw new HttpError(409, 'already_decided', s.status === 'WITHDRAWN' ? 'Alto withdrew this candidate.' : 'Already answered.');
+    }
+    const feedback = input.feedback || null;
+    const decidedAt = new Date();
+    await prisma.$transaction(async (tx) => {
+      // Conditional on PENDING so two managers answering at once can't
+      // both win.
+      const n = await tx.candidateSubmittal.updateMany({
+        where: { id: s.id, status: 'PENDING' },
+        data: { status: input.decision, feedback, decidedById: user.id, decidedAt },
+      });
+      if (n.count === 0) throw new HttpError(409, 'already_decided', 'Already answered.');
+      const who = s.location ? `${s.client.name} · ${s.location.name}` : s.client.name;
+      await recordCandidateEvent(tx, {
+        candidateId: s.candidateId,
+        kind: 'CLIENT_FEEDBACK',
+        actorUserId: user.id,
+        // The verdict, then their words on a line of their own.
+        body: `${input.decision === 'APPROVED' ? 'Approved' : 'Passed'} by ${who}${feedback ? `\n${feedback}` : ''}`,
+        metadata: { submittalId: s.id, decision: input.decision },
+      });
+    });
+    auditRecruiting(req, 'client_feedback', 'CandidateSubmittal', s.id, {
+      candidateId: s.candidateId,
+      decision: input.decision,
+    });
+    if (s.submittedById) {
+      const name = `${s.candidate.firstName} ${s.candidate.lastName}`;
+      void notifyUser(s.submittedById, {
+        subject: input.decision === 'APPROVED' ? `${s.client.name} approved ${name}` : `${s.client.name} passed on ${name}`,
+        body: feedback ?? (input.decision === 'APPROVED' ? 'Ready for an offer.' : 'No reason given.'),
+        category: 'recruiting',
+        linkUrl: `/recruiting?candidateId=${s.candidateId}`,
+      }).catch(() => undefined);
+    }
+    res.json({ id: s.id, status: input.decision, decidedAt: decidedAt.toISOString() });
+  } catch (err) {
+    next(err);
+  }
+});
+
