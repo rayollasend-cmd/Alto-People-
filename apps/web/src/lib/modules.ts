@@ -286,6 +286,10 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  // Recruiting is one of the relay's four desks — batons are handed to
+  // the recruiter there, so they need the way in like HR, Workforce and
+  // Finance have it.
+  'relay',
   'recruiting',
   'onboarding',
   'people',

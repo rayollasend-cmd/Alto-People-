@@ -14,16 +14,24 @@ function keysFor(role: Role, scope: { regionId?: string | null } = {}): ModuleKe
 }
 
 describe('visibleModules — INTERNAL_RECRUITER curation', () => {
+  it('every role that holds a relay desk can reach the relay from the nav', () => {
+    for (const role of ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'INTERNAL_RECRUITER', 'WORKFORCE_MANAGER', 'FINANCE_ACCOUNTANT'] as Role[]) {
+      expect(keysFor(role), role).toContain('relay');
+    }
+  });
+
   // The role carries the FULL admin capability surface (identical to
   // Marketing / Workforce Manager), so without curation the sidebar dumped
   // the whole console. This pins the recruiter's nav to exactly the six
-  // areas they own plus the two personal-baseline utilities.
-  it('shows exactly the six recruiter areas plus My profile + Messages', () => {
+  // areas they own, the relay (Recruiting is one of its desks), and the two
+  // personal-baseline utilities.
+  it('shows exactly the six recruiter areas plus the relay, My profile + Messages', () => {
     const keys = keysFor('INTERNAL_RECRUITER');
     expect(new Set(keys)).toEqual(
       new Set<ModuleKey>([
         'me',
         'messages',
+        'relay',
         'recruiting',
         'onboarding',
         'people',
