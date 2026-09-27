@@ -239,7 +239,8 @@ describe('profiles — the rider’s van and driver, the driver’s riders', () 
     const crew = (await a.agent.get(`/transport/me/rides/${a.ride.id}/crew`)).body.crew;
     expect(crew.van).toMatchObject({ name: 'Van 1', plate: 'ALT 101', look: 'White Ford Transit 2023', capacity: 2 });
     expect(crew.driver).toMatchObject({ name: 'Mike C.', trips: 0 });
-    expect(JSON.stringify(crew)).not.toMatch(/Chen|555/);
+    // A phone number, not any "555" — random UUIDs in the payload contain it.
+    expect(JSON.stringify(crew)).not.toMatch(/Chen|555-\d{4}/);
   });
 
   it('a driver sees a rider asking for a seat or riding with them — not anyone else', async () => {
