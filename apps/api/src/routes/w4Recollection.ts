@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
 import { w4SsnRecollectionTemplate } from '../lib/emailTemplates.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 /**
  * W-4 SSN re-collection campaign — remediation surface for the 2026-06-11
@@ -254,7 +254,7 @@ w4RecollectionRouter.post('/email', idempotent, async (req, res) => {
     const taskPath = `/onboarding/me/${application.id}/tasks/w4`;
     const tpl = w4SsnRecollectionTemplate({
       firstName: a.firstName,
-      taskUrl: `${env.APP_BASE_URL}${taskPath}`,
+      taskUrl: `${publicBaseUrl()}${taskPath}`,
       needsNumber: row.needsNumber,
       needsCard: !row.hasSsnCard,
     });

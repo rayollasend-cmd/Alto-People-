@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { enqueueAudit } from './audit.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate, notifyUser } from './notify.js';
 import { ledWindows } from './shiftWindows.js';
+import { associateWeekLink } from './appLinks.js';
 
 /**
  * THE READY-TO-WORK HANDOFF.
@@ -289,7 +290,7 @@ export async function startReadyToWorkHandoff(input: {
         subject: `New associate ready to schedule: ${associate.name}`,
         body: supervisorBody,
         category: 'scheduling',
-        linkUrl: `/scheduling?associate=${associateId}`,
+        linkUrl: associateWeekLink({ associateId, clientId }),
       }),
     ),
   );
@@ -319,7 +320,7 @@ export async function startReadyToWorkHandoff(input: {
       subject: `No supervisor to hand ${associate.name} to`,
       body: `${associate.name}'s clock-in number was issued for ${where}, but ${client.name} has no active shift supervisor to tell. Give the store a supervisor (Users & access → shift windows) and re-issue the number, or schedule their first shift yourself.`,
       category: 'onboarding',
-      linkUrl: `/scheduling?associate=${associateId}`,
+      linkUrl: associateWeekLink({ associateId, clientId }),
       emailRoles: ADMIN_EMAIL_HR_ONLY,
     });
   }
@@ -485,7 +486,7 @@ export async function runReadyToWorkNudgeSweep(now: Date = new Date()): Promise<
     const where = row.location ? `${row.location.name} (${row.client.name})` : row.client.name;
     const hours = env.READY_TO_WORK_NUDGE_AFTER_HOURS;
     const body = `${associate.name} was cleared to work at ${where} ${hours} hours ago and still has no first shift. Phone ${associate.phone ?? '—'} · ${associate.email}. Put them on the schedule so they are not waiting on a call.`;
-    const link = `/scheduling?associate=${row.associateId}`;
+    const link = associateWeekLink({ associateId: row.associateId, clientId: row.clientId });
     await Promise.all([
       ...row.supervisorUserIds.map((id) =>
         notifyUser(id, { subject: `Still waiting for a first shift: ${associate.name}`, body, category: 'scheduling', linkUrl: link }),

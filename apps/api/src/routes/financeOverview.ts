@@ -562,12 +562,14 @@ financeOverviewRouter.post(
 
       // One nudge per client per org-day. The linkUrl doubles as the
       // dedupe key carrier (same pattern as the Fieldglass notifications).
-      const linkUrl = `/time-attendance?closeNudge=${clientId ?? 'all'}`;
+      // tab=queue opens the approval queue; closeNudge stays — it's the dedupe key.
+      const linkUrl = `/time-attendance?tab=queue&closeNudge=${clientId ?? 'all'}`;
       const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');
       const already = await prisma.notification.findFirst({
         where: {
           category: 'finance.close_nudge',
-          linkUrl,
+          // Either spelling — a nudge sent before tab=queue still counts today.
+          linkUrl: { in: [linkUrl, `/time-attendance?closeNudge=${clientId ?? 'all'}`] },
           createdAt: { gte: dayStart },
         },
         select: { id: true },

@@ -9,7 +9,6 @@ import {
   type Role,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { adminForcePasswordResetLimiter } from '../middleware/rateLimit.js';
@@ -22,6 +21,7 @@ import { send } from '../lib/notifications.js';
 import { nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { personName } from '../lib/floorLeads.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -681,7 +681,7 @@ usersRouter.post(
     });
     invalidateUserCache(target.id);
 
-    const resetUrl = `${env.APP_BASE_URL}/reset-password/${raw}`;
+    const resetUrl = `${publicBaseUrl()}/reset-password/${raw}`;
     const subject = 'Set a new Alto People password';
     const body = [
       `Hi,`,

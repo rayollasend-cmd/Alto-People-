@@ -122,6 +122,7 @@ import {
 } from '../lib/compliancePacket.js';
 import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 export const onboardingRouter = Router();
 
@@ -1243,7 +1244,7 @@ async function approveOneApplication(
     firstName: approvedAssoc?.firstName ?? 'there',
     clientName: approvedClient?.name ?? 'your assigned client',
     hireDate,
-    appUrl: env.APP_BASE_URL,
+    appUrl: publicBaseUrl(),
   });
   void notifyAssociate(app.associateId, {
     subject: approvedTpl.subject,
@@ -3311,7 +3312,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       clientName: i9Client?.name ?? 'the client',
       hireDate: hireDateStr,
       section2DueDate: section2Due,
-      i9Url: `${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
+      i9Url: `${publicBaseUrl()}/onboarding/applications/${app.id}`,
     });
     void notifyAllAdmins({
       subject: i9Tpl.subject,
@@ -3842,7 +3843,7 @@ onboardingRouter.post(
       // the vault under their folder regardless. Notification row records
       // the attempt so HR can see it landed.
       if (associate.email) {
-        const linkUrl = `${env.APP_BASE_URL}/api/onboarding/esign/signatures/${result.sig.id}/pdf`;
+        const linkUrl = `${publicBaseUrl()}/api/onboarding/esign/signatures/${result.sig.id}/pdf`;
         // Branded layout — the signed-agreement copy is a legal artifact
         // and used to go out as bare plain text with no logo or footer.
         const tpl = esignCopyTemplate({
@@ -4067,7 +4068,7 @@ onboardingRouter.post(
         inviteUrl:
           env.RESEND_API_KEY && env.RESEND_FROM
             ? null
-            : `${env.APP_BASE_URL}/accept-invite/${result.rawToken}`,
+            : `${publicBaseUrl()}/accept-invite/${result.rawToken}`,
       });
     } catch (err) {
       next(err);
@@ -4442,6 +4443,7 @@ onboardingRouter.post(
             subject: 'Application declined on your team',
             body: `An application for one of your direct reports was declined. Reason: ${reason}.`,
             category: 'onboarding',
+            linkUrl: `/onboarding/applications/${app.id}`, // as the single decline does
           });
           rejected++;
         } catch (err) {

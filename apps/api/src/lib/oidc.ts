@@ -415,6 +415,21 @@ export interface OidcFlowState {
   state: string;
   nonce: string;
   verifier: string;
+  /** Where to land after sign-in — the page a notification link pointed at. */
+  next?: string;
+}
+
+/**
+ * A post-sign-in destination, or null: a same-origin absolute path only.
+ * `//host` and `/\host` are protocol-relative to a browser, so they're
+ * refused like any full URL. Mirrors the web's safeNextPath.
+ */
+export function safeReturnPath(candidate: unknown): string | null {
+  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 512) return null;
+  if (!candidate.startsWith('/') || candidate.startsWith('//') || candidate.startsWith('/\\')) return null;
+  // No control characters — a header-splitting CR/LF has no place in a path.
+  for (let i = 0; i < candidate.length; i++) if (candidate.charCodeAt(i) < 0x20) return null;
+  return candidate;
 }
 
 function flowSignature(body: string): string {
@@ -423,24 +438,29 @@ function flowSignature(body: string): string {
 
 /**
  * Compact HMAC-signed cookie value carrying the per-flow secrets between
- * /start and /callback: `ts.state.nonce.verifier.sig`. All four payload
- * parts are dot-free (base36 timestamp, hex, hex, base64url) so splitting
- * on '.' is unambiguous. Signed with JWT_SECRET — same trust root as the
+ * /start and /callback: `ts.state.nonce.verifier[.next].sig`. Every payload
+ * part is dot-free (base36 timestamp, hex, hex, base64url, and the return
+ * path base64url-encoded) so splitting on '.' is unambiguous. The return
+ * path is optional — a cookie minted before it existed has five parts. Signed with JWT_SECRET — same trust root as the
  * session itself; a party who can forge this can already mint sessions.
  * The embedded timestamp gives a server-side 10-minute expiry that a
  * captured cookie can't sidestep by ignoring the browser Max-Age.
  */
 export function signFlowCookie(flow: OidcFlowState): string {
-  const body = [Date.now().toString(36), flow.state, flow.nonce, flow.verifier].join('.');
+  const parts = [Date.now().toString(36), flow.state, flow.nonce, flow.verifier];
+  const next = safeReturnPath(flow.next);
+  if (next) parts.push(Buffer.from(next, 'utf8').toString('base64url'));
+  const body = parts.join('.');
   return `${body}.${flowSignature(body)}`;
 }
 
 export function verifyFlowCookie(raw: string): OidcFlowState | null {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 1024) return null;
   const parts = raw.split('.');
-  if (parts.length !== 5) return null;
-  const [ts, state, nonce, verifier, sig] = parts;
-  const expected = flowSignature([ts, state, nonce, verifier].join('.'));
+  if (parts.length !== 5 && parts.length !== 6) return null;
+  const sig = parts.pop()!;
+  const [ts, state, nonce, verifier, nextEnc] = parts;
+  const expected = flowSignature(parts.join('.'));
   const a = Buffer.from(sig, 'utf8');
   const b = Buffer.from(expected, 'utf8');
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
@@ -453,7 +473,8 @@ export function verifyFlowCookie(raw: string): OidcFlowState | null {
     return null;
   }
   if (!state || !nonce || !verifier) return null;
-  return { state, nonce, verifier };
+  const next = nextEnc ? safeReturnPath(Buffer.from(nextEnc, 'base64url').toString('utf8')) : null;
+  return next ? { state, nonce, verifier, next } : { state, nonce, verifier };
 }
 
 /**

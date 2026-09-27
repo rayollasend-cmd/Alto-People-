@@ -11,6 +11,7 @@ import { enqueueAudit } from './audit.js';
 import { scheduledReportTemplate } from './emailTemplates.js';
 import { ENTITY_COLUMNS, SpecSchema, runReport } from './reportRun.js';
 import type { SessionUser } from '../types/express.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Scheduled-report delivery sweep.
@@ -223,7 +224,7 @@ export async function runDueReportSchedules(
         rowCount: rows.length,
         truncated,
         rowCap: cap,
-        reportsUrl: `${env.APP_BASE_URL}/reports`,
+        reportsUrl: `${publicBaseUrl()}/reports`,
       });
       const filename = `${report.name.replace(/[^A-Za-z0-9_-]+/g, '_')}-${runDate}.csv`;
       const attachment = {

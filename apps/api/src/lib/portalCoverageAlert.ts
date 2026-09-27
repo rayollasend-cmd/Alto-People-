@@ -235,7 +235,11 @@ export async function runPortalCoverageAlertSweep(
           subject,
           body: `${line(w)} for the ${startLabel(w)} shift at ${storeName(w)}.`,
           category: CATEGORY,
-          linkUrl: `/time-attendance?wave=${encodeURIComponent(w.startsAt.toISOString())}`,
+          // The store's Today page, opened on that shift. The Time page this
+          // used to open never read ?wave=. clientId lets a Workforce
+          // Manager (not store-bound) see the store; supervisors are clamped
+          // to theirs server-side.
+          linkUrl: `/today?clientId=${w.clientId}&date=${orgDateKey(w.startsAt)}&wave=${encodeURIComponent(w.startsAt.toISOString())}`,
         },
         prisma,
       );

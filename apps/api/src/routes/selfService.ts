@@ -547,7 +547,7 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
     subject: `Life event reported: ${input.kind.replace(/_/g, ' ')}`,
     body: `${who} reported ${input.kind} effective ${input.eventDate} — review benefits eligibility.`,
     category: 'benefits',
-    linkUrl: '/people',
+    linkUrl: `/people?associateId=${associateId}`, // the person, not the directory
     emailRoles: ADMIN_EMAIL_HR_ONLY,
   });
   // Fire workflow: associate hired isn't relevant; this is informational

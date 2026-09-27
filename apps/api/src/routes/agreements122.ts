@@ -6,7 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate } from '../lib/notify.js';
-import { env } from '../config/env.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 /**
  * Phase 122 — Per-associate legal agreements.
@@ -173,7 +173,7 @@ agreements122Router.post('/agreements', MANAGE, async (req, res) => {
     subject: `Action required: ${label} awaiting your signature`,
     body:
       `A ${label} has been issued to you and is awaiting your signature. ` +
-      `Review and sign it here: ${env.APP_BASE_URL}/agreements` +
+      `Review and sign it here: ${publicBaseUrl()}/agreements` +
       (input.expiresOn ? ` (sign by ${input.expiresOn})` : ''),
     category: 'agreements',
     linkUrl: '/agreements',

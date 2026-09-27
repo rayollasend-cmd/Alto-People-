@@ -464,7 +464,7 @@ export async function computeRoleDecisions(
         detail: `${days} days unpaid — chase the cash or flag it upward.`,
         stakes: amount || null,
         ageDays: days,
-        linkUrl: '/clients',
+        linkUrl: `/clients/statements?statement=${s.id}`, // the statement itself
       });
     }
   }

@@ -46,7 +46,7 @@ import {
   sanitizeUploadFilename,
   verifyFileMagic,
 } from '../lib/uploads.js';
-import { env } from '../config/env.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 export const documentsRouter = Router();
 
@@ -288,7 +288,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       documentKind: created.kind.replace(/_/g, ' ').toLowerCase(),
       filename: created.filename,
       uploadedAt: new Date(created.createdAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
-      documentsUrl: `${env.APP_BASE_URL}/documents`,
+      documentsUrl: `${publicBaseUrl()}/documents`,
     });
     // Bell-only (emailRoles: []): every upload used to EMAIL all six admin
     // roles — a single new hire's ID front + back + SSN card was ~24
@@ -300,7 +300,8 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       body: tpl.text,
       html: tpl.html,
       category: 'documents',
-      linkUrl: '/documents',
+      // That person's documents, not the whole vault.
+      linkUrl: created.associateId ? `/people?associateId=${created.associateId}&tab=documents` : '/documents',
       emailRoles: [],
     });
 
@@ -1272,8 +1273,8 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       ? linkTaskKind
         ? `/onboarding/me/${liveApplicationId}/tasks/${linkTaskKind.toLowerCase()}`
         : `/onboarding/me/${liveApplicationId}`
-      : `/me/documents`;
-    const documentsUrl = `${env.APP_BASE_URL}${associateLinkPath}`;
+      : `/documents`; // there is no /me/documents route
+    const documentsUrl = `${publicBaseUrl()}${associateLinkPath}`;
     const assocTpl = documentRejectedAssociateTemplate({
       firstName: rejAssoc?.firstName ?? 'there',
       documentKind: docKindLabel,
@@ -1302,10 +1303,9 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       body: mgrTpl.text,
       html: mgrTpl.html,
       category: 'documents',
-      // Land the manager on the admin documents page so they can spot
-      // the rejected row in context. The admin view groups by associate;
-      // there's no per-associate sub-route to deep-link to today.
-      linkUrl: `/documents`,
+      // The associate's documents tab in People — the rejected file in
+      // context, not the whole vault.
+      linkUrl: `/people?associateId=${updated.associateId}&tab=documents`,
     });
 
     res.json(toRecord(updated));
@@ -1369,7 +1369,7 @@ documentsRouter.post('/admin/:id/request-reupload', MANAGE, async (req, res, nex
       ? linkTaskKind
         ? `/onboarding/me/${liveApplicationId}/tasks/${linkTaskKind.toLowerCase()}`
         : `/onboarding/me/${liveApplicationId}`
-      : `/me/documents`;
+      : `/documents`; // there is no /me/documents route
     const docKindLabel = doc.kind.replace(/_/g, ' ').toLowerCase();
     const expiredOn = doc.expiresAt
       ? ` on ${doc.expiresAt.toISOString().slice(0, 10)}`

@@ -6,6 +6,7 @@ import { revertCandidateHire } from './candidateHire.js';
 import { getBlobStore } from './blobStore.js';
 import { logger } from './logger.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyUser } from './notify.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Onboarding ghost purge — the self-cleaning half of the invite pipeline.
@@ -403,7 +404,7 @@ export async function runOnboardingPurgeSweep(
             `If nothing moves in the next ${daysLeft} days, your application and everything ` +
             `you've uploaded will be permanently removed, and you would need a fresh ` +
             `invitation to start again.\n\n` +
-            `Pick up where you left off: ${env.APP_BASE_URL}/onboarding`,
+            `Pick up where you left off: ${publicBaseUrl()}/onboarding`,
           category: 'onboarding.purge_warning',
           linkUrl: '/onboarding',
         });

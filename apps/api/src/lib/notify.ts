@@ -54,8 +54,8 @@ import {
   genericNotificationTemplate,
   onboardingCompleteTemplate,
 } from './emailTemplates.js';
-import { env } from '../config/env.js';
 import { supervisorRecipients } from './shiftWindows.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
 // Capability-based (not a hardcoded role list) so a future role gaining
@@ -644,13 +644,15 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
         associateName: who,
         clientName: app.client.name,
         submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-        applicationUrl: `${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
+        applicationUrl: `${publicBaseUrl()}/onboarding/applications/${app.id}`,
       });
       await notifyAllAdmins({
         subject: tpl.subject,
         body: tpl.text,
         html: tpl.html,
         category: 'onboarding',
+        // The email's button already opened it; now the bell row does too.
+        linkUrl: `/onboarding/applications/${app.id}`,
         // Reviewing a submission is HR/recruiting work; the other four
         // admin roles see the bell row without the inbox hit.
         emailRoles: ADMIN_EMAIL_HIRING,

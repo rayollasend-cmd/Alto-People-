@@ -459,7 +459,8 @@ teamRouter.post(
       subject: 'Your timesheet was approved',
       body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
       category: 'team',
-      linkUrl: '/me',
+      // The entry on their timesheet — /me (their profile) shows no time.
+      linkUrl: `/time-attendance?entry=${updated.id}`,
       emailFallback: true,
     });
     res.json({ ok: true });
@@ -514,7 +515,7 @@ teamRouter.post(
       subject: 'Your timesheet was rejected',
       body: `Your time entry for ${entry.clockInAt.toISOString().slice(0, 10)} was rejected. Reason: ${reason}`,
       category: 'team',
-      linkUrl: '/me',
+      linkUrl: `/time-attendance?entry=${entry.id}`,
       emailFallback: true,
     });
     res.json({ ok: true });
@@ -596,7 +597,7 @@ teamRouter.post(
           subject: 'Your timesheet was approved',
           body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
           category: 'team',
-          linkUrl: '/me',
+          linkUrl: `/time-attendance?entry=${updated.id}`,
           emailFallback: true,
         });
         approved++;

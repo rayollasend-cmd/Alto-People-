@@ -83,7 +83,7 @@ export async function runAutoClockOutSweep(
       subject: `We clocked you out at ${formatTimeInZone(shiftEnd, tz)}`,
       body: `Looks like you forgot to punch out — your entry was closed at your shift's scheduled end. If you actually worked later, tell your supervisor so they can adjust it. Remember to punch out at the kiosk next time!`,
       category: 'time_entry',
-      linkUrl: '/time-attendance',
+      linkUrl: `/time-attendance?entry=${entry.id}`, // the entry that was closed
     });
   }
 

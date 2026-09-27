@@ -7,6 +7,7 @@ import {
   recordNoShowAttendance,
 } from '../../lib/attendance.js';
 import { runShiftReminderSweep } from '../../lib/shiftReminder.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -239,6 +240,11 @@ describe('OT radar', () => {
     }
     const first = await runShiftReminderSweep(prisma, now);
     expect(first.otAlerts).toBe(1);
+    // The alert opens THEIR week, on their store's roster — it used to link
+    // to plain /scheduling, which showed whatever the reader last left open.
+    await flushPendingNotifications();
+    const alert = await prisma.notification.findFirstOrThrow({ where: { category: 'ot_radar', channel: 'IN_APP' } });
+    expect(alert.linkUrl).toBe(`/scheduling?view=week&associate=${assoc.id}&client=${client.id}&week=2026-08-29`);
     const second = await runShiftReminderSweep(prisma, now);
     expect(second.otAlerts).toBe(0); // stamped — no re-alert
 

@@ -72,7 +72,7 @@ export async function approveWalkInRequest(
     subject: "You're clocked in",
     body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, DEFAULT_TIMEZONE)}. No need to punch again; clock out at the kiosk as usual.`,
     category: 'time_entry',
-    linkUrl: '/time-attendance',
+    linkUrl: `/time-attendance?entry=${entry.id}`, // the entry just opened
   });
   return { ok: true, timeEntryId: entry.id };
 }

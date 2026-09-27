@@ -28,9 +28,9 @@ import { type PrismaClient } from '@prisma/client';
 import { EmailSuppressedError, send } from './notifications.js';
 import { renderPaystubPdf } from './paystub.js';
 import { buildPaystubDataFromItem, paystubItemInclude } from './paystubData.js';
-import { env } from '../config/env.js';
 import { paystubTemplate } from './emailTemplates.js';
 import { emitLiveEvent } from './liveEvents.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 type PrismaSlice = Pick<
   PrismaClient,
@@ -120,7 +120,7 @@ export async function sendPaystubEmail(
       firstName: item.associate.firstName,
       periodLabel: period,
       netPay: fmtMoney(netPay),
-      payrollUrl: `${env.APP_BASE_URL}/payroll`,
+      payrollUrl: `${publicBaseUrl()}/payroll`,
     });
     const subject = data.amendment
       ? `[For Your Records] Amended paystub for ${period}`

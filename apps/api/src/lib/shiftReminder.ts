@@ -20,6 +20,7 @@ import {
   withdrawContradictedNoShows,
 } from './attendance.js';
 import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
+import { associateWeekLink } from './appLinks.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Bound one sweep so a backlog (e.g. cron re-enabled after a week off)
@@ -248,7 +249,8 @@ export async function runShiftReminderSweep(
           timezone: shift.locationRel?.timezone ?? null,
         })}. Worth a call — the shift started over 15 minutes ago.`,
         category: 'shift_no_show',
-        linkUrl: '/scheduling',
+        // Their week, on this shift's store — where you'd reassign it.
+        linkUrl: associateWeekLink({ associateId: shift.assignedAssociateId!, clientId: shift.clientId, week: shift.startsAt }),
       };
       // Fire-and-forget — both helpers never reject, and the sweep's job
       // is the claim stamp, not the delivery.
@@ -498,7 +500,8 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
       subject: `Overtime ahead — ${associate.firstName} ${associate.lastName}`,
       body: `${associate.firstName} ${associate.lastName} is on track for ~${otHours.toFixed(1)}h of overtime this week if their remaining shifts run as scheduled${cost}. Trim or reassign a shift now to avoid it.`,
       category: 'ot_radar',
-      linkUrl: '/scheduling',
+      // Their week, scrolled to their row — where the trimming happens.
+      linkUrl: associateWeekLink({ associateId, clientId: rem.clientId, week: weekStart }),
     };
     void notifyAllAdmins(notice);
     // Supervisors get the hours, never the billed cost — money is withheld

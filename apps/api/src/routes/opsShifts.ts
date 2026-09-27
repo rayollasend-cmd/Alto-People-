@@ -1279,7 +1279,7 @@ opsRouter.patch('/tasks/:id', RUN_OR_ASSIST, async (req, res, next) => {
         subject: `Temperature out of range — ${task.opsShift.position}`,
         body: `${task.tempLabel ?? 'A reading'} came back ${input.answerNumber}°F on "${task.title}" (allowed ${task.tempMin ?? '—'}–${task.tempMax ?? '—'}°F). Recorded by ${req.user!.email}. Check the equipment now.`,
         category: 'ops.temp_alert',
-        linkUrl: '/ops',
+        linkUrl: `/ops?tab=board&record=${task.opsShift.id}`, // the shift with the reading
       });
     }
 
@@ -1506,7 +1506,7 @@ opsRouter.post('/shifts/:id/handover', RUN_OR_ASSIST, async (req, res, next) => 
             .join('\n') +
           `\n\nLogged by ${req.user!.email} on the ${shift.position} shift (${shift.dateKey}). Also queued for the next shift's handover.`,
         category: 'ops.handover_alert',
-        linkUrl: '/ops',
+        linkUrl: `/ops?tab=board&record=${shift.id}`,
       });
     }
     res.status(201).json({ added: parsed.data.items.length });
@@ -2101,7 +2101,7 @@ opsRouter.post('/shifts/:id/close', RUN_OR_ASSIST, async (req, res, next) => {
         subject: `Ops shift closed incomplete — ${shift.position}`,
         body: `${shift.windowLabel ? `${shift.windowLabel} SOP` : shift.department} (${shift.dateKey}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${submittedBy}. Reason: ${incompleteReason}`,
         category: 'ops.incomplete_close',
-        linkUrl: '/ops',
+        linkUrl: `/ops?tab=board&record=${shift.id}`,
       });
     }
     if (coveredLead && coveredLead.id !== req.user!.id) {

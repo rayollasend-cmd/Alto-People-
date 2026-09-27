@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { getBrandingSync } from './branding.js';
 import { mintUnsubscribeToken } from './emailUnsubscribe.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Thrown by send() when the recipient is on the EmailSuppression
@@ -329,7 +330,7 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
       // is the fallback for older clients. Transactional mail must not
       // set includeUnsubscribe, so it never carries these headers.
       const token = mintUnsubscribeToken(to);
-      const unsubscribeUrl = `${env.APP_BASE_URL}/api/communications/unsubscribe/${token}`;
+      const unsubscribeUrl = `${publicBaseUrl()}/api/communications/unsubscribe/${token}`;
       const mailtoAddr =
         env.RESEND_REPLY_TO ??
         (from ? (from.match(/<([^>]+)>/)?.[1] ?? from) : null);

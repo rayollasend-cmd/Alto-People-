@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { notifyAllAdmins, notifyAssociate } from './notify.js';
 import { agreementReminderEmail } from './emailContent.js';
 import { buildExpirationsTile } from '../routes/complianceScorecard.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Daily compliance-expiration digest.
@@ -42,7 +43,7 @@ export async function runExpirationDigest(): Promise<{ notified: number }> {
     subject: `[Compliance] ${sorted.length} item${sorted.length === 1 ? '' : 's'} expiring within 30 days`,
     body:
       `Compliance items needing renewal:\n\n${lines}${overflow}\n\n` +
-      `Full list: ${env.APP_BASE_URL}/compliance`,
+      `Full list: ${publicBaseUrl()}/compliance`,
     category: 'compliance.expirations',
   });
   return { notified: sorted.length };

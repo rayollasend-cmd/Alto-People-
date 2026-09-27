@@ -29,7 +29,6 @@ import {
   trackNotificationWork,
 } from '../lib/notify.js';
 import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
-import { env } from '../config/env.js';
 import {
   approveRequest,
   formatDateUTC,
@@ -42,6 +41,8 @@ import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { promptShiftHandover } from '../lib/floorLeads.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
+import { associateWeekLink } from '../lib/appLinks.js';
 
 export const timeOffRouter = Router();
 
@@ -148,7 +149,13 @@ async function notifyCoverageImpact(row: {
             `overlaps ${shifts.length} assigned shift${shifts.length === 1 ? '' : 's'}${stores}. ` +
             'Rebook or release them before the gap reaches the floor.',
           category: 'scheduling',
-          linkUrl: '/scheduling',
+          // Their schedule from the first day of leave, on the store's
+          // roster when it's one store.
+          linkUrl: associateWeekLink({
+            associateId: row.associateId,
+            clientId: clientIds.length === 1 ? clientIds[0] : null,
+            week: row.startDate.toISOString().slice(0, 10), // a calendar date
+          }),
         }),
       ),
     );
@@ -281,7 +288,8 @@ timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
       dateRange: range,
       reason: input.reason ?? null,
       submittedAt: new Date(created.createdAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-      timeOffUrl: `${env.APP_BASE_URL}/admin/time-off`,
+      // The row itself, same as the bell — /admin/time-off was never a route.
+      timeOffUrl: `${publicBaseUrl()}/approvals?request=${created.id}`,
     });
     const opts = {
       subject: tpl.subject,

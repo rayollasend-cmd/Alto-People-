@@ -23,6 +23,7 @@ import {
   periodForNow,
   type AttestationConfig,
 } from './manualAttestation.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 const REMINDER_DEDUPE_HOURS = 24;
 
@@ -100,7 +101,7 @@ async function maybeRemindForSignal(
     `${config.description}\n\n` +
     `Open the Compliance scorecard → Billing & invoicing tile to record ` +
     `when you completed this and confirm the outcome.\n\n` +
-    `${env.APP_BASE_URL}/compliance?tab=scorecard`;
+    `${publicBaseUrl()}/compliance?tab=scorecard`;
 
   await notifyAllAdmins({
     subject,

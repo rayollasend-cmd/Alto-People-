@@ -298,7 +298,7 @@ export function financialChangeConfirmationEmail(o: FinancialChangeConfirmationO
       ...(o.newSummary ? [{ label: s.newValue, value: o.newSummary }] : []),
       { label: s.changedOn, value: when },
     ],
-    cta: { label: s.cta, url: appLink('/pay') },
+    cta: { label: s.cta, url: appLink('/payroll') },
     after: [s.ok, s.notYou],
     refId: o.refId,
   });

@@ -114,6 +114,8 @@ import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMet
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
+import { associateWeekLink } from '../lib/appLinks.js';
 
 export const schedulingRouter = Router();
 
@@ -4548,7 +4550,7 @@ function buildCalendarFeedUrls(associateId: string, version: number) {
   // share an origin (Railway single-service setup), so this works for
   // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
   // — in dev the SPA proxies `/api/*` to the API.
-  const base = env.APP_BASE_URL.replace(/\/$/, '');
+  const base = publicBaseUrl();
   const url = `${base}/api/calendar/v1/${associateId}/${token}.ics`;
   const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
   return CalendarFeedUrlResponseSchema.parse({ url, webcalUrl });
@@ -5071,7 +5073,12 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       body: mgrSwapTpl.text,
       html: mgrSwapTpl.html,
       category: 'scheduling',
-      linkUrl: '/scheduling',
+      // Their week, on the shift's store — the swap in context.
+      linkUrl: associateWeekLink({
+        associateId: user.associateId,
+        clientId: created.shift.clientId,
+        week: created.shift.startsAt,
+      }),
     });
     // The site's shift supervisor approves swaps but is rarely anyone's
     // managerId — route them a copy keyed on the shift's client.

@@ -94,10 +94,11 @@ describe('short-staffing alert', () => {
     expect(a[0]!.body).toContain("Alto's supervisors have been alerted too.");
     // Store B's manager hears nothing about store A.
     expect(await alerts(s.managerB.id)).toHaveLength(0);
-    // The supervisor hears it, linked to the live floor.
+    // The supervisor hears it, linked to the store's Today page on that shift
+    // (the Time page it used to open never read ?wave=).
     const sup = await alerts(s.supervisor.id);
     expect(sup).toHaveLength(1);
-    expect(sup[0]!.linkUrl).toContain('/time-attendance?wave=');
+    expect(sup[0]!.linkUrl).toMatch(/^\/today\?clientId=[^&]+&date=\d{4}-\d{2}-\d{2}&wave=/);
     // Market and region accounts get one roll-up each.
     const mk = await alerts(s.market.id);
     expect(mk).toHaveLength(1);

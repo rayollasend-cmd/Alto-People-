@@ -115,6 +115,7 @@ import {
   MfaRegenerateInputSchema,
 } from '@alto-people/shared';
 import { getBrandingSync } from '../lib/branding.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 // Tolerate one full TOTP period of skew on either side (~30s before/after
 // the current window) so users with mildly drifted phone clocks still
@@ -1094,7 +1095,7 @@ authRouter.post(
           });
         });
 
-        const resetUrl = `${env.APP_BASE_URL}/reset-password/${raw}`;
+        const resetUrl = `${publicBaseUrl()}/reset-password/${raw}`;
         // Best-effort first-name lookup for the greeting; falls back to
         // "there" if the user isn't an associate (e.g. an HR account).
         const firstName =
@@ -2113,7 +2114,7 @@ authRouter.post('/me/email-change/request', requireAuth, changePasswordLimiter, 
       });
     });
 
-    const confirmUrl = `${env.APP_BASE_URL}/confirm-email-change/${raw}`;
+    const confirmUrl = `${publicBaseUrl()}/confirm-email-change/${raw}`;
     const subject = 'Confirm your new Alto People email';
     const body = [
       `Hi,`,

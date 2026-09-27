@@ -43,10 +43,12 @@ export async function runRelayEscalationSweep(
     recipientIds: string[],
     subject: string,
     body: string,
+    /** Earlier spellings of the same bell's link — they count as rung too. */
+    formerLinks: string[] = [],
   ): Promise<boolean> => {
     if (recipientIds.length === 0) return false;
     const already = await prisma.notification.findFirst({
-      where: { category: CATEGORY, linkUrl, createdAt: { gte: dayStart } },
+      where: { category: CATEGORY, linkUrl: { in: [linkUrl, ...formerLinks] }, createdAt: { gte: dayStart } },
       select: { id: true },
     });
     if (already) return false;
@@ -92,7 +94,12 @@ export async function runRelayEscalationSweep(
         byClient.set(e.clientId, (byClient.get(e.clientId) ?? 0) + 1);
       }
       for (const [clientId, count] of byClient) {
-        const stage1Link = `/relay#timesheets:${clientId}`;
+        // The store's own timesheets — supervisors can't open the relay
+        // (it needs view:org), so the old /relay#timesheets link 404'd.
+        // The old spelling still counts as "rung" so the ladder doesn't
+        // restart on the deploy.
+        const stage1Link = `/time-attendance/timesheets?client=${clientId}`;
+        const formerStage1 = [`/relay#timesheets:${clientId}`];
         const stage2Link = `/relay#timesheets:${clientId}:l2`;
         const [client, sups] = await Promise.all([
           prisma.client.findUnique({ where: { id: clientId }, select: { name: true } }),
@@ -106,7 +113,7 @@ export async function runRelayEscalationSweep(
         const rungBefore = await prisma.notification.findFirst({
           where: {
             category: CATEGORY,
-            linkUrl: stage1Link,
+            linkUrl: { in: [stage1Link, ...formerStage1] },
             createdAt: { lt: dayStart },
           },
           select: { id: true },
@@ -117,6 +124,7 @@ export async function runRelayEscalationSweep(
             sups.map((s) => s.id),
             `Overdue at ${storeName}: timesheet approvals`,
             `${count} timesheet${count === 1 ? '' : 's'} from a closed week still await approval at ${storeName}. Approve them today — tomorrow this escalates to the Workforce Manager.`,
+            formerStage1,
           );
         }
         if (sups.length === 0 || rungBefore) {

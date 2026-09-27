@@ -6,6 +6,7 @@ import { ADMIN_EMAIL_HIRING, notifyAllAdmins, notifyUser } from './notify.js';
 import { generateInviteToken } from './inviteToken.js';
 import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js';
 import { portalDisplayName, portalInviteTemplate, portalScopeForUser } from './portalInvite.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Phase 17 — invite reminder sweep.
@@ -158,7 +159,7 @@ export async function sendReminderForUser(
 
   const firstName = user.associate?.firstName ?? 'there';
   const clientName = user.associate?.applications?.[0]?.client?.name ?? 'your employer';
-  const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${fresh.raw}`;
+  const acceptUrl = `${publicBaseUrl()}/accept-invite/${fresh.raw}`;
   // Manual resends are treated as a fresh invite (HR clicked Resend); the
   // 48h cron path is the actual "you forgot" reminder template.
   // A portal account (store or market manager) is never an associate:
@@ -321,7 +322,7 @@ export async function runProgressReminderSweep(
           `Your onboarding for ${app.client.name} is ${percent}% complete, ` +
           `but nothing has moved in ${idleDays} day${idleDays === 1 ? '' : 's'}. ` +
           `Still outstanding:\n\n${taskLines}\n\n` +
-          `Pick up where you left off: ${env.APP_BASE_URL}${linkPath}`,
+          `Pick up where you left off: ${publicBaseUrl()}${linkPath}`,
         category: 'onboarding.progress_reminder',
         linkUrl: linkPath,
       });
@@ -342,8 +343,9 @@ export async function runProgressReminderSweep(
             `${app.associate.firstName}'s onboarding for ${app.client.name} has been idle ` +
             `${idleDays} days at ${percent}% despite ${newCount} reminders. ` +
             `Outstanding: ${open.map((t) => t.title).join(', ')}. ` +
-            `Open it: ${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
+            `Open it: ${publicBaseUrl()}/onboarding/applications/${app.id}`,
           category: 'onboarding',
+          linkUrl: `/onboarding/applications/${app.id}`, // the bell row opens it too
           emailRoles: ADMIN_EMAIL_HIRING,
         });
         escalated++;

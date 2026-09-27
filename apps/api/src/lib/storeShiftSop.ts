@@ -766,7 +766,7 @@ export async function runSopCoverSweep(
           `${leadName ? `${leadName} wasn't` : 'No shift supervisor was'} on the clock ${FALLBACK_MIN} minutes into the ` +
           `${ss.label} shift, and nobody handed the shift over. ${name} (floor supervisor) is running the SOP.`,
         category: 'ops.sop_fallback',
-        linkUrl: '/ops?tab=board',
+        linkUrl: `/ops?tab=board&record=${shift.id}`, // that shift's record, not the whole board
       });
     } catch (err) {
       console.warn('[ops] SOP cover sweep:', u.id, err instanceof Error ? err.message : err);
@@ -830,7 +830,7 @@ export async function runOpsSopSweep(
         subject: `SOP not submitted — ${s.location?.name ?? 'store'} · ${label}`,
         body: `${who}'s ${label} SOP is still open 30 minutes after the shift ended. The handover to the next shift is waiting on it.`,
         category: 'ops.sop_overdue',
-        linkUrl: '/ops?tab=board',
+        linkUrl: `/ops?tab=board&record=${s.id}`,
       });
       escalated += 1;
     }

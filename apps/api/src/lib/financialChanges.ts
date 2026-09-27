@@ -538,7 +538,7 @@ export function dispatchFinancialChange(changeId: string): Promise<void> {
           subject: confirmation.subject,
           body: confirmation.heading,
           category: 'direct_deposit_change',
-          linkUrl: '/pay',
+          linkUrl: '/payroll', // their pay page; there is no /pay route
           quiet: true,
         });
       }

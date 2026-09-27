@@ -389,6 +389,7 @@ positionsRouter.post(
           : ''
       }.`,
       category: 'org',
+      linkUrl: `/people?associateId=${input.associateId}`, // who was placed
     });
     res.json(shape(updated));
   },

@@ -550,7 +550,8 @@ complianceScorecardRouter.post('/onboarding/nudge', MANAGE_COMPLIANCE, async (re
         subject: copy.subject,
         body: copy.body,
         category: 'onboarding',
-        linkUrl: '/me',
+        // The copy points at their onboarding checklist; /onboarding opens it.
+        linkUrl: '/onboarding',
         emailFallback: true,
       });
       nudged++;

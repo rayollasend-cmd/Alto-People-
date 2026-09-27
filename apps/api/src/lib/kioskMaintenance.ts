@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
 import { isEmailMuted } from './notify.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Hourly kiosk maintenance sweep.
@@ -297,7 +298,7 @@ export async function sendKioskFleetNotices(
   }
   const body =
     `Some kiosk devices need attention:\n\n${sections.join('\n\n')}\n\n` +
-    `Manage devices: ${env.APP_BASE_URL ?? ''}/time-attendance/kiosk`;
+    `Manage devices: ${publicBaseUrl()}/time-attendance/kiosk`;
 
   for (const admin of admins) {
     // Same gap as the engagement digest: a raw send() ignores the mute,

@@ -206,7 +206,7 @@ async function generateRaw(
       detail: `${days} days unpaid. Payroll goes out weekly; this cash hasn't come in.`,
       stakes: amount || null,
       ageDays: days,
-      linkUrl: '/clients',
+      linkUrl: `/clients/statements?statement=${s.id}`,
     });
   }
   if (staleDrafts.length > 0) {

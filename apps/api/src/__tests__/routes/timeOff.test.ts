@@ -749,7 +749,8 @@ describe('coverage seam: leave overlapping assigned shifts', () => {
     expect(notes[0]!.subject).toContain('Vac Taker');
     expect(notes[0]!.body).toContain('1 assigned shift');
     expect(notes[0]!.body).toContain('Front Beach 218');
-    expect(notes[0]!.linkUrl).toBe('/scheduling');
+    // Their week from the first day of leave, on the store's roster.
+    expect(notes[0]!.linkUrl).toBe(`/scheduling?view=week&associate=${associate.id}&client=${client.id}&week=${startDate}`);
   });
 
   it('stays silent when the leave window overlaps nothing', async () => {

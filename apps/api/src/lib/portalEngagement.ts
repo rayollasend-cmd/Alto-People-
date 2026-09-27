@@ -350,7 +350,7 @@ export async function runPortalEngagementDigest(
   const bodyText =
     `${activeCount} of ${accounts.length} portal accounts signed in last week; ${pulled} report${pulled === 1 ? '' : 's'} pulled.\n\n` +
     lines.join('\n');
-  const tpl = genericNotificationTemplate({ subject, body: bodyText, linkUrl: '/executive' });
+  const tpl = genericNotificationTemplate({ subject, body: bodyText, linkUrl: '/' });
 
   let sent = 0;
   let skipped = 0;
@@ -386,7 +386,7 @@ export async function runPortalEngagementDigest(
         subject,
         body: bodyText,
         category: ENGAGEMENT_DIGEST_CATEGORY,
-        linkUrl: '/executive',
+        linkUrl: '/',
         sentAt: now,
         createdAt: now,
       },

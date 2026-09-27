@@ -397,7 +397,14 @@ export function Login() {
                       type="button"
                       size="lg"
                       variant="outline"
-                      onClick={() => window.location.assign('/api/auth/oidc/start')}
+                      // Carry the page they were headed to (an emailed link)
+                      // through the IdP round trip — without it SSO landed
+                      // everyone on the dashboard.
+                      onClick={() =>
+                        window.location.assign(
+                          from === '/' ? '/api/auth/oidc/start' : `/api/auth/oidc/start?next=${encodeURIComponent(from)}`,
+                        )
+                      }
                       disabled={submitting}
                       className="w-full"
                     >

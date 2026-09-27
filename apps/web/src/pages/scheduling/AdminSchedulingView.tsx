@@ -551,11 +551,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Time / Labor), and this page's own client select writes back to it.
   const storeScope = useStoreScope();
   const [searchParams, setSearchParams] = useSearchParams();
+  // A link about one person (?associate=<id>) — an overtime alert, a new
+  // hire to schedule. It lands on that person whatever the reader last had
+  // open: the week grid (their row lives there), and none of the filters
+  // they left behind that could hide them. Read once, at mount.
+  const [deepLinkAssociate] = useState<string | null>(() => searchParams.get('associate'));
   // View mode persists in the URL so deep links stay stable.
-  const view: ViewMode = parseView(searchParams.get('view'));
+  const view: ViewMode = parseView(searchParams.get('view') ?? (searchParams.get('associate') ? 'week' : null));
   const setView = useCallback(
     (v: ViewMode) => {
       const next = new URLSearchParams(searchParams);
+      // Picking a view is moving on from the person the link was about.
+      next.delete('associate');
       if (v === 'list') next.delete('view');
       else next.set('view', v);
       setSearchParams(next, { replace: true });
@@ -571,6 +578,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // for an explicit deep link or back-button.
   useEffect(() => {
     if (searchParams.get('view')) return;
+    if (deepLinkAssociate) return; // the link's week view, not the stored one
     if (typeof window === 'undefined') return;
     const raw = window.localStorage.getItem(VIEW_KEY);
     const stored = parseView(raw);
@@ -636,7 +644,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   //                  positions in the schedule), AND-combined client-side.
   // client + location are filtered server-side; position is client-side.
   const [posFilter, setPosFilter] = useState<string>(
-    () => readStoredFilters()?.position ?? '',
+    () => (deepLinkAssociate ? '' : (readStoredFilters()?.position ?? '')),
   );
   // Deep-link params (?client / ?location / ?week / ?associate) beat the
   // persisted localStorage filters — a shared link must show ITS scope.
@@ -646,6 +654,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     () =>
       boundedClient?.id ??
       searchParams.get('client') ??
+      // A person link with no store: every store, so they're on the roster.
+      (deepLinkAssociate ? '' : null) ??
       (storeScope.enabled && storeScope.clientId ? storeScope.clientId : null) ??
       readStoredFilters()?.client ??
       '',
@@ -678,13 +688,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [scopeClientId]);
   // A ?client= deep link focuses the whole app on that store, not just this
   // page — push it into the global scope once so Time/Labor follow along.
+  // A person link with no store widens the bar to every store the same
+  // way — otherwise the bar's saved store, hydrating a beat after mount,
+  // re-scopes the page and hides the person the link was about.
   useEffect(() => {
+    if (boundedClient) return;
     const urlClient = searchParams.get('client');
-    if (urlClient && !boundedClient) storeScope.setClientId(urlClient);
+    if (urlClient) storeScope.setClientId(urlClient);
+    else if (deepLinkAssociate) storeScope.setClientId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [locationFilter, setLocationFilter] = useState<string>(
-    () => searchParams.get('location') ?? readStoredFilters()?.location ?? '',
+    () => searchParams.get('location') ?? (deepLinkAssociate ? '' : (readStoredFilters()?.location ?? '')),
   ); // '' = all
   // Persist the scope + status chip so they survive navigating away and back.
   useEffect(() => {
@@ -1125,11 +1140,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   });
   const shifts: Shift[] | null = shiftsQuery.data?.shifts ?? null;
   const shiftsLoaded = shifts !== null;
-  useEffect(() => {
-    if (!highlightAssociateId || !shiftsLoaded) return;
-    const t = window.setTimeout(() => setHighlightAssociateId(null), 2500);
-    return () => window.clearTimeout(t);
-  }, [highlightAssociateId, shiftsLoaded]);
   // True when the server capped the result — the visible list is a prefix, not
   // the whole match set. Drives a "narrow your range" banner in list view.
   const listTruncated = shiftsQuery.data?.truncated ?? false;
@@ -1239,6 +1249,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     ? NO_ASSOCIATES
     : (rosterQuery.data?.associates ?? NO_ASSOCIATES);
   const associatesError = rosterQuery.isError;
+  // The highlight ring holds until the shifts AND the roster (the grid's
+  // rows) have arrived, then a few seconds more — clearing on the shifts
+  // alone could beat a slower roster, and the row never got its scroll.
+  const rosterLoaded = !canManage || rosterQuery.data !== undefined || rosterQuery.isError;
+  useEffect(() => {
+    if (!highlightAssociateId || !shiftsLoaded || !rosterLoaded) return;
+    const t = window.setTimeout(() => setHighlightAssociateId(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [highlightAssociateId, shiftsLoaded, rosterLoaded]);
   // The roster is the grid's row axis, and the server pages it. Without
   // surfacing the cut, an org-wide view past the page cap renders an
   // incomplete grid that looks complete — the manager scans for unstaffed

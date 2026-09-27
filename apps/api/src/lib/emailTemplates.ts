@@ -25,6 +25,7 @@
  */
 import { env } from '../config/env.js';
 import { getBrandingSync } from './branding.js';
+import { appLink } from './emailLayout.js';
 
 /* ============================================================== */
 /* Types                                                          */
@@ -1399,11 +1400,9 @@ export function genericNotificationTemplate(
     .filter(Boolean)
     .map((p) => escapeHtml(p).replace(/\n/g, '<br>'));
   const [intro = '', ...rest] = paragraphs;
-  const url = opts.linkUrl
-    ? /^https?:\/\//i.test(opts.linkUrl)
-      ? opts.linkUrl
-      : `${env.APP_BASE_URL}${opts.linkUrl}`
-    : null;
+  // appLink: the public address, never a raw deployment host — a link to
+  // another domain has no session cookie and lands on the login page.
+  const url = opts.linkUrl ? appLink(opts.linkUrl) : null;
   const cta = url ? { label: opts.linkLabel ?? 'Open in Alto HR', url } : undefined;
   return {
     subject: opts.subject,

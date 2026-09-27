@@ -113,8 +113,8 @@ afterAll(async () => {
 });
 
 /** Kick off /start on the given agent; returns the per-flow parameters. */
-async function beginFlow(a: ReturnType<typeof agent>) {
-  const res = await a.get('/auth/oidc/start');
+async function beginFlow(a: ReturnType<typeof agent>, next?: string) {
+  const res = await a.get('/auth/oidc/start').query(next === undefined ? {} : { next });
   expect(res.status).toBe(302);
   const url = new URL(res.headers.location as string);
   expect(`${url.origin}${url.pathname}`).toBe(AUTHZ_URL);
@@ -208,6 +208,31 @@ describe('OIDC SSO when configured', () => {
     });
     expect(log).not.toBeNull();
     expect((log!.metadata as { method?: string }).method).toBe('oidc');
+  });
+
+  // An emailed link opened while signed out: the login page hands the page
+  // to /start, and the callback lands there instead of the dashboard.
+  it('lands on the page the person was headed to', async () => {
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = agent();
+    const target = '/scheduling?view=week&associate=abc&week=2026-09-26';
+    const { state, nonce } = await beginFlow(a, target);
+    idTokenForExchange = signIdToken(baseClaims({ nonce, email: user.email }));
+    const res = await callback(a, state);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(target);
+  });
+
+  it('never redirects off-site, whatever next says', async () => {
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    for (const hostile of ['//evil.example/x', 'https://evil.example/', '/\\evil.example', '/ok\r\nSet-Cookie: x=1']) {
+      const a = agent();
+      const { state, nonce } = await beginFlow(a, hostile);
+      idTokenForExchange = signIdToken(baseClaims({ nonce, email: user.email }));
+      const res = await callback(a, state);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('/');
+    }
   });
 
   it('falls back to an email-shaped preferred_username when email is absent (Entra)', async () => {

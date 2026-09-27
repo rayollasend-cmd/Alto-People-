@@ -96,7 +96,8 @@ describe('POST /kiosk-pins → ready-to-work handoff', () => {
     expect(toLead[0]!.subject).toContain('Maria Lopez');
     expect(toLead[0]!.body).toContain('850-555-0101');
     expect(toLead[0]!.body).toContain('Northgate');
-    expect(toLead[0]!.linkUrl).toBe(`/scheduling?associate=${associate.id}`);
+    // Their week on the schedule, on this store's roster — not whatever view the lead last left open.
+    expect(toLead[0]!.linkUrl).toBe(`/scheduling?view=week&associate=${associate.id}&client=${client.id}`);
     // The supervisor of the OTHER store does not.
     expect(await prisma.notification.count({ where: { recipientUserId: elsewhere.user.id } })).toBe(0);
     // The associate hears, with the lead's card.

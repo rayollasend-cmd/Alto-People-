@@ -214,7 +214,8 @@ describe('relay escalation sweep — chain of command', () => {
       rows.some(
         (r) =>
           r.recipientUserId === sup.id &&
-          r.linkUrl === `/relay#timesheets:${withSup.id}`,
+          // Their store's timesheets — supervisors can't open the relay.
+          r.linkUrl === `/time-attendance/timesheets?client=${withSup.id}`,
       ),
     ).toBe(true);
     expect(
@@ -236,9 +237,11 @@ describe('relay escalation sweep — chain of command', () => {
 
     // The supervisor was rung YESTERDAY and it is still overdue → today
     // it climbs to the WFM.
+    // (Rung under the link's OLD spelling, from before the deploy — it
+    // still counts, so the ladder doesn't restart.)
     await prisma.notification.updateMany({
-      where: { linkUrl: `/relay#timesheets:${withSup.id}` },
-      data: { createdAt: new Date(now.getTime() - DAY) },
+      where: { linkUrl: `/time-attendance/timesheets?client=${withSup.id}` },
+      data: { createdAt: new Date(now.getTime() - DAY), linkUrl: `/relay#timesheets:${withSup.id}` },
     });
     await runRelayEscalationSweep(prisma, now);
     const climbed = await prisma.notification.findFirst({

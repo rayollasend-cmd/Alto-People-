@@ -20,6 +20,7 @@ import {
   generatePkce,
   getDiscovery,
   getOidcSettings,
+  safeReturnPath,
   signFlowCookie,
   verifyFlowCookie,
   verifyIdToken,
@@ -173,6 +174,8 @@ oidcAuthRouter.get('/config', (_req, res) => {
  * stashes them in the HMAC-signed flow cookie, and 302s the browser to the
  * IdP's authorization endpoint. Reached by a top-level navigation
  * (window.location.assign from the login page), never by fetch().
+ * `?next=/path` — the page the person was headed to (an emailed link) —
+ * rides the flow cookie and is where the callback lands them.
  */
 oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
   try {
@@ -199,9 +202,10 @@ oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
     const nonce = randomBytes(32).toString('hex');
     const { verifier, challenge } = generatePkce();
 
+    const next = safeReturnPath(req.query.next) ?? undefined;
     res.cookie(
       OIDC_FLOW_COOKIE,
-      signFlowCookie({ state, nonce, verifier }),
+      signFlowCookie({ state, nonce, verifier, next }),
       flowCookieOptions(),
     );
 
@@ -372,7 +376,9 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       amr: 'sso',
     });
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
-    res.redirect(302, '/');
+    // Back to the page they were headed to — an emailed link used to lose
+    // its destination at the SSO button and land everyone on the dashboard.
+    res.redirect(302, safeReturnPath(flow.next) ?? '/');
   } catch (err) {
     // Never JSON-error a redirect flow: last-resort catch (unexpected DB
     // error, audit-write failure post-refusal, …) still lands the browser

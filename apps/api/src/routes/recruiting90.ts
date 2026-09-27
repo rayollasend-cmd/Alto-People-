@@ -29,6 +29,7 @@ import {
   careersApplyIpLimiter,
   offerLetterIpLimiter,
 } from '../middleware/rateLimit.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 /**
  * Phase 90 — Recruiting extras: interview kits + scheduled interviews,
@@ -723,7 +724,7 @@ recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
   // fire-and-forget after the write. If there is no reachable email, the
   // flip still happened; `emailed` lets the UI say so.
   const candidateEmail = o.candidate.email?.trim() || null;
-  const link = `${env.APP_BASE_URL}/offer/${token.raw}`;
+  const link = `${publicBaseUrl()}/offer/${token.raw}`;
   if (candidateEmail) {
     void send({
       channel: 'EMAIL',

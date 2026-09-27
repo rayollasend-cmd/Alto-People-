@@ -9,7 +9,7 @@ import {
   disciplineAssociateTemplate,
   disciplineManagerTemplate,
 } from '../lib/emailTemplates.js';
-import { env } from '../config/env.js';
+import { publicBaseUrl } from '../lib/emailLayout.js';
 
 /**
  * Phase 118 — Disciplinary action log.
@@ -173,7 +173,7 @@ discipline118Router.post(
       description: input.description,
       expectedAction: input.expectedAction ?? null,
       actor: { name: actorName, role: actorRole },
-      disciplineUrl: `${env.APP_BASE_URL}/me/discipline/${created.id}`,
+      disciplineUrl: `${publicBaseUrl()}/me/discipline/${created.id}`,
     });
     void notifyAssociate(input.associateId, {
       subject: assocTpl.subject,

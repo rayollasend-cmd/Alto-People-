@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { inviteTemplate } from './emailTemplates.js';
 import { generateInviteToken } from './inviteToken.js';
 import { send } from './notifications.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * The onboarding invite email, sent now or held for the Undo window.
@@ -42,7 +43,7 @@ export async function sendInviteEmail(input: {
   expiresAt: Date;
   actorUserId: string | null;
 }): Promise<{ acceptUrl: string; emailRef: string | null; emailFailed: string | null }> {
-  const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${input.rawToken}`;
+  const acceptUrl = `${publicBaseUrl()}/accept-invite/${input.rawToken}`;
   const tpl = inviteTemplate({
     firstName: input.firstName,
     clientName: input.clientName,

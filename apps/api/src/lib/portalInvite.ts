@@ -6,6 +6,7 @@ import { generateInviteToken } from './inviteToken.js';
 import { send } from './notifications.js';
 import { enqueueAudit } from './audit.js';
 import { marketManagerInviteTemplate, storeManagerInviteTemplate, type EmailTemplate } from './emailTemplates.js';
+import { publicBaseUrl } from './emailLayout.js';
 
 /**
  * Onboarding a portal account — a store manager or a market manager.
@@ -153,7 +154,7 @@ export async function invitePortalAccount(input: {
   });
   invalidateUserCache(user.id);
 
-  const magicLink = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
+  const magicLink = `${publicBaseUrl()}/accept-invite/${invite.raw}`;
   const { kind, template } = portalInviteTemplate({
     name: portalDisplayName(input.name, email),
     scope,
