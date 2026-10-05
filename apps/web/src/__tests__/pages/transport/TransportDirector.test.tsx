@@ -92,7 +92,7 @@ function activeRun(): RideRun {
 function board(over: Partial<TransportBoard> = {}): TransportBoard {
   return {
     date: zonedDayKey(new Date(), tz),
-    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
     kpis: { booked: 3, needsVan: 2, scheduled: 1, onBoard: 0, completed: 0, noShows: 0, cancelled: 0, vansOut: 1, runs: 1, openIssues: 0 },
     rides: [ride({ id: 'r1' }), ride({ id: 'r2', rider: { associateId: 'a2', name: 'Ben Ray', phone: null } })],
     runs: [activeRun()],

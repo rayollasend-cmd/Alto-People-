@@ -18,8 +18,10 @@ export interface ShiftCoverage {
   shift: Shift;
   there: Ride | null;
   home: Ride | null;
-  /** Legs still bookable (outside the cutoff, not yet booked). */
+  /** Legs still bookable (not yet booked, and not past the earliest a seat can be requested). */
   canBook: RideDirection[];
+  /** A bookable leg is inside the planning cutoff — a driver has to take it. */
+  shortNotice: boolean;
 }
 
 function near(r: Ride, shift: Shift, direction: RideDirection): boolean {
@@ -30,16 +32,21 @@ function near(r: Ride, shift: Shift, direction: RideDirection): boolean {
 }
 
 export function coverageFor(data: MyTransport, now = Date.now()): ShiftCoverage[] {
-  const cutoff = now + data.settings.cutoffHours * H;
+  const planned = now + data.settings.cutoffHours * H;
+  // Short notice, when the director allows it: a leg inside the planning
+  // cutoff can still be requested until this close to its time.
+  const shortMs = data.settings.shortNoticeMinutes > 0 ? data.settings.shortNoticeMinutes * 60_000 : null;
+  const earliest = now + (shortMs ?? data.settings.cutoffHours * H);
   return data.shifts
     .filter((s) => s.locationId && data.stores.some((st) => st.id === s.locationId) && Date.parse(s.endsAt) > now)
     .map((shift) => {
       const there = data.rides.find((r) => near(r, shift, 'TO_WORK')) ?? null;
       const home = data.rides.find((r) => near(r, shift, 'FROM_WORK')) ?? null;
       const canBook: RideDirection[] = [];
-      if (!there && Date.parse(shift.startsAt) > cutoff) canBook.push('TO_WORK');
-      if (!home && Date.parse(shift.endsAt) > cutoff) canBook.push('FROM_WORK');
-      return { shift, there, home, canBook };
+      if (!there && Date.parse(shift.startsAt) > earliest) canBook.push('TO_WORK');
+      if (!home && Date.parse(shift.endsAt) > earliest) canBook.push('FROM_WORK');
+      const shortNotice = canBook.some((d) => Date.parse(d === 'TO_WORK' ? shift.startsAt : shift.endsAt) <= planned);
+      return { shift, there, home, canBook, shortNotice };
     });
 }
 

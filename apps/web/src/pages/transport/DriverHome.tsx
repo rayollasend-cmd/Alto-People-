@@ -636,6 +636,11 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
                         {t('drive.inLine', { position: r.waitlist.position, shift: r.windowLabel ?? '' })}
                       </span>
                     )}
+                    {r.shortNotice && (
+                      <span className="mt-1 inline-flex items-center rounded-full bg-gold/15 px-2 py-0.5 text-2xs font-semibold text-gold">
+                        {t('drive.shortNotice')}
+                      </span>
+                    )}
                     <div className="mt-0.5 flex items-center gap-1 text-xs text-silver">
                       {r.direction === 'TO_WORK' ? <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" /> : <Home className="h-3 w-3 shrink-0" aria-hidden="true" />}
                       <span className="truncate">{r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address}</span>

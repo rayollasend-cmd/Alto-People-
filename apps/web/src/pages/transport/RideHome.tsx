@@ -27,6 +27,7 @@ import {
   type MyTransport,
   type Ride,
   type RideDirection,
+  type RideNotice,
   type RideStatus,
   type RiderSignal,
   type ShiftTrip,
@@ -820,6 +821,7 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
                   </div>
                   <div className="truncate text-xs text-silver">
                     {store?.name}
+                    {c.shortNotice && ` · ${t('ride.shortNoticeChip')}`}
                     {c.there && !both && ` · ${t('ride.thereBooked')}`}
                     {c.home && !both && ` · ${t('ride.homeBooked')}`}
                   </div>
@@ -1364,30 +1366,32 @@ export function BookRideDialog({
   );
   const store = data.stores.find((x) => x.id === storeId) ?? null;
   const tz = store?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const earliest = useMemo(() => new Date(Date.now() + s.cutoffHours * H + 5 * 60_000), [s.cutoffHours]);
-  // Open on the first bookable day.
-  //
-  // Judged by the earliest moment the day can actually be booked: the
-  // first shift window when the store plans by shift (the default when it
-  // has windows), else the 07:00 the "other time" form starts on. Judging
-  // every day by 07:00 while by-shift targets a 06:00 window opened the
-  // dialog on a day whose first shift was already inside the cutoff — the
-  // shift list rendered, "too soon" appeared, and the button sat disabled
-  // with no way forward except noticing the date and changing it.
-  const [date, setDate] = useState(() => {
-    if (initial.date) return initial.date;
+  // The earliest a seat can be requested right now: on short notice when
+  // the director allows it, else the planning cutoff. A ride between the
+  // two is "short notice" — allowed, flagged, and a driver has to take it.
+  const shortMs = s.shortNoticeMinutes > 0 ? s.shortNoticeMinutes * 60_000 : null;
+  const earliest = useMemo(
+    () => new Date(Date.now() + (shortMs ?? s.cutoffHours * H) + 5 * 60_000),
+    [shortMs, s.cutoffHours],
+  );
+  const plannedFrom = useMemo(() => new Date(Date.now() + s.cutoffHours * H + 5 * 60_000), [s.cutoffHours]);
+  // Open on today while anything today can still be requested; else the
+  // first day that can — and SAY so. The old silent jump to tomorrow is
+  // how "I booked a ride home" became a ride for tomorrow afternoon.
+  const [{ date: initialDate, moved: dateMoved }] = useState(() => {
+    if (initial.date) return { date: initial.date, moved: false };
+    const today = zonedDayKey(new Date(), tz);
     const first = zonedDayKey(earliest, tz);
-    const openMinute = (store?.windows ?? []).reduce(
-      (min, w) => Math.min(min, w.startMinute),
-      7 * 60,
-    );
-    const openAt = `${String(Math.floor(openMinute / 60)).padStart(2, '0')}:${String(
-      openMinute % 60,
-    ).padStart(2, '0')}`;
-    return new Date(localInputToUtcIso(`${first}T${openAt}`, tz)) < earliest
-      ? addDays(first, 1)
-      : first;
+    if (first !== today) return { date: first, moved: true };
+    const ws = store?.windows ?? [];
+    const todayOpen =
+      ws.length === 0 ||
+      ws.some((w) =>
+        (['TO_WORK', 'FROM_WORK'] as const).some((d) => new Date(shiftTargetIso(w, today, d, tz)) >= earliest),
+      );
+    return todayOpen ? { date: today, moved: false } : { date: addDays(today, 1), moved: true };
   });
+  const [date, setDate] = useState(initialDate);
   const [arrive, setArrive] = useState(initial.arrive ?? '07:00');
   const [leave, setLeave] = useState(initial.leave ?? '15:30');
   const [shiftId, setShiftId] = useState<string | null>(initial.shiftId ?? null);
@@ -1411,6 +1415,9 @@ export function BookRideDialog({
     staleTime: 20_000,
   });
   const [pickup, setPickup] = useState<Pickup | null>(() => initialPickup(data, initial));
+  // A saved address the booking refused for having no pin: the picker
+  // opens the pin step on it.
+  const [pinPlaceId, setPinPlaceId] = useState<string | null>(null);
   const [saveAs, setSaveAs] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1469,7 +1476,10 @@ export function BookRideDialog({
             { direction: 'TO_WORK', at: toWorkAt },
             { direction: 'FROM_WORK', at: fromWorkAt },
           ];
-  const tooSoon = legs.some((l) => l.at && new Date(l.at) < earliest);
+  const noticeOf = (at: string | null): RideNotice | null =>
+    !at ? null : new Date(at) < earliest ? 'closed' : new Date(at) < plannedFrom ? 'short_notice' : 'planned';
+  const tooSoon = legs.some((l) => noticeOf(l.at) === 'closed');
+  const shortNotice = !tooSoon && legs.some((l) => noticeOf(l.at) === 'short_notice');
   const total = legs.length * s.fareCents;
   // Where each leg of the picked shift stands: seats left, or its line.
   const tripOf = (w: string, d: RideDirection) => trips.data?.trips.find((x) => x.windowLabel === w && x.direction === d);
@@ -1539,6 +1549,13 @@ export function BookRideDialog({
       await queryClient.invalidateQueries({ queryKey: ['transport', 'trips'] });
       onOpenChange(false);
     } catch (err) {
+      // A saved address that was never placed on the map: open the pin
+      // step on it rather than echoing a message about suggestions.
+      const placeId =
+        err instanceof ApiError && err.code === 'place_not_located'
+          ? (err.details as { placeId?: string } | undefined)?.placeId
+          : undefined;
+      if (placeId) setPinPlaceId(placeId);
       setError(why(err));
     } finally {
       setBusy(false);
@@ -1611,6 +1628,7 @@ export function BookRideDialog({
                   {data.stores.map((st) => (
                     <option key={st.id} value={st.id}>
                       {st.clientName} · {st.name}
+                      {st.mine ? ` · ${t('ride.yourStore')}` : ''}
                     </option>
                   ))}
                 </Select>
@@ -1631,6 +1649,14 @@ export function BookRideDialog({
               )}
             </Field>
           </div>
+          {dateMoved && (
+            <p role="status" className="text-xs text-silver">
+              {t('ride.dateMoved', {
+                when: `${fmtRelativeDayTz(earliest, tz)} ${fmtTimeTz(earliest, tz)}`,
+                day: fmtRelativeDayTz(localInputToUtcIso(`${date}T12:00`, tz), tz),
+              })}
+            </p>
+          )}
 
           {/* Without this, a failed trip lookup just showed every shift as
               having no seats taken — a rider would book into a van that
@@ -1686,6 +1712,11 @@ export function BookRideDialog({
             locationId={store?.id ?? null}
             label={pickupLabel}
             invalid={!!error && !pickup}
+            pinPlaceId={pinPlaceId}
+            onPinPlaceDone={() => {
+              setPinPlaceId(null);
+              setError(null);
+            }}
           />
           {/* Offered only for an address they searched for: a stop or an
               already-saved place has nothing to save. */}
@@ -1710,10 +1741,21 @@ export function BookRideDialog({
 
           {tooSoon && (
             <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-              {t('ride.tooSoon', {
-                hours: s.cutoffHours,
-                when: `${fmtRelativeDayTz(earliest, tz)} ${fmtTimeTz(earliest, tz)}`,
-              })}
+              {t('ride.tooSoon', { when: `${fmtRelativeDayTz(earliest, tz)} ${fmtTimeTz(earliest, tz)}` })}
+              {s.dispatchPhone && (
+                <>
+                  {' '}
+                  {t('ride.callDispatch')}{' '}
+                  <a href={`tel:${s.dispatchPhone.replace(/[^+\d]/g, '')}`} className="font-semibold underline">
+                    {s.dispatchPhone}
+                  </a>
+                </>
+              )}
+            </p>
+          )}
+          {shortNotice && (
+            <p role="status" className="rounded-md border border-gold/40 bg-gold/10 p-3 text-sm text-gold">
+              {t('ride.shortNoticeNote')}
             </p>
           )}
           {error && (
@@ -1788,8 +1830,10 @@ function ShiftPicker({
     const trip = tripOf(w, d);
     if (!trip) return null;
     const lead = way === 'BOTH' ? `${d === 'TO_WORK' ? t('ride.legThere') : t('ride.legHome')} · ` : '';
-    if (!trip.bookable) return { text: lead + t('ride.seatTooSoon'), tone: 'text-silver/60' };
+    const notice = trip.notice ?? (trip.bookable ? 'planned' : 'closed');
+    if (notice === 'closed' || notice === 'too_far') return { text: lead + t('ride.seatTooSoon'), tone: 'text-silver/60' };
     if (trip.full) return { text: lead + t('ride.seatFull', { position: trip.waiting + 1 }), tone: 'text-warning' };
+    if (notice === 'short_notice') return { text: lead + t('ride.seatShortNotice'), tone: 'text-gold' };
     if (trip.seats) {
       const left = trip.seats.capacity - trip.seats.taken;
       return { text: lead + (left === 1 ? t('ride.seatLeftOne') : t('ride.seatsLeft', { count: left })), tone: 'text-success' };

@@ -39,6 +39,8 @@ import {
   getTransportBoard,
   getTransportCharges,
   getTransportSettings,
+  type GeocoderStatus,
+  type TransportSettings,
   listStops,
   listTransportIssues,
   reofferRide,
@@ -756,6 +758,11 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                                 {r.waitlist && (
                                   <Badge size="sm" variant="pending">
                                     Waitlist #{r.waitlist.position}
+                                  </Badge>
+                                )}
+                                {r.shortNotice && (
+                                  <Badge size="sm" variant="accent">
+                                    Short notice
                                   </Badge>
                                 )}
                                 {r.declines > 0 && (
@@ -2416,14 +2423,31 @@ function SettingsTab({ manage }: { manage: boolean }) {
   const settings = useQuery({ queryKey: ['transport', 'settings'], queryFn: getTransportSettings });
   if (settings.isError) return <QueryError what="the transport settings" query={settings} />;
   if (settings.isLoading || !settings.data) return <Skeleton className="h-40 max-w-md" />;
-  return <SettingsForm key={JSON.stringify(settings.data.settings)} initial={settings.data.settings} manage={manage} />;
+  return (
+    <SettingsForm
+      key={JSON.stringify(settings.data.settings)}
+      initial={settings.data.settings}
+      geocoder={settings.data.geocoder ?? null}
+      manage={manage}
+    />
+  );
 }
 
-function SettingsForm({ initial, manage }: { initial: { fareCents: number; noShowFeeCents: number; cutoffHours: number }; manage: boolean }) {
+function SettingsForm({
+  initial,
+  geocoder,
+  manage,
+}: {
+  initial: TransportSettings;
+  geocoder: GeocoderStatus | null;
+  manage: boolean;
+}) {
   const queryClient = useQueryClient();
   const [fare, setFare] = useState((initial.fareCents / 100).toFixed(2));
   const [fee, setFee] = useState((initial.noShowFeeCents / 100).toFixed(2));
   const [cutoff, setCutoff] = useState(String(initial.cutoffHours));
+  const [shortNotice, setShortNotice] = useState(String(initial.shortNoticeMinutes));
+  const [dispatchPhone, setDispatchPhone] = useState(initial.dispatchPhone ?? '');
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
@@ -2432,6 +2456,8 @@ function SettingsForm({ initial, manage }: { initial: { fareCents: number; noSho
         fareCents: Math.round(Number(fare) * 100),
         noShowFeeCents: Math.round(Number(fee) * 100),
         cutoffHours: Number(cutoff),
+        shortNoticeMinutes: Math.max(0, Math.round(Number(shortNotice) || 0)),
+        dispatchPhone: dispatchPhone.trim() || null,
       });
       toast.success('Saved — new bookings use these');
       await queryClient.invalidateQueries({ queryKey: ['transport'] });
@@ -2441,6 +2467,14 @@ function SettingsForm({ initial, manage }: { initial: { fareCents: number; noSho
       setBusy(false);
     }
   };
+  const lookup =
+    geocoder === null
+      ? null
+      : geocoder.primary === 'mapbox'
+        ? 'Mapbox, with OpenStreetMap behind it — house numbers, apartment complexes and businesses.'
+        : geocoder.primary === 'nominatim'
+          ? 'OpenStreetMap only — limited house-number coverage and one lookup a second. Set MAPBOX_TOKEN on the API to fix "my address doesn’t come up".'
+          : 'Off — riders can only pick a stop, a saved address, or where they are.';
   return (
     <Card className="max-w-md">
       <CardContent className="space-y-4 pt-5">
@@ -2450,9 +2484,27 @@ function SettingsForm({ initial, manage }: { initial: { fareCents: number; noSho
         <Field label="No-show fee ($)" hint="When the driver marks a rider who didn't come.">
           {(p) => <Input {...p} type="number" min={0} step="0.25" value={fee} onChange={(e) => setFee(e.target.value)} disabled={!manage} />}
         </Field>
-        <Field label="Book at least (hours ahead)" hint="How far ahead riders must book so the vans can be planned.">
+        <Field label="Plan ahead (hours)" hint="Rides booked this far ahead are planned onto vans. Inside it, see short notice.">
           {(p) => <Input {...p} type="number" min={0} max={72} value={cutoff} onChange={(e) => setCutoff(e.target.value)} disabled={!manage} />}
         </Field>
+        <Field
+          label="Short notice (minutes)"
+          hint="Inside the planning window a rider can still request a seat up to this close to the time. Drivers see it flagged and you are told; it is real only once a driver takes it. 0 turns short notice off."
+        >
+          {(p) => (
+            <Input {...p} type="number" min={0} max={1440} step={15} value={shortNotice} onChange={(e) => setShortNotice(e.target.value)} disabled={!manage} />
+          )}
+        </Field>
+        <Field label="Dispatch phone" hint="Shown to riders, with a tap-to-call link, when a ride can't be requested in time.">
+          {(p) => (
+            <Input {...p} type="tel" value={dispatchPhone} onChange={(e) => setDispatchPhone(e.target.value)} placeholder="(850) 555-0100" maxLength={40} disabled={!manage} />
+          )}
+        </Field>
+        {lookup && (
+          <p className="text-xs text-silver">
+            <span className="font-medium text-white">Address search:</span> {lookup}
+          </p>
+        )}
         <p className="text-xs text-silver">
           Changes apply to new bookings. Rides already booked keep the fare the rider agreed to.
         </p>

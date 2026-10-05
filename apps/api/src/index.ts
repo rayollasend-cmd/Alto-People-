@@ -1,3 +1,4 @@
+import { activeGeocoder } from './lib/geocode.js';
 import { env } from './config/env.js';
 // Sentry must initialise before any module that handles requests so
 // its auto-instrumentation can attach to Node's HTTP layer at import
@@ -57,6 +58,9 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
     { port: env.PORT, corsOrigins: env.CORS_ORIGIN },
     'api listening',
   );
+  // Which address lookup the vans' map runs on. Nominatim alone is the
+  // limited mode: set MAPBOX_TOKEN to get house numbers and businesses.
+  logger.info({ geocoder: activeGeocoder() }, 'address lookup provider');
 
   // Wake the DB pool immediately so the first user request doesn't pay the
   // cold-start. Best-effort — if the DB is unreachable, we still serve

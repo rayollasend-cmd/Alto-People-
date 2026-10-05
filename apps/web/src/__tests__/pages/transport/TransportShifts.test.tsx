@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -75,7 +75,7 @@ function ride(over: Partial<Ride> & { id: string }): Ride {
 
 function me(over: Partial<MyTransport> = {}): MyTransport {
   return {
-    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
     consent: { acceptedAt: new Date().toISOString() },
     places: [],
     stops: [{ id: 's1', name: 'Seaside Housing', address: '100 Seaside Dr' }],
@@ -162,6 +162,9 @@ describe('booking by shift', () => {
     renderAs('ASSOCIATE', <RideHome />);
     await userEvent.click((await screen.findAllByRole('button', { name: /Request a seat/ }))[0]!);
     const dialog = await screen.findByRole('dialog');
+    // Tomorrow: today's Morning has passed, and the form now opens on today
+    // whenever anything today can still be requested.
+    fireEvent.change(within(dialog).getByLabelText(/^Day/), { target: { value: zonedDayKey(new Date(Date.now() + 86_400_000), tz) } });
     await userEvent.click(within(dialog).getByRole('radio', { name: 'To work' }));
     const shifts = within(dialog).getByRole('radiogroup', { name: 'Which shift?' });
     const morning = within(shifts).getByRole('radio', { name: /Morning/ });

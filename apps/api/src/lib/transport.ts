@@ -28,7 +28,39 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export interface TransportSettingsView {
   fareCents: number;
   noShowFeeCents: number;
+  /** Planned rides book this far ahead. */
   cutoffHours: number;
+  /** Inside the cutoff, a seat can still be requested down to this many
+   *  minutes before its time; 0 = never. */
+  shortNoticeMinutes: number;
+  dispatchPhone: string | null;
+}
+
+export const MAX_DAYS_AHEAD = 30;
+const H = 3_600_000;
+
+/** How a ride at `targetAt` can be requested right now. */
+export type RideNotice = 'planned' | 'short_notice' | 'closed' | 'too_far';
+
+/**
+ * Planned rides book `cutoffHours` ahead so the vans can be planned. Inside
+ * that, a seat can still be requested on short notice down to
+ * `shortNoticeMinutes` before its time — flagged for the drivers and the
+ * desk, and real only once a driver takes it. Closer than that it's closed,
+ * and `earliestAt` is the honest answer to "when, then?".
+ */
+export function noticeFor(
+  s: Pick<TransportSettingsView, 'cutoffHours' | 'shortNoticeMinutes'>,
+  targetAt: Date,
+  now: Date = new Date(),
+): { notice: RideNotice; earliestAt: Date } {
+  const lead = targetAt.getTime() - now.getTime();
+  const shortMs = s.shortNoticeMinutes > 0 ? s.shortNoticeMinutes * 60_000 : null;
+  const earliestAt = new Date(now.getTime() + (shortMs ?? s.cutoffHours * H));
+  if (lead > MAX_DAYS_AHEAD * 86_400_000) return { notice: 'too_far', earliestAt };
+  if (lead >= s.cutoffHours * H) return { notice: 'planned', earliestAt };
+  if (shortMs !== null && lead >= shortMs) return { notice: 'short_notice', earliestAt };
+  return { notice: 'closed', earliestAt };
 }
 
 export async function getTransportSettings(db: Db = prisma): Promise<TransportSettingsView> {
@@ -39,7 +71,13 @@ export async function getTransportSettings(db: Db = prisma): Promise<TransportSe
       create: { id: 'default' },
       update: {},
     }));
-  return { fareCents: row.fareCents, noShowFeeCents: row.noShowFeeCents, cutoffHours: row.cutoffHours };
+  return {
+    fareCents: row.fareCents,
+    noShowFeeCents: row.noShowFeeCents,
+    cutoffHours: row.cutoffHours,
+    shortNoticeMinutes: row.shortNoticeMinutes,
+    dispatchPhone: row.dispatchPhone,
+  };
 }
 
 /** The active stores an associate can ride to — every store of every client
@@ -47,7 +85,7 @@ export async function getTransportSettings(db: Db = prisma): Promise<TransportSe
  *  on the schedule there (a shift in the last 30 days or ahead), or the
  *  client a supervisor's login is assigned to. */
 export async function bookableStores(associateId: string, ownClientId: string | null = null, db: Db = prisma) {
-  const [placed, scheduled] = await Promise.all([
+  const [placed, scheduled, own] = await Promise.all([
     placedClientIds(associateId, db),
     db.shift.findMany({
       where: {
@@ -58,12 +96,13 @@ export async function bookableStores(associateId: string, ownClientId: string | 
       select: { clientId: true },
       distinct: ['clientId'],
     }),
+    ownStoreIds(associateId, db),
   ]);
   const clientIds = [
     ...new Set([...placed, ...scheduled.map((s) => s.clientId), ...(ownClientId ? [ownClientId] : [])]),
   ];
   if (clientIds.length === 0) return [];
-  return db.location.findMany({
+  const rows = await db.location.findMany({
     where: { clientId: { in: clientIds }, deletedAt: null, isActive: true },
     select: {
       id: true,
@@ -76,6 +115,25 @@ export async function bookableStores(associateId: string, ownClientId: string | 
     },
     orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
   });
+  // Their own stores first. A client with twenty stores listed them
+  // alphabetically and defaulted to the first, which was the wrong store
+  // for almost everyone who had never ridden before.
+  return rows
+    .map((s) => ({ ...s, mine: own.has(s.id) }))
+    .sort((a, b) => Number(b.mine) - Number(a.mine));
+}
+
+/** The stores an associate is actually placed at: the store on their
+ *  approved application, and any assignment still open. */
+export async function ownStoreIds(associateId: string, db: Db = prisma): Promise<Set<string>> {
+  const [apps, assignments] = await Promise.all([
+    db.application.findMany({
+      where: { associateId, status: 'APPROVED', deletedAt: null, locationId: { not: null } },
+      select: { locationId: true },
+    }),
+    db.associateAssignment.findMany({ where: { associateId, endedAt: null }, select: { locationId: true } }),
+  ]);
+  return new Set([...apps.map((a) => a.locationId!), ...assignments.map((a) => a.locationId)]);
 }
 
 export function serviceDateFor(targetAt: Date, timezone: string | null | undefined): string {
@@ -92,6 +150,7 @@ export const rideSelect = {
   shiftId: true,
   windowLabel: true,
   note: true,
+  shortNotice: true,
   address: true,
   lat: true,
   lng: true,
@@ -156,6 +215,8 @@ export function toRideView(r: RideRow) {
     /** The store shift the seat is for ("Morning"); null: an other time. */
     windowLabel: r.windowLabel,
     note: r.note,
+    /** Requested inside the planning cutoff — a driver has to take it. */
+    shortNotice: r.shortNotice,
     pickup: r.stop
       ? { kind: 'stop' as const, id: r.stop.id, name: r.stop.name, address: r.stop.address }
       : { kind: 'address' as const, id: null, name: null, address: r.address ?? '' },

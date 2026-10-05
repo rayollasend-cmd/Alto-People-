@@ -29,7 +29,26 @@ export interface GeoPoint {
 export interface TransportSettings {
   fareCents: number;
   noShowFeeCents: number;
+  /** Planned rides book this far ahead. */
   cutoffHours: number;
+  /** Inside the cutoff, a seat can still be requested down to this many
+   *  minutes before its time; 0 = never. */
+  shortNoticeMinutes: number;
+  /** Shown when a ride can't be requested in time. */
+  dispatchPhone: string | null;
+}
+
+/** How a ride at a given time can be requested right now. */
+export type RideNotice = 'planned' | 'short_notice' | 'closed' | 'too_far';
+
+export interface RidePlace {
+  id: string;
+  label: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  /** False for a place saved before the picker that the lookup never placed — it needs a pin before it books. */
+  located: boolean;
 }
 
 export interface Ride {
@@ -43,6 +62,8 @@ export interface Ride {
   /** The store shift the seat is for ("Morning"); null: an other time. */
   windowLabel?: string | null;
   note: string | null;
+  /** Requested inside the planning cutoff — a driver has to take it. */
+  shortNotice?: boolean;
   pickup:
     | { kind: 'stop'; id: string; name: string; address: string }
     | { kind: 'address'; id: null; name: null; address: string };
@@ -136,6 +157,8 @@ export interface RideStore {
   timezone: string;
   clientName: string;
   address: string | null;
+  /** One of the stores they are placed at — listed first, the default. */
+  mine?: boolean;
   /** Its shifts — riders book by these (none: by time only). */
   windows?: StoreShiftWindow[];
 }
@@ -143,7 +166,7 @@ export interface RideStore {
 export interface MyTransport {
   settings: TransportSettings;
   consent: { acceptedAt: string } | null;
-  places: Array<{ id: string; label: string; address: string }>;
+  places: RidePlace[];
   stops: Array<{ id: string; name: string; address: string }>;
   stores: RideStore[];
   shifts: Array<{ id: string; startsAt: string; endsAt: string; position: string | null; locationId: string | null }>;
@@ -168,9 +191,19 @@ export const getMyTransport = () => apiFetch<MyTransport>('/transport/me');
 export const giveRideConsent = () => apiFetch<{ ok: true }>('/transport/me/consent', { method: 'POST' });
 
 export const addRidePlace = (body: { label: string; address: string; lat?: number; lng?: number }) =>
-  apiFetch<{ place: { id: string; label: string; address: string } }>('/transport/me/places', { method: 'POST', body });
+  apiFetch<{ place: RidePlace }>('/transport/me/places', { method: 'POST', body });
 
 export const deleteRidePlace = (id: string) => apiFetch<void>(`/transport/me/places/${id}`, { method: 'DELETE' });
+
+/** The pin for a saved address that never had one. */
+export const updateRidePlace = (id: string, point: GeoPoint) =>
+  apiFetch<{ place: RidePlace }>(`/transport/me/places/${id}`, { method: 'PATCH', body: point });
+
+/** Where to open the map for a saved address with no pin: a fresh lookup, else the store. */
+export const locateRidePlace = (id: string, locationId?: string | null) =>
+  apiFetch<{ point: GeoPoint | null; center: GeoPoint | null }>(
+    `/transport/me/places/${id}/locate${locationId ? `?locationId=${locationId}` : ''}`,
+  );
 
 export interface BookRideInput {
   direction: RideDirection;
@@ -198,7 +231,8 @@ export interface ShiftTrip {
   windowLabel: string;
   direction: RideDirection;
   targetAt: string;
-  /** Outside the 10-hour cutoff and within 30 days. */
+  /** How this leg can be requested right now; bookable = planned or short notice. */
+  notice?: RideNotice;
   bookable: boolean;
   vans: number;
   /** The seats its vans have — null while no driver has taken it yet. */
@@ -241,7 +275,7 @@ export interface AddressSuggestion {
 
 /** Addresses matching what they have typed so far, biased toward the store. */
 export const searchRideAddresses = (q: string, locationId?: string | null) =>
-  apiFetch<{ results: AddressSuggestion[] }>(
+  apiFetch<{ results: AddressSuggestion[]; unavailable?: boolean }>(
     `/transport/me/ride-addresses?q=${encodeURIComponent(q)}${locationId ? `&locationId=${locationId}` : ''}`,
   );
 
@@ -675,7 +709,13 @@ export const getTransportCharges = (from: string, to: string) =>
     totals: Omit<TransportChargeRow, 'associateId' | 'name'>;
   }>(`/transport/charges?from=${from}&to=${to}`);
 
-export const getTransportSettings = () => apiFetch<{ settings: TransportSettings }>('/transport/settings');
+export interface GeocoderStatus {
+  primary: 'mapbox' | 'nominatim' | 'off';
+  fallback: 'nominatim' | null;
+}
+
+export const getTransportSettings = () =>
+  apiFetch<{ settings: TransportSettings; geocoder?: GeocoderStatus }>('/transport/settings');
 export const saveTransportSettings = (body: TransportSettings) =>
   apiFetch<{ settings: TransportSettings }>('/transport/settings', { method: 'PUT', body });
 

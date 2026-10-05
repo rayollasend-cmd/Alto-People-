@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
-import { searchRideAddresses, whereAmI, type AddressSuggestion } from '@/lib/transportApi';
+import { locateRidePlace, searchRideAddresses, updateRidePlace, whereAmI, type AddressSuggestion, type GeoPoint } from '@/lib/transportApi';
 import { LazyLiveMap } from '@/components/transport/LazyLiveMap';
 import {
   Dialog,
@@ -84,6 +84,8 @@ interface Row {
   title: string;
   detail?: string;
   badge?: string;
+  /** The badge is a warning (a saved place that still needs a pin). */
+  warn?: boolean;
   onPick: () => void;
 }
 
@@ -98,12 +100,15 @@ interface Row {
  */
 function ConfirmPinDialog({
   pickup,
+  body,
   onCancel,
   onConfirm,
 }: {
-  pickup: Extract<Pickup, { kind: 'address' }>;
+  pickup: { address: string; lat: number; lng: number };
+  /** Why the pin is being asked for, when it isn't the usual "found the street, not the building". */
+  body?: string;
   onCancel: () => void;
-  onConfirm: (p: Pickup) => void;
+  onConfirm: (p: GeoPoint) => void;
 }) {
   const { t } = useI18n();
   const [point, setPoint] = useState({ lat: pickup.lat, lng: pickup.lng });
@@ -116,7 +121,7 @@ function ConfirmPinDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('ride.pinTitle')}</DialogTitle>
-          <DialogDescription>{t('ride.pinBody')}</DialogDescription>
+          <DialogDescription>{body ?? t('ride.pinBody')}</DialogDescription>
         </DialogHeader>
         {/* This is the one screen where a few pixels are a few metres of
             walking, in the dark, at the end of a shift — so it takes the
@@ -161,7 +166,7 @@ function ConfirmPinDialog({
           <Button variant="ghost" onClick={onCancel}>
             {t('ride.pinBack')}
           </Button>
-          <Button onClick={() => onConfirm({ ...pickup, ...point, precision: 'exact' })}>
+          <Button onClick={() => onConfirm(point)}>
             <Check className="h-4 w-4" />
             {t('ride.pinConfirm')}
           </Button>
@@ -224,14 +229,19 @@ export function PickupPicker({
   locationId,
   label,
   invalid,
+  pinPlaceId = null,
+  onPinPlaceDone,
 }: {
   value: Pickup | null;
   onChange: (p: Pickup | null) => void;
   stops: Array<{ id: string; name: string; address: string }>;
-  places: Array<{ id: string; label: string; address: string }>;
+  places: Array<{ id: string; label: string; address: string; located?: boolean }>;
   locationId: string | null;
   label: string;
   invalid?: boolean;
+  /** A saved place the booking refused for having no pin: open the pin step on it. */
+  pinPlaceId?: string | null;
+  onPinPlaceDone?: () => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -246,6 +256,10 @@ export function PickupPicker({
   const [searchScreen, setSearchScreen] = useState(false);
   // An approximate match is held here until they have moved the pin.
   const [confirming, setConfirming] = useState<Extract<Pickup, { kind: 'address' }> | null>(null);
+  // A saved place with no pin, and where its map opens.
+  const [placePin, setPlacePin] = useState<{ place: { id: string; label: string; address: string }; center: GeoPoint } | null>(null);
+  // The search provider was down or busy — not "no such address".
+  const [unavailable, setUnavailable] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = 'pickup-suggestions';
 
@@ -264,10 +278,16 @@ export function PickupPicker({
     setSearching(true);
     const timer = window.setTimeout(async () => {
       try {
-        const { results: found } = await searchRideAddresses(q, locationId);
-        if (seq.current === mine) setResults(found);
+        const { results: found, unavailable: down } = await searchRideAddresses(q, locationId);
+        if (seq.current === mine) {
+          setResults(found);
+          setUnavailable(!!down);
+        }
       } catch {
-        if (seq.current === mine) setResults([]);
+        if (seq.current === mine) {
+          setResults([]);
+          setUnavailable(true);
+        }
       } finally {
         if (seq.current === mine) setSearching(false);
       }
@@ -284,13 +304,19 @@ export function PickupPicker({
     const out: Row[] = [];
     for (const p of places) {
       if (q && !match(p.label) && !match(p.address)) continue;
+      // Saved before the picker and never placed: it books once a pin is
+      // dropped on it, so picking it opens the map instead of the form.
+      const unplaced = p.located === false;
       out.push({
         key: `place:${p.id}`,
         icon: Home,
         title: p.label,
         detail: p.address,
-        badge: t('ride.pickSaved'),
-        onPick: () => choose({ kind: 'place', id: p.id, label: p.label, address: p.address }),
+        badge: unplaced ? t('ride.needsPin') : t('ride.pickSaved'),
+        warn: unplaced,
+        onPick: unplaced
+          ? () => void startPlacePin(p)
+          : () => choose({ kind: 'place', id: p.id, label: p.label, address: p.address }),
       });
     }
     for (const s of stops) {
@@ -341,6 +367,38 @@ export function PickupPicker({
     setResults([]);
     setNote(null);
   };
+
+  /**
+   * A saved place with no pin: find where to open the map (a fresh lookup,
+   * else the store), then ask for the pin. The pin is saved on the place,
+   * so this happens once.
+   */
+  const startPlacePin = async (place: { id: string; label: string; address: string }) => {
+    setSearchScreen(false);
+    setOpen(false);
+    setNote(t('ride.placeLocating'));
+    try {
+      const { point, center } = await locateRidePlace(place.id, locationId);
+      const at = point ?? center;
+      if (!at) {
+        setNote(t('ride.placeNoMap'));
+        return;
+      }
+      setNote(null);
+      setPlacePin({ place, center: at });
+    } catch {
+      setNote(t('ride.placeNoMap'));
+    }
+  };
+
+  // The booking said a saved place has no pin: open on it straight away.
+  useEffect(() => {
+    if (!pinPlaceId) return;
+    const place = places.find((p) => p.id === pinPlaceId);
+    if (place) void startPlacePin(place);
+    onPinPlaceDone?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the booking names a place, not on every render
+  }, [pinPlaceId]);
 
   /** Into the search — the whole screen on a phone, the list in place otherwise. */
   const startSearch = () => {
@@ -415,21 +473,54 @@ export function PickupPicker({
     }
   };
 
-  const pinDialog = confirming ? (
-    <ConfirmPinDialog
-      pickup={confirming}
-      onCancel={() => {
-        setConfirming(null);
-        startSearch();
-      }}
-      onConfirm={(p) => {
-        setConfirming(null);
-        onChange(p);
-        setQuery('');
-        setResults([]);
-      }}
-    />
-  ) : null;
+  const pinDialog = (() => {
+    if (confirming) {
+      const c = confirming;
+      return (
+        <ConfirmPinDialog
+          pickup={c}
+          onCancel={() => {
+            setConfirming(null);
+            startSearch();
+          }}
+          onConfirm={(p) => {
+            setConfirming(null);
+            onChange({ ...c, lat: p.lat, lng: p.lng, precision: 'exact' });
+            setQuery('');
+            setResults([]);
+          }}
+        />
+      );
+    }
+    if (placePin) {
+      const pp = placePin;
+      return (
+        <ConfirmPinDialog
+          pickup={{ address: pp.place.address, lat: pp.center.lat, lng: pp.center.lng }}
+          body={t('ride.placePinBody')}
+          onCancel={() => {
+            setPlacePin(null);
+            startSearch();
+          }}
+          onConfirm={(p) => {
+            void (async () => {
+              try {
+                await updateRidePlace(pp.place.id, p);
+                setPlacePin(null);
+                onChange({ kind: 'place', id: pp.place.id, label: pp.place.label, address: pp.place.address });
+                setQuery('');
+                setResults([]);
+                setNote(null);
+              } catch {
+                setNote(t('ride.placeNoMap'));
+              }
+            })();
+          }}
+        />
+      );
+    }
+    return null;
+  })();
 
   /* The pieces both layouts share. */
   const searchInput = (
@@ -526,7 +617,12 @@ export function PickupPicker({
                 {r.detail && <span className="block truncate text-xs text-silver/70">{r.detail}</span>}
               </span>
               {r.badge && (
-                <span className="shrink-0 rounded-full bg-navy-secondary px-1.5 py-0.5 text-2xs text-silver">
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-1.5 py-0.5 text-2xs',
+                    r.warn ? 'bg-warning/15 font-semibold text-warning' : 'bg-navy-secondary text-silver',
+                  )}
+                >
                   {r.badge}
                 </span>
               )}
@@ -543,7 +639,11 @@ export function PickupPicker({
       )}
       {!searching && rows.length === 0 && (
         <li className="px-3 py-3 text-xs text-silver">
-          {query.trim().length < MIN_QUERY ? t('ride.pickKeepTyping') : t('ride.pickNoMatch')}
+          {query.trim().length < MIN_QUERY
+            ? t('ride.pickKeepTyping')
+            : unavailable
+              ? t('ride.pickUnavailable')
+              : t('ride.pickNoMatch')}
         </li>
       )}
     </>

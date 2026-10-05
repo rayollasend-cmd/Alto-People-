@@ -12,7 +12,7 @@ import { emitLiveEvent } from '../lib/liveEvents.js';
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
-import { geocode, reverseGeocode, searchAddresses, type GeoPoint } from '../lib/geocode.js';
+import { activeGeocoder, geocode, reverseGeocode, searchAddresses, type GeoPoint } from '../lib/geocode.js';
 import { orderAndTime, planDay, planRideSelect } from '../lib/transportPlan.js';
 import {
   announceWaitlist,
@@ -41,6 +41,8 @@ import {
   OPEN_RIDE_STATUSES,
   bookableStores,
   getTransportSettings,
+  MAX_DAYS_AHEAD,
+  noticeFor,
   owedCents,
   rideSelect,
   serviceDateFor,
@@ -68,7 +70,6 @@ const DRIVE = requireCapability('drive:transport');
 const VIEW = requireCapability('view:transport');
 const MANAGE = requireCapability('manage:transport');
 
-const MAX_DAYS_AHEAD = 30;
 const DUPLICATE_WINDOW_MS = 3 * 3_600_000;
 
 type RideRowOf = Prisma.RideGetPayload<{ select: typeof rideSelect }>;
@@ -199,8 +200,12 @@ transportRouter.get('/me', RIDE, async (req, res) => {
         : places[0]
           ? { kind: 'place' as const, placeId: places[0].id, label: places[0].label }
           : null;
+  // Where they went last time; else the store they are placed at; else
+  // the first on the list (which puts their own stores first).
   const defaultStoreId =
-    last && stores.some((x) => x.id === last.locationId) ? last.locationId : (stores[0]?.id ?? null);
+    last && stores.some((x) => x.id === last.locationId)
+      ? last.locationId
+      : (stores.find((x) => x.mine)?.id ?? stores[0]?.id ?? null);
   // Each store's shifts (what riders book by), each open shift ride's seats
   // and place in line, and who they ride with — faces only, never names.
   const open = rides.filter((r) => (OPEN_RIDE_STATUSES as readonly string[]).includes(r.status) || r.status === 'BOARDED');
@@ -212,7 +217,17 @@ transportRouter.get('/me', RIDE, async (req, res) => {
   res.json({
     settings,
     consent: consent ? { acceptedAt: consent.acceptedAt.toISOString() } : null,
-    places: places.map((p) => ({ id: p.id, label: p.label, address: p.address })),
+    places: places.map((p) => ({
+      id: p.id,
+      label: p.label,
+      address: p.address,
+      lat: p.lat === null ? null : Number(p.lat),
+      lng: p.lng === null ? null : Number(p.lng),
+      // A place saved before the picker, from typed text the lookup never
+      // placed. It books only once a pin is dropped on it — and the page
+      // says so instead of letting the booking fail.
+      located: p.lat !== null && p.lng !== null,
+    })),
     stops: stops.map((s) => ({ id: s.id, name: s.name, address: s.address })),
     stores: stores.map((s) => ({
       id: s.id,
@@ -220,6 +235,8 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       timezone: s.timezone,
       clientName: s.client.name,
       address: [s.addressLine1, s.city, s.state].filter(Boolean).join(', ') || null,
+      /** One of the stores they are placed at. */
+      mine: s.mine,
       windows: windows.get(s.id) ?? [],
     })),
     shifts: shifts.map((s) => ({
@@ -302,6 +319,12 @@ async function storePointById(locationId: string): Promise<GeoPoint | null> {
  */
 const AT_STORE_M = 250;
 
+/** Close enough to the store to be the store: its clock-in geofence when
+ *  it has one (a Supercenter's lot runs well past 250 m), else the floor. */
+function atStoreRadius(loc: { geofenceRadiusMeters: number | null } | null | undefined): number {
+  return Math.max(AT_STORE_M, (loc?.geofenceRadiusMeters ?? 0) + 150);
+}
+
 transportRouter.post('/me/places', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const input = PlaceInput.parse(req.body);
@@ -309,7 +332,55 @@ transportRouter.post('/me/places', RIDE, async (req, res) => {
   const place = await prisma.ridePlace.create({
     data: { associateId, label: input.label, address: input.address, lat: at?.lat ?? null, lng: at?.lng ?? null },
   });
-  res.status(201).json({ place: { id: place.id, label: place.label, address: place.address } });
+  res.status(201).json({
+    place: {
+      id: place.id,
+      label: place.label,
+      address: place.address,
+      lat: place.lat === null ? null : Number(place.lat),
+      lng: place.lng === null ? null : Number(place.lng),
+      located: place.lat !== null && place.lng !== null,
+    },
+  });
+});
+
+/**
+ * A saved address that was never placed on the map — typed before the
+ * picker existed, and refused at booking ever since with a message about
+ * suggestions and pins the saved-place path never offered. This is the
+ * pin: the rider drops it once and the place books from then on.
+ */
+transportRouter.patch('/me/places/:id', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const id = z.string().uuid().parse(req.params.id);
+  const input = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).parse(req.body);
+  const place = await prisma.ridePlace.findFirst({ where: { id, associateId } });
+  if (!place) throw new HttpError(404, 'not_found', 'Address not found.');
+  await prisma.ridePlace.update({ where: { id }, data: { lat: input.lat, lng: input.lng } });
+  // The rides still waiting from that address pick the pin up too.
+  await prisma.ride.updateMany({
+    where: { associateId, address: place.address, status: 'REQUESTED', runId: null },
+    data: { lat: input.lat, lng: input.lng },
+  });
+  res.json({ place: { id: place.id, label: place.label, address: place.address, lat: input.lat, lng: input.lng, located: true } });
+});
+
+/**
+ * Where to open the map for a saved address that has no pin: a fresh
+ * lookup (past any remembered miss), else the store they are booking
+ * against, so the pin starts somewhere near rather than on the equator.
+ */
+transportRouter.get('/me/places/:id/locate', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const id = z.string().uuid().parse(req.params.id);
+  const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
+  const place = await prisma.ridePlace.findFirst({ where: { id, associateId } });
+  if (!place) throw new HttpError(404, 'not_found', 'Address not found.');
+  const own = place.lat !== null && place.lng !== null ? { lat: Number(place.lat), lng: Number(place.lng) } : null;
+  const point = own ?? (await geocode(place.address, { retryMiss: true }));
+  if (point && !own) await prisma.ridePlace.update({ where: { id }, data: { lat: point.lat, lng: point.lng } });
+  const center = point ?? (q.locationId ? await storePointById(q.locationId) : null);
+  res.json({ point, center });
 });
 
 /**
@@ -336,7 +407,7 @@ transportRouter.get('/me/ride-addresses', RIDE, async (req, res) => {
     .parse(req.query);
 
   const near = q.locationId ? await storePointById(q.locationId) : null;
-  res.json({ results: await searchAddresses(q.q, near) });
+  res.json(await searchAddresses(q.q, near));
 });
 
 /**
@@ -357,8 +428,14 @@ transportRouter.get('/me/where', RIDE, async (req, res) => {
     })
     .parse(req.query);
   const here = { lat: q.lat, lng: q.lng };
-  const store = q.locationId ? await storePointById(q.locationId) : null;
-  if (store && haversineM(here, store) < AT_STORE_M) {
+  const loc = q.locationId
+    ? await prisma.location.findUnique({
+        where: { id: q.locationId },
+        select: { addressLine1: true, city: true, state: true, zip: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+      })
+    : null;
+  const store = loc ? await storePoint(loc) : null;
+  if (store && haversineM(here, store) < atStoreRadius(loc)) {
     res.json({ address: null, atStore: true });
     return;
   }
@@ -418,17 +495,25 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   } else {
     targetAt = new Date(input.targetAt!);
   }
-  const now = Date.now();
-  if (targetAt.getTime() - now < settings.cutoffHours * 3_600_000) {
+  // Planned rides book `cutoffHours` ahead so the vans can be planned.
+  // Inside that, a seat can still be requested on short notice (down to
+  // `shortNoticeMinutes` before the time) — flagged for the drivers and
+  // the desk, and real only once a driver takes it. Closer than that, the
+  // answer is honest: the earliest time, and the dispatch phone.
+  const { notice, earliestAt } = noticeFor(settings, targetAt);
+  if (notice === 'closed') {
     throw new HttpError(
       400,
       'too_late',
-      `Book at least ${settings.cutoffHours} hours ahead — the vans are planned ahead of time.`,
+      `Too soon — the earliest ride you can request now is ${fmtWhen(earliestAt, store.timezone)}.` +
+        (settings.dispatchPhone ? ` Need one sooner? Call dispatch at ${settings.dispatchPhone}.` : ''),
+      { earliestAt: earliestAt.toISOString(), dispatchPhone: settings.dispatchPhone },
     );
   }
-  if (targetAt.getTime() - now > MAX_DAYS_AHEAD * 86_400_000) {
+  if (notice === 'too_far') {
     throw new HttpError(400, 'too_far', `You can book up to ${MAX_DAYS_AHEAD} days ahead.`);
   }
+  const shortNotice = notice === 'short_notice';
   // The home end: a housing complex / stop, a saved address, or a one-off.
   let stopId: string | null = null;
   let stopAt: GeoPoint | null = null;
@@ -443,7 +528,19 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
     const place = await prisma.ridePlace.findFirst({ where: { id: input.placeId, associateId } });
     if (!place) throw new HttpError(400, 'place_not_found', 'That saved address is gone.');
     address = place.address;
-    at = place.lat !== null && place.lng !== null ? { lat: Number(place.lat), lng: Number(place.lng) } : await geocode(place.address);
+    at = place.lat !== null && place.lng !== null ? { lat: Number(place.lat), lng: Number(place.lng) } : await geocode(place.address, { retryMiss: true });
+    if (at && (place.lat === null || place.lng === null)) {
+      await prisma.ridePlace.update({ where: { id: place.id }, data: { lat: at.lat, lng: at.lng } });
+    }
+    if (!at) {
+      // Named, and with a way out the page can open directly: the pin.
+      throw new HttpError(
+        422,
+        'place_not_located',
+        `Your saved address "${place.label}" isn't on the map yet. Open it in the pickup list and drop a pin where the van should stop.`,
+        { placeId: place.id },
+      );
+    }
   } else {
     address = input.address!;
     at = await pointFor(address, input.lat, input.lng);
@@ -473,13 +570,16 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   // built on that would leave someone who lives nearby no way to book.
   const home = at ?? stopAt;
   const fence = home
-    ? await prisma.location.findUnique({ where: { id: store.id }, select: { latitude: true, longitude: true } })
+    ? await prisma.location.findUnique({
+        where: { id: store.id },
+        select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
+      })
     : null;
   const storeAt =
     fence?.latitude != null && fence.longitude != null
       ? { lat: Number(fence.latitude), lng: Number(fence.longitude) }
       : null;
-  if (home && storeAt && haversineM(home, storeAt) < AT_STORE_M) {
+  if (home && storeAt && haversineM(home, storeAt) < atStoreRadius(fence)) {
     throw new HttpError(
       422,
       'pickup_at_store',
@@ -513,6 +613,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
       serviceDate: serviceDateFor(targetAt, store.timezone),
       shiftId: input.shiftId ?? null,
       windowLabel,
+      shortNotice,
       note: input.note || null,
       fareCents: settings.fareCents,
       noShowFeeCents: settings.noShowFeeCents,
@@ -537,6 +638,18 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
     select: { id: true },
   });
   for (const u of watchers) emitLiveEvent(u.id, 'transport');
+  // Short notice is the desk's to watch: nobody planned a van for it.
+  if (shortNotice) {
+    void trackNotificationWork(
+      notifyTransportDesk({
+        subject: `Short-notice seat: ${ride.associate.firstName} ${ride.associate.lastName}`,
+        body:
+          `${ride.direction === 'TO_WORK' ? 'To' : 'Home from'} ${store.name} at ${fmtWhen(targetAt, store.timezone)} — ` +
+          `inside the ${settings.cutoffHours}-hour planning window. Drivers see it now; it needs one to accept.`,
+        linkUrl: '/transport',
+      }),
+    );
+  }
   // A shift whose vans are full: they're in line, and told their place.
   const key = tripKeyOf({ ...ride, locationId: ride.location.id });
   const state = key ? await tripState(key) : null;
@@ -566,9 +679,8 @@ transportRouter.get('/me/trips', RIDE, async (req, res) => {
           windowLabel: w.label,
           direction,
           targetAt: targetAt.toISOString(),
-          bookable:
-            targetAt.getTime() - now >= settings.cutoffHours * 3_600_000 &&
-            targetAt.getTime() - now <= MAX_DAYS_AHEAD * 86_400_000,
+          notice: noticeFor(settings, targetAt, new Date(now)).notice,
+          bookable: ['planned', 'short_notice'].includes(noticeFor(settings, targetAt, new Date(now)).notice),
           vans: state.runs.length,
           seats: state.runs.length > 0 ? { capacity: state.capacity, taken: state.taken } : null,
           full: state.full,
@@ -2538,7 +2650,7 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
 });
 
 transportRouter.get('/settings', VIEW, async (_req, res) => {
-  res.json({ settings: await getTransportSettings() });
+  res.json({ settings: await getTransportSettings(), geocoder: activeGeocoder() });
 });
 
 transportRouter.put('/settings', MANAGE, async (req, res) => {
@@ -2547,6 +2659,8 @@ transportRouter.put('/settings', MANAGE, async (req, res) => {
       fareCents: z.number().int().min(0).max(10_000),
       noShowFeeCents: z.number().int().min(0).max(10_000),
       cutoffHours: z.number().int().min(0).max(72),
+      shortNoticeMinutes: z.number().int().min(0).max(24 * 60).optional(),
+      dispatchPhone: z.string().trim().max(40).nullable().optional(),
     })
     .parse(req.body);
   await prisma.transportSettings.upsert({

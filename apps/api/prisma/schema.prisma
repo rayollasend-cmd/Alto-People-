@@ -7971,6 +7971,8 @@ model Ride {
   /// full the rest wait in line. Null: booked at an "other time".
   windowLabel    String?        @db.VarChar(80)
   note           String?        @db.VarChar(300)
+  /// Requested inside the planning cutoff — a driver has to take it.
+  shortNotice    Boolean        @default(false)
   // Dispatch: the run, the pickup order and time.
   runId          String?        @db.Uuid
   pickupOrder    Int?
@@ -8117,7 +8119,14 @@ model TransportSettings {
   id             String   @id @default("default") @db.VarChar(20)
   fareCents      Int      @default(500)
   noShowFeeCents Int      @default(100)
+  /// Planned rides book this far ahead, so the vans can be planned.
   cutoffHours    Int      @default(10)
+  /// Inside the cutoff a seat can still be requested on short notice, down
+  /// to this many minutes before the time — flagged for the drivers and
+  /// the desk, and real only once a driver takes it. 0 turns it off.
+  shortNoticeMinutes Int  @default(90)
+  /// Shown to riders when a ride can't be requested in time.
+  dispatchPhone  String?  @db.VarChar(40)
   updatedById    String?  @db.Uuid
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 }

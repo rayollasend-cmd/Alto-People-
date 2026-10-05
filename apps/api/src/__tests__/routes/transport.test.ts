@@ -236,9 +236,16 @@ describe('the Ride tab — booking a seat', () => {
     expect((await book(kimAgent, body)).body.error.code).toBe('consent_required');
 
     expect((await kimAgent.post('/transport/me/consent')).status).toBe(201);
+    // Short notice off: the planning cutoff is the only rule.
+    await prisma.transportSettings.upsert({
+      where: { id: 'default' },
+      create: { id: 'default', shortNoticeMinutes: 0 },
+      update: { shortNoticeMinutes: 0 },
+    });
     const tooLate = await book(kimAgent, { ...body, targetAt: inHours(6).toISOString() });
     expect(tooLate.status).toBe(400);
-    expect(tooLate.body.error.message).toMatch(/at least 10 hours ahead/);
+    expect(tooLate.body.error.code).toBe('too_late');
+    expect(tooLate.body.error.message).toMatch(/earliest ride you can request now is/);
 
     const ok = await book(kimAgent, body);
     expect(ok.status).toBe(201);
@@ -254,7 +261,13 @@ describe('the Ride tab — booking a seat', () => {
     expect((await book(kimAgent, body)).body.error.code).toBe('duplicate');
 
     const me = await kimAgent.get('/transport/me');
-    expect(me.body.settings).toEqual({ fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 });
+    expect(me.body.settings).toEqual({
+      fareCents: 500,
+      noShowFeeCents: 100,
+      cutoffHours: 10,
+      shortNoticeMinutes: 0,
+      dispatchPhone: null,
+    });
     expect(me.body.rides).toHaveLength(1);
     expect(me.body.stores.map((s: { id: string }) => s.id)).toContain(store.id);
   });
@@ -597,3 +610,133 @@ describe('the pickup handshake and one-tap booking', () => {
   });
 });
 
+describe('short notice, saved places that need a pin, and your own store', () => {
+  // The two complaints from the floor: "I can't get a ride home from the
+  // store" (a 10-hour cutoff with no same-day path) and "my address doesn't
+  // come up" (a saved place from before the picker, refused at booking with
+  // a message about suggestions the saved-place path never offered).
+  it('inside the planning cutoff a seat can still be requested on short notice — flagged, and the desk hears', async () => {
+    const { kimAgent, store, stop, director } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    const res = await book(kimAgent, {
+      direction: 'FROM_WORK',
+      locationId: store.id,
+      stopId: stop.id,
+      targetAt: inHours(3).toISOString(),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.ride.shortNotice).toBe(true);
+    expect(res.body.ride.status).toBe('REQUESTED');
+    await flushPendingNotifications();
+    const told = await prisma.notification.findFirst({
+      where: { recipientUserId: director.id, channel: 'IN_APP', subject: { contains: 'Short-notice seat' } },
+    });
+    expect(told?.body).toMatch(/Home from .* inside the 10-hour planning window/);
+    // Planned rides are not flagged.
+    const planned = await book(kimAgent, { direction: 'TO_WORK', locationId: store.id, stopId: stop.id, targetAt: inHours(20).toISOString() });
+    expect(planned.body.ride.shortNotice).toBe(false);
+  });
+
+  it('closer than the short-notice window it is closed — with the earliest time and the dispatch phone', async () => {
+    const { kimAgent, store, stop } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    await prisma.transportSettings.upsert({
+      where: { id: 'default' },
+      create: { id: 'default', dispatchPhone: '(850) 555-0199' },
+      update: { dispatchPhone: '(850) 555-0199' },
+    });
+    const body = { direction: 'FROM_WORK', locationId: store.id, stopId: stop.id };
+    const res = await book(kimAgent, { ...body, targetAt: new Date(Date.now() + 30 * 60_000).toISOString() });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('too_late');
+    expect(res.body.error.message).toMatch(/earliest ride you can request now is .*Call dispatch at \(850\) 555-0199/);
+    expect(res.body.error.details).toMatchObject({ dispatchPhone: '(850) 555-0199' });
+    expect(Date.parse(res.body.error.details.earliestAt)).toBeGreaterThan(Date.now() + 80 * 60_000);
+    // Short notice switched off: back to the planning cutoff alone.
+    await prisma.transportSettings.update({ where: { id: 'default' }, data: { shortNoticeMinutes: 0 } });
+    expect((await book(kimAgent, { ...body, targetAt: inHours(3).toISOString() })).body.error.code).toBe('too_late');
+    expect((await book(kimAgent, { ...body, targetAt: inHours(20).toISOString() })).status).toBe(201);
+  });
+
+  it('a saved address with no pin is named, not refused with talk of suggestions — and books once pinned', async () => {
+    const { kimAgent, kim, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    setGeocoderForTests(async () => null);
+    const place = await prisma.ridePlace.create({
+      data: { associateId: kim.id, label: 'Home', address: '12 Pine Grove Lot 4, Freeport FL' },
+    });
+    const me = await kimAgent.get('/transport/me');
+    expect(me.body.places[0]).toMatchObject({ id: place.id, located: false, lat: null, lng: null });
+
+    const refused = await book(kimAgent, { direction: 'TO_WORK', locationId: store.id, placeId: place.id, targetAt: inHours(20).toISOString() });
+    expect(refused.status).toBe(422);
+    expect(refused.body.error.code).toBe('place_not_located');
+    expect(refused.body.error.details).toEqual({ placeId: place.id });
+    expect(refused.body.error.message).toMatch(/"Home".*drop a pin/);
+
+    // Where the map opens: the store, since the lookup found nothing.
+    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    const locate = await kimAgent.get(`/transport/me/places/${place.id}/locate?locationId=${store.id}`);
+    expect(locate.body).toEqual({ point: null, center: { lat: 30.3925, lng: -86.4128 } });
+
+    const pinned = await kimAgent.patch(`/transport/me/places/${place.id}`).send({ lat: 30.4012, lng: -86.5003 });
+    expect(pinned.status).toBe(200);
+    expect(pinned.body.place).toMatchObject({ located: true, lat: 30.4012, lng: -86.5003 });
+    const ok = await book(kimAgent, { direction: 'TO_WORK', locationId: store.id, placeId: place.id, targetAt: inHours(20).toISOString() });
+    expect(ok.status).toBe(201);
+    expect(ok.body.ride.point).toEqual({ lat: 30.4012, lng: -86.5003 });
+    // A fresh lookup that succeeds places it without a pin.
+    const other = await prisma.ridePlace.create({ data: { associateId: kim.id, label: 'Mom', address: '382 Flamingo Drive, Destin FL' } });
+    setGeocoderForTests(async () => ({ lat: 30.4, lng: -86.5 }));
+    const found = await kimAgent.get(`/transport/me/places/${other.id}/locate`);
+    expect(found.body.point).toEqual({ lat: 30.4, lng: -86.5 });
+    expect((await prisma.ridePlace.findUniqueOrThrow({ where: { id: other.id } })).lat).not.toBeNull();
+  });
+
+  it('their own store comes first and is the default — not the first store alphabetically', async () => {
+    const { kimAgent, kim, client, store } = await seed();
+    await prisma.location.create({ data: { clientId: client.id, name: 'Aardvark Plaza' } });
+    await prisma.application.updateMany({ where: { associateId: kim.id }, data: { locationId: store.id } });
+    const me = await kimAgent.get('/transport/me');
+    expect(me.body.stores[0]).toMatchObject({ id: store.id, mine: true });
+    expect(me.body.stores[1]).toMatchObject({ name: 'Aardvark Plaza', mine: false });
+    expect(me.body.defaultStoreId).toBe(store.id);
+  });
+
+  it('address search says when it is unavailable, rather than "no match"', async () => {
+    const { kimAgent, store } = await seed();
+    setGeocoderForTests(null, null, async () => {
+      throw new Error('geocoder 429');
+    });
+    const res = await kimAgent.get(`/transport/me/ride-addresses?q=7209 Thomas&locationId=${store.id}`);
+    expect(res.body).toEqual({ results: [], unavailable: true });
+  });
+
+  it('the shift list says which legs are planned, short notice, or closed', async () => {
+    const { kimAgent, store } = await seed();
+    const tz = store.timezone ?? 'America/New_York';
+    // A shift whose end is a few hours away and whose start has passed.
+    const now = new Date();
+    const local = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+    const h = Number(local.find((x) => x.type === 'hour')!.value) % 24;
+    const m = Number(local.find((x) => x.type === 'minute')!.value);
+    const nowMin = h * 60 + m;
+    await prisma.staffingTarget.create({
+      data: {
+        locationId: store.id,
+        label: 'Now',
+        startMinute: (nowMin + 1440 - 120) % 1440,
+        endMinute: (nowMin + 180) % 1440,
+        targetCount: 4,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    });
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+    const res = await kimAgent.get(`/transport/me/trips?locationId=${store.id}&date=${date}`);
+    expect(res.status).toBe(200);
+    const home = res.body.trips.find((t: { direction: string }) => t.direction === 'FROM_WORK');
+    const there = res.body.trips.find((t: { direction: string }) => t.direction === 'TO_WORK');
+    expect(home).toMatchObject({ notice: 'short_notice', bookable: true });
+    expect(there).toMatchObject({ notice: 'closed', bookable: false });
+  });
+});

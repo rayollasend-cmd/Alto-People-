@@ -68,7 +68,7 @@ function ride(over: Partial<Ride> & { id: string }): Ride {
 
 function me(over: Partial<MyTransport> = {}): MyTransport {
   return {
-    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
     consent: { acceptedAt: new Date().toISOString() },
     places: [],
     stops: [{ id: 's1', name: 'Seaside Housing', address: '100 Seaside Dr' }],
@@ -132,7 +132,7 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     expect(await screen.findByText('$5.00 each way — $10.00 to work and back')).toBeInTheDocument();
     expect(screen.getByText('$1.00 if you miss your van')).toBeInTheDocument();
     expect(screen.getByText(/Taken out of your paycheck each pay period/)).toBeInTheDocument();
-    expect(screen.getByText('Book at least 10 hours ahead')).toBeInTheDocument();
+    expect(screen.getByText('Book 10 hours ahead when you can — short notice when a driver can take it')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /I agree/ }));
     expect(apiFetch).toHaveBeenCalledWith('/transport/me/consent', { method: 'POST' });
     expect(await screen.findByText('No rides booked')).toBeInTheDocument();
@@ -181,7 +181,7 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText(/^Day/), { target: { value: zonedDayKey(new Date(), tz) } });
     fireEvent.change(within(dialog).getByLabelText(/Be at work by/), { target: { value: '00:00' } });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(/Too soon — book at least 10 hours ahead/);
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/Too soon — the earliest ride you can request now is/);
     // Both ways is the default — most rides are there and back.
     expect(within(dialog).getByRole('radio', { name: 'Both ways' })).toHaveAttribute('aria-checked', 'true');
     expect(within(dialog).getByRole('button', { name: 'Request both seats' })).toBeDisabled();
@@ -359,7 +359,7 @@ describe('<TransportHome> — the command center', () => {
     });
     return {
       date: zonedDayKey(new Date(), tz),
-      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
       kpis: { booked: 2, needsVan: 2, scheduled: 0, onBoard: 0, completed: 0, noShows: 0, cancelled: 0, vansOut: 0, runs: 0, openIssues: 1 },
       rides: [a, b],
       runs: [],
@@ -619,7 +619,7 @@ describe('the vans live', () => {
   function board0(): TransportBoard {
     return {
       date: zonedDayKey(new Date(), tz),
-      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
       kpis: { booked: 0, needsVan: 0, scheduled: 0, onBoard: 0, completed: 0, noShows: 0, cancelled: 0, vansOut: 1, runs: 1, openIssues: 0 },
       rides: [],
       runs: [],

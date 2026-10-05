@@ -121,7 +121,7 @@ describe('the rider’s van and driver', () => {
       },
     });
     const me: MyTransport = {
-      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+      settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
       consent: { acceptedAt: new Date().toISOString() },
       places: [],
       stops: [],
@@ -233,7 +233,7 @@ describe('the director runs the fleet — and has the last word', () => {
   }
   const board = (over: Partial<TransportBoard> = {}): TransportBoard => ({
     date: zonedDayKey(new Date(), tz),
-    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10 },
+    settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
     kpis: { booked: 1, needsVan: 1, scheduled: 0, onBoard: 0, completed: 0, noShows: 0, cancelled: 0, vansOut: 0, runs: 0, openIssues: 0 },
     rides: [],
     runs: [],

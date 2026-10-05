@@ -70,15 +70,33 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   }
 }
 
-// Nominatim's usage policy: one request per second, absolute.
+// Nominatim's usage policy: one request per second, absolute. The line is
+// bounded: once it is deeper than MAX_QUEUE_MS of waiting, a new call fails
+// fast as "busy" instead of holding a rider's picker open for half a
+// minute — the caller says so, and the rider can use where they are.
+const NOMINATIM_GAP_MS = 1_100;
+const MAX_QUEUE_MS = 6_000;
 let nominatimQueue: Promise<unknown> = Promise.resolve();
 let nominatimLast = 0;
+let nominatimPending = 0;
+export class GeocoderBusyError extends Error {
+  constructor() {
+    super('geocoder busy');
+    this.name = 'GeocoderBusyError';
+  }
+}
 function nominatimPaced<T>(fn: () => Promise<T>): Promise<T> {
+  if (nominatimPending * NOMINATIM_GAP_MS > MAX_QUEUE_MS) return Promise.reject(new GeocoderBusyError());
+  nominatimPending += 1;
   const run = nominatimQueue.then(async () => {
-    const wait = nominatimLast + 1_100 - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    nominatimLast = Date.now();
-    return fn();
+    try {
+      const wait = nominatimLast + NOMINATIM_GAP_MS - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      nominatimLast = Date.now();
+      return await fn();
+    } finally {
+      nominatimPending -= 1;
+    }
   });
   nominatimQueue = run.catch(() => undefined);
   return run;
@@ -245,23 +263,35 @@ export function setGeocoderForTests(
   testSearch = search;
 }
 
-function provider(): {
+interface Provider {
   name: string;
   lookup: Lookup | null;
   reverse: ReverseLookup | null;
   search: SearchLookup | null;
-} {
+}
+const NOMINATIM: Provider = { name: 'nominatim', lookup: nominatim, reverse: nominatimReverse, search: nominatimSearch };
+const MAPBOX: Provider = { name: 'mapbox', lookup: mapbox, reverse: mapboxReverse, search: mapboxSearch };
+
+/**
+ * The providers to try, in order. Mapbox when a token is set — the one
+ * with house numbers, apartment complexes and businesses for this
+ * workforce — with Nominatim behind it for an outage or a miss. Nominatim
+ * alone without a token, which is the limited mode the desk is told about.
+ */
+function providers(): Provider[] {
   if (testLookup || testReverse || testSearch) {
-    return { name: 'test', lookup: testLookup, reverse: testReverse, search: testSearch };
+    return [{ name: 'test', lookup: testLookup, reverse: testReverse, search: testSearch }];
   }
   const name = geocoderName();
-  if (name === 'nominatim') {
-    return { name, lookup: nominatim, reverse: nominatimReverse, search: nominatimSearch };
-  }
-  if (name === 'mapbox') {
-    return { name, lookup: mapbox, reverse: mapboxReverse, search: mapboxSearch };
-  }
-  return { name, lookup: null, reverse: null, search: null };
+  if (name === 'mapbox') return [MAPBOX, NOMINATIM];
+  if (name === 'nominatim') return [NOMINATIM];
+  return [];
+}
+
+/** What address lookup runs on right now — for the boot log and the desk. */
+export function activeGeocoder(): { primary: 'mapbox' | 'nominatim' | 'off'; fallback: 'nominatim' | null } {
+  const primary = geocoderName();
+  return { primary, fallback: primary === 'mapbox' ? 'nominatim' : null };
 }
 
 /**
@@ -321,31 +351,44 @@ function withUnit(s: AddressSuggestion, unit: string): AddressSuggestion {
   };
 }
 
-export async function searchAddresses(
-  query: string,
-  near?: GeoPoint | null,
-): Promise<AddressSuggestion[]> {
+export interface AddressSearch {
+  results: AddressSuggestion[];
+  /** Every provider failed or was busy — "try again", not "no such address". */
+  unavailable: boolean;
+}
+
+export async function searchAddresses(query: string, near?: GeoPoint | null): Promise<AddressSearch> {
   const { street: q, unit } = splitUnit(query.trim());
   // Below four characters everything matches and nothing is useful — and
   // on Nominatim it would burn the one-per-second budget on noise.
-  if (q.length < 4) return [];
+  if (q.length < 4) return { results: [], unavailable: false };
   const key = `${normalizeAddress(q)}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ''}`;
   const hit = searchCache.get(key);
   let results: AddressSuggestion[];
   if (hit && Date.now() - hit.at < SEARCH_TTL_MS) {
     results = hit.results;
   } else {
-    const p = provider();
-    if (!p.search) return [];
-    try {
-      results = await p.search(q, near ?? null);
-    } catch (err) {
-      // An outage means "no suggestions right now", not "no such address" —
-      // so it isn't cached, and the caller falls back to letting them drop
-      // a pin instead.
-      console.warn('[alto-people/api] address search failed:', (err as Error).message);
-      return [];
+    const chain = providers().filter((p) => p.search);
+    if (chain.length === 0) return { results: [], unavailable: false };
+    // First provider with an answer wins; an empty answer is still an
+    // answer, but the next provider gets a chance to do better with it.
+    let found: AddressSuggestion[] | null = null;
+    for (const p of chain) {
+      try {
+        const r = await p.search!(q, near ?? null);
+        if (r.length > 0) {
+          found = r;
+          break;
+        }
+        found ??= r;
+      } catch (err) {
+        // An outage or a full queue means "no suggestions right now", not
+        // "no such address" — so it isn't cached, and the caller says so.
+        console.warn(`[alto-people/api] address search failed (${p.name}):`, (err as Error).message);
+      }
     }
+    if (found === null) return { results: [], unavailable: true };
+    results = found;
     if (searchCache.size >= SEARCH_CACHE_MAX) {
       // Oldest insertion first — Map preserves it, and this runs rarely.
       const oldest = searchCache.keys().next().value;
@@ -353,45 +396,60 @@ export async function searchAddresses(
     }
     searchCache.set(key, { at: Date.now(), results });
   }
-  return unit ? results.map((r) => withUnit(r, unit)) : results;
+  return { results: unit ? results.map((r) => withUnit(r, unit)) : results, unavailable: false };
 }
 
 /** Coordinates for an address — cached; null when unknown or lookups are off. */
-export async function geocode(address: string | null | undefined): Promise<GeoPoint | null> {
+export async function geocode(
+  address: string | null | undefined,
+  opts: { retryMiss?: boolean } = {},
+): Promise<GeoPoint | null> {
   if (!address || address.trim().length < 5) return null;
   const key = normalizeAddress(address);
   const cached = await prisma.geoCache.findUnique({ where: { key } });
   if (cached?.found && cached.lat !== null && cached.lng !== null) {
     return { lat: Number(cached.lat), lng: Number(cached.lng) };
   }
-  if (cached && !cached.found && Date.now() - cached.createdAt.getTime() < MISS_RETRY_MS) return null;
-  const p = provider();
-  if (!p.lookup) return null;
-  let point: GeoPoint | null;
-  try {
-    point = await p.lookup(address);
-  } catch (err) {
-    // A provider outage isn't a miss — don't cache it.
-    console.warn('[alto-people/api] geocode failed:', (err as Error).message);
-    return null;
+  // A remembered miss stands for a week — unless the caller is acting on
+  // the rider's behalf right now (a saved address they are about to pin),
+  // when a fresh try is worth the one request.
+  if (cached && !cached.found && !opts.retryMiss && Date.now() - cached.createdAt.getTime() < MISS_RETRY_MS) return null;
+  const chain = providers().filter((p) => p.lookup);
+  if (chain.length === 0) return null;
+  let point: GeoPoint | null = null;
+  let answered: string | null = null;
+  for (const p of chain) {
+    try {
+      const r = await p.lookup!(address);
+      answered = p.name;
+      if (r && Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+        point = r;
+        break;
+      }
+    } catch (err) {
+      console.warn(`[alto-people/api] geocode failed (${p.name}):`, (err as Error).message);
+    }
   }
-  const valid = point && Number.isFinite(point.lat) && Number.isFinite(point.lng) ? point : null;
+  // Every provider was down: an outage isn't a miss — don't cache it.
+  if (answered === null) return null;
   await prisma.geoCache.upsert({
     where: { key },
-    create: { key, lat: valid?.lat ?? null, lng: valid?.lng ?? null, found: !!valid, provider: p.name },
-    update: { lat: valid?.lat ?? null, lng: valid?.lng ?? null, found: !!valid, provider: p.name, createdAt: new Date() },
+    create: { key, lat: point?.lat ?? null, lng: point?.lng ?? null, found: !!point, provider: answered },
+    update: { lat: point?.lat ?? null, lng: point?.lng ?? null, found: !!point, provider: answered, createdAt: new Date() },
   });
-  return valid;
+  return point;
 }
 
 /** "Use where I am now": a street address for a point, or null. */
 export async function reverseGeocode(point: GeoPoint): Promise<string | null> {
-  const p = provider();
-  if (!p.reverse) return null;
-  try {
-    return await p.reverse(point);
-  } catch (err) {
-    console.warn('[alto-people/api] reverse geocode failed:', (err as Error).message);
-    return null;
+  for (const p of providers()) {
+    if (!p.reverse) continue;
+    try {
+      const found = await p.reverse(point);
+      if (found) return found;
+    } catch (err) {
+      console.warn(`[alto-people/api] reverse geocode failed (${p.name}):`, (err as Error).message);
+    }
   }
+  return null;
 }
