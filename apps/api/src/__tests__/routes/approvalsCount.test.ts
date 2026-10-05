@@ -38,8 +38,10 @@ describe('GET /approvals/count', () => {
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,
-        clockInAt: new Date('2026-07-01T13:00:00.000Z'),
-        clockOutAt: new Date('2026-07-01T21:00:00.000Z'),
+        // Relative to today: the badge counts the last 90 days, and a fixed
+        // July date fell out of that window on its own.
+        clockInAt: new Date(Date.now() - 7 * 86_400_000),
+        clockOutAt: new Date(Date.now() - 7 * 86_400_000 + 8 * 3_600_000),
         status: 'COMPLETED',
       },
     });

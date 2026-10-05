@@ -261,6 +261,9 @@ export function setGeocoderForTests(
   testLookup = lookup;
   testReverse = reverse;
   testSearch = search;
+  // A provider swap must never serve the previous provider's answers: the
+  // in-process suggestion cache outlives truncateAll between tests.
+  searchCache.clear();
 }
 
 interface Provider {

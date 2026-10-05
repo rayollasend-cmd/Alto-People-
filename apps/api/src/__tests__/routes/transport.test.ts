@@ -708,7 +708,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
     setGeocoderForTests(null, null, async () => {
       throw new Error('geocoder 429');
     });
-    const res = await kimAgent.get(`/transport/me/ride-addresses?q=7209 Thomas&locationId=${store.id}`);
+    const res = await kimAgent.get(`/transport/me/ride-addresses?q=4411 Beach Blvd&locationId=${store.id}`);
     expect(res.body).toEqual({ results: [], unavailable: true });
   });
 
