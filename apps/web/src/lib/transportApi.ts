@@ -595,9 +595,65 @@ export interface SeatRequest extends Ride {
 }
 
 export const getSeatRequests = () =>
-  apiFetch<{ van: { id: string; name: string; plate: string | null; capacity: number; look: string } | null; requests: SeatRequest[] }>(
-    '/transport/driver/requests',
+  apiFetch<{
+    van: { id: string; name: string; plate: string | null; capacity: number; look: string } | null;
+    requests: SeatRequest[];
+    /** The clients this driver is approved for — none, and the list is empty on purpose. */
+    clients?: { all: boolean; approved: number; pending: number };
+  }>('/transport/driver/requests');
+
+/* ----- Which clients a driver picks up for ----------------------------------- */
+
+export type DriverAccessStatus = 'REQUESTED' | 'APPROVED' | 'DENIED';
+
+export interface DriverAccessState {
+  id: string;
+  status: DriverAccessStatus;
+  note: string | null;
+  decisionNote: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+}
+
+/** The driver's view: every active client, and where they stand on each. */
+export interface DriverClients {
+  /** The "all clients" row, when they asked for or were granted everything. */
+  all: DriverAccessState | null;
+  clients: Array<{ id: string; name: string; access: DriverAccessState | null }>;
+  approved: number;
+  pending: number;
+}
+
+export const getDriverClients = () => apiFetch<DriverClients>('/transport/driver/clients');
+export const requestDriverClients = (body: { all?: boolean; clientIds?: string[]; note?: string }) =>
+  apiFetch<DriverClients>('/transport/driver/clients/request', { method: 'POST', body });
+/** `key` is a client id, or "all". */
+export const dropDriverClient = (key: string) =>
+  apiFetch<DriverClients>(`/transport/driver/clients/${key}`, { method: 'DELETE' });
+
+/** The desk's view: one row per driver × client (null client = all). */
+export interface DriverAccessRow {
+  id: string;
+  driver: { userId: string; name: string };
+  client: { id: string; name: string } | null;
+  status: DriverAccessStatus;
+  note: string | null;
+  decisionNote: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+  decidedBy: string | null;
+}
+
+export const getDriverAccess = () =>
+  apiFetch<{ rows: DriverAccessRow[]; clients: Array<{ id: string; name: string }>; drivers: Array<{ userId: string; name: string }> }>(
+    '/transport/driver-access',
   );
+export const decideDriverAccess = (id: string, decision: 'APPROVED' | 'DENIED', note?: string) =>
+  apiFetch<{ row: DriverAccessRow }>(`/transport/driver-access/${id}/decide`, { method: 'POST', body: { decision, ...(note ? { note } : {}) } });
+export const grantDriverAccess = (body: { driverUserId: string; all?: boolean; clientIds?: string[] }) =>
+  apiFetch<DriverClients>('/transport/driver-access/grant', { method: 'POST', body });
+export const revokeDriverAccess = (id: string) =>
+  apiFetch<{ ok: true }>(`/transport/driver-access/${id}`, { method: 'DELETE' });
 /** The driver's week, like a schedule. */
 export interface DriverWeekRun {
   id: string;

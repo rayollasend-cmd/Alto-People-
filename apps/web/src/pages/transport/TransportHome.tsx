@@ -35,6 +35,11 @@ import {
   createStop,
   createVan,
   getFleet,
+  getDriverAccess,
+  decideDriverAccess,
+  grantDriverAccess,
+  revokeDriverAccess,
+  type DriverAccessRow,
   getLiveBoard,
   getTransportBoard,
   getTransportCharges,
@@ -1999,6 +2004,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
           </div>
         ))}
       </div>
+      <DriverAccessCard manage={manage} />
       {fleet.isLoading ? (
         <Skeleton className="h-64" />
       ) : fleet.isError ? (
@@ -2228,6 +2234,170 @@ function VanDialog({ van, drivers, onClose }: { van: Van | null; drivers: Transp
 }
 
 /* ===== Stops ================================================================ */
+
+/**
+ * Which clients each driver picks up for. Drivers ask — all clients, or the
+ * ones they want — and wait here for the director; approved clients are the
+ * only ones whose seat requests that driver sees. Grant and revoke are
+ * direct: the director's word, as with dispatch.
+ */
+function DriverAccessCard({ manage }: { manage: boolean }) {
+  const q = useQuery({ queryKey: ['transport', 'driver-access'], queryFn: getDriverAccess, refetchInterval: 60_000 });
+  const queryClient = useQueryClient();
+  const prompt = usePrompt();
+  const confirm = useConfirm();
+  const [grantDriver, setGrantDriver] = useState('');
+  const [grantClient, setGrantClient] = useState('all');
+  const [busy, setBusy] = useState<string | null>(null);
+  if (q.isError) return <QueryError what="driver access" query={q} />;
+  if (!q.data) return <Skeleton className="h-24" />;
+  const { rows, clients, drivers } = q.data;
+  const pending = rows.filter((r) => r.status === 'REQUESTED');
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport', 'driver-access'] });
+  const act = async (key: string, fn: () => Promise<unknown>, done?: string) => {
+    setBusy(key);
+    try {
+      await fn();
+      if (done) toast.success(done);
+    } catch (err) {
+      toast.error(errMsg(err));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+  const nameOf = (r: DriverAccessRow) => r.client?.name ?? 'all clients';
+  const approve = (r: DriverAccessRow) => act(r.id, () => decideDriverAccess(r.id, 'APPROVED'), `${r.driver.name} now drives for ${nameOf(r)}`);
+  const deny = async (r: DriverAccessRow) => {
+    const note = await prompt({
+      title: `Deny ${nameOf(r)} for ${r.driver.name}?`,
+      description: 'The driver sees the reason.',
+      reasonLabel: 'Reason',
+      required: false,
+      confirmLabel: 'Deny',
+    });
+    if (note === null) return;
+    await act(r.id, () => decideDriverAccess(r.id, 'DENIED', note || undefined));
+  };
+  const revoke = async (r: DriverAccessRow) => {
+    const ok = await confirm({
+      title: `Take ${nameOf(r)} off ${r.driver.name}?`,
+      description: 'They stop seeing those seat requests at once.',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
+    await act(r.id, () => revokeDriverAccess(r.id));
+  };
+  const grant = () =>
+    act(
+      'grant',
+      () => grantDriverAccess({ driverUserId: grantDriver, ...(grantClient === 'all' ? { all: true } : { clientIds: [grantClient] }) }),
+      'Granted',
+    );
+  const byDriver = drivers.map((d) => ({
+    ...d,
+    approved: rows.filter((r) => r.driver.userId === d.userId && r.status === 'APPROVED'),
+    denied: rows.filter((r) => r.driver.userId === d.userId && r.status === 'DENIED'),
+  }));
+  return (
+    <Card>
+      <CardContent className="space-y-3 pt-4">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Driver access</h3>
+          <p className="text-xs text-silver">
+            Drivers see seat requests from the clients approved here. They ask; you decide — or grant directly.
+          </p>
+        </div>
+        <section aria-label="Access requests">
+          {pending.length === 0 ? (
+            <p className="text-xs text-silver">No requests waiting.</p>
+          ) : (
+            <ul className="divide-y divide-navy-secondary/60">
+              {pending.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center gap-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-white">
+                      {r.driver.name} <span className="text-silver">asked to drive for</span> {nameOf(r)}
+                    </div>
+                    <div className="text-xs text-silver">
+                      {r.note ? `“${r.note}” · ` : ''}
+                      {fmtDateTime(r.requestedAt)}
+                    </div>
+                  </div>
+                  {manage && (
+                    <>
+                      <Button size="xs" onClick={() => void approve(r)} loading={busy === r.id} disabled={busy !== null}>
+                        <Check className="h-3.5 w-3.5" />
+                        Approve
+                      </Button>
+                      <Button size="xs" variant="secondary" onClick={() => void deny(r)} disabled={busy !== null}>
+                        Deny
+                      </Button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        {byDriver.length > 0 && (
+          <ul aria-label="Drivers and their clients" className="space-y-1.5">
+            {byDriver.map((d) => (
+              <li key={d.userId} className="flex flex-wrap items-center gap-1.5 text-sm">
+                <span className="mr-1 text-white">{d.name}</span>
+                {d.approved.length === 0 && <span className="text-xs text-silver/70">no clients yet</span>}
+                {d.approved.map((r) => (
+                  <span key={r.id} className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs text-success">
+                    {r.client?.name ?? 'All clients'}
+                    {manage && (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${nameOf(r)} from ${d.name}`}
+                        onClick={() => void revoke(r)}
+                        disabled={busy !== null}
+                        className="rounded hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+                {d.denied.map((r) => (
+                  <span key={r.id} className="rounded-full bg-navy-secondary px-2 py-0.5 text-xs text-silver line-through">
+                    {r.client?.name ?? 'All clients'}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+        {manage && drivers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Select size="sm" aria-label="Driver to grant" value={grantDriver} onChange={(e) => setGrantDriver(e.target.value)} className="min-w-[160px]">
+              <option value="">Driver…</option>
+              {drivers.map((d) => (
+                <option key={d.userId} value={d.userId}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+            <Select size="sm" aria-label="Client to grant" value={grantClient} onChange={(e) => setGrantClient(e.target.value)} className="min-w-[160px]">
+              <option value="all">All clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            <Button size="sm" variant="secondary" onClick={() => void grant()} loading={busy === 'grant'} disabled={!grantDriver || busy !== null}>
+              Grant
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function StopsTab({ manage }: { manage: boolean }) {
   const stops = useQuery({ queryKey: ['transport', 'stops'], queryFn: listStops });

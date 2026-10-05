@@ -160,6 +160,8 @@ describe('the driver decides on seat requests', () => {
   it('lists the requests with who’s asking; accept puts the seat in their van, decline passes it on', async () => {
     routes((path, init) => {
       if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [] };
+      if (path === '/transport/driver/clients')
+        return { all: { id: 'x0', status: 'APPROVED', note: null, decisionNote: null, requestedAt: '', decidedAt: null }, clients: [], approved: 0, pending: 0 };
       if (path === '/transport/driver/requests')
         return {
           van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12, look: 'White Ford Transit 2023' },
@@ -200,9 +202,37 @@ describe('the driver decides on seat requests', () => {
     );
   });
 
+  it('a new driver drives for nobody yet: asks for a client, and sees the request waiting', async () => {
+    const clients = [
+      { id: 'c1', name: 'Coastal', access: null },
+      { id: 'c2', name: 'Harbor', access: { id: 'x2', status: 'DENIED' as const, note: null, decisionNote: 'Harbor has its own vans', requestedAt: '', decidedAt: null } },
+    ];
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [] };
+      if (path === '/transport/driver/requests')
+        return { van: { id: 'v1', name: 'Van 1', plate: null, capacity: 12, look: '' }, requests: [], clients: { all: false, approved: 0, pending: 0 } };
+      if (path === '/transport/driver/clients' && !init?.method) return { all: null, clients, approved: 0, pending: 0 };
+      if (path === '/transport/driver/clients/request' && init?.method === 'POST') return { all: null, clients, approved: 0, pending: 1 };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    expect(await screen.findByText(/not driving for any client yet/)).toBeInTheDocument();
+    const card = screen.getByRole('region', { name: 'Clients I drive for' });
+    await userEvent.click(within(card).getByRole('button', { name: 'Ask for clients' }));
+    await userEvent.click(within(card).getByRole('checkbox', { name: /Coastal/ }));
+    // Denied last time, with the director's reason beside it.
+    expect(within(card).getByRole('checkbox', { name: /Harbor/ })).not.toBeChecked();
+    expect(within(card).getByText('Harbor has its own vans')).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole('button', { name: 'Send request' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/driver/clients/request', { method: 'POST', body: { clientIds: ['c1'] } }),
+    );
+  });
+
   it('without a van, the driver can see requests but not accept them', async () => {
     routes((path) => {
       if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [] };
+      if (path === '/transport/driver/clients')
+        return { all: { id: 'x0', status: 'APPROVED', note: null, decisionNote: null, requestedAt: '', decidedAt: null }, clients: [], approved: 0, pending: 0 };
       if (path === '/transport/driver/requests') return { van: null, requests: [req({ id: 'q1' })] };
     });
     renderAs('DRIVER', <DriverHome />);
@@ -246,6 +276,7 @@ describe('the director runs the fleet — and has the last word', () => {
     routes((path, init) => {
       if (path.startsWith('/transport/board')) return board();
       if (path.startsWith('/transport/fleet')) return { from: '2026-08-21', to: '2026-09-19', vans: [fleetVan()] };
+      if (path === '/transport/driver-access') return { rows: [], clients: [], drivers: [] };
       if (path === '/transport/vans/v1' && init?.method === 'PATCH') return { van: fleetVan() };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
@@ -255,6 +286,38 @@ describe('the director runs the fleet — and has the last word', () => {
     expect(screen.getByText('33%')).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Driver for Van 1' }), 'd1');
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/vans/v1', { method: 'PATCH', body: { driverUserId: 'd1' } }));
+  });
+
+  it('a driver’s request for a client waits for the director — approve it in one tap', async () => {
+    routes((path, init) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/fleet')) return { from: '2026-08-21', to: '2026-09-19', vans: [fleetVan()] };
+      if (path === '/transport/driver-access')
+        return {
+          rows: [
+            { id: 'x1', driver: { userId: 'd1', name: 'Mike Chen' }, client: { id: 'c1', name: 'Coastal' }, status: 'REQUESTED', note: 'I live near the Coastal stores', decisionNote: null, requestedAt: new Date().toISOString(), decidedAt: null, decidedBy: null },
+            { id: 'x2', driver: { userId: 'd2', name: 'Jo Park' }, client: null, status: 'APPROVED', note: null, decisionNote: null, requestedAt: new Date().toISOString(), decidedAt: new Date().toISOString(), decidedBy: 'Dana Ortiz' },
+          ],
+          clients: [{ id: 'c1', name: 'Coastal' }],
+          drivers: [
+            { userId: 'd1', name: 'Mike Chen' },
+            { userId: 'd2', name: 'Jo Park' },
+          ],
+        };
+      if (path === '/transport/driver-access/x1/decide' && init?.method === 'POST') return { row: {} };
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    const asks = await screen.findByRole('region', { name: 'Access requests' });
+    expect(within(asks).getByText(/Mike Chen/)).toBeInTheDocument();
+    expect(within(asks).getByText(/I live near the Coastal stores/)).toBeInTheDocument();
+    const who = screen.getByRole('list', { name: 'Drivers and their clients' });
+    expect(within(who).getByText('All clients')).toBeInTheDocument();
+    expect(within(who).getByText('no clients yet')).toBeInTheDocument();
+    await userEvent.click(within(asks).getByRole('button', { name: 'Approve' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/driver-access/x1/decide', { method: 'POST', body: { decision: 'APPROVED' } }),
+    );
   });
 
   it('a seat every driver declined comes to the top — dispatch it, or offer it again', async () => {

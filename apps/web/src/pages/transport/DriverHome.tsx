@@ -34,6 +34,10 @@ import {
   driverArrived,
   getRiderProfile,
   getSeatRequests,
+  getDriverClients,
+  requestDriverClients,
+  dropDriverClient,
+  type DriverAccessStatus,
   getDriverRunLive,
   getDriverWeek,
   getDriverRuns,
@@ -232,6 +236,7 @@ export function DriverHome() {
         }
       />
       <SeatRequests onRider={setRider} />
+      <DriverClients />
       {runs.isLoading ? (
         <div className="space-y-3">
           <Skeleton className="h-20" />
@@ -592,6 +597,9 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
       ) : (
         <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">{t('drive.noVan')}</p>
       )}
+      {q.data.clients && !q.data.clients.all && q.data.clients.approved === 0 && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">{t('drive.noClients')}</p>
+      )}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
           {t('drive.requests')} <span className="text-white">{requests.length}</span>
@@ -677,6 +685,157 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
 }
 
 /** A rider's profile — who they are, how to reach them, how they ride. */
+/* ----- Clients I drive for ---------------------------------------------------- */
+
+/**
+ * Which clients this driver picks up for. They ask — all clients, or the
+ * ones they want — transportation approves or denies, and seat requests
+ * from approved clients are the only ones they see. A new driver drives
+ * for nobody, so this sits right under the (empty) requests.
+ */
+function DriverClients() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ['transport', 'driver', 'clients'], queryFn: getDriverClients, refetchInterval: 60_000 });
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  if (q.isError) return <QueryError what="your clients" query={q} />;
+  if (!q.data) return null;
+  // Tolerate a thin answer (an older API, a generic test mock): no clients is a quiet card.
+  const d = { ...q.data, clients: q.data.clients ?? [] };
+  const allApproved = d.all?.status === 'APPROVED';
+  const approved = allApproved ? [t('drive.allClients')] : d.clients.filter((c) => c.access?.status === 'APPROVED').map((c) => c.name);
+  const waiting = [
+    ...(d.all?.status === 'REQUESTED' ? [t('drive.allClients')] : []),
+    ...d.clients.filter((c) => c.access?.status === 'REQUESTED').map((c) => c.name),
+  ];
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
+  const send = async () => {
+    setBusy('send');
+    try {
+      await requestDriverClients({ ...(all ? { all: true } : { clientIds: picked }), ...(note.trim() ? { note: note.trim() } : {}) });
+      hapticConfirm();
+      toast.success(t('drive.clientsAsked'));
+      setOpen(false);
+      setAll(false);
+      setPicked([]);
+      setNote('');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+  const drop = async (key: string) => {
+    setBusy(key);
+    try {
+      await dropDriverClient(key);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  };
+  const box =
+    'h-4 w-4 shrink-0 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 disabled:opacity-60';
+  return (
+    <section aria-label={t('drive.clients')} className="mb-4 rounded-lg border border-navy-secondary bg-navy px-3.5 py-3">
+      <div className="flex items-start gap-3">
+        <Store className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-white">{t('drive.clients')}</h2>
+          <p className="text-xs text-silver">{approved.length ? approved.join(', ') : t('drive.clientsNone')}</p>
+          {waiting.length > 0 && <p className="text-xs text-warning">{t('drive.clientsPending', { names: waiting.join(', ') })}</p>}
+        </div>
+        <Button size="sm" variant={approved.length ? 'secondary' : 'primary'} onClick={() => setOpen((o) => !o)}>
+          {open ? t('drive.clientsCancel') : approved.length ? t('drive.clientsChange') : t('drive.clientsAsk')}
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-2 border-t border-navy-secondary pt-3">
+          <p className="text-xs text-silver">{t('drive.clientsBody')}</p>
+          <ul className="space-y-1.5">
+            {!allApproved && (
+              <li className="flex items-center gap-2">
+                <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-white coarse:min-h-11">
+                  <input
+                    type="checkbox"
+                    checked={all || d.all?.status === 'REQUESTED'}
+                    disabled={d.all?.status === 'REQUESTED'}
+                    onChange={(e) => setAll(e.target.checked)}
+                    className={box}
+                  />
+                  <span className="truncate">{t('drive.allClients')}</span>
+                  {d.all && <AccessChip status={d.all.status} />}
+                </label>
+                {d.all?.status === 'REQUESTED' && (
+                  <button type="button" onClick={() => void drop('all')} disabled={busy !== null} className="text-xs text-silver hover:text-white coarse:min-h-11">
+                    {t('drive.clientsWithdraw')}
+                  </button>
+                )}
+              </li>
+            )}
+            {d.clients.map((c) => {
+              const st = c.access?.status ?? null;
+              const locked = allApproved || st === 'APPROVED' || st === 'REQUESTED';
+              return (
+                <li key={c.id} className="flex items-center gap-2">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-white coarse:min-h-11">
+                    <input
+                      type="checkbox"
+                      checked={locked || all || picked.includes(c.id)}
+                      disabled={locked || all}
+                      onChange={(e) => setPicked((p) => (e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id)))}
+                      className={box}
+                    />
+                    <span className="truncate">{c.name}</span>
+                    {st && !allApproved && <AccessChip status={st} />}
+                  </label>
+                  {st === 'DENIED' && c.access?.decisionNote && (
+                    <span className="max-w-[45%] truncate text-xs text-silver/70">{c.access.decisionNote}</span>
+                  )}
+                  {(st === 'APPROVED' || st === 'REQUESTED') && !allApproved && (
+                    <button type="button" onClick={() => void drop(c.id)} disabled={busy !== null} className="shrink-0 text-xs text-silver hover:text-white coarse:min-h-11">
+                      {st === 'APPROVED' ? t('drive.clientsRemove') : t('drive.clientsWithdraw')}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={300}
+            placeholder={t('drive.clientsNote')}
+            aria-label={t('drive.clientsNote')}
+            className="h-11 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-base text-white placeholder:text-silver/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          />
+          <Button size="sm" onClick={() => void send()} loading={busy === 'send'} disabled={(!all && picked.length === 0) || busy !== null}>
+            {t('drive.clientsSend')}
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AccessChip({ status }: { status: DriverAccessStatus }) {
+  const { t } = useI18n();
+  const tone =
+    status === 'APPROVED' ? 'bg-success/15 text-success' : status === 'REQUESTED' ? 'bg-warning/15 text-warning' : 'bg-alert/15 text-alert';
+  return (
+    <span className={cn('inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-2xs font-semibold', tone)}>
+      {t(`drive.status.${status}` as MessageKey)}
+    </span>
+  );
+}
+
 function RiderDialog({ associateId, onClose }: { associateId: string; onClose: () => void }) {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ['transport', 'rider', associateId], queryFn: () => getRiderProfile(associateId) });

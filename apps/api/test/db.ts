@@ -163,6 +163,13 @@ export async function createUser(opts: CreateUserOpts) {
       associateId: opts.associateId ?? null,
     },
   });
+  // Mirrors the deploy: every driver already on the road was granted all
+  // clients. A test for the new-driver path deletes this row.
+  if (opts.role === 'DRIVER') {
+    await prisma.driverClientAccess.create({
+      data: { driverUserId: user.id, clientId: null, status: 'APPROVED', decidedAt: new Date() },
+    });
+  }
   return { user, password };
 }
 

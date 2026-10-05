@@ -25,6 +25,7 @@ import {
   tripStates,
 } from '../lib/transportSeats.js';
 import { haversineM } from '../lib/transportLive.js';
+import { approvedForClient, assertDriverMayServe, driverAccessFor, ridesForAccess } from '../lib/driverAccess.js';
 import { clusterAndOrder, type ClusterMember } from '../lib/rideClusters.js';
 import {
   MIN_PING_GAP_MS,
@@ -1346,6 +1347,8 @@ transportRouter.get('/driver/requests', DRIVE, async (req, res) => {
   const me = req.user!.id;
   const van = await myVan(me);
   const now = new Date();
+  // Only the clients the driver is approved for — nothing, until one is.
+  const access = await driverAccessFor(me);
   const [open, myRuns] = await Promise.all([
     prisma.ride.findMany({
       where: {
@@ -1353,6 +1356,7 @@ transportRouter.get('/driver/requests', DRIVE, async (req, res) => {
         runId: null,
         targetAt: { gt: now, lt: new Date(now.getTime() + 8 * 86_400_000) },
         rejections: { none: { driverUserId: me } },
+        ...ridesForAccess(access),
       },
       orderBy: { targetAt: 'asc' },
       take: 100,
@@ -1373,6 +1377,11 @@ transportRouter.get('/driver/requests', DRIVE, async (req, res) => {
     );
   res.json({
     van: van ? { id: van.id, name: van.name, plate: van.plate, capacity: van.capacity, look: vanLook(van) } : null,
+    clients: {
+      all: access.all,
+      approved: access.all ? await prisma.client.count({ where: { status: 'ACTIVE', deletedAt: null } }) : access.clientIds.size,
+      pending: access.pending,
+    },
     requests: await (async () => {
       const trips = await tripStates(open.map((r) => ({ ...r, locationId: r.location.id })));
       return open.map((r) => {
@@ -1429,10 +1438,11 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
       zip: true,
       latitude: true,
       longitude: true,
-      client: { select: { name: true } },
+      client: { select: { id: true, name: true } },
     },
   });
   if (!location) throw new HttpError(404, 'not_found', 'Store not found.');
+  await assertDriverMayServe(req, location.client.id);
   const members: ClusterMember[] = [];
   for (const r of rides) {
     members.push({
@@ -1543,6 +1553,7 @@ transportRouter.post('/rides/:id/pin', DRIVE, async (req, res) => {
  */
 transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
   const me = req.user!.id;
+  const access = await driverAccessFor(me);
   const q = z
     .object({
       from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -1588,6 +1599,7 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
         serviceDate: { gte: from, lte: to },
         targetAt: { gt: now },
         rejections: { none: { driverUserId: me } },
+        ...ridesForAccess(access),
       },
       select: { serviceDate: true, direction: true, windowLabel: true, targetAt: true, location: { select: { id: true, name: true, timezone: true } } },
     }),
@@ -1664,6 +1676,8 @@ transportRouter.post('/driver/requests/:rideId/accept', DRIVE, async (req, res) 
   if (!ride || ride.status !== 'REQUESTED' || ride.runId) {
     throw new HttpError(409, 'taken', 'This seat is no longer open — another van has it, or it was cancelled.');
   }
+  const seat = await prisma.ride.findUniqueOrThrow({ where: { id: rideId }, select: { location: { select: { clientId: true } } } });
+  await assertDriverMayServe(req, seat.location.clientId);
   const mine = await prisma.rideRun.findMany({
     where: { driverUserId: me, status: { in: ['PLANNED', 'ACTIVE'] }, serviceDate: ride.serviceDate },
     include: { rides: { where: { status: 'SCHEDULED' }, select: { ...planRideSelect, pickupAt: true } } },
@@ -1765,6 +1779,7 @@ transportRouter.post('/driver/requests/:rideId/decline', DRIVE, async (req, res)
   const { reason } = z.object({ reason: z.string().trim().max(200).optional() }).parse(req.body ?? {});
   const ride = await prisma.ride.findUnique({ where: { id: rideId }, select: rideSelect });
   if (!ride || ride.status !== 'REQUESTED') throw new HttpError(409, 'taken', 'This seat is no longer open.');
+  await assertDriverMayServe(req, ride.location.client.id);
   await prisma.rideRejection.upsert({
     where: { rideId_driverUserId: { rideId, driverUserId: me } },
     create: { rideId, driverUserId: me, reason: reason || null },
@@ -1776,6 +1791,8 @@ transportRouter.post('/driver/requests/:rideId/decline', DRIVE, async (req, res)
       status: 'ACTIVE',
       deletedAt: null,
       assignedVans: { some: { isActive: true } },
+      // Only the drivers who could have taken it: approved for this client.
+      ...approvedForClient(ride.location.client.id),
     },
     select: { id: true },
   });
@@ -2369,6 +2386,237 @@ function toVanView(v: Prisma.VanGetPayload<{ select: typeof vanSelect }>) {
       : null,
   };
 }
+
+/* ===== Which clients a driver picks up for ============================== */
+
+const ClientAccessInput = z
+  .object({
+    all: z.boolean().optional(),
+    clientIds: z.array(z.string().uuid()).max(100).optional(),
+    note: z.string().trim().max(300).optional(),
+  })
+  .refine((v) => v.all || (v.clientIds && v.clientIds.length > 0), { message: 'Pick all clients, or at least one.' });
+
+const accessSelect = {
+  id: true,
+  driverUserId: true,
+  clientId: true,
+  status: true,
+  note: true,
+  decisionNote: true,
+  requestedAt: true,
+  decidedAt: true,
+  driver: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
+  client: { select: { id: true, name: true } },
+  decidedBy: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+} satisfies Prisma.DriverClientAccessSelect;
+
+function toAccessRow(r: Prisma.DriverClientAccessGetPayload<{ select: typeof accessSelect }>) {
+  return {
+    id: r.id,
+    driver: { userId: r.driver.id, name: personName(r.driver) },
+    /** Null: all clients. */
+    client: r.client ? { id: r.client.id, name: r.client.name } : null,
+    status: r.status,
+    note: r.note,
+    decisionNote: r.decisionNote,
+    requestedAt: r.requestedAt.toISOString(),
+    decidedAt: r.decidedAt?.toISOString() ?? null,
+    decidedBy: r.decidedBy ? personName(r.decidedBy) : null,
+  };
+}
+
+/** What the driver sees: every active client, with where they stand on each. */
+async function clientAccessView(driverUserId: string) {
+  const [clients, rows] = await Promise.all([
+    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.driverClientAccess.findMany({ where: { driverUserId }, orderBy: { requestedAt: 'asc' } }),
+  ]);
+  const view = (r: (typeof rows)[number] | null | undefined) =>
+    r
+      ? {
+          id: r.id,
+          status: r.status,
+          note: r.note,
+          decisionNote: r.decisionNote,
+          requestedAt: r.requestedAt.toISOString(),
+          decidedAt: r.decidedAt?.toISOString() ?? null,
+        }
+      : null;
+  const byClient = new Map(rows.filter((r) => r.clientId !== null).map((r) => [r.clientId!, r]));
+  const all = rows.find((r) => r.clientId === null) ?? null;
+  return {
+    all: view(all),
+    clients: clients.map((c) => ({ id: c.id, name: c.name, access: view(byClient.get(c.id)) })),
+    approved: all?.status === 'APPROVED' ? clients.length : clients.filter((c) => byClient.get(c.id)?.status === 'APPROVED').length,
+    pending: rows.filter((r) => r.status === 'REQUESTED').length,
+  };
+}
+
+async function driverName(userId: string): Promise<string> {
+  const u = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { email: true, associate: { select: { firstName: true, lastName: true } } },
+  });
+  return personName(u);
+}
+
+transportRouter.get('/driver/clients', DRIVE, async (req, res) => {
+  res.json(await clientAccessView(req.user!.id));
+});
+
+/**
+ * The driver asks: all clients, or the ones they picked. An approved client
+ * stays approved; a denied one can be asked for again; asking twice is one
+ * request. The desk hears once per request.
+ */
+transportRouter.post('/driver/clients/request', DRIVE, async (req, res) => {
+  const me = req.user!.id;
+  const input = ClientAccessInput.parse(req.body ?? {});
+  const now = new Date();
+  const targets: Array<string | null> = input.all ? [null] : [...new Set(input.clientIds!)];
+  if (!input.all) {
+    const known = await prisma.client.count({ where: { id: { in: targets as string[] }, status: 'ACTIVE', deletedAt: null } });
+    if (known !== targets.length) throw new HttpError(400, 'client_not_found', 'One of those clients is not active.');
+  }
+  const asked: Array<string | null> = [];
+  for (const clientId of targets) {
+    const existing = await prisma.driverClientAccess.findFirst({ where: { driverUserId: me, clientId } });
+    if (existing?.status === 'APPROVED' || existing?.status === 'REQUESTED') continue;
+    if (existing) {
+      await prisma.driverClientAccess.update({
+        where: { id: existing.id },
+        data: { status: 'REQUESTED', note: input.note ?? null, requestedAt: now, decidedAt: null, decidedById: null, decisionNote: null },
+      });
+    } else {
+      await prisma.driverClientAccess.create({ data: { driverUserId: me, clientId, status: 'REQUESTED', note: input.note ?? null, requestedAt: now } });
+    }
+    asked.push(clientId);
+  }
+  if (asked.length > 0) {
+    const names = input.all
+      ? 'all clients'
+      : (await prisma.client.findMany({ where: { id: { in: asked as string[] } }, orderBy: { name: 'asc' }, select: { name: true } }))
+          .map((c) => c.name)
+          .join(', ');
+    const who = await driverName(me);
+    await notifyTransportDesk({
+      subject: `${who} asked to drive for ${names}`,
+      body:
+        `${who} wants to see seat requests from ${names}.` +
+        (input.note ? ` “${input.note}”` : '') +
+        ' Approve or deny it under Fleet → Driver access.',
+      linkUrl: '/transport?tab=vans',
+    });
+    enqueueAudit(
+      { actorUserId: me, action: 'transport.client_access_requested', entityType: 'User', entityId: me, metadata: { all: !!input.all, clientIds: asked, note: input.note ?? null } },
+      'transport',
+    );
+    const desk = await prisma.user.findMany({ where: { ...actsAs('TRANSPORTATION_DIRECTOR'), status: 'ACTIVE', deletedAt: null }, select: { id: true } });
+    for (const u of desk) emitLiveEvent(u.id, 'transport');
+  }
+  res.status(201).json(await clientAccessView(me));
+});
+
+/** The driver withdraws a request, or drops a client they no longer want. */
+transportRouter.delete('/driver/clients/:key', DRIVE, async (req, res) => {
+  const me = req.user!.id;
+  const clientId = req.params.key === 'all' ? null : z.string().uuid().parse(req.params.key);
+  const n = await prisma.driverClientAccess.deleteMany({ where: { driverUserId: me, clientId } });
+  if (n.count === 0) throw new HttpError(404, 'not_found', 'Nothing to remove.');
+  enqueueAudit({ actorUserId: me, action: 'transport.client_access_dropped', entityType: 'User', entityId: me, metadata: { clientId } }, 'transport');
+  res.json(await clientAccessView(me));
+});
+
+/** The desk: every request waiting, and who drives for whom. */
+transportRouter.get('/driver-access', VIEW, async (_req, res) => {
+  const [rows, clients, drivers] = await Promise.all([
+    prisma.driverClientAccess.findMany({ orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }], select: accessSelect }),
+    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.user.findMany({
+      where: { ...actsAs('DRIVER'), status: 'ACTIVE', deletedAt: null },
+      select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
+      orderBy: { email: 'asc' },
+    }),
+  ]);
+  res.json({
+    rows: rows.map(toAccessRow),
+    clients,
+    drivers: drivers.map((d) => ({ userId: d.id, name: personName(d) })).sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
+function tellDriver(driverUserId: string, subject: string, body: string) {
+  void trackNotificationWork(notifyUser(driverUserId, { subject, body, category: 'transport', linkUrl: '/' }));
+  emitLiveEvent(driverUserId, 'transport');
+}
+
+transportRouter.post('/driver-access/:id/decide', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const input = z.object({ decision: z.enum(['APPROVED', 'DENIED']), note: z.string().trim().max(300).optional() }).parse(req.body ?? {});
+  const row = await prisma.driverClientAccess.findUnique({ where: { id }, select: accessSelect });
+  if (!row) throw new HttpError(404, 'not_found', 'Request not found.');
+  if (row.status !== 'REQUESTED') throw new HttpError(409, 'decided', `This request is already ${row.status.toLowerCase()}.`);
+  const updated = await prisma.driverClientAccess.update({
+    where: { id },
+    data: { status: input.decision, decidedAt: new Date(), decidedById: req.user!.id, decisionNote: input.note ?? null },
+    select: accessSelect,
+  });
+  const what = row.client?.name ?? 'all clients';
+  if (input.decision === 'APPROVED') {
+    tellDriver(row.driverUserId, `You now drive for ${what}`, `Seat requests from ${what} show up in your list now.`);
+  } else {
+    tellDriver(row.driverUserId, `${what} was not approved`, input.note ? `Transportation said: “${input.note}”` : 'Transportation did not approve it. Ask them if you think it should be.');
+  }
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.client_access_decided', entityType: 'User', entityId: row.driverUserId, metadata: { accessId: id, clientId: row.clientId, decision: input.decision, note: input.note ?? null } },
+    'transport',
+  );
+  res.json({ row: toAccessRow(updated) });
+});
+
+/** The director's word, directly: a driver drives for all clients, or these. */
+transportRouter.post('/driver-access/grant', MANAGE, async (req, res) => {
+  const input = z
+    .object({ driverUserId: z.string().uuid(), all: z.boolean().optional(), clientIds: z.array(z.string().uuid()).max(100).optional() })
+    .refine((v) => v.all || (v.clientIds && v.clientIds.length > 0), { message: 'Pick all clients, or at least one.' })
+    .parse(req.body ?? {});
+  const driver = await prisma.user.findFirst({ where: { id: input.driverUserId, ...actsAs('DRIVER'), status: 'ACTIVE', deletedAt: null }, select: { id: true } });
+  if (!driver) throw new HttpError(404, 'driver_not_found', 'Pick an active driver.');
+  const now = new Date();
+  const targets: Array<string | null> = input.all ? [null] : [...new Set(input.clientIds!)];
+  for (const clientId of targets) {
+    const existing = await prisma.driverClientAccess.findFirst({ where: { driverUserId: driver.id, clientId } });
+    const data = { status: 'APPROVED' as const, decidedAt: now, decidedById: req.user!.id, decisionNote: null };
+    if (existing) await prisma.driverClientAccess.update({ where: { id: existing.id }, data });
+    else await prisma.driverClientAccess.create({ data: { driverUserId: driver.id, clientId, requestedAt: now, ...data } });
+  }
+  const what = input.all
+    ? 'all clients'
+    : (await prisma.client.findMany({ where: { id: { in: targets as string[] } }, select: { name: true } })).map((c) => c.name).join(', ');
+  tellDriver(driver.id, `You now drive for ${what}`, `Transportation added ${what} to your clients. Their seat requests show up in your list now.`);
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.client_access_granted', entityType: 'User', entityId: driver.id, metadata: { all: !!input.all, clientIds: targets } },
+    'transport',
+  );
+  res.json(await clientAccessView(driver.id));
+});
+
+transportRouter.delete('/driver-access/:id', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const row = await prisma.driverClientAccess.findUnique({ where: { id }, select: accessSelect });
+  if (!row) throw new HttpError(404, 'not_found', 'Not found.');
+  await prisma.driverClientAccess.delete({ where: { id } });
+  const what = row.client?.name ?? 'all clients';
+  if (row.status === 'APPROVED') {
+    tellDriver(row.driverUserId, `You no longer drive for ${what}`, `Transportation took ${what} off your clients. Their seat requests no longer show in your list.`);
+  }
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.client_access_revoked', entityType: 'User', entityId: row.driverUserId, metadata: { accessId: id, clientId: row.clientId, was: row.status } },
+    'transport',
+  );
+  res.json({ ok: true });
+});
 
 transportRouter.get('/vans', VIEW, async (_req, res) => {
   const vans = await prisma.van.findMany({ orderBy: [{ isActive: 'desc' }, { name: 'asc' }], select: vanSelect });

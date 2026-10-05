@@ -477,6 +477,8 @@ model User {
   transportIssuesReported           TransportIssue[]              @relation("TransportIssueReporter")
   assignedVans                      Van[]                         @relation("VanDriver")
   rideRejections                    RideRejection[]               @relation("RideRejectionDriver")
+  driverClientAccess                DriverClientAccess[]          @relation("DriverAccessDriver")
+  driverAccessDecided               DriverClientAccess[]          @relation("DriverAccessDecider")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
@@ -709,6 +711,7 @@ model Client {
 
   applications           Application[]
   users                  User[]
+  driverAccess           DriverClientAccess[]
   policies               Policy[]
   templates              OnboardingTemplate[]
   readyToWorkHandoffs    ReadyToWorkHandoff[]
@@ -8397,4 +8400,38 @@ model PacketDownload {
 
   @@index([createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Which clients a driver picks up for. A driver asks (all clients — a null
+/// client — or the ones they want), the Transportation Director approves or
+/// denies, and the driver sees seat requests from approved clients only.
+/// The director can also grant or revoke directly.
+model DriverClientAccess {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  driverUserId String             @db.Uuid
+  clientId     String?            @db.Uuid
+  status       DriverAccessStatus @default(REQUESTED)
+  /// The driver's note with the request.
+  note         String?            @db.VarChar(300)
+  /// The director's reason, shown to the driver.
+  decisionNote String?            @db.VarChar(300)
+  requestedAt  DateTime           @default(now()) @db.Timestamptz(6)
+  decidedAt    DateTime?          @db.Timestamptz(6)
+  decidedById  String?            @db.Uuid
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(6)
+
+  driver    User    @relation("DriverAccessDriver", fields: [driverUserId], references: [id], onDelete: Cascade)
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  decidedBy User?   @relation("DriverAccessDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([driverUserId, clientId])
+  @@index([status, requestedAt])
+  @@index([clientId])
+}
+
+enum DriverAccessStatus {
+  REQUESTED
+  APPROVED
+  DENIED
 }
