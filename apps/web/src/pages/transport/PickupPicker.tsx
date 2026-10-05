@@ -5,7 +5,15 @@ import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
-import { locateRidePlace, searchRideAddresses, updateRidePlace, whereAmI, type AddressSuggestion, type GeoPoint } from '@/lib/transportApi';
+import {
+  addRidePlace,
+  locateRidePlace,
+  searchRideAddresses,
+  updateRidePlace,
+  whereAmI,
+  type AddressSuggestion,
+  type GeoPoint,
+} from '@/lib/transportApi';
 import { LazyLiveMap } from '@/components/transport/LazyLiveMap';
 import {
   Dialog,
@@ -229,19 +237,25 @@ export function PickupPicker({
   locationId,
   label,
   invalid,
+  profileAddress = null,
   pinPlaceId = null,
   onPinPlaceDone,
+  onPlaceAdded,
 }: {
   value: Pickup | null;
   onChange: (p: Pickup | null) => void;
   stops: Array<{ id: string; name: string; address: string }>;
   places: Array<{ id: string; label: string; address: string; located?: boolean }>;
+  /** The home address from onboarding, when it isn't a saved place yet. */
+  profileAddress?: { address: string } | null;
   locationId: string | null;
   label: string;
   invalid?: boolean;
   /** A saved place the booking refused for having no pin: open the pin step on it. */
   pinPlaceId?: string | null;
   onPinPlaceDone?: () => void;
+  /** The onboarding address was just saved as a place — the page refetches. */
+  onPlaceAdded?: () => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -260,6 +274,11 @@ export function PickupPicker({
   const [placePin, setPlacePin] = useState<{ place: { id: string; label: string; address: string }; center: GeoPoint } | null>(null);
   // The search provider was down or busy — not "no such address".
   const [unavailable, setUnavailable] = useState(false);
+  // Where a pin for the typed address would start, when nothing matched.
+  const [searchCenter, setSearchCenter] = useState<GeoPoint | null>(null);
+  // The typed address they chose to keep, waiting for its pin.
+  const [typedPin, setTypedPin] = useState<{ address: string; center: GeoPoint } | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = 'pickup-suggestions';
 
@@ -278,15 +297,17 @@ export function PickupPicker({
     setSearching(true);
     const timer = window.setTimeout(async () => {
       try {
-        const { results: found, unavailable: down } = await searchRideAddresses(q, locationId);
+        const { results: found, unavailable: down, center } = await searchRideAddresses(q, locationId);
         if (seq.current === mine) {
           setResults(found);
           setUnavailable(!!down);
+          setSearchCenter(center ?? null);
         }
       } catch {
         if (seq.current === mine) {
           setResults([]);
           setUnavailable(true);
+          setSearchCenter(null);
         }
       } finally {
         if (seq.current === mine) setSearching(false);
@@ -302,6 +323,19 @@ export function PickupPicker({
   // network call is still in flight — which is why they are listed first.
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
+    // The home address from onboarding: one tap, no typing. Standing in
+    // the store with "Take me to" open, this is the answer most people
+    // need — and typing it was where "it won't suggest my address" began.
+    if (profileAddress && (!q || match(profileAddress.address))) {
+      out.push({
+        key: 'profile',
+        icon: Home,
+        title: t('ride.profileAddress'),
+        detail: profileAddress.address,
+        badge: t('ride.profileBadge'),
+        onPick: () => void saveProfileAddress(profileAddress.address),
+      });
+    }
     for (const p of places) {
       if (q && !match(p.label) && !match(p.address)) continue;
       // Saved before the picker and never placed: it books once a pin is
@@ -346,9 +380,27 @@ export function PickupPicker({
           }),
       });
     }
+    // What they typed, kept as typed, with a pin they place themselves.
+    // The way out when no suggestion is theirs — an apartment complex, a
+    // lot in a park, a road the provider doesn't know — and the only
+    // other button was "use where I am", which at the store is the store.
+    const typed = query.trim();
+    if (typed.length >= MIN_QUERY && !searching) {
+      out.push({
+        key: 'typed',
+        icon: MapPin,
+        title: t('ride.useTyped', { text: typed }),
+        detail: t('ride.useTypedDetail'),
+        onPick: () => {
+          setSearchScreen(false);
+          setOpen(false);
+          setTypedPin({ address: typed, center: searchCenter ?? results[0] ?? { lat: 30.39, lng: -86.49 } });
+        },
+      });
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [places, stops, results, q, t]);
+  }, [places, stops, results, q, t, profileAddress, searching, searchCenter]);
 
   useEffect(() => setActive(0), [rows.length]);
 
@@ -388,6 +440,31 @@ export function PickupPicker({
       setPlacePin({ place, center: at });
     } catch {
       setNote(t('ride.placeNoMap'));
+    }
+  };
+
+  /**
+   * The onboarding address becomes their "Home" place. Placed by the
+   * lookup it is chosen at once; not placed, it goes through the same pin
+   * step as any saved address with none.
+   */
+  const saveProfileAddress = async (address: string) => {
+    if (savingProfile) return;
+    setSavingProfile(true);
+    setNote(t('ride.placeLocating'));
+    try {
+      const { place } = await addRidePlace({ label: t('ride.saveAsPlaceholder'), address });
+      onPlaceAdded?.();
+      setNote(null);
+      if (place.located) {
+        choose({ kind: 'place', id: place.id, label: place.label, address: place.address });
+      } else {
+        await startPlacePin(place);
+      }
+    } catch {
+      setNote(t('ride.placeNoMap'));
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -488,6 +565,26 @@ export function PickupPicker({
             onChange({ ...c, lat: p.lat, lng: p.lng, precision: 'exact' });
             setQuery('');
             setResults([]);
+          }}
+        />
+      );
+    }
+    if (typedPin) {
+      const tp = typedPin;
+      return (
+        <ConfirmPinDialog
+          pickup={{ address: tp.address, lat: tp.center.lat, lng: tp.center.lng }}
+          body={t('ride.typedPinBody')}
+          onCancel={() => {
+            setTypedPin(null);
+            startSearch();
+          }}
+          onConfirm={(p) => {
+            setTypedPin(null);
+            onChange({ kind: 'address', address: tp.address, lat: p.lat, lng: p.lng, precision: 'exact' });
+            setQuery('');
+            setResults([]);
+            setNote(null);
           }}
         />
       );

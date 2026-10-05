@@ -178,6 +178,8 @@ export interface MyTransport {
     | { kind: 'address'; address: string; lat: number | null; lng: number | null; label: string }
     | null;
   defaultStoreId: string | null;
+  /** The home address from onboarding, when it isn't a saved place yet — one tap, no typing. */
+  profileAddress?: { address: string } | null;
   charges: {
     pendingCents: number;
     rides: number;
@@ -275,7 +277,12 @@ export interface AddressSuggestion {
 
 /** Addresses matching what they have typed so far, biased toward the store. */
 export const searchRideAddresses = (q: string, locationId?: string | null) =>
-  apiFetch<{ results: AddressSuggestion[]; unavailable?: boolean }>(
+  apiFetch<{
+    results: AddressSuggestion[];
+    unavailable?: boolean;
+    /** When nothing matched: where a pin for the typed address should start (the street, else the store). */
+    center?: (GeoPoint & { approximate: boolean }) | null;
+  }>(
     `/transport/me/ride-addresses?q=${encodeURIComponent(q)}${locationId ? `&locationId=${locationId}` : ''}`,
   );
 

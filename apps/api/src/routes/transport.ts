@@ -139,7 +139,7 @@ async function notifyTransportDesk(opts: { subject: string; body: string; linkUr
 transportRouter.get('/me', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const now = new Date();
-  const [settings, consent, places, stops, stores, rides, shifts, payday] = await Promise.all([
+  const [settings, consent, places, stops, stores, rides, shifts, payday, profile] = await Promise.all([
     getTransportSettings(),
     prisma.rideConsent.findUnique({ where: { associateId } }),
     prisma.ridePlace.findMany({ where: { associateId }, orderBy: { createdAt: 'asc' } }),
@@ -171,7 +171,27 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       select: { id: true, startsAt: true, endsAt: true, position: true, locationId: true },
     }),
     nextPaydayFor(associateId),
+    prisma.associate.findUnique({
+      where: { id: associateId },
+      select: { addressLine1: true, addressLine2: true, city: true, state: true, zip: true },
+    }),
   ]);
+  // The home address they gave at onboarding. Standing in the store with
+  // "Take me to" open, this is the one answer that needs no typing — and
+  // typing was where "the address bar won't suggest it" happened.
+  const profileLine = profile?.addressLine1
+    ? [
+        [profile.addressLine1, profile.addressLine2].filter(Boolean).join(' '),
+        profile.city,
+        [profile.state, profile.zip].filter(Boolean).join(' '),
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : null;
+  const profileAddress =
+    profileLine && !places.some((p) => p.address.trim().toLowerCase() === profileLine.toLowerCase())
+      ? { address: profileLine }
+      : null;
   const owed = await prisma.ride.findMany({
     where: { associateId, chargeCents: { gt: 0 }, waivedAt: null, chargedRunId: null },
     select: { chargeCents: true, status: true },
@@ -253,6 +273,7 @@ transportRouter.get('/me', RIDE, async (req, res) => {
     })),
     defaultPickup,
     defaultStoreId,
+    profileAddress,
     charges: {
       pendingCents: owed.reduce((n, r) => n + r.chargeCents, 0),
       rides: owed.filter((r) => r.status !== 'NO_SHOW').length,
@@ -407,7 +428,19 @@ transportRouter.get('/me/ride-addresses', RIDE, async (req, res) => {
     .parse(req.query);
 
   const near = q.locationId ? await storePointById(q.locationId) : null;
-  res.json(await searchAddresses(q.q, near));
+  const found = await searchAddresses(q.q, near);
+  // Nothing matched: the rider can still use what they typed and point to
+  // it on a map. The map opens on the street if the provider knows the
+  // street without the number (common for a new subdivision or a lot in a
+  // park), else on the store they are booking against.
+  let center: (GeoPoint & { approximate: boolean }) | null = null;
+  if (found.results.length === 0) {
+    const street = q.q.replace(/^\s*\d+[a-z]?\s+/i, '').trim();
+    const onStreet = street !== q.q.trim() && street.length >= 4 ? await searchAddresses(street, near) : null;
+    const hit = onStreet?.results[0];
+    center = hit ? { lat: hit.lat, lng: hit.lng, approximate: true } : near ? { ...near, approximate: true } : null;
+  }
+  res.json({ ...found, center });
 });
 
 /**

@@ -1709,6 +1709,7 @@ export function BookRideDialog({
             onChange={setPickup}
             stops={data.stops}
             places={data.places}
+            profileAddress={data.profileAddress ?? null}
             locationId={store?.id ?? null}
             label={pickupLabel}
             invalid={!!error && !pickup}
@@ -1717,6 +1718,7 @@ export function BookRideDialog({
               setPinPlaceId(null);
               setError(null);
             }}
+            onPlaceAdded={() => void queryClient.invalidateQueries({ queryKey: ['transport', 'me'] })}
           />
           {/* Offered only for an address they searched for: a stop or an
               already-saved place has nothing to save. */}

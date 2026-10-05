@@ -709,7 +709,47 @@ describe('short notice, saved places that need a pin, and your own store', () =>
       throw new Error('geocoder 429');
     });
     const res = await kimAgent.get(`/transport/me/ride-addresses?q=4411 Beach Blvd&locationId=${store.id}`);
-    expect(res.body).toEqual({ results: [], unavailable: true });
+    expect(res.body).toEqual({ results: [], unavailable: true, center: null });
+  });
+
+  it('standing in the store with "Take me to" open: the home address from onboarding is one tap, and a typed address nobody can suggest still gets a pin', async () => {
+    const { kimAgent, kim, store } = await seed();
+    await kimAgent.post('/transport/me/consent');
+    await prisma.associate.update({
+      where: { id: kim.id },
+      data: { addressLine1: '12 Pine Grove', addressLine2: 'Lot 4', city: 'Freeport', state: 'FL', zip: '32439' },
+    });
+    const me = await kimAgent.get('/transport/me');
+    expect(me.body.profileAddress).toEqual({ address: '12 Pine Grove Lot 4, Freeport, FL 32439' });
+
+    // Saving it as "Home" is the one tap; once saved it stops being offered twice.
+    const saved = await kimAgent.post('/transport/me/places').send({ label: 'Home', address: me.body.profileAddress.address });
+    expect(saved.status).toBe(201);
+    expect((await kimAgent.get('/transport/me')).body.profileAddress).toBeNull();
+
+    // The search knows the street but not the number: the map opens on the
+    // street, and the typed words plus the pin are the pickup.
+    const seen: string[] = [];
+    setGeocoderForTests(null, null, async (q) => {
+      seen.push(q);
+      return q === 'Pine Grove, Freeport FL'
+        ? [{ label: 'Pine Grove', address: 'Pine Grove, Freeport, Florida', lat: 30.5, lng: -86.1, precision: 'approximate' as const }]
+        : [];
+    });
+    const res = await kimAgent.get(`/transport/me/ride-addresses?q=${encodeURIComponent('12 Pine Grove, Freeport FL')}&locationId=${store.id}`);
+    expect(res.body).toEqual({ results: [], unavailable: false, center: { lat: 30.5, lng: -86.1, approximate: true } });
+    expect(seen).toEqual(['12 Pine Grove, Freeport FL', 'Pine Grove, Freeport FL']);
+    const booked = await book(kimAgent, {
+      direction: 'FROM_WORK',
+      locationId: store.id,
+      address: '12 Pine Grove, Freeport FL',
+      lat: 30.5012,
+      lng: -86.1034,
+      targetAt: inHours(20).toISOString(),
+    });
+    expect(booked.status).toBe(201);
+    expect(booked.body.ride.pickup.address).toBe('12 Pine Grove, Freeport FL');
+    expect(booked.body.ride.point).toEqual({ lat: 30.5012, lng: -86.1034 });
   });
 
   it('the shift list says which legs are planned, short notice, or closed', async () => {

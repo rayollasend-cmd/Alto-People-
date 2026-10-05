@@ -739,6 +739,41 @@ describe('the Ride tab, one tap at a time', () => {
     // Nothing chosen, so nothing to save under a name yet.
     expect(within(dialog).queryByLabelText(/Save as/i)).not.toBeInTheDocument();
   });
+
+  it('in the store with "Take me to" open: the home address on file is one tap, and a typed address with no match still gets a pin', async () => {
+    const posted: unknown[] = [];
+    routes((path, init) => {
+      if (path === '/transport/me') return me({ stops: [], places: [], profileAddress: { address: '12 Pine Grove Lot 4, Freeport, FL 32439' } });
+      if (path.startsWith('/transport/me/ride-addresses?')) {
+        return { results: [], unavailable: false, center: { lat: 30.5, lng: -86.1, approximate: true } };
+      }
+      if (path === '/transport/me/places' && init?.method === 'POST') {
+        posted.push(init.body);
+        return { place: { id: 'p-home', label: 'Home', address: '12 Pine Grove Lot 4, Freeport, FL 32439', lat: 30.5, lng: -86.1, located: true } };
+      }
+    });
+    renderAs('ASSOCIATE', <RideHome />);
+    await userEvent.click((await screen.findAllByRole('button', { name: /Request a seat/i }))[0]!);
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Home' }));
+    const box = within(dialog).getByRole('combobox');
+    await userEvent.click(box);
+
+    // One tap: the onboarding address becomes "Home" and is the pickup.
+    await userEvent.click(await within(dialog).findByRole('option', { name: /Home address on file/ }));
+    expect(posted[0]).toMatchObject({ label: 'Home', address: '12 Pine Grove Lot 4, Freeport, FL 32439' });
+    expect(await within(dialog).findByText('12 Pine Grove Lot 4, Freeport, FL 32439')).toBeInTheDocument();
+
+    // Change it: type an address the search can't suggest — the typed
+    // words are still offered, and confirming the pin makes them the pickup.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Change' }));
+    await userEvent.type(within(dialog).getByRole('combobox'), '7 Sandpiper Cove');
+    await userEvent.click(await within(dialog).findByRole('option', { name: /Use “7 Sandpiper Cove”/ }));
+    const pin = await screen.findByRole('dialog', { name: 'Move the pin to your door' });
+    expect(within(pin).getByText(/We couldn’t find that address/)).toBeInTheDocument();
+    await userEvent.click(within(pin).getByRole('button', { name: 'This is the spot' }));
+    expect(await within(dialog).findByText('7 Sandpiper Cove')).toBeInTheDocument();
+  });
 });
 
 describe('<RideStrip> — the van on Home', () => {
