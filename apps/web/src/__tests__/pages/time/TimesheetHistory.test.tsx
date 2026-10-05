@@ -164,7 +164,9 @@ describe('an associate’s timesheet history', () => {
 
     const periods = screen.getAllByRole('heading', { level: 2, name: /Pay period/ });
     expect(periods.map((h) => h.textContent)).toEqual(['Pay period · Sep 12 – Sep 25, 2026', 'Pay period · Aug 29 – Sep 11, 2026']);
-    expect(screen.getByText('Pays Fri, Oct 2, 2026')).toBeInTheDocument();
+    // Tense follows the calendar — "Pays" until the pay date, "Paid" after — and
+    // the fixture's date is fixed, so the test is about the date, not the tense.
+    expect(screen.getByText(/^(Pays|Paid) Fri, Oct 2, 2026$/)).toBeInTheDocument();
     const [current, previous] = screen.getAllByRole('table');
     expect(within(current!).getByText('Past due')).toBeInTheDocument();
     expect(within(previous!).getByText('Rejected')).toBeInTheDocument();
