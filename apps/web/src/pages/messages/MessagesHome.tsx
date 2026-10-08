@@ -56,6 +56,11 @@ import { downloadStatementFile } from '@/pages/clients/statementsShared';
  * something.") is shown as is; a crash or a lost connection isn't the
  * user's to read — they're told their message is still there to retry.
  */
+/** The Message.body column, counted in characters as the server counts. */
+const MESSAGE_MAX = 4000;
+/** Show the counter from here on — before the limit bites, not after. */
+const COUNTER_FROM = MESSAGE_MAX - 500;
+
 function failureText(err: unknown, fallback: string): string {
   return err instanceof ApiError && err.status < 500 ? err.message : fallback;
 }
@@ -362,9 +367,15 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
     void markRead(id).then(() => queryClient.invalidateQueries({ queryKey: ['messages', 'inbox'] }));
   }, [id, lastMessageId, queryClient]);
 
+  const length = Array.from(draft).length;
+  const tooLong = length > MESSAGE_MAX;
   const send = useCallback(async () => {
     const body = draft.trim();
     if (!body) return;
+    if (Array.from(body).length > MESSAGE_MAX) {
+      toast.error(t('msg.tooLong', { max: MESSAGE_MAX.toLocaleString() }));
+      return;
+    }
     setBusy(true);
     try {
       await sendMessage(id, body);
@@ -496,12 +507,25 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
             className="min-h-10 flex-1 resize-none"
             aria-label={t('msg.placeholder')}
           />
-          <Button size="md" onClick={() => void send()} loading={busy} disabled={!draft.trim()}>
+          <Button size="md" onClick={() => void send()} loading={busy} disabled={!draft.trim() || tooLong}>
             <Send className="h-4 w-4" aria-hidden="true" />
             <span className="sr-only">{t('msg.send')}</span>
           </Button>
         </div>
-        <p className="mt-1 px-1 text-2xs text-silver/40">{t('msg.recordNote')}</p>
+        <div className="mt-1 flex items-baseline justify-between gap-3 px-1">
+          <p className="text-2xs text-silver/40">{t('msg.recordNote')}</p>
+          {length >= COUNTER_FROM && (
+            <p
+              role={tooLong ? 'alert' : 'status'}
+              aria-live="polite"
+              className={cn('shrink-0 text-2xs tabular-nums', tooLong ? 'font-semibold text-alert' : 'text-silver/70')}
+            >
+              {tooLong
+                ? t('msg.tooLong', { max: MESSAGE_MAX.toLocaleString() })
+                : t('msg.charCount', { count: length.toLocaleString(), max: MESSAGE_MAX.toLocaleString() })}
+            </p>
+          )}
+        </div>
       </footer>
     </div>
   );

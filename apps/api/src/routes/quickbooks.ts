@@ -23,6 +23,7 @@ import {
   saveConnection,
   syncAssociateToQbo,
   verifyState,
+  connectionNeedsReconnect,
 } from '../lib/quickbooks.js';
 import { recordPayrollEvent } from '../lib/audit.js';
 
@@ -48,6 +49,10 @@ quickbooksRouter.get('/status', VIEW, async (req, res, next) => {
     });
     const body: QboStatus = {
       connected: !!conn,
+      // Tokens written under a previous encryption key: still "connected"
+      // on paper, unusable in practice. The UI offers Reconnect instead of
+      // letting the first account lookup fail.
+      needsReconnect: conn ? connectionNeedsReconnect(conn) : false,
       realmId: conn?.realmId ?? null,
       expiresAt: conn?.expiresAt ? conn.expiresAt.toISOString() : null,
       lastRefreshedAt: conn?.lastRefreshedAt

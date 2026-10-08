@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Link as LinkIcon, Save, Unlink, Users } from 'lucide-react';
+import { Link as LinkIcon, RefreshCw, Save, Unlink, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type { QboAccount, QboAccountConfigInput, QboStatus } from '@alto-people/shared';
 import {
@@ -193,7 +193,9 @@ export function QuickbooksSection({ clientId }: Props) {
         <CardTitle className="flex items-center gap-2">
           <LinkIcon className="h-4 w-4 text-gold" />
           QuickBooks
-          {status.connected ? (
+          {status.connected && status.needsReconnect ? (
+            <Badge variant="pending">Needs reconnect</Badge>
+          ) : status.connected ? (
             <Badge variant="success">Connected</Badge>
           ) : (
             <Badge variant="outline">Not connected</Badge>
@@ -208,6 +210,25 @@ export function QuickbooksSection({ clientId }: Props) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {status.connected && status.needsReconnect && (
+          <div className="flex flex-wrap items-start gap-3 rounded-md border border-warning/40 bg-warning/[0.07] p-3">
+            <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-medium text-white">QuickBooks needs to be reconnected</div>
+              <div className="mt-0.5 text-silver">
+                The stored connection can no longer be used — its tokens were saved before the encryption key changed.
+                Reconnecting signs in to Intuit again and keeps the account mapping below. Payroll runs won’t post to
+                QuickBooks until then.
+              </div>
+            </div>
+            {canManage && (
+              <Button size="sm" onClick={onConnect} loading={connecting}>
+                <RefreshCw className="h-4 w-4" />
+                Reconnect QuickBooks
+              </Button>
+            )}
+          </div>
+        )}
         {status.connected ? (
           <ConnectionDetails status={status} />
         ) : (
@@ -219,10 +240,18 @@ export function QuickbooksSection({ clientId }: Props) {
         {canManage && (
           <div className="flex flex-wrap gap-2">
             {status.connected ? (
-              <Button variant="ghost" onClick={onDisconnect} loading={disconnecting}>
-                <Unlink className="h-4 w-4" />
-                Disconnect
-              </Button>
+              <>
+                {status.needsReconnect && (
+                  <Button onClick={onConnect} loading={connecting}>
+                    <RefreshCw className="h-4 w-4" />
+                    Reconnect QuickBooks
+                  </Button>
+                )}
+                <Button variant="ghost" onClick={onDisconnect} loading={disconnecting}>
+                  <Unlink className="h-4 w-4" />
+                  Disconnect
+                </Button>
+              </>
             ) : (
               <Button onClick={onConnect} loading={connecting}>
                 <LinkIcon className="h-4 w-4" />
@@ -232,7 +261,7 @@ export function QuickbooksSection({ clientId }: Props) {
           </div>
         )}
 
-        {status.connected && (
+        {status.connected && !status.needsReconnect && (
           <>
             <AccountMappingForm
               clientId={clientId}

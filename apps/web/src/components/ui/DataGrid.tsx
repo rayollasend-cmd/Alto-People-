@@ -235,22 +235,40 @@ export function DataGrid<T>(props: DataGridProps<T>) {
   return <LocalStateGrid {...props} />;
 }
 
+/** How long the search box waits before the URL follows it. */
+const URL_WRITE_DELAY_MS = 300;
+
 function UrlStateGrid<T>(props: DataGridProps<T>) {
   const [params, setParams] = useSearchParams();
-  const q = params.get('q') ?? '';
-  const setQ = React.useCallback(
-    (next: string) => {
+  const urlQ = params.get('q') ?? '';
+  // The box answers at once; the URL follows a beat later, and only when
+  // it has actually changed. Writing on every keystroke was one
+  // history.replaceState per character — Safari allows a hundred in ten
+  // seconds for the whole page — and the rows never needed the URL to
+  // filter. Back/forward (or a link) still seeds the box from the URL.
+  const [q, setLocalQ] = React.useState(urlQ);
+  const mirrored = React.useRef(urlQ);
+  React.useEffect(() => {
+    if (urlQ === mirrored.current) return;
+    mirrored.current = urlQ;
+    setLocalQ(urlQ);
+  }, [urlQ]);
+  React.useEffect(() => {
+    if (q === mirrored.current) return;
+    const timer = window.setTimeout(() => {
+      mirrored.current = q;
       setParams(
         (p) => {
-          if (next) p.set('q', next);
+          if (q) p.set('q', q);
           else p.delete('q');
           return p;
         },
         { replace: true },
       );
-    },
-    [setParams],
-  );
+    }, URL_WRITE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [q, setParams]);
+  const setQ = React.useCallback((next: string) => setLocalQ(next), []);
   const sortKey = params.get('sort');
   const sortDir = params.get('dir');
   const initialSort = React.useMemo<TableSortState<string> | undefined>(() => {

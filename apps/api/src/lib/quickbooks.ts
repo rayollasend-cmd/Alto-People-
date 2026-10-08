@@ -1,7 +1,39 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Prisma, PrismaClient, QuickbooksConnection } from '@prisma/client';
 import { env } from '../config/env.js';
-import { encryptString, decryptString } from './crypto.js';
+import { encryptString, tryDecryptString } from './crypto.js';
+import { HttpError } from '../middleware/error.js';
+
+/**
+ * The stored OAuth tokens can no longer be used: they were encrypted under
+ * a previous PAYOUT_ENCRYPTION_KEY (the 2026-06-11 rotation — "decryption
+ * failed" on GET /quickbooks/accounts/list ever since), or Intuit refused
+ * the refresh token. Either way the fix is the same and the person in the
+ * client's QuickBooks section can do it: Reconnect. A 409 with a code, so
+ * the UI says so and Sentry (which ignores HttpError) stays quiet.
+ */
+export class QuickbooksReconnectRequired extends HttpError {
+  constructor(clientId: string, reason: 'unreadable_tokens' | 'refresh_rejected') {
+    super(
+      409,
+      'quickbooks_reconnect_required',
+      'QuickBooks needs to be reconnected for this client. Open the client’s QuickBooks section and choose Reconnect — the account mapping is kept.',
+      { clientId, reason },
+    );
+  }
+}
+
+/** A token the current key can read, or the reconnect error. */
+function readToken(blob: Uint8Array, clientId: string): string {
+  const plain = tryDecryptString(blob);
+  if (plain === null) throw new QuickbooksReconnectRequired(clientId, 'unreadable_tokens');
+  return plain;
+}
+
+/** True when the stored tokens were written under a key we no longer have. */
+export function connectionNeedsReconnect(conn: Pick<QuickbooksConnection, 'accessTokenEnc' | 'refreshTokenEnc'>): boolean {
+  return tryDecryptString(conn.accessTokenEnc) === null || tryDecryptString(conn.refreshTokenEnc) === null;
+}
 
 /**
  * Phase 44 — Intuit QuickBooks Online OAuth 2.0 + JournalEntry posting.
@@ -241,12 +273,24 @@ export async function getValidAccessToken(
 
   if (conn.expiresAt.getTime() > Date.now() + 60_000) {
     return {
-      accessToken: decryptString(conn.accessTokenEnc),
+      accessToken: readToken(conn.accessTokenEnc, clientId),
       realmId: conn.realmId,
     };
   }
 
-  const refreshed = await refreshAccessToken(decryptString(conn.refreshTokenEnc));
+  let refreshed: IntuitTokenResponse;
+  try {
+    refreshed = await refreshAccessToken(readToken(conn.refreshTokenEnc, clientId));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    // Intuit answers 400 invalid_grant once a refresh token has expired
+    // (100 days unused) or been revoked — the connection is gone and only
+    // reconnecting brings it back. Anything else (a 5xx, a network error)
+    // is their outage, not our state, and stays an ordinary failure.
+    const text = err instanceof Error ? err.message : String(err);
+    if (/\((400|401)\)/.test(text)) throw new QuickbooksReconnectRequired(clientId, 'refresh_rejected');
+    throw err;
+  }
   await saveConnection(prisma, clientId, conn.realmId, refreshed);
   return { accessToken: refreshed.access_token, realmId: conn.realmId };
 }

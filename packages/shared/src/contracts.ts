@@ -862,6 +862,10 @@ export type QboJeMode = z.infer<typeof QboJeModeSchema>;
 
 export const QboStatusSchema = z.object({
   connected: z.boolean(),
+  // The stored tokens can't be read under the current key (or Intuit
+  // refused the refresh): the connection row exists but is unusable until
+  // someone reconnects. The account mapping survives a reconnect.
+  needsReconnect: z.boolean(),
   realmId: z.string().nullable(),
   expiresAt: z.string().datetime().nullable(),
   lastRefreshedAt: z.string().datetime().nullable(),

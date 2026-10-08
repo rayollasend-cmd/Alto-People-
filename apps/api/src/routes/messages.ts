@@ -52,6 +52,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: UPL
 const PHOTO_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 /** Conversation.lastPreview is VARCHAR(160) — the sender's name and the text together. */
 const PREVIEW = 160;
+/** The Message.body column. Counted in characters, as Postgres counts. */
+export const MESSAGE_MAX = 4000;
 
 /**
  * At most `max` characters, with an ellipsis when cut. Counted in code
@@ -229,8 +231,8 @@ messagesRouter.get('/directory', requireAuth, async (req, res, next) => {
 const StartSchema = z.object({
   participantIds: z.array(z.string().uuid()).min(1).max(20),
   title: z.string().trim().max(120).optional(),
-  /** Optional first message, sent in the same call. */
-  body: z.string().trim().max(4000).optional(),
+  /** Optional first message, sent in the same call (length checked in appendMessage). */
+  body: z.string().trim().max(50_000).optional(),
 });
 
 messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
@@ -366,6 +368,17 @@ async function appendMessage(
   const p = await myThread(user.id, conversationId);
   const body = input.body.trim();
   if (!body && !input.attachment) throw new HttpError(400, 'empty', 'Write something.');
+  // Said before the database says it: "value too long for the column's
+  // type" was a 500 with no way for the sender to know what to do.
+  const length = Array.from(body).length;
+  if (length > MESSAGE_MAX) {
+    throw new HttpError(
+      400,
+      'too_long',
+      `Messages are limited to ${MESSAGE_MAX.toLocaleString('en-US')} characters — this one is ${length.toLocaleString('en-US')}. Shorten it, or send it as two.`,
+      { max: MESSAGE_MAX, length },
+    );
+  }
   const sender = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: USER_SELECT });
   const preview = clip(body || `📷 ${input.attachment?.name ?? 'photo'}`, PREVIEW);
   const created = await prisma.$transaction(async (tx) => {
@@ -417,7 +430,9 @@ async function appendMessage(
   return created;
 }
 
-const SendSchema = z.object({ body: z.string().max(4000) });
+// The length check lives in appendMessage, where it can say how long the
+// message is; this ceiling only stops a payload nobody typed.
+const SendSchema = z.object({ body: z.string().max(50_000) });
 
 messagesRouter.post('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {

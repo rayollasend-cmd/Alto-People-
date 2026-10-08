@@ -219,8 +219,13 @@ describe('long messages', () => {
     expect((await wfm.post(`/messages/conversations/${id}/messages`).send({ body: three })).status).toBe(201);
     const max = 'All good here. '.repeat(267).slice(0, 4000);
     expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: max })).status).toBe(201);
-    // Past the limit is a clear 400, not a crash.
-    expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: `${max}!` })).status).toBe(400);
+    // Past the limit is a clear 400 that says how long it is, not a crash.
+    const over = await sup.post(`/messages/conversations/${id}/messages`).send({ body: `${max}!` });
+    expect(over.status).toBe(400);
+    expect(over.body.error.code).toBe('too_long');
+    expect(over.body.error.message).toMatch(/limited to 4,000 characters — this one is 4,001/);
+    // Emoji count as one character, as the column counts them.
+    expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: '🙂'.repeat(4000) })).status).toBe(201);
 
     const thread = (await sup.get(`/messages/conversations/${id}`)).body;
     expect(thread.messages.map((m: { body: string }) => m.body)).toEqual([three, max]);

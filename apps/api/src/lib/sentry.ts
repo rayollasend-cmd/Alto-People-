@@ -13,6 +13,9 @@ import { scrubDeep, stripUrlSecrets } from '@alto-people/shared';
  */
 export function initSentry(): void {
   if (!env.SENTRY_DSN) return;
+  // src/instrument.ts runs this first (node --import); index.ts calls it
+  // again as a fallback for a process started without the flag.
+  if (Sentry.isInitialized()) return;
   Sentry.init({
     dsn: env.SENTRY_DSN,
     environment: env.NODE_ENV,

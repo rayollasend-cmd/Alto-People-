@@ -1,6 +1,7 @@
 // Must be imported before any route is registered. Monkey-patches Express's
 // router so async handlers that throw forward to next(err) instead of becoming
 // unhandled rejections (which would crash the process under Express 4).
+import { installRouteNaming } from './lib/routeName.js';
 import 'express-async-errors';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -168,6 +169,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIST = path.resolve(__dirname, '../../web/dist');
 
 export function createApp() {
+  // Route-parameterized transaction names for Sentry, taken at the moment
+  // Express matches the route (see lib/routeName.ts).
+  installRouteNaming();
   const app = express();
 
   // Behind a proxy in prod (Vercel/Railway/etc.) so req.ip resolves correctly.
