@@ -1,4 +1,5 @@
 import type {
+  DirectoryEntry,
   DirectoryListResponse,
   DirectoryStatus,
 } from '@alto-people/shared';
@@ -55,4 +56,14 @@ export function directoryQuery(filters: DirectoryFilters) {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last: DirectoryListResponse) => last.nextCursor ?? undefined,
   });
+}
+
+/**
+ * One person, as the directory lists them — the profile deep link's
+ * lookup. The list is paged and filtered; whoever a link names may be on
+ * another page or behind a saved filter, and this finds them anyway.
+ * Throws an ApiError with status 404 when nobody has that id.
+ */
+export function getDirectoryEntry(id: string): Promise<DirectoryEntry> {
+  return apiFetch<DirectoryEntry>(`/people/directory/${encodeURIComponent(id)}`);
 }

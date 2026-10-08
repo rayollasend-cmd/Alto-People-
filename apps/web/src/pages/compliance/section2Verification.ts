@@ -53,7 +53,4 @@ export function autoDetectSection2(docs: I9DocumentListItem[]): {
  * starting with a single '/' (absolute URLs, protocol-relative '//host')
  * is dropped so the param can't become an open redirect.
  */
-export function sanitizeReturnPath(raw: string | null): string | null {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
-  return raw;
-}
+export { sanitizeReturnPath } from '@/lib/returnPath';

@@ -24,6 +24,8 @@ import { useEffect, useRef } from 'react';
 interface ParkedOverlay {
   onBack: () => boolean | void;
   parked: boolean;
+  /** Opened while one of our own pops was still in flight; parks once it lands. */
+  waiting: boolean;
 }
 
 const stack: ParkedOverlay[] = [];
@@ -46,10 +48,47 @@ let wired = false;
  * real Back press.
  */
 const selfPops: Array<{ done: boolean }> = [];
+/**
+ * Overlays that opened while a pop of ours was still in flight.
+ *
+ * history.back() is asynchronous; a pushState issued before it lands is
+ * applied on top of the entry the browser is ABOUT TO LEAVE. One overlay
+ * replacing another in a single commit — the kiosk's "issue a number" form
+ * handing over to the "number issued" reveal — did exactly that: the old
+ * sentinel's pop and the new sentinel's push went out in the same tick,
+ * the browser ended on the page entry with the new sentinel parked as a
+ * forward entry, and when the reveal closed its own cleanup pop took the
+ * user off the page entirely. So a new overlay parks only once the stack
+ * is quiet: the pop lands (or the safety timeout gives up on it), then the
+ * sentinel goes on.
+ */
+const waitingToPark: ParkedOverlay[] = [];
+
+function pushSentinel() {
+  window.history.pushState({ ...window.history.state, altoOverlay: true }, '');
+}
 
 function park(entry: ParkedOverlay) {
-  window.history.pushState({ ...window.history.state, altoOverlay: true }, '');
+  if (selfPops.length > 0) {
+    entry.waiting = true;
+    waitingToPark.push(entry);
+    return;
+  }
+  pushSentinel();
   entry.parked = true;
+}
+
+/** The stack is quiet again: park whoever was waiting, in opening order. */
+function parkWaiting() {
+  if (selfPops.length > 0) return;
+  while (waitingToPark.length > 0) {
+    const entry = waitingToPark.shift()!;
+    entry.waiting = false;
+    // Closed again before the pop landed — nothing to park.
+    if (!stack.includes(entry)) continue;
+    pushSentinel();
+    entry.parked = true;
+  }
 }
 
 function ensureWired() {
@@ -60,6 +99,7 @@ function ensureWired() {
     const mine = selfPops.shift();
     if (mine) {
       mine.done = true;
+      parkWaiting();
       return;
     }
     // Only the topmost overlay answers; anything below keeps its sentinel.
@@ -86,6 +126,7 @@ function ensureWired() {
 export function __resetOverlayBackForTests(): void {
   selfPops.length = 0;
   stack.length = 0;
+  waitingToPark.length = 0;
 }
 
 export function useOverlayBackButton(open: boolean, onBack: () => boolean | void) {
@@ -100,13 +141,22 @@ export function useOverlayBackButton(open: boolean, onBack: () => boolean | void
     // navigated while the overlay was open, so our sentinel is buried and
     // popping it would undo their navigation — we leave it alone instead.
     const parkedAt = window.location.href;
-    const entry: ParkedOverlay = { onBack: () => onBackRef.current(), parked: false };
+    const entry: ParkedOverlay = {
+      onBack: () => onBackRef.current(),
+      parked: false,
+      waiting: false,
+    };
     stack.push(entry);
     park(entry);
 
     return () => {
       const i = stack.indexOf(entry);
       if (i !== -1) stack.splice(i, 1);
+      if (entry.waiting) {
+        entry.waiting = false;
+        const w = waitingToPark.indexOf(entry);
+        if (w !== -1) waitingToPark.splice(w, 1);
+      }
       if (entry.parked && window.location.href === parkedAt) {
         entry.parked = false;
         const token = { done: false };
@@ -120,6 +170,7 @@ export function useOverlayBackButton(open: boolean, onBack: () => boolean | void
           if (token.done) return;
           const i = selfPops.indexOf(token);
           if (i !== -1) selfPops.splice(i, 1);
+          parkWaiting();
         }, 500);
       }
     };

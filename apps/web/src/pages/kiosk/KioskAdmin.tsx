@@ -1,9 +1,10 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   Copy,
   Download,
@@ -53,6 +54,7 @@ import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth } from '@/lib/auth';
+import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
 import {
@@ -1053,11 +1055,15 @@ function PinsTab({
   const [locationFilter, setLocationFilter] = useState('');
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
+  // Where the deep link came from (?return=, the People profile that sent
+  // us here): once the number is issued, the reveal offers one tap back.
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   // Deep link from the People drawer: ?tab=pins&issue=<associateId>
-  // (&client=<clientId>) opens the issue drawer preselected on that
-  // associate. Params are consumed with a replace-write so refresh/Back
-  // don't re-open the drawer — the house deep-link convention.
+  // (&client=<clientId>)(&return=<path>) opens the issue drawer preselected
+  // on that associate. Params are consumed with a replace-write so
+  // refresh/Back don't re-open the drawer — the house deep-link convention.
   const [deepParams, setDeepParams] = useSearchParams();
   useEffect(() => {
     const issue = deepParams.get('issue');
@@ -1065,10 +1071,12 @@ function PinsTab({
     const deepClient = deepParams.get('client');
     if (deepClient && !boundedClient) setClientId(deepClient);
     setIssueFor(issue);
+    setReturnTo(sanitizeReturnPath(deepParams.get('return')));
     setShowNew(true);
     const next = new URLSearchParams(deepParams);
     next.delete('issue');
     next.delete('client');
+    next.delete('return');
     setDeepParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepParams]);
@@ -1781,6 +1789,19 @@ function PinsTab({
             </Button>
           </DrawerBody>
           <DrawerFooter>
+            {returnTo && (
+              <Button
+                variant="ghost"
+                // Navigate with the reveal still open and replace, not
+                // push: the reveal's Back sentinel is the current entry,
+                // so the profile takes its place and one Back from there
+                // is this page again. Closing first would race the
+                // sentinel's own pop with the navigation.
+                onClick={() => navigate(returnTo, { replace: true })}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to {returnPathLabel(returnTo)}
+              </Button>
+            )}
             <Button onClick={() => setShowPin(null)}>Done</Button>
           </DrawerFooter>
         </Drawer>

@@ -52,7 +52,8 @@ import type {
   DocumentVaultResponse,
   DocumentVaultSummary,
 } from '@alto-people/shared';
-import { directoryQuery, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { directoryQuery, getDirectoryEntry, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
@@ -194,38 +195,6 @@ const SEEDABLE_STATUSES = new Set<DirectoryStatus>([
   'INACTIVE',
 ]);
 
-// `?return=` handed over by AssociateLink — the page the person's name was
-// clicked on, so the profile drawer can offer a way back. Same-origin app
-// paths only (same rule as the compliance Section 2 verifier's return
-// param): anything not starting with a single '/' — absolute URLs,
-// protocol-relative '//host' — is dropped so it can't become an open
-// redirect.
-function sanitizeReturnPath(raw: string | null): string | null {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
-  return raw;
-}
-
-// Friendly names for the "← Back to …" chip. Matched on the path prefix;
-// anything unrecognized still gets a working chip, just a generic label.
-const RETURN_PATH_LABELS: ReadonlyArray<readonly [string, string]> = [
-  ['/compliance', 'Compliance'],
-  ['/time-attendance', 'Time & attendance'],
-  ['/payroll', 'Payroll'],
-  ['/scheduling', 'Scheduling'],
-  ['/approvals', 'Approvals'],
-  ['/expirations', 'Expirations'],
-];
-
-function returnPathLabel(path: string): string {
-  const hit = RETURN_PATH_LABELS.find(
-    ([prefix]) =>
-      path === prefix ||
-      path.startsWith(`${prefix}/`) ||
-      path.startsWith(`${prefix}?`),
-  );
-  return hit ? hit[1] : 'previous page';
-}
-
 // Validators for the persisted filters — a stored value from a removed
 // option falls back to the default instead of silently hiding rows.
 const isStatusFilter = (v: unknown): v is DirectoryStatus | '' =>
@@ -292,27 +261,16 @@ export function PeopleDirectory() {
       setEmploymentType(rawType as EmploymentTypeFilter);
     }
   }
-  // Session-only deep-link override (mirrors the compliance I-9 tab's
-  // filterOverride): while active, the directory QUERY drops every
-  // narrowing filter so a deep-linked person hidden by the saved filters
-  // can be fetched — without ever writing to the persisted filter state.
-  // `name` fills in once the person is found, for the dismissible note.
-  const [deepLinkOverride, setDeepLinkOverride] = useState<{
-    name: string | null;
-  } | null>(null);
   const filters = useMemo<DirectoryFilters>(
-    () =>
-      deepLinkOverride
-        ? {}
-        : {
-            ...(q ? { q } : {}),
-            ...(status ? { status } : {}),
-            ...(clientId ? { clientId } : {}),
-            ...(locationId ? { locationId } : {}),
-            ...(departmentId ? { departmentId } : {}),
-            ...(employmentType ? { employmentType } : {}),
-          },
-    [q, status, clientId, locationId, departmentId, employmentType, deepLinkOverride],
+    () => ({
+      ...(q ? { q } : {}),
+      ...(status ? { status } : {}),
+      ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
+      ...(departmentId ? { departmentId } : {}),
+      ...(employmentType ? { employmentType } : {}),
+    }),
+    [q, status, clientId, locationId, departmentId, employmentType],
   );
   const [search, setSearch] = useState(
     () => new URLSearchParams(window.location.search).get('q') ?? '',
@@ -411,7 +369,6 @@ export function PeopleDirectory() {
   const {
     data: pages,
     error: rowsError,
-    isFetching: rowsFetching,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -428,78 +385,63 @@ export function PeopleDirectory() {
     [pages],
   );
 
-  // Resolve the deep-link associateId once rows load. setTarget is the
-  // canonical drawer-open path so we get all the existing render logic
-  // for free. Strip the query param so the URL stays clean and a back-
-  // forward dance doesn't re-open the drawer after the user closed it.
+  // Resolve the deep-link associateId. setTarget is the canonical
+  // drawer-open path so we get all the existing render logic for free.
+  // Strip the query param so the URL stays clean and a back-forward dance
+  // doesn't re-open the drawer after the user closed it.
   //
-  // When no loaded row matches (persisted status/workplace filters can
-  // hide the person), there's no single-associate getter in the
-  // directory API to fall back on — so we relax the filters IN THE QUERY
-  // ONLY (session override above; the user's persisted filters are never
-  // written) and let the refetch surface them, with a dismissible note.
-  // If they're still absent after the widened fetch, the id is stale:
-  // drop the param and the override instead of looping.
-  const deepLinkRetried = useRef(false);
+  // A loaded row is the cheap answer. Otherwise the person is fetched by
+  // id: the list is one page of 500 under the viewer's saved filters, so
+  // anyone past page one, or still onboarding behind an Active filter,
+  // simply isn't in it — and used to come back as "Couldn't find that
+  // person". Both run at once; whichever answers first opens the drawer.
+  const deepLinkRow = useMemo(
+    () =>
+      deepLinkAssociateId && rows
+        ? (rows.find((r) => r.id === deepLinkAssociateId) ?? null)
+        : null,
+    [deepLinkAssociateId, rows],
+  );
+  const deepLinkLookup = useQuery({
+    queryKey: ['directory', 'entry', deepLinkAssociateId],
+    queryFn: () => getDirectoryEntry(deepLinkAssociateId!),
+    enabled: Boolean(deepLinkAssociateId) && !deepLinkRow,
+    retry: false,
+  });
+  const deepLinkResolved = deepLinkRow ?? deepLinkLookup.data ?? null;
+  const deepLinkFailed = !deepLinkRow && deepLinkLookup.isError;
+  const deepLinkError = deepLinkLookup.error;
+  // One answer per link: the param is dropped in the same pass, but a
+  // StrictMode double-run or a rows refetch must not toast twice.
+  const deepLinkHandled = useRef<string | null>(null);
   useEffect(() => {
-    if (!deepLinkAssociateId || !rows || rowsFetching) return;
-    const dropParam = () => {
-      const next = new URLSearchParams(searchParams);
-      next.delete('associateId');
-      setSearchParams(next, { replace: true });
-    };
-    const match = rows.find((r) => r.id === deepLinkAssociateId);
-    if (match) {
-      setTarget(match);
-      // Fill the note's name in — the override was armed before we knew
-      // who the id resolved to.
-      setDeepLinkOverride((o) =>
-        o ? { name: `${match.firstName} ${match.lastName}`.trim() } : o,
+    if (!deepLinkAssociateId) {
+      deepLinkHandled.current = null;
+      return;
+    }
+    if (!deepLinkResolved && !deepLinkFailed) return; // still looking
+    if (deepLinkHandled.current === deepLinkAssociateId) return;
+    deepLinkHandled.current = deepLinkAssociateId;
+    if (deepLinkResolved) {
+      setTarget(deepLinkResolved);
+    } else {
+      toast.error(
+        deepLinkError instanceof ApiError && deepLinkError.status === 404
+          ? "Couldn't find that person in the directory — they may have been removed."
+          : "Couldn't open that profile right now. Try again in a moment.",
       );
-      dropParam();
-      return;
     }
-    if (
-      !deepLinkRetried.current &&
-      !deepLinkOverride &&
-      (status || clientId || locationId || departmentId || employmentType || q)
-    ) {
-      deepLinkRetried.current = true;
-      // EVERY narrowing filter can hide a deep-link target — a persisted
-      // employmentType (or a live search/department filter) just as
-      // effectively as status/workplace. Relax them all, query-side only.
-      setDeepLinkOverride({ name: null });
-      return;
-    }
-    toast.error("Couldn't find that person in the directory.");
-    setDeepLinkOverride(null);
-    dropParam();
+    const next = new URLSearchParams(searchParams);
+    next.delete('associateId');
+    setSearchParams(next, { replace: true });
   }, [
     deepLinkAssociateId,
-    deepLinkOverride,
-    rows,
-    rowsFetching,
+    deepLinkResolved,
+    deepLinkFailed,
+    deepLinkError,
     searchParams,
     setSearchParams,
-    status,
-    clientId,
-    locationId,
-    departmentId,
-    employmentType,
-    q,
   ]);
-
-  // A deliberate filter change while the override note is up means the
-  // user is driving again — drop the override so their click actually
-  // takes effect (the override was masking every narrowing filter).
-  const filterKey = JSON.stringify([q, status, clientId, locationId, departmentId, employmentType]);
-  const prevFilterKey = useRef(filterKey);
-  useEffect(() => {
-    if (prevFilterKey.current !== filterKey) {
-      prevFilterKey.current = filterKey;
-      setDeepLinkOverride((o) => (o ? null : o));
-    }
-  }, [filterKey]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message
@@ -760,25 +702,6 @@ export function PeopleDirectory() {
         )}
       </FilterBar>
 
-      {/* Deep-link session override — the saved filters were NOT changed,
-          the query is just temporarily unfiltered so the linked person can
-          render. Dismissing snaps straight back to the saved filters. */}
-      {deepLinkOverride && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-gold/40 bg-gold/[0.07] px-3 py-2 text-sm text-silver">
-          <span>
-            Showing {deepLinkOverride.name ?? 'this person'} outside your
-            current filters — they stay saved.
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => setDeepLinkOverride(null)}
-          >
-            <X className="h-3.5 w-3.5" />
-            Back to my filters
-          </Button>
-        </div>
-      )}
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
@@ -2527,9 +2450,11 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
   // The issue/re-issue deep link opens Kiosk admin's drawer preselected on
   // this associate at their CURRENT client — for a mismatch that one
   // re-issue also re-homes the PIN under the right client.
+  // …and carries the way back: once the number is issued, the kiosk's
+  // reveal offers "Back to People", which lands on this same profile.
   const issueLink = `/time-attendance/kiosk?tab=pins&issue=${a.id}${
     a.workplaceClientId ? `&client=${a.workplaceClientId}` : ''
-  }`;
+  }&return=${encodeURIComponent(`/people?associateId=${a.id}`)}`;
 
   return (
     <Section title="Kiosk clock-in">

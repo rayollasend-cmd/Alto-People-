@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import {
+  DirectoryEntrySchema,
   DirectoryListResponseSchema,
   type DirectoryEntry,
   type DirectoryStatus,
@@ -8,6 +10,7 @@ import {
 import { prisma } from '../db.js';
 import { atClient } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
@@ -21,6 +24,11 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
  * - live pay rate (latest CompensationRecord with effectiveTo=null)
  * - employment type, start date, manager / dept / job profile
  * - onboarding % complete for PENDING entries
+ *
+ * Two reads share one row builder: the paged list, and one person by id
+ * (the profile deep link — a name clicked on Compliance or a dashboard
+ * must open whoever it names, whatever page or filter the directory is
+ * sitting on).
  *
  * Scope: VIEW capability gate. CLIENT_PORTAL doesn't get a path here yet —
  * org views aren't surfaced to portal users today.
@@ -52,17 +60,217 @@ const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
 });
 
+// Everything a directory row is synthesized from. `applications` ordered
+// desc so the first one in each array is the freshest.
+const DIRECTORY_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  employmentType: true,
+  j1Status: true,
+  createdAt: true,
+  photoS3Key: true,
+  separatedAt: true,
+  deactivatedAt: true,
+  deactivationReason: true,
+  photoUpdatedAt: true,
+  managerId: true,
+  manager: { select: { firstName: true, lastName: true } },
+  departmentId: true,
+  department: { select: { name: true } },
+  jobProfileId: true,
+  jobProfile: { select: { title: true } },
+  applications: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      status: true,
+      clientId: true,
+      position: true,
+      startDate: true,
+      invitedAt: true,
+      approvedAt: true,
+      client: { select: { name: true } },
+      checklist: {
+        select: {
+          tasks: { select: { status: true } },
+        },
+      },
+    },
+    orderBy: { invitedAt: 'desc' },
+  },
+  // Phase 131 — current open assignment, if any. There's at most
+  // one per associate (partial unique index in the schema).
+  // location.client is included so workplaceClient* can prefer
+  // the live assignment over the Application's clientId.
+  assignments: {
+    where: { endedAt: null },
+    select: {
+      locationId: true,
+      startedAt: true,
+      location: {
+        select: {
+          name: true,
+          clientId: true,
+          client: { select: { name: true } },
+        },
+      },
+    },
+    take: 1,
+  },
+} satisfies Prisma.AssociateSelect;
+
+type DirectoryRow = Prisma.AssociateGetPayload<{ select: typeof DIRECTORY_SELECT }>;
+
+/** Rows → directory entries, with the live pay rate batch-fetched once. */
+async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[]> {
+  // One open compensation row per associate ⇒ batch-fetch and index.
+  const ids = associates.map((a) => a.id);
+  const liveComp =
+    ids.length === 0
+      ? []
+      : await prisma.compensationRecord.findMany({
+          take: 500,
+          where: { associateId: { in: ids }, effectiveTo: null },
+          select: {
+            associateId: true,
+            amount: true,
+            payType: true,
+            currency: true,
+            effectiveFrom: true,
+          },
+        });
+  // Many associates may have no comp record. If multiple match (data
+  // glitch), keep the most recent effectiveFrom.
+  const compByAssoc = new Map<string, (typeof liveComp)[number]>();
+  for (const c of liveComp) {
+    const cur = compByAssoc.get(c.associateId);
+    if (!cur || c.effectiveFrom > cur.effectiveFrom) {
+      compByAssoc.set(c.associateId, c);
+    }
+  }
+
+  return associates.map((a) => {
+    // Status derivation: APPROVED ⇒ ACTIVE; any in-flight (DRAFT,
+    // SUBMITTED, IN_REVIEW) ⇒ PENDING; otherwise INACTIVE.
+    const apps = a.applications;
+    const approved = apps.find((x) => x.status === 'APPROVED');
+    const inFlight = apps.find(
+      (x) =>
+        x.status === 'DRAFT' ||
+        x.status === 'SUBMITTED' ||
+        x.status === 'IN_REVIEW',
+    );
+    // A completed separation makes the associate INACTIVE regardless of
+    // old approvals — UNLESS a newer approval exists (rehire) or a fresh
+    // application is in flight. Without this, "Active" derived purely
+    // from "has ever been approved" and separated people stayed active
+    // forever.
+    const separated =
+      a.separatedAt !== null &&
+      !apps.some(
+        (x) =>
+          x.status === 'APPROVED' &&
+          x.approvedAt !== null &&
+          x.approvedAt > a.separatedAt!,
+      ) &&
+      !inFlight;
+    // A manual deactivation (temporary pause) hard-overrides everything:
+    // INACTIVE until someone clicks Reactivate, no matter what
+    // applications exist.
+    const status: DirectoryStatus = a.deactivatedAt
+      ? 'INACTIVE'
+      : separated
+        ? 'INACTIVE'
+        : approved
+          ? 'ACTIVE'
+          : inFlight
+            ? 'PENDING'
+            : 'INACTIVE';
+
+    // Workplace = approved client first, then most-recent application.
+    const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
+
+    // Phase 131 — when an open AssociateAssignment exists, its Location's
+    // client is the live workplace. Falls back to the application chain
+    // for associates that haven't been placed at a Location yet.
+    const openAssignment = a.assignments[0] ?? null;
+    const workplaceClientId =
+      openAssignment?.location.clientId ?? workplaceApp?.clientId ?? null;
+    const workplaceClientName =
+      openAssignment?.location.client.name ??
+      workplaceApp?.client?.name ??
+      null;
+
+    const comp = compByAssoc.get(a.id) ?? null;
+
+    // Onboarding % only meaningful for PENDING (or freshly approved)
+    // — pulls from the most-recent application's checklist.
+    let onboardingPercent: number | null = null;
+    if (status === 'PENDING' && inFlight?.checklist) {
+      onboardingPercent = computePercent(
+        inFlight.checklist.tasks.map((t) => ({ status: t.status })),
+      );
+    }
+
+    return {
+      id: a.id,
+      firstName: a.firstName,
+      lastName: a.lastName,
+      email: a.email,
+      phone: a.phone,
+      employmentType: a.employmentType,
+      j1Status: a.j1Status,
+      status,
+      workplaceClientId,
+      workplaceClientName,
+      position: workplaceApp?.position ?? null,
+      startDate: workplaceApp?.startDate
+        ? workplaceApp.startDate.toISOString().slice(0, 10)
+        : null,
+      payAmount: comp ? comp.amount.toString() : null,
+      payType: comp?.payType ?? null,
+      payCurrency: comp?.currency ?? null,
+      managerId: a.managerId,
+      managerName: a.manager
+        ? `${a.manager.firstName} ${a.manager.lastName}`.trim()
+        : null,
+      departmentId: a.departmentId,
+      departmentName: a.department?.name ?? null,
+      jobProfileId: a.jobProfileId,
+      jobProfileTitle: a.jobProfile?.title ?? null,
+      onboardingPercent,
+      applicationId: workplaceApp?.id ?? null,
+      separatedAt: separated && a.separatedAt ? a.separatedAt.toISOString() : null,
+      deactivatedAt: a.deactivatedAt ? a.deactivatedAt.toISOString() : null,
+      deactivationReason: a.deactivatedAt ? a.deactivationReason : null,
+      createdAt: a.createdAt.toISOString(),
+      photoUrl: profilePhotoUrlFor({
+        id: a.id,
+        photoS3Key: a.photoS3Key,
+        photoUpdatedAt: a.photoUpdatedAt,
+      }),
+      currentLocationId: a.assignments[0]?.locationId ?? null,
+      currentLocationName: a.assignments[0]?.location?.name ?? null,
+      currentAssignmentStartedAt: a.assignments[0]?.startedAt
+        ? a.assignments[0].startedAt.toISOString().slice(0, 10)
+        : null,
+    };
+  });
+}
+
 directoryRouter.get('/directory', VIEW, async (req, res, next) => {
   try {
     const filters = QuerySchema.parse(req.query);
     const take = filters.limit ?? DEFAULT_PAGE_SIZE;
 
     // Pull every non-deleted associate plus the relations we need to
-    // synthesize the row. `applications` ordered desc so the first one in
-    // each array is the freshest. Ordering ends with id as the
-    // tiebreaker so the cursor (id) is stable when lastName/firstName
-    // collide — without that, cursor pagination can skip or duplicate
-    // rows across boundaries.
+    // synthesize the row. Ordering ends with id as the tiebreaker so the
+    // cursor (id) is stable when lastName/firstName collide — without
+    // that, cursor pagination can skip or duplicate rows across
+    // boundaries.
     const associates = await prisma.associate.findMany({
       take,
       ...(filters.cursor
@@ -92,201 +300,11 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
             }
           : {}),
       },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        employmentType: true,
-        j1Status: true,
-        createdAt: true,
-        photoS3Key: true,
-        separatedAt: true,
-        deactivatedAt: true,
-        deactivationReason: true,
-        photoUpdatedAt: true,
-        managerId: true,
-        manager: { select: { firstName: true, lastName: true } },
-        departmentId: true,
-        department: { select: { name: true } },
-        jobProfileId: true,
-        jobProfile: { select: { title: true } },
-        applications: {
-          where: { deletedAt: null },
-          select: {
-            id: true,
-            status: true,
-            clientId: true,
-            position: true,
-            startDate: true,
-            invitedAt: true,
-            approvedAt: true,
-            client: { select: { name: true } },
-            checklist: {
-              select: {
-                tasks: { select: { status: true } },
-              },
-            },
-          },
-          orderBy: { invitedAt: 'desc' },
-        },
-        // Phase 131 — current open assignment, if any. There's at most
-        // one per associate (partial unique index in the schema).
-        // location.client is included so workplaceClient* can prefer
-        // the live assignment over the Application's clientId.
-        assignments: {
-          where: { endedAt: null },
-          select: {
-            locationId: true,
-            startedAt: true,
-            location: {
-              select: {
-                name: true,
-                clientId: true,
-                client: { select: { name: true } },
-              },
-            },
-          },
-          take: 1,
-        },
-      },
+      select: DIRECTORY_SELECT,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
 
-    // One open compensation row per associate ⇒ batch-fetch and index.
-    const ids = associates.map((a) => a.id);
-    const liveComp =
-      ids.length === 0
-        ? []
-        : await prisma.compensationRecord.findMany({
-            take: 500,
-            where: { associateId: { in: ids }, effectiveTo: null },
-            select: {
-              associateId: true,
-              amount: true,
-              payType: true,
-              currency: true,
-              effectiveFrom: true,
-            },
-          });
-    // Many associates may have no comp record. If multiple match (data
-    // glitch), keep the most recent effectiveFrom.
-    const compByAssoc = new Map<string, (typeof liveComp)[number]>();
-    for (const c of liveComp) {
-      const cur = compByAssoc.get(c.associateId);
-      if (!cur || c.effectiveFrom > cur.effectiveFrom) {
-        compByAssoc.set(c.associateId, c);
-      }
-    }
-
-    const entries: DirectoryEntry[] = associates.map((a) => {
-      // Status derivation: APPROVED ⇒ ACTIVE; any in-flight (DRAFT,
-      // SUBMITTED, IN_REVIEW) ⇒ PENDING; otherwise INACTIVE.
-      const apps = a.applications;
-      const approved = apps.find((x) => x.status === 'APPROVED');
-      const inFlight = apps.find(
-        (x) =>
-          x.status === 'DRAFT' ||
-          x.status === 'SUBMITTED' ||
-          x.status === 'IN_REVIEW',
-      );
-      // A completed separation makes the associate INACTIVE regardless of
-      // old approvals — UNLESS a newer approval exists (rehire) or a fresh
-      // application is in flight. Without this, "Active" derived purely
-      // from "has ever been approved" and separated people stayed active
-      // forever.
-      const separated =
-        a.separatedAt !== null &&
-        !apps.some(
-          (x) =>
-            x.status === 'APPROVED' &&
-            x.approvedAt !== null &&
-            x.approvedAt > a.separatedAt!,
-        ) &&
-        !inFlight;
-      // A manual deactivation (temporary pause) hard-overrides everything:
-      // INACTIVE until someone clicks Reactivate, no matter what
-      // applications exist.
-      const status: DirectoryStatus = a.deactivatedAt
-        ? 'INACTIVE'
-        : separated
-          ? 'INACTIVE'
-          : approved
-            ? 'ACTIVE'
-            : inFlight
-              ? 'PENDING'
-              : 'INACTIVE';
-
-      // Workplace = approved client first, then most-recent application.
-      const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
-
-      // Phase 131 — when an open AssociateAssignment exists, its Location's
-      // client is the live workplace. Falls back to the application chain
-      // for associates that haven't been placed at a Location yet.
-      const openAssignment = a.assignments[0] ?? null;
-      const workplaceClientId =
-        openAssignment?.location.clientId ?? workplaceApp?.clientId ?? null;
-      const workplaceClientName =
-        openAssignment?.location.client.name ??
-        workplaceApp?.client?.name ??
-        null;
-
-      const comp = compByAssoc.get(a.id) ?? null;
-
-      // Onboarding % only meaningful for PENDING (or freshly approved)
-      // — pulls from the most-recent application's checklist.
-      let onboardingPercent: number | null = null;
-      if (status === 'PENDING' && inFlight?.checklist) {
-        onboardingPercent = computePercent(
-          inFlight.checklist.tasks.map((t) => ({ status: t.status })),
-        );
-      }
-
-      return {
-        id: a.id,
-        firstName: a.firstName,
-        lastName: a.lastName,
-        email: a.email,
-        phone: a.phone,
-        employmentType: a.employmentType,
-        j1Status: a.j1Status,
-        status,
-        workplaceClientId,
-        workplaceClientName,
-        position: workplaceApp?.position ?? null,
-        startDate: workplaceApp?.startDate
-          ? workplaceApp.startDate.toISOString().slice(0, 10)
-          : null,
-        payAmount: comp ? comp.amount.toString() : null,
-        payType: comp?.payType ?? null,
-        payCurrency: comp?.currency ?? null,
-        managerId: a.managerId,
-        managerName: a.manager
-          ? `${a.manager.firstName} ${a.manager.lastName}`.trim()
-          : null,
-        departmentId: a.departmentId,
-        departmentName: a.department?.name ?? null,
-        jobProfileId: a.jobProfileId,
-        jobProfileTitle: a.jobProfile?.title ?? null,
-        onboardingPercent,
-        applicationId: workplaceApp?.id ?? null,
-        separatedAt: separated && a.separatedAt ? a.separatedAt.toISOString() : null,
-        deactivatedAt: a.deactivatedAt ? a.deactivatedAt.toISOString() : null,
-        deactivationReason: a.deactivatedAt ? a.deactivationReason : null,
-        createdAt: a.createdAt.toISOString(),
-        photoUrl: profilePhotoUrlFor({
-          id: a.id,
-          photoS3Key: a.photoS3Key,
-          photoUpdatedAt: a.photoUpdatedAt,
-        }),
-        currentLocationId: a.assignments[0]?.locationId ?? null,
-        currentLocationName: a.assignments[0]?.location?.name ?? null,
-        currentAssignmentStartedAt: a.assignments[0]?.startedAt
-          ? a.assignments[0].startedAt.toISOString().slice(0, 10)
-          : null,
-      };
-    });
+    const entries = await buildEntries(associates);
 
     // Apply status filter after derivation since status is computed.
     const filtered = filters.status
@@ -307,6 +325,32 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       nextCursor,
     });
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * One person, as the directory would list them.
+ *
+ * The People page used to resolve a profile deep link by scanning the
+ * page of rows it had loaded — 500 people sorted by last name, under
+ * whatever filters the viewer had saved. Anyone on page two, or hidden by
+ * an Active filter while they were still onboarding, came back as
+ * "Couldn't find that person". This is the lookup that scan never had.
+ */
+directoryRouter.get('/directory/:id', VIEW, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const row = id.success
+      ? await prisma.associate.findFirst({
+          where: { id: id.data, deletedAt: null },
+          select: DIRECTORY_SELECT,
+        })
+      : null;
+    if (!row) throw new HttpError(404, 'not_found', 'No one in the directory has that id.');
+    const [entry] = await buildEntries([row]);
+    res.json(DirectoryEntrySchema.parse(entry));
   } catch (err) {
     next(err);
   }
