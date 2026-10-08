@@ -228,7 +228,7 @@ describe('long messages', () => {
     expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: '🙂'.repeat(4000) })).status).toBe(201);
 
     const thread = (await sup.get(`/messages/conversations/${id}`)).body;
-    expect(thread.messages.map((m: { body: string }) => m.body)).toEqual([three, max]);
+    expect(thread.messages.map((m: { body: string }) => m.body)).toEqual([three, max, '🙂'.repeat(4000)]);
     // The inbox preview is cut to fit, and says so.
     const row = await prisma.conversation.findUniqueOrThrow({ where: { id } });
     expect(Array.from(row.lastPreview!).length).toBeLessThanOrEqual(160);

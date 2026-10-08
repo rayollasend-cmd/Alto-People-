@@ -154,7 +154,8 @@ describe('clients a driver drives for', () => {
     const granted = await w.directorAgent.post('/transport/driver-access/grant').send({ driverUserId: w.mike.id, all: true });
     expect(granted.status).toBe(200);
     const bo2 = await w.rider('Cy', w.storeB);
-    expect((await w.mikeAgent.get('/transport/driver/requests')).body.requests.map((r: { id: string }) => r.id)).toEqual([bo.ride.id, bo2.ride.id]);
+    // Both seats are for the same time, so the list's order between them is not a promise.
+    expect((await w.mikeAgent.get('/transport/driver/requests')).body.requests.map((r: { id: string }) => r.id).sort()).toEqual([bo.ride.id, bo2.ride.id].sort());
     expect((await w.mikeAgent.get('/transport/driver/requests')).body.clients).toEqual({ all: true, approved: 2, pending: 0 });
     const allRow = (await w.directorAgent.get('/transport/driver-access')).body.rows.find((r: { client: unknown; status: string }) => r.client === null && r.status === 'APPROVED');
     expect((await w.directorAgent.delete(`/transport/driver-access/${allRow.id}`)).status).toBe(200);
