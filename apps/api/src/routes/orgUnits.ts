@@ -81,6 +81,8 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
     data: {
       clientId: null,
       orgUnitId: input.orgUnitId ?? null,
+      // A direct employer's site is a property unless it says otherwise.
+      type: input.type ?? 'PROPERTY',
       name: input.name,
       addressLine1: input.addressLine1 ?? null,
       addressLine2: input.addressLine2 ?? null,
@@ -89,7 +91,7 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
       zip: input.zip ?? null,
       ...(input.timezone ? { timezone: input.timezone } : {}),
     },
-    select: { id: true, name: true, timezone: true, orgUnitId: true, state: true },
+    select: { id: true, name: true, timezone: true, orgUnitId: true, state: true, type: true },
   });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'site.created', entityType: 'Location', entityId: created.id, metadata: { name: created.name, orgUnitId: created.orgUnitId } }, 'org');
   res.status(201).json({ site: created });
@@ -98,10 +100,10 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
 orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {
   const rows = await prisma.location.findMany({
     where: { deletedAt: null },
-    select: { id: true, name: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } } },
+    select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } } },
     orderBy: [{ clientId: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }],
   });
-  res.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, timezone: r.timezone, state: r.state, isActive: r.isActive, clientId: r.clientId, clientName: r.client?.name ?? null, orgUnitId: r.orgUnitId, orgUnitName: r.orgUnit?.name ?? null, orgUnitType: r.orgUnit?.type ?? null })) });
+  res.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, timezone: r.timezone, state: r.state, isActive: r.isActive, clientId: r.clientId, clientName: r.client?.name ?? null, orgUnitId: r.orgUnitId, orgUnitName: r.orgUnit?.name ?? null, orgUnitType: r.orgUnit?.type ?? null })) });
 });
 
 orgUnitsRouter.get('/admin/org-units/:id/sites', VIEW, async (req, res) => {

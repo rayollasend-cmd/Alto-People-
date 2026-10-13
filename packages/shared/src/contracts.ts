@@ -7033,7 +7033,13 @@ export type LocationListResponse = z.infer<typeof LocationListResponseSchema>;
 /** Geofence inputs come as a trio: all three together (set) or all three
  *  null (clear). Per-axis nulls are coerced to the all-null case on the
  *  server. radius is meters. lat/lng have ~5cm precision. */
+/** Brief 2-1b step 7: the kind of site; the tenant's terminology names it. */
+export const SITE_TYPES = ['STORE', 'PROPERTY', 'OFFICE', 'WAREHOUSE', 'OTHER'] as const;
+export const SiteTypeSchema = z.enum(SITE_TYPES);
+export type SiteType = z.infer<typeof SiteTypeSchema>;
+
 const LocationBaseFields = {
+  type: SiteTypeSchema.optional(),
   name: z.string().trim().min(1).max(255),
   addressLine1: z.string().max(255).nullable().optional(),
   addressLine2: z.string().max(255).nullable().optional(),

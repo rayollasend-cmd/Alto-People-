@@ -435,6 +435,7 @@ clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
       data: {
         clientId: client.id,
         name: input.name,
+        type: input.type ?? undefined,
         addressLine1: input.addressLine1 ?? null,
         addressLine2: input.addressLine2 ?? null,
         city: input.city ?? null,

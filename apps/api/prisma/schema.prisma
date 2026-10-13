@@ -854,6 +854,8 @@ model Location {
   // admins set it per location. Validated against SUPPORTED_TIMEZONES on
   // write.
   timezone             String    @default("America/New_York")
+  /// Brief 2-1b step 7: what kind of site this is. The noun the tenant uses for it comes from the terminology table.
+  type                 SiteType  @default(STORE)
   // The region this store rolls up to (the command center). Stores may
   // belong to different clients and still share a region.
   regionId             String?   @db.Uuid
@@ -10153,6 +10155,15 @@ model OrgUnit {
   @@index([parentId])
   @@index([path])
   @@index([deletedAt])
+}
+
+/// Brief 2-1b, step 7: the kind of site. "Store" is the staffing default; a direct employer's sites are properties, offices, warehouses.
+enum SiteType {
+  STORE
+  PROPERTY
+  OFFICE
+  WAREHOUSE
+  OTHER
 }
 
 model Tenant {
