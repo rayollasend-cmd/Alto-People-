@@ -191,7 +191,7 @@ export async function sentryOpenIssues(days = 7, limit = 10): Promise<SentryIssu
       for (const slug of cfg.projects) {
         const rows = await sentryGet<RawIssue[]>(
           cfg,
-          `/projects/${cfg.org}/${slug}/issues/?query=is:unresolved&statsPeriod=${days}d&sort=freq&limit=${limit}`,
+          `/projects/${cfg.org}/${slug}/issues/?query=${encodeURIComponent('is:unresolved')}&statsPeriod=${days}d&sort=freq&limit=${limit}`,
         );
         for (const r of rows) {
           all.push({

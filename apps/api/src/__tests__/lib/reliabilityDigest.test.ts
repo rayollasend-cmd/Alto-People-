@@ -64,7 +64,8 @@ describe('runReliabilityDigestSweep', () => {
     expect(first.sent).toBe(2);
     expect(first.weekStart).toBe(startOfWeekUTC(lastWeekDay).toISOString());
 
-    const rows = await prisma.notification.findMany({ where: { category: RELIABILITY_DIGEST_CATEGORY } });
+    // The bell rows; the email rows ride alongside under the same category.
+    const rows = await prisma.notification.findMany({ where: { category: RELIABILITY_DIGEST_CATEGORY, channel: 'IN_APP' } });
     expect(rows.map((r) => r.recipientUserId).sort()).toEqual([hr.id, chair.id].sort());
     expect(rows[0]!.subject).toContain('Sentry not connected');
     expect(rows[0]!.body).toContain('GET /time/me — 400 ms (50 calls)');

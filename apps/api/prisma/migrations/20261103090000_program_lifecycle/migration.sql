@@ -99,7 +99,7 @@ CREATE TABLE "ProgramAlertSetting" (
 -- Backfill: every sponsor agency named on a J-1 profile becomes a Sponsor;
 -- every J-1 profile becomes a J1_SWT Program. Idempotent on re-run.
 INSERT INTO "Sponsor" ("name", "programType", "updatedAt")
-SELECT DISTINCT trim("sponsorAgency"), 'J1_SWT', CURRENT_TIMESTAMP
+SELECT DISTINCT trim("sponsorAgency"), 'J1_SWT'::"ProgramType", CURRENT_TIMESTAMP
 FROM "J1Profile"
 WHERE trim(coalesce("sponsorAgency", '')) <> ''
 ON CONFLICT ("name") DO NOTHING;
@@ -109,11 +109,11 @@ INSERT INTO "Program" (
   "programStart", "programEnd", "gracePeriodDays", "updatedAt"
 )
 SELECT
-  j."associateId", 'J1_SWT', s."id", j."ds2019Number", j."sevisId", j."country",
+  j."associateId", 'J1_SWT'::"ProgramType", s."id", j."ds2019Number", j."sevisId", j."country",
   j."programStartDate", j."programEndDate", 30, CURRENT_TIMESTAMP
 FROM "J1Profile" j
 LEFT JOIN "Sponsor" s ON s."name" = trim(j."sponsorAgency")
 WHERE NOT EXISTS (
   SELECT 1 FROM "Program" p
-  WHERE p."associateId" = j."associateId" AND p."type" = 'J1_SWT' AND p."programEnd" = j."programEndDate"
+  WHERE p."associateId" = j."associateId" AND p."type" = 'J1_SWT'::"ProgramType" AND p."programEnd" = j."programEndDate"
 );
