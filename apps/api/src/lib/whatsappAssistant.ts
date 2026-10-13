@@ -6,6 +6,7 @@ import { placedClientIds } from './openShiftEligibility.js';
 import { resolveStoreForAssociate, storeSupervisors } from './readyToWork.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
 import { sendWhatsApp } from './whatsapp.js';
+import { logBuiltInAgentAction } from './agents.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
 
 /**
@@ -186,6 +187,8 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
   const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null) => {
     const sent = await sendWhatsApp(db, { associateId, text: () => text, lang, category: 'assistant', kind, replyToId: replyTo }, now);
     if (sent && conversationId) await db.whatsAppMessage.update({ where: { id: sent.id }, data: { conversationId } });
+    // Brief 1D-2: the assistant is a registered agent; every reply is on its trail.
+    await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId } });
     return text;
   };
 

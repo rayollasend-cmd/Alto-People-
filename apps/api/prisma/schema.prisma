@@ -629,6 +629,8 @@ model User {
   emergenciesDeclared               Emergency[]                   @relation("EmergencyDeclarer")
   emergenciesStoodDown              Emergency[]                   @relation("EmergencyStandDown")
   ownedWorkers                      Worker[]                      @relation("WorkerOwner")
+  agentCredentialsIssued            AgentCredential[]             @relation("AgentCredentialIssuer")
+  agentDecisions                    AgentApprovalRequest[]        @relation("AgentApprovalDecider")
   relayClaims                       RelayClaim[]                  @relation("RelayClaimHolder")
   relayClaimsHandedOff              RelayClaim[]                  @relation("RelayClaimAssigner")
   relayRequestsSent                 RelayRequest[]                @relation("RelayRequestFrom")
@@ -8912,6 +8914,7 @@ model Worker {
   owner       User               @relation("WorkerOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
   assignments WorkerAssignment[]
   shifts      Shift[]
+  agent       AgentProfile?
 
   @@index([type, status])
   @@index([ownerUserId])
@@ -8933,4 +8936,120 @@ model WorkerAssignment {
 
   @@index([workerId, endedAt])
   @@index([locationId, endedAt])
+}
+
+// ===== Brief 1D-2 — Agent registry, permissions and audit trail =============
+//
+// An AI agent is a Worker of type AGENT. The profile below holds what the
+// registry needs beyond the worker row: purpose, vendor and model, scopes
+// drawn from the RBAC capability list, limits, and the credentials it calls
+// the API with. Everything an agent does through /agent/v1 lands in
+// AuditLog with its workerId; the AuditLog table is append-only at the
+// database (trigger audit_log_immutable).
+
+enum AgentEnvironment {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+}
+
+enum AgentGatedAction {
+  PAY_CHANGE
+  SEPARATION
+  CLIENT_MESSAGE
+  DATA_EXPORT
+}
+
+enum AgentApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CONSUMED
+  EXPIRED
+}
+
+model AgentProfile {
+  workerId           String           @id @db.Uuid
+  purpose            String           @db.VarChar(500)
+  vendor             String           @db.VarChar(80)
+  model              String           @db.VarChar(120)
+  modelVersion       String           @db.VarChar(80)
+  environment        AgentEnvironment @default(PRODUCTION)
+  /// RBAC capabilities this agent may use (AGENT_SCOPES in shared contracts).
+  scopes             String[]         @default([])
+  /// Calendar-month spend cap; null = no cap.
+  spendCapCents      Int?
+  rateLimitPerMinute Int              @default(60)
+  /// Hours of operation, org-local 0..23; both null = any hour.
+  allowedHoursStart  Int?
+  allowedHoursEnd    Int?
+  /// Set for the agents Alto already runs, so the boot sweep finds them.
+  builtInKey         String?          @unique @db.VarChar(60)
+  lastActiveAt       DateTime?        @db.Timestamptz(6)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+
+  worker      Worker                 @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  credentials AgentCredential[]
+  approvals   AgentApprovalRequest[]
+  spend       AgentSpend[]
+}
+
+model AgentCredential {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId      String    @db.Uuid
+  /// sha256 of the plaintext token; the plaintext is shown once and never stored.
+  tokenHash     String    @unique @db.VarChar(64)
+  last4         String    @db.VarChar(4)
+  /// Null when the agent rotated it itself.
+  issuedById    String?   @db.Uuid
+  rotatedFromId String?   @unique @db.Uuid
+  issuedAt      DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt     DateTime  @db.Timestamptz(6)
+  lastUsedAt    DateTime? @db.Timestamptz(6)
+  /// A revocation in the future is a rotation grace period.
+  revokedAt     DateTime? @db.Timestamptz(6)
+  revokedReason String?   @db.VarChar(200)
+
+  agent    AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+  issuedBy User?        @relation("AgentCredentialIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([workerId, revokedAt])
+}
+
+model AgentApprovalRequest {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId     String              @db.Uuid
+  action       AgentGatedAction
+  summary      String              @db.VarChar(500)
+  payload      Json
+  payloadHash  String              @db.VarChar(64)
+  status       AgentApprovalStatus @default(PENDING)
+  requestedAt  DateTime            @default(now()) @db.Timestamptz(6)
+  expiresAt    DateTime            @db.Timestamptz(6)
+  decidedById  String?             @db.Uuid
+  decidedAt    DateTime?           @db.Timestamptz(6)
+  decisionNote String?             @db.VarChar(500)
+  consumedAt   DateTime?           @db.Timestamptz(6)
+
+  agent     AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+  decidedBy User?        @relation("AgentApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
+  @@index([workerId, requestedAt(sort: Desc)])
+}
+
+model AgentSpend {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId     String   @db.Uuid
+  occurredAt   DateTime @default(now()) @db.Timestamptz(6)
+  amountCents  Int
+  taskRef      String?  @db.VarChar(120)
+  note         String?  @db.VarChar(300)
+  /// Null when the agent reported it itself.
+  recordedById String?  @db.Uuid
+
+  agent AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+
+  @@index([workerId, occurredAt(sort: Desc)])
 }

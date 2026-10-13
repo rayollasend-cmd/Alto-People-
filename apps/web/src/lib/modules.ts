@@ -9,6 +9,7 @@ export type ModuleKey =
   | 'programs'
   | 'season-planner'
   | 'workers'
+  | 'agents'
   | 'portal'
   | 'region'
   | 'regions'
@@ -561,6 +562,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Worker types',
     description:
       'People, AI agents and robots in one registry: who owns each worker, what it can do, and where it is in its lifecycle.',
+    requires: 'view:org',
+    group: 'workforce',
+  },
+  {
+    key: 'agents',
+    path: '/agents',
+    label: 'AI agents',
+    description:
+      'Every AI agent Alto runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person.',
     requires: 'view:org',
     group: 'workforce',
   },

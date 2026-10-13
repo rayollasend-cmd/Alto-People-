@@ -8243,3 +8243,237 @@ export interface WorkersResponse {
   /** Associates that have no PERSON worker yet (the sweep fills them when an owner can be found). */
   associatesWithoutWorker: number;
 }
+
+/* ---------------------------------------------------------------------------
+ *  Agent registry (Brief 1D-2) — every AI agent Alto runs is registered,
+ *  scoped, owned and logged. An agent is a Worker of type AGENT; the
+ *  profile carries what the registry needs beyond the worker row.
+ * -------------------------------------------------------------------------- */
+
+export const AgentEnvironmentSchema = z.enum(['PRODUCTION', 'STAGING', 'DEVELOPMENT']);
+export type AgentEnvironment = z.infer<typeof AgentEnvironmentSchema>;
+export const AGENT_ENVIRONMENT_LABELS: Record<AgentEnvironment, string> = {
+  PRODUCTION: 'Production',
+  STAGING: 'Staging',
+  DEVELOPMENT: 'Development',
+};
+
+/**
+ * The capabilities an agent may be granted, drawn from the role catalog.
+ * Least privilege by construction: nothing here touches pay, people
+ * records, access or settings; those are human-only, and the gated
+ * actions below are how an agent asks a person for them.
+ */
+export const AGENT_SCOPES = [
+  { code: 'view:scheduling', label: 'Read schedules' },
+  { code: 'view:time', label: 'Read time and attendance' },
+  { code: 'view:analytics', label: 'Read reports' },
+  { code: 'view:communications', label: 'Read messages' },
+  { code: 'manage:communications', label: 'Write messages' },
+  { code: 'view:transport', label: 'Read rides and routes' },
+  { code: 'view:compliance', label: 'Read compliance status' },
+] as const;
+export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
+const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];
+export const AgentScopeSchema = z.enum(agentScopeCodes);
+
+/** High-risk actions an agent may only request; a person approves or rejects from the queue. */
+export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT']);
+export type AgentGatedAction = z.infer<typeof AgentGatedActionSchema>;
+export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
+  PAY_CHANGE: 'Pay change',
+  SEPARATION: 'Separation',
+  CLIENT_MESSAGE: 'Message to a client',
+  DATA_EXPORT: 'Data export',
+};
+/** The two the agent may carry out itself once approved; the other two are done by the approver. */
+export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT'];
+
+export const AgentApprovalStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED']);
+export type AgentApprovalStatus = z.infer<typeof AgentApprovalStatusSchema>;
+export const AGENT_APPROVAL_STATUS_LABELS: Record<AgentApprovalStatus, string> = {
+  PENDING: 'Waiting',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  CONSUMED: 'Done',
+  EXPIRED: 'Expired',
+};
+
+const AgentLimitsShape = {
+  /** Calendar-month spend cap; null = no cap. */
+  spendCapCents: z.number().int().min(0).max(100_000_000).nullable(),
+  rateLimitPerMinute: z.number().int().min(1).max(10_000),
+  /** Hours of operation, org-local; both null = any hour. End 24 = midnight. */
+  allowedHoursStart: z.number().int().min(0).max(23).nullable(),
+  allowedHoursEnd: z.number().int().min(1).max(24).nullable(),
+};
+
+export const AgentInputSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  /** Required: no agent without a person accountable for it. */
+  ownerUserId: UuidSchema,
+  purpose: z.string().trim().min(3).max(500),
+  vendor: z.string().trim().min(1).max(80),
+  model: z.string().trim().min(1).max(120),
+  modelVersion: z.string().trim().min(1).max(80),
+  environment: AgentEnvironmentSchema.default('PRODUCTION'),
+  scopes: z.array(AgentScopeSchema).max(20).default([]),
+  spendCapCents: AgentLimitsShape.spendCapCents.optional().default(null),
+  rateLimitPerMinute: AgentLimitsShape.rateLimitPerMinute.default(60),
+  allowedHoursStart: AgentLimitsShape.allowedHoursStart.optional().default(null),
+  allowedHoursEnd: AgentLimitsShape.allowedHoursEnd.optional().default(null),
+  status: WorkerStatusSchema.default('ONBOARDING'),
+  capabilities: z.array(z.enum(capabilityCodes)).max(20).default([]),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+export type AgentInput = z.infer<typeof AgentInputSchema>;
+
+export const AgentUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  ownerUserId: UuidSchema.optional(),
+  purpose: z.string().trim().min(3).max(500).optional(),
+  vendor: z.string().trim().min(1).max(80).optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  modelVersion: z.string().trim().min(1).max(80).optional(),
+  environment: AgentEnvironmentSchema.optional(),
+  scopes: z.array(AgentScopeSchema).max(20).optional(),
+  spendCapCents: AgentLimitsShape.spendCapCents.optional(),
+  rateLimitPerMinute: AgentLimitsShape.rateLimitPerMinute.optional(),
+  allowedHoursStart: AgentLimitsShape.allowedHoursStart.optional(),
+  allowedHoursEnd: AgentLimitsShape.allowedHoursEnd.optional(),
+  status: WorkerStatusSchema.optional(),
+  capabilities: z.array(z.enum(capabilityCodes)).max(20).optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+export type AgentUpdate = z.infer<typeof AgentUpdateSchema>;
+
+export const AgentCredentialIssueSchema = z.object({
+  /** Short-lived: a day by default, a week at most. */
+  ttlHours: z.number().int().min(1).max(168).default(24),
+});
+export type AgentCredentialIssue = z.infer<typeof AgentCredentialIssueSchema>;
+
+export const AgentRevokeSchema = z.object({ reason: z.string().trim().max(200).optional() });
+
+export const AgentRequestInputSchema = z.object({
+  action: AgentGatedActionSchema,
+  /** What the agent wants, in words a person can approve. */
+  summary: z.string().trim().min(3).max(500),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+export type AgentRequestInput = z.infer<typeof AgentRequestInputSchema>;
+
+export const AgentDecisionSchema = z.object({ note: z.string().trim().max(500).optional() });
+
+export const AgentSpendInputSchema = z.object({
+  amountCents: z.number().int().min(0).max(100_000_000),
+  taskRef: z.string().trim().max(120).optional(),
+  note: z.string().trim().max(300).optional(),
+  occurredAt: z.string().datetime().optional(),
+});
+export type AgentSpendInput = z.infer<typeof AgentSpendInputSchema>;
+
+/** What an agent sends to a conversation; a client thread turns it into an approval request. */
+export const AgentMessageInputSchema = z.object({
+  conversationId: UuidSchema,
+  body: z.string().trim().min(1).max(4000),
+  /** An approved request's id, to carry out a message that was gated. */
+  approvalId: UuidSchema.optional(),
+});
+export type AgentMessageInput = z.infer<typeof AgentMessageInputSchema>;
+
+export type AgentCredentialState = 'ACTIVE' | 'ROTATING' | 'EXPIRED' | 'REVOKED';
+
+export interface AgentCredentialSummary {
+  id: string;
+  last4: string;
+  state: AgentCredentialState;
+  issuedAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+  issuedBy: { id: string; name: string } | null;
+  rotatedFromId: string | null;
+}
+
+export interface AgentApprovalSummary {
+  id: string;
+  workerId: string;
+  agentName: string;
+  action: AgentGatedAction;
+  summary: string;
+  payload: Record<string, unknown>;
+  status: AgentApprovalStatus;
+  requestedAt: string;
+  expiresAt: string;
+  decidedBy: { id: string; name: string } | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  consumedAt: string | null;
+}
+
+export interface AgentTrailEntry {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AgentProfileSummary {
+  purpose: string;
+  vendor: string;
+  model: string;
+  modelVersion: string;
+  environment: AgentEnvironment;
+  scopes: AgentScope[];
+  spendCapCents: number | null;
+  rateLimitPerMinute: number;
+  allowedHoursStart: number | null;
+  allowedHoursEnd: number | null;
+  builtInKey: string | null;
+  lastActiveAt: string | null;
+}
+
+export interface AgentSummary extends WorkerSummary {
+  profile: AgentProfileSummary;
+  activeCredentials: number;
+  pendingApprovals: number;
+  spendThisMonthCents: number;
+}
+
+export interface AgentDetail extends AgentSummary {
+  credentials: AgentCredentialSummary[];
+  approvals: AgentApprovalSummary[];
+  spend: { id: string; occurredAt: string; amountCents: number; taskRef: string | null; note: string | null }[];
+  trail: AgentTrailEntry[];
+}
+
+export interface AgentRegistryResponse {
+  agents: AgentSummary[];
+  counts: Record<WorkerStatus, number>;
+  pendingApprovals: number;
+  /** Built-in agents the boot sweep could not register (no owner account yet). */
+  builtInMissing: string[];
+}
+
+export interface AgentIssuedCredential {
+  id: string;
+  /** Shown once. */
+  plaintext: string;
+  last4: string;
+  expiresAt: string;
+}
+
+/** What /agent/v1/me answers. */
+export interface AgentSelf {
+  workerId: string;
+  name: string;
+  status: WorkerStatus;
+  scopes: AgentScope[];
+  limits: { spendCapCents: number | null; rateLimitPerMinute: number; allowedHoursStart: number | null; allowedHoursEnd: number | null };
+  spendThisMonthCents: number;
+  credential: { id: string; expiresAt: string };
+}

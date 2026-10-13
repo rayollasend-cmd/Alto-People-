@@ -40,6 +40,8 @@ import { emergencyRouter } from './routes/emergency.js';
 import { programsRouter } from './routes/programs.js';
 import { seasonPlansRouter } from './routes/seasonPlans.js';
 import { workersRouter } from './routes/workers.js';
+import { agentsRouter } from './routes/agents.js';
+import { agentApiRouter } from './routes/agentApi.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -359,6 +361,8 @@ export function createApp() {
   // don't get tangled with cookie-flow routes if a caller forgets the
   // bearer header.
   app.use('/integrations/v1', integrationsV1Router);
+  // Agents call with their own credential, never a session (Brief 1D-2).
+  app.use('/agent/v1', agentApiRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
   // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
   // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the
@@ -442,6 +446,7 @@ export function createApp() {
   app.use('/season-plans', seasonPlansRouter);
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
   app.use('/workers', workersRouter);
+  app.use('/agents', agentsRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

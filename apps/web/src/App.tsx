@@ -140,6 +140,7 @@ const MessagesHome = lazyNamed(() => import('@/pages/messages/MessagesHome'), 'M
 const RegionHome = lazyNamed(() => import('@/pages/region/RegionHome'), 'RegionHome');
 const RegionsAdmin = lazyNamed(() => import('@/pages/admin/RegionsAdmin'), 'RegionsAdmin');
 const WorkerTypesAdmin = lazyNamed(() => import('@/pages/admin/WorkerTypesAdmin'), 'WorkerTypesAdmin');
+const AgentRegistryAdmin = lazyNamed(() => import('@/pages/admin/AgentRegistryAdmin'), 'AgentRegistryAdmin');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
@@ -244,6 +245,7 @@ registerPrefetch('/compliance', () => import('@/pages/compliance/ComplianceHome'
 registerPrefetch('/programs', () => import('@/pages/programs/ProgramsHome'));
 registerPrefetch('/season-planner', () => import('@/pages/planner/SeasonPlannerHome'));
 registerPrefetch('/workers', () => import('@/pages/admin/WorkerTypesAdmin'));
+registerPrefetch('/agents', () => import('@/pages/admin/AgentRegistryAdmin'));
 registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHome'));
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
@@ -440,6 +442,7 @@ const LAYOUT_ROUTES = [
   { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
   { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
   { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },
+  { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },

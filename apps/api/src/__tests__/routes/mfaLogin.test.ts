@@ -35,8 +35,10 @@ async function enrolledUser() {
   // auth.logout). Tests that assert the absence of auth.login from a
   // gated /login call need a clean slate, so flush + wipe.
   await flushPendingAudits();
-  await prisma.auditLog.deleteMany({ where: { actorUserId: user.id } });
-  return { user, agent: a, secret, recoveryCodes };
+  // AuditLog is append-only (Brief 1D-2), so the test looks only at rows
+  // written after setup instead of wiping them.
+  const since = new Date();
+  return { user, agent: a, secret, recoveryCodes, since };
 }
 
 describe('POST /auth/login (MFA gate)', () => {
@@ -55,7 +57,7 @@ describe('POST /auth/login (MFA gate)', () => {
   });
 
   it('returns mfaRequired and sets a pending cookie when MFA is enrolled', async () => {
-    const { user } = await enrolledUser();
+    const { user, since } = await enrolledUser();
     const a = agent();
     const res = await a
       .post('/auth/login')
@@ -80,7 +82,7 @@ describe('POST /auth/login (MFA gate)', () => {
     // No auth.login audit row yet — login isn't done.
     await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
-      where: { action: 'auth.login', actorUserId: user.id },
+      where: { action: 'auth.login', actorUserId: user.id, createdAt: { gte: since } },
     });
     expect(log).toBeNull();
   });

@@ -1,6 +1,7 @@
 import type { Role, UserStatus } from '@prisma/client';
 import type { Capability } from '@alto-people/shared';
 import type { RequestLogger } from '../lib/logger.js';
+import type { AgentContext } from '../lib/agents.js';
 
 export interface SessionUser {
   id: string;
@@ -55,6 +56,8 @@ declare global {
       /** How this session was established (from the token's amr claim). */
       authMethod?: 'password' | 'mfa' | 'passkey' | 'sso';
       apiKey?: ApiKeyContext;
+      /** Set by requireAgent on /agent/v1: the registered agent calling (Brief 1D-2). */
+      agent?: AgentContext;
       /**
        * Set by `attachUser` when the request had a session cookie that
        * was malformed, expired, or pointed at a now-invalid user.
