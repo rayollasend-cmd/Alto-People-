@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { hasCapability, type Role } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -389,7 +390,7 @@ let sweepTimer: NodeJS.Timeout | null = null;
 
 export function startAccessPurgeCron(): void {
   if (sweepTimer) return;
-  const run = () => sweepDeactivatedUsers().catch((err) => console.error('[alto-people/api] deactivated-user sweep failed:', err));
+  const run = () => tenantJob('accessCleanup', sweepDeactivatedUsers)().catch((err) => console.error('[alto-people/api] deactivated-user sweep failed:', err));
   void run();
   sweepTimer = setInterval(run, SWEEP_MS);
   sweepTimer.unref();

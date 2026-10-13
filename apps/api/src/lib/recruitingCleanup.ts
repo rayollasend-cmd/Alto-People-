@@ -1,4 +1,5 @@
 import type { CandidateStage } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { recordCandidateEvent } from './candidateEvents.js';
@@ -203,8 +204,8 @@ export function startRecruitingCleanupCron(): void {
   if (seconds <= 0) return;
   let announcedGrace = false;
   const run = () => {
-    void runRecruitingCleanup()
-      .then((r) => {
+    void tenantJob('recruitingCleanup', () =>
+      runRecruitingCleanup().then((r) => {
         if (r.graceUntil && !announcedGrace) {
           announcedGrace = true;
           console.log(`[alto-people/api] recruiting clean-up: grace period — nothing closes before ${r.graceUntil.toISOString()}`);
@@ -212,7 +213,8 @@ export function startRecruitingCleanupCron(): void {
         if (r.candidatesClosed || r.invitesExpired) {
           console.log(`[alto-people/api] recruiting clean-up: ${r.candidatesClosed} candidates closed, ${r.invitesExpired} invites expired`);
         }
-      })
+      }),
+    )()
       .catch((err) => console.error('[alto-people/api] recruiting clean-up failed', err));
   };
   run();

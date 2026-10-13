@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyUser } from './notify.js';
@@ -218,7 +219,7 @@ export function startPortalDigestCron(): void {
   const seconds = env.PORTAL_DIGEST_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runPortalDigestSweep().catch((err) => {
+    void tenantJob('portalDigest', runPortalDigestSweep)().catch((err) => {
       console.error('[alto-people/api] portal digest sweep failed:', err);
     });
   };

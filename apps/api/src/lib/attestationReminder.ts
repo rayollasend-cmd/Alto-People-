@@ -13,6 +13,7 @@
 // stable category like `compliance.attestation.MONTHLY_REPORT`.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyAllAdmins } from './notify.js';
@@ -118,11 +119,11 @@ export function startAttestationReminderCron(): void {
   if (timer) return;
   const seconds = env.ATTESTATION_REMINDER_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void runAttestationReminderSweep().catch((err) => {
+  void tenantJob('attestationReminder', runAttestationReminderSweep)().catch((err) => {
     console.error('[alto-people/api] attestation reminder sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runAttestationReminderSweep().catch((err) => {
+    void tenantJob('attestationReminder', runAttestationReminderSweep)().catch((err) => {
       console.error(
         '[alto-people/api] attestation reminder sweep failed:',
         err,

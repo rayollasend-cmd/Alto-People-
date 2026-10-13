@@ -11,6 +11,7 @@
 // tomorrow" coverage on top of the assignment notification.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
@@ -522,11 +523,11 @@ export function startShiftReminderCron(): void {
   if (timer) return;
   const seconds = env.SHIFT_REMINDER_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void runShiftReminderSweep().catch((err) => {
+  void tenantJob('shiftReminder', runShiftReminderSweep)().catch((err) => {
     console.error('[alto-people/api] shift reminder sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runShiftReminderSweep().catch((err) => {
+    void tenantJob('shiftReminder', runShiftReminderSweep)().catch((err) => {
       console.error('[alto-people/api] shift reminder sweep failed:', err);
     });
   }, seconds * 1000);

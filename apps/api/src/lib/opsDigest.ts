@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyAllAdmins } from './notify.js';
@@ -117,7 +118,7 @@ export function startOpsDigestCron(): void {
   const seconds = env.OPS_DIGEST_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runOpsDigestSweep().catch((err) => {
+    void tenantJob('opsDigest', runOpsDigestSweep)().catch((err) => {
       console.error('[alto-people/api] ops digest sweep failed:', err);
     });
   };

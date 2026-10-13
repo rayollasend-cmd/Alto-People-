@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { tenantJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import {
   buildActionsTile,
@@ -83,7 +84,7 @@ export function startComplianceSnapshotCron(): void {
   const seconds = env.COMPLIANCE_SNAPSHOT_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void runComplianceSnapshot().catch((err) => {
+    void tenantJob('complianceSnapshot', runComplianceSnapshot)().catch((err) => {
       console.error('[alto-people/api] compliance snapshot failed:', err);
     });
   };

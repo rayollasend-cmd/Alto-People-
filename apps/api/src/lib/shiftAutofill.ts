@@ -8,6 +8,7 @@
 // asked.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { atClient } from './scope.js';
 import { notifyUser } from './notify.js';
@@ -111,11 +112,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startShiftAutofillCron(): void {
   if (timer) return;
-  void runShiftAutofillSweep().catch((err) => {
+  void tenantJob('shiftAutofill', runShiftAutofillSweep)().catch((err) => {
     console.error('[alto-people/api] shift autofill sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runShiftAutofillSweep().catch((err) => {
+    void tenantJob('shiftAutofill', runShiftAutofillSweep)().catch((err) => {
       console.error('[alto-people/api] shift autofill sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

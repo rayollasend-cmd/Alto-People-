@@ -149,7 +149,12 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
   // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.
+  const platformScopeSeen = new Map<string, number>();
   onPlatformScope((ctx, callSite) => {
+    // Once an hour per call site: a timed flush must not write an audit row a minute.
+    const last = platformScopeSeen.get(callSite) ?? 0;
+    if (Date.now() - last < 3_600_000) return;
+    platformScopeSeen.set(callSite, Date.now());
     enqueueAudit(
       { actorUserId: null, clientId: null, action: 'platform.scope_opened', entityType: 'Tenant', entityId: ctx.tenantId, metadata: { callSite } },
       'tenancy',

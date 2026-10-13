@@ -15,6 +15,7 @@
 //      snapshot ~a week ago (needs two snapshots; silent until then).
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
@@ -210,11 +211,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startExecutiveAlertsCron(): void {
   if (timer) return;
-  void runExecutiveAlertsSweep().catch((err) => {
+  void tenantJob('executiveAlerts', runExecutiveAlertsSweep)().catch((err) => {
     console.error('[alto-people/api] executive alerts sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runExecutiveAlertsSweep().catch((err) => {
+    void tenantJob('executiveAlerts', runExecutiveAlertsSweep)().catch((err) => {
       console.error('[alto-people/api] executive alerts sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

@@ -9,6 +9,7 @@
 // first day (Saturday, Florida-local) after SEND_AFTER_HOUR local time.
 
 import { prisma as defaultPrisma } from '../db.js';
+import { tenantJob } from './tenantJobs.js';
 import type { PrismaClient } from '@prisma/client';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveDecisions } from './executiveDecisions.js';
@@ -96,11 +97,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startExecutiveDigestCron(): void {
   if (timer) return;
-  void runExecutiveDigestSweep().catch((err) => {
+  void tenantJob('executiveDigest', runExecutiveDigestSweep)().catch((err) => {
     console.error('[alto-people/api] executive digest sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runExecutiveDigestSweep().catch((err) => {
+    void tenantJob('executiveDigest', runExecutiveDigestSweep)().catch((err) => {
       console.error('[alto-people/api] executive digest sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

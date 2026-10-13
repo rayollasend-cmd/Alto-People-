@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
@@ -472,7 +473,7 @@ export function startOnboardingPurgeCron(): void {
   const seconds = env.ONBOARDING_PURGE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runOnboardingPurgeSweep().catch((err) => {
+    void tenantJob('onboardingPurge', runOnboardingPurgeSweep)().catch((err) => {
       console.error('[alto-people/api] onboarding purge sweep failed:', err);
     });
   };

@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { platformJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
 
@@ -229,7 +230,7 @@ export async function flushUsage(): Promise<void> {
 export function startUsageFlusher(): void {
   if (timer) return;
   timer = setInterval(() => {
-    void flushUsage();
+    void platformJob('usageTracker', flushUsage)();
   }, FLUSH_MS);
   // Never hold the process open for a counter.
   timer.unref?.();

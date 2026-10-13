@@ -1,4 +1,5 @@
 import type { OpsPeriod, OpsShift, Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { fmtShiftWindow, inShiftWindow, minuteOfDayInZone } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -851,8 +852,7 @@ export function startOpsSopCron(): void {
   const run = () => {
     // Covers first: an SOP that moves to a floor supervisor this tick is
     // reminded and escalated like any other from the next one.
-    void runSopCoverSweep()
-      .then(() => runOpsSopSweep())
+    void tenantJob('storeShiftSop', () => runSopCoverSweep().then(() => runOpsSopSweep()))()
       .catch((err) => {
         console.error('[alto-people/api] store-shift SOP sweep failed:', err);
       });

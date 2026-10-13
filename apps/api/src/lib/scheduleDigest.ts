@@ -18,6 +18,7 @@
 // is something to report, not "empty report at 6am, silence after".
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { paidMinutesForRange, rolesWithCapability } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -247,11 +248,11 @@ export function startScheduleDigestCron(): void {
   if (timer) return;
   const seconds = env.SCHEDULE_DIGEST_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void runScheduleDigestSweep().catch((err) => {
+  void tenantJob('scheduleDigest', runScheduleDigestSweep)().catch((err) => {
     console.error('[alto-people/api] schedule digest sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runScheduleDigestSweep().catch((err) => {
+    void tenantJob('scheduleDigest', runScheduleDigestSweep)().catch((err) => {
       console.error('[alto-people/api] schedule digest sweep failed:', err);
     });
   }, seconds * 1000);

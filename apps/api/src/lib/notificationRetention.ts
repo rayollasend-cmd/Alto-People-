@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
 
 /**
@@ -88,7 +89,7 @@ export function startNotificationRetentionCron(): void {
   const seconds = env.NOTIFICATION_RETENTION_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void runNotificationRetention().catch((err) => {
+    void tenantJob('notificationRetention', runNotificationRetention)().catch((err) => {
       console.error('[alto-people/api] notification retention failed:', err);
     });
   };

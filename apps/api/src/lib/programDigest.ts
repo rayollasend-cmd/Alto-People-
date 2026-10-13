@@ -8,6 +8,7 @@
 // Nothing due → nothing sent.
 
 import type { PrismaClient, Role } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { PROGRAM_TYPE_LABELS, ROLE_CAPABILITIES, type ProgramAlert } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
@@ -93,9 +94,9 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startProgramDigestCron(): void {
   if (timer) return;
-  void runProgramDigestSweep().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
+  void tenantJob('programDigest', runProgramDigestSweep)().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
   timer = setInterval(() => {
-    void runProgramDigestSweep().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
+    void tenantJob('programDigest', runProgramDigestSweep)().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
   }, SWEEP_SECONDS * 1000);
   timer.unref();
   console.log(`[alto-people/api] program digest cron armed (every ${SWEEP_SECONDS}s, sends Mondays after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`);

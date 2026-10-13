@@ -15,6 +15,7 @@
 // after SEND_AFTER_HOUR local time.
 
 import type { PrismaClient, Role } from '@prisma/client';
+import { platformJob } from './tenantJobs.js';
 import { RELIABILITY_ERROR_BUDGET, ROLE_CAPABILITIES } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
@@ -175,11 +176,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startReliabilityDigestCron(): void {
   if (timer) return;
-  void runReliabilityDigestSweep().catch((err) => {
+  void platformJob('reliabilityDigest', runReliabilityDigestSweep)().catch((err) => {
     console.error('[alto-people/api] reliability digest sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runReliabilityDigestSweep().catch((err) => {
+    void platformJob('reliabilityDigest', runReliabilityDigestSweep)().catch((err) => {
       console.error('[alto-people/api] reliability digest sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

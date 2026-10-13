@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
@@ -166,10 +167,10 @@ export function startDocumentMaintenanceCron(): void {
   const seconds = env.DOCUMENT_MAINTENANCE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void purgeRejectedDocs().catch((err) => {
+    void tenantJob('documentMaintenance', purgeRejectedDocs)().catch((err) => {
       console.error('[alto-people/api] document maintenance failed:', err);
     });
-    void expireLapsedDocs().catch((err) => {
+    void tenantJob('documentMaintenance', expireLapsedDocs)().catch((err) => {
       console.error('[alto-people/api] document expiry sweep failed:', err);
     });
   };

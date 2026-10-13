@@ -14,6 +14,7 @@
 // punch-outs corrupt payroll whether or not an env knob was set.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { recordAttendanceForEntry } from './attendance.js';
 import { closeForgottenClockOuts } from './kioskMaintenance.js';
@@ -96,11 +97,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startAutoClockOutCron(): void {
   if (timer) return;
-  void runAutoClockOutSweep().catch((err) => {
+  void tenantJob('autoClockOut', runAutoClockOutSweep)().catch((err) => {
     console.error('[alto-people/api] auto clock-out sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runAutoClockOutSweep().catch((err) => {
+    void tenantJob('autoClockOut', runAutoClockOutSweep)().catch((err) => {
       console.error('[alto-people/api] auto clock-out sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

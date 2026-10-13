@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import type { Request } from 'express';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -324,8 +325,8 @@ export function startOfferLetterCron(): void {
   const seconds = env.OFFER_LETTER_SWEEP_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void runOfferLetterSweep()
-      .then((r) => {
+    void tenantJob('offerLetters', () =>
+      runOfferLetterSweep().then((r) => {
         if (r.filed > 0) {
           console.log(`[alto-people/api] offer-letter sweep filed ${r.filed} letter(s)`);
         }
@@ -339,7 +340,8 @@ export function startOfferLetterCron(): void {
           const why = skipped.map(([reason, n]) => `${reason}=${n}`).join(' ');
           console.warn(`[alto-people/api] offer-letter sweep filed nothing — ${why}`);
         }
-      })
+      }),
+    )()
       .catch((err) => {
         console.error('[alto-people/api] offer-letter sweep failed:', err);
       });

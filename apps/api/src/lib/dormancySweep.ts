@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
@@ -249,7 +250,7 @@ export function startDormancySweepCron(): void {
   const seconds = env.DORMANCY_SWEEP_INTERVAL_SECONDS;
   if (seconds <= 0 || env.DORMANCY_DEACTIVATE_DAYS <= 0) return;
   const run = () => {
-    void runDormancySweep().catch((err) => {
+    void tenantJob('dormancySweep', runDormancySweep)().catch((err) => {
       console.error('[alto-people/api] dormancy sweep failed:', err);
     });
   };

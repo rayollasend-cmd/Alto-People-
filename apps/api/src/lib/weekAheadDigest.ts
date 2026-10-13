@@ -16,6 +16,7 @@
 // starts alert on different evenings by design).
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -231,11 +232,11 @@ export function startWeekAheadCron(): void {
   if (timer) return;
   const seconds = env.WEEK_AHEAD_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void runWeekAheadSweep().catch((err) => {
+  void tenantJob('weekAheadDigest', runWeekAheadSweep)().catch((err) => {
     console.error('[alto-people/api] week-ahead sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runWeekAheadSweep().catch((err) => {
+    void tenantJob('weekAheadDigest', runWeekAheadSweep)().catch((err) => {
       console.error('[alto-people/api] week-ahead sweep failed:', err);
     });
   }, seconds * 1000);

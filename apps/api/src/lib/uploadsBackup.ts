@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import * as tar from 'tar';
 import { env } from '../config/env.js';
 import { UPLOAD_ROOT } from './storage.js';
+import { platformJob } from './tenantJobs.js';
 
 /**
  * Nightly off-site backup of the uploads volume.
@@ -152,7 +153,7 @@ export function startUploadsBackupCron(): void {
     return;
   }
   const run = () => {
-    void runUploadsBackup()
+    void platformJob('uploadsBackup', runUploadsBackup)()
       .then((r) =>
         console.log(
           `[backup] uploads backed up to ${r.key}` +

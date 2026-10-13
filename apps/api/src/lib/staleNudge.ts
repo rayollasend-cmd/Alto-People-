@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { tenantJob } from './tenantJobs.js';
 import type { SessionUser } from '../types/express.js';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -155,7 +156,7 @@ export function startStaleNudgeCron(): void {
   const seconds = env.STALE_NUDGE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runStaleNudgeSweep().catch((err) => {
+    void tenantJob('staleNudge', runStaleNudgeSweep)().catch((err) => {
       console.error('[alto-people/api] stale nudge sweep failed:', err);
     });
   };

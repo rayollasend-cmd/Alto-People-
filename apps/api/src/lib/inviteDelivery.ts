@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
 import { inviteTemplate } from './emailTemplates.js';
 import { generateInviteToken } from './inviteToken.js';
@@ -159,7 +160,7 @@ export function startDueInviteCron(): void {
   const seconds = env.DUE_INVITE_SWEEP_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void deliverDueInvites().catch((err) => console.error('[alto-people/api] due-invite sweep failed', err));
+    void tenantJob('inviteDelivery', deliverDueInvites)().catch((err) => console.error('[alto-people/api] due-invite sweep failed', err));
   };
   run();
   timer = setInterval(run, seconds * 1000);

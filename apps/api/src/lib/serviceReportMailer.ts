@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { EmailSuppressedError, send } from './notifications.js';
@@ -233,7 +234,7 @@ export function startServiceReportMailCron(): void {
   const seconds = env.SERVICE_REPORT_MAIL_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runServiceReportMailSweep().catch((err) => {
+    void tenantJob('serviceReportMailer', runServiceReportMailSweep)().catch((err) => {
       console.error('[alto-people/api] service report mail sweep failed:', err);
     });
   };

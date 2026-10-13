@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -375,11 +376,11 @@ export function startKioskMaintenanceCron(): void {
   if (timer) return;
   const seconds = env.KIOSK_MAINTENANCE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void runKioskMaintenance().catch((err) => {
+  void tenantJob('kioskMaintenance', runKioskMaintenance)().catch((err) => {
     console.error('[alto-people/api] kiosk maintenance failed:', err);
   });
   timer = setInterval(() => {
-    void runKioskMaintenance().catch((err) => {
+    void tenantJob('kioskMaintenance', runKioskMaintenance)().catch((err) => {
       console.error('[alto-people/api] kiosk maintenance failed:', err);
     });
   }, seconds * 1000);

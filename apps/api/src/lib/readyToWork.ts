@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { enqueueAudit } from './audit.js';
@@ -523,7 +524,7 @@ export function startReadyToWorkNudgeCron(): void {
   const seconds = env.READY_TO_WORK_NUDGE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void runReadyToWorkNudgeSweep().catch((err) => {
+    void tenantJob('readyToWork', runReadyToWorkNudgeSweep)().catch((err) => {
       console.error('[alto-people/api] ready-to-work nudge sweep failed:', err);
     });
   };

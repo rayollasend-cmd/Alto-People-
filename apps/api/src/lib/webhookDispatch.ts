@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { tenantJob } from './tenantJobs.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { assertSafeOutboundUrl } from './safeOutboundUrl.js';
@@ -311,7 +312,7 @@ export function startWebhookDeliveryCron(): void {
   const seconds = env.WEBHOOK_DELIVERY_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void deliverPendingDeliveries().catch((err) => {
+    void tenantJob('webhookDispatch', deliverPendingDeliveries)().catch((err) => {
       console.error('[alto-people/api] webhook delivery sweep failed:', err);
     });
   };

@@ -1,4 +1,5 @@
 import type { PrismaClient, Role } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { isEmailMuted, notifyUser, trackNotificationWork } from './notify.js';
@@ -405,10 +406,12 @@ export function startPortalEngagementDigestCron(): void {
   if (seconds <= 0) return;
   const run = () => {
     void trackNotificationWork(
-      runPortalEngagementDigest().catch((err) => {
-        console.error('[alto-people/api] portal engagement digest failed:', err);
-        return { sent: 0, skipped: 0 } as EngagementDigestResult;
-      }),
+      tenantJob('portalEngagement', () =>
+        runPortalEngagementDigest().catch((err) => {
+          console.error('[alto-people/api] portal engagement digest failed:', err);
+          return { sent: 0, skipped: 0 } as EngagementDigestResult;
+        }),
+      )(),
     );
   };
   run();

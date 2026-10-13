@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { tenantJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import { notifyAllAdmins, notifyAssociate } from './notify.js';
 import { agreementReminderEmail } from './emailContent.js';
@@ -124,10 +125,10 @@ export function startExpirationDigestCron(): void {
   const seconds = env.EXPIRATION_DIGEST_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void runExpirationDigest().catch((err) => {
+    void tenantJob('expirationDigest', runExpirationDigest)().catch((err) => {
       console.error('[alto-people/api] expiration digest failed:', err);
     });
-    void runAgreementSweep().catch((err) => {
+    void tenantJob('expirationDigest', runAgreementSweep)().catch((err) => {
       console.error('[alto-people/api] agreement sweep failed:', err);
     });
   };

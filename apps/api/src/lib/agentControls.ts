@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import type { AgentCertification, AgentControlState, AgentScenarioAnswer, AgentScenarioInput, AgentScenarioSummary, AgentScorecard, AgentScenarioRunSummary } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -327,7 +328,7 @@ const DRIFT_SWEEP_MS = 6 * 3_600_000;
 
 export function startAgentDriftCron(): void {
   if (driftTimer) return;
-  const run = () => sweepAgentDrift().catch((err) => console.error('[alto-people/api] agent drift sweep failed:', err));
+  const run = () => tenantJob('agentControls', sweepAgentDrift)().catch((err) => console.error('[alto-people/api] agent drift sweep failed:', err));
   void run();
   driftTimer = setInterval(run, DRIFT_SWEEP_MS);
   driftTimer.unref();

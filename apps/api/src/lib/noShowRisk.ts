@@ -6,6 +6,7 @@
 // gets pre-arranged out of existence the night before.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { atClient } from './scope.js';
 import { notifyUser } from './notify.js';
@@ -200,11 +201,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startNoShowRiskCron(): void {
   if (timer) return;
-  void runNoShowRiskSweep().catch((err) => {
+  void tenantJob('noShowRisk', runNoShowRiskSweep)().catch((err) => {
     console.error('[alto-people/api] no-show risk sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runNoShowRiskSweep().catch((err) => {
+    void tenantJob('noShowRisk', runNoShowRiskSweep)().catch((err) => {
       console.error('[alto-people/api] no-show risk sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
@@ -368,10 +369,10 @@ export function startInviteReminderCron(): void {
   const seconds = env.INVITE_REMINDER_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const runBoth = () => {
-    void runInviteReminderSweep().catch((err) => {
+    void tenantJob('inviteReminder', runInviteReminderSweep)().catch((err) => {
       console.error('[alto-people/api] invite reminder sweep failed:', err);
     });
-    void runProgressReminderSweep().catch((err) => {
+    void tenantJob('inviteReminder', runProgressReminderSweep)().catch((err) => {
       console.error('[alto-people/api] progress reminder sweep failed:', err);
     });
   };

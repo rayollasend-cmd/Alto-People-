@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { platformJob } from './tenantJobs.js';
 import { logger } from './logger.js';
 
 /**
@@ -204,7 +205,7 @@ export async function flushVitals(): Promise<void> {
 export function startVitalsFlusher(): void {
   if (timer) return;
   timer = setInterval(() => {
-    void flushVitals();
+    void platformJob('webVitals', flushVitals)();
   }, FLUSH_MS);
   timer.unref?.();
 }

@@ -12,6 +12,7 @@ import { scheduledReportTemplate } from './emailTemplates.js';
 import { ENTITY_COLUMNS, SpecSchema, runReport } from './reportRun.js';
 import type { SessionUser } from '../types/express.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { tenantJob } from './tenantJobs.js';
 
 /**
  * Scheduled-report delivery sweep.
@@ -344,7 +345,7 @@ export function startReportScheduleCron(): void {
   const seconds = env.REPORT_SCHEDULE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void runDueReportSchedules().catch((err) => {
+    void tenantJob('reportScheduleRunner', runDueReportSchedules)().catch((err) => {
       console.error('[alto-people/api] report schedule sweep failed:', err);
     });
   };

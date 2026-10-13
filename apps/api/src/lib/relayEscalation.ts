@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { computeRelayBoard, DESK_LABELS, type Desk } from './relayBoard.js';
 import { notifyUser } from './notify.js';
@@ -202,11 +203,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startRelayEscalationCron(): void {
   if (timer) return;
-  void runRelayEscalationSweep().catch((err) => {
+  void tenantJob('relayEscalation', runRelayEscalationSweep)().catch((err) => {
     console.error('[alto-people/api] relay escalation sweep failed:', err);
   });
   timer = setInterval(() => {
-    void runRelayEscalationSweep().catch((err) => {
+    void tenantJob('relayEscalation', runRelayEscalationSweep)().catch((err) => {
       console.error('[alto-people/api] relay escalation sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);
