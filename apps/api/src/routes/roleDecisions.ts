@@ -10,6 +10,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
 import { approveWalkInRequest } from '../lib/walkInApproval.js';
 import { enqueueAudit } from '../lib/audit.js';
@@ -319,7 +320,8 @@ function colleagueWhere(me: ReturnType<typeof queueUser>): Prisma.UserWhereInput
 async function listColleagues(req: Request) {
   const me = queueUser(req);
   const rows = await prisma.user.findMany({
-    where: colleagueWhere(me),
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+    where: { AND: [colleagueWhere(me), { tenantId: tenantIdForWrite() }] },
     select: { ...CLAIMER_SELECT, role: true, clientId: true },
     orderBy: { email: 'asc' },
     take: 50,
@@ -331,7 +333,7 @@ async function listColleagues(req: Request) {
  *  writes — same circle as assign/tag, never an arbitrary user id. */
 async function assertColleague(req: Request, userId: string) {
   const hit = await prisma.user.findFirst({
-    where: { AND: [colleagueWhere(queueUser(req)), { id: userId }] },
+    where: { AND: [colleagueWhere(queueUser(req)), { id: userId, tenantId: tenantIdForWrite() }] },
     select: { id: true },
   });
   if (!hit) {

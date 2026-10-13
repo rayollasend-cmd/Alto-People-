@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { hasCapability } from '@alto-people/shared';
@@ -1961,8 +1962,9 @@ transportRouter.get('/riders/:associateId', requireAuth, async (req, res) => {
     });
     if (!related) throw new HttpError(404, 'not_found', 'Rider not found.');
   }
-  const a = await prisma.associate.findUnique({
-    where: { id: associateId },
+  // Another tenant's person is not found here (Brief 2-1, cross-tenant suite).
+  const a = await prisma.associate.findFirst({
+    where: { id: associateId, tenantId: tenantIdForWrite() },
     select: { id: true, firstName: true, lastName: true, phone: true, createdAt: true },
   });
   if (!a) throw new HttpError(404, 'not_found', 'Rider not found.');
@@ -2510,7 +2512,8 @@ function toAccessRow(r: Prisma.DriverClientAccessGetPayload<{ select: typeof acc
 /** What the driver sees: every active client, with where they stand on each. */
 async function clientAccessView(driverUserId: string) {
   const [clients, rows] = await Promise.all([
-    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
+    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null, tenantId: tenantIdForWrite() }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.driverClientAccess.findMany({ where: { driverUserId }, orderBy: { requestedAt: 'asc' } }),
   ]);
   const view = (r: (typeof rows)[number] | null | undefined) =>
@@ -2612,10 +2615,11 @@ transportRouter.delete('/driver/clients/:key', DRIVE, async (req, res) => {
 /** The desk: every request waiting, and who drives for whom. */
 transportRouter.get('/driver-access', VIEW, async (_req, res) => {
   const [rows, clients, drivers] = await Promise.all([
-    prisma.driverClientAccess.findMany({ orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }], select: accessSelect }),
-    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
+    prisma.driverClientAccess.findMany({ where: { tenantId: tenantIdForWrite() }, orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }], select: accessSelect }),
+    prisma.client.findMany({ where: { status: 'ACTIVE', deletedAt: null, tenantId: tenantIdForWrite() }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.user.findMany({
-      where: { ...actsAs('DRIVER'), status: 'ACTIVE', deletedAt: null },
+      where: { ...actsAs('DRIVER'), status: 'ACTIVE', deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
       orderBy: { email: 'asc' },
     }),

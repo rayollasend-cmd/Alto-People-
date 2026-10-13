@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
@@ -30,6 +31,7 @@ ramp125Router.get(
   VIEW,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    await assertSameTenant('associate', associateId);
     const plan = await prisma.rampPlan.findFirst({
       where: { associateId, archivedAt: null },
       include: {

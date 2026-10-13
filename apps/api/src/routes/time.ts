@@ -32,6 +32,7 @@ import { csvCell as sharedCsvCell, hasCapability, isClientBoundedRole } from '@a
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
@@ -982,6 +983,8 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
 
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
+      // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+      tenantId: tenantIdForWrite(),
       ...(entryId ? { id: entryId } : {}),
       ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
@@ -1337,7 +1340,7 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
     }
 
     const existing = await prisma.timeEntry.findFirst({
-      where: { id: req.params.id, ...scopeTimeEntries(user) },
+      where: { id: req.params.id, ...scopeTimeEntries(user), tenantId: tenantIdForWrite() },
     });
     if (!existing) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
@@ -1407,7 +1410,7 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
     }
 
     const existing = await prisma.timeEntry.findFirst({
-      where: { id: req.params.id, ...scopeTimeEntries(user) },
+      where: { id: req.params.id, ...scopeTimeEntries(user), tenantId: tenantIdForWrite() },
     });
     if (!existing) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
@@ -1586,7 +1589,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     }
 
     const existing = await prisma.timeEntry.findFirst({
-      where: { id: req.params.id, ...scopeTimeEntries(user) },
+      where: { id: req.params.id, ...scopeTimeEntries(user), tenantId: tenantIdForWrite() },
       include: { breaks: true, associate: { select: { state: true } } },
     });
     if (!existing) {
@@ -3541,12 +3544,16 @@ timeRouter.get('/admin/timesheets/history/:associateId', MANAGE, async (req, res
     const associateId = z.string().uuid().safeParse(req.params.associateId);
     if (!associateId.success) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     const user = req.user!;
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite) —
+    // another tenant's associate is not found here.
+    const inTenant = await prisma.associate.findFirst({ where: { id: associateId.data, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!inTenant) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     const bounded = isClientBoundedRole(user.role);
     const showSecurityId = !bounded && hasCapability(user.role, 'process:payroll');
     const history = await buildTimesheetHistory({
       associateId: associateId.data,
       clientId: bounded ? timesheetClientId(user, undefined) : undefined,
-      scopeWhere: scopeTimeEntries(user),
+      scopeWhere: { ...scopeTimeEntries(user), tenantId: tenantIdForWrite() },
       bounded,
       showMoney: !bounded,
       showSecurityId,

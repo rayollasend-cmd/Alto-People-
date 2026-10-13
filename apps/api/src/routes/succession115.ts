@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 
@@ -137,6 +138,7 @@ succession115Router.get(
   VIEW,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    await assertSameTenant('associate', associateId);
     const rows = await prisma.successionCandidate.findMany({
       take: 500,
       where: { associateId },

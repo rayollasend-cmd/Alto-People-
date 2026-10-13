@@ -17,6 +17,7 @@ import {
   type J1Profile,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
@@ -149,7 +150,7 @@ complianceRouter.post('/i9/:associateId', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null },
+      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
@@ -330,6 +331,7 @@ complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
       take: 501, // one past the cap so truncation is detectable
       where: {
         deletedAt: null,
+        tenantId: tenantIdForWrite(),
         backgroundChecks: { none: {} },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -650,7 +652,7 @@ complianceRouter.post('/j1/:associateId', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null },
+      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 

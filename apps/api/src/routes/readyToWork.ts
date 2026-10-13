@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -31,6 +32,9 @@ readyToWorkRouter.get(
   async (req, res, next) => {
     try {
       const associateId = req.params.associateId;
+      // Another tenant's person is not found here (Brief 2-1, cross-tenant suite).
+      const known = await prisma.associate.findFirst({ where: { id: associateId, tenantId: tenantIdForWrite() }, select: { id: true } });
+      if (!known) throw new HttpError(404, 'not_found', 'Not found.');
       // Client-bounded staff only see their own client's hires.
       const bound = req.user!.clientId;
       if (bound) {

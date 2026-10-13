@@ -54,6 +54,7 @@ import {
 import { renderGarnishmentLetterPdf } from '../lib/garnishmentLetter.js';
 import { renderTaxFormSummaryPdf } from '../lib/taxFormSummaryPdf.js';
 import { send } from '../lib/notifications.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -252,6 +253,7 @@ payrollTax91Router.post('/garnishments/:id/deduct', MANAGE, async (req, res) => 
 });
 
 payrollTax91Router.get('/garnishments/:id/deductions', VIEW, async (req, res) => {
+  await assertSameTenant('garnishment', String(req.params.id));
   const rows = await prisma.garnishmentDeduction.findMany({
     where: { garnishmentId: req.params.id },
     orderBy: { deductedOn: 'desc' },
@@ -2894,6 +2896,7 @@ const TinBodySchema = z.object({
 
 payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
   try {
+    await assertSameTenant('associate', String(req.params.id));
     const id = z.string().uuid().parse(req.params.id);
     const a = await prisma.associate.findUnique({
       where: { id },
@@ -2925,6 +2928,7 @@ payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
 
 payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) => {
   try {
+    await assertSameTenant('associate', String(req.params.id));
     const id = z.string().uuid().parse(req.params.id);
     const input = TinBodySchema.parse(req.body);
     const cleaned = input.tin.replace(/[^0-9]/g, '');
@@ -2985,6 +2989,7 @@ payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) =>
 
 payrollTax91Router.delete('/associates/:id/tin', MANAGE, async (req, res, next) => {
   try {
+    await assertSameTenant('associate', String(req.params.id));
     const id = z.string().uuid().parse(req.params.id);
     const a = await prisma.associate.findUnique({
       where: { id },

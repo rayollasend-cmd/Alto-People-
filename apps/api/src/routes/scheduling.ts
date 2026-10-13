@@ -224,7 +224,7 @@ const NOT_CLIENT_BOUNDED: RequestHandler = (req, _res, next) => {
 schedulingRouter.get('/clients', SCHED_READ, async (req, res, next) => {
   try {
     const rows = await prisma.client.findMany({
-      where: { ...scopeClients(req.user!), status: 'ACTIVE' },
+      where: { ...scopeClients(req.user!), status: 'ACTIVE', tenantId: tenantIdForWrite() },
       select: { id: true, name: true, weekStartsOn: true },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       take: 1000,
@@ -715,6 +715,8 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
+      // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+      tenantId: tenantIdForWrite(),
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
       ...(clientId ? { clientId } : {}),
       // Narrow to one work-site within the client (cascading filter).
@@ -1527,6 +1529,7 @@ schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => 
       where: {
         deletedAt: null,
         isActive: true,
+        tenantId: tenantIdForWrite(),
         ...(stClientId ? { clientId: stClientId } : {}),
       },
       select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
@@ -2540,7 +2543,8 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
     // without saying so makes an incomplete schedule look complete.
     const ROSTER_PAGE = 500;
     const rows = await prisma.associate.findMany({
-      where,
+      // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+      where: { AND: [where, { tenantId: tenantIdForWrite() }] },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
       take: ROSTER_PAGE + 1,
@@ -3317,7 +3321,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     }
 
     const existing = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
       include: { client: { select: { state: true } } },
     });
     if (!existing) throw new HttpError(404, 'shift_not_found', 'Shift not found');
@@ -3496,7 +3500,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
 schedulingRouter.delete('/shifts/:id', MANAGE, async (req, res, next) => {
   try {
     const existing = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
       select: {
         id: true,
         clientId: true,
@@ -3538,7 +3542,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     }
 
     const shift = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
       include: { locationRel: { select: { timezone: true } } },
     });
     if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found');
@@ -3681,7 +3685,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
 schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => {
   try {
     const shift = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
     });
     if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (!shift.assignedAssociateId) {
@@ -3741,7 +3745,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const shift = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
     });
     if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (shift.status === 'COMPLETED') {
@@ -4748,7 +4752,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
   try {
     const associateId = req.query.associateId?.toString();
     const target = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
       include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
@@ -4840,7 +4844,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
 schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => {
   try {
     const target = await prisma.shift.findFirst({
-      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
       include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');

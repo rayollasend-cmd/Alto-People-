@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient, Application } from '@prisma/client';
 import { hasCapability } from '@alto-people/shared';
 import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from './tenant.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -480,8 +481,9 @@ export async function assertCanModifyApplication(
   applicationId: string,
   opts: { intent?: ApplicationAccessIntent; write?: boolean } = {}
 ): Promise<Application> {
+  // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
   const app = await tx.application.findFirst({
-    where: { ...scopeApplications(user), id: applicationId },
+    where: { ...scopeApplications(user), id: applicationId, tenantId: tenantIdForWrite() },
   });
   if (!app) {
     throw new HttpError(404, 'application_not_found', 'Application not found');

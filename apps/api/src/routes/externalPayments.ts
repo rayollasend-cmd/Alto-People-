@@ -18,6 +18,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit, recordDocumentEvent } from '../lib/audit.js';
 import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 
 /**
  * External payments — audit documentation for externally-run payroll.
@@ -138,6 +139,7 @@ externalPaymentsRouter.get(
   '/associates/:id',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await assertSameTenant('associate', String(req.params.id));
       await assertAssociate(req.params.id);
       const where = { associateId: req.params.id, deletedAt: null };
       const [total, rows] = await Promise.all([

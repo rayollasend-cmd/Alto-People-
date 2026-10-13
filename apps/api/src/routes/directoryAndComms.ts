@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { atClient } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -39,7 +40,7 @@ directoryAndCommsRouter.get(
   VIEW_ORG,
   async (req, res) => {
     const q = z.string().max(120).optional().parse(req.query.q);
-    const where: Prisma.AssociateWhereInput = { deletedAt: null };
+    const where: Prisma.AssociateWhereInput = { deletedAt: null, tenantId: tenantIdForWrite() };
     if (q && q.trim()) {
       const term = q.trim();
       where.OR = [
@@ -294,6 +295,8 @@ directoryAndCommsRouter.post(
   async (req, res) => {
     if (!req.user) throw new HttpError(401, 'unauthenticated', 'Sign in required.');
     const id = req.params.id;
+    const othersBroadcast = await prisma.broadcast.findFirst({ where: { id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+    if (othersBroadcast) throw new HttpError(404, 'not_found', 'Broadcast not found.');
     await prisma.broadcastReceipt.updateMany({
       where: { broadcastId: id, userId: req.user.id, readAt: null },
       data: { readAt: new Date() },
@@ -375,6 +378,8 @@ directoryAndCommsRouter.get(
   MANAGE_COMMS,
   async (req, res) => {
     const surveyId = req.params.id;
+    const othersRow = await prisma.survey.findFirst({ where: { id: surveyId, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+    if (othersRow) throw new HttpError(404, 'not_found', 'Survey not found.');
     const rows = await prisma.surveyQuestion.findMany({
       take: 500,
       where: { surveyId },
@@ -390,6 +395,8 @@ directoryAndCommsRouter.post(
   async (req, res) => {
     const surveyId = req.params.id;
     const input = QuestionInputSchema.parse(req.body);
+    const othersRow = await prisma.survey.findFirst({ where: { id: surveyId, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+    if (othersRow) throw new HttpError(404, 'not_found', 'Survey not found.');
     const created = await prisma.surveyQuestion.create({
       data: {
         surveyId,

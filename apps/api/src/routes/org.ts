@@ -50,6 +50,8 @@ import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 export const orgRouter = Router();
 
@@ -624,6 +626,7 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
     take: 1000,
     where: {
       deletedAt: null,
+      tenantId: tenantIdForWrite(),
       // Where they work now (a transfer moves them), else the client
       // they applied to — lib/scope.atClient.
       ...(clientId ? atClient(clientId) : {}),
@@ -676,6 +679,7 @@ orgRouter.put(
   '/associates/:id/org',
   MANAGE,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
     const input = AssociateOrgAssignmentInputSchema.parse(req.body);
     const existing = await prisma.associate.findUnique({ where: { id } });
@@ -782,6 +786,7 @@ orgRouter.get(
   '/associates/:id/history',
   VIEW,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
     const rows = await prisma.associateHistory.findMany({
       take: 500,
@@ -814,6 +819,7 @@ orgRouter.get(
   '/associates/:id/as-of',
   VIEW,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
     const whenStr =
       typeof req.query.when === 'string' ? req.query.when : undefined;
@@ -850,6 +856,7 @@ orgRouter.patch(
   '/associates/:id',
   MANAGE,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
     const input = AssociateProfilePatchInputSchema.parse(req.body);
     const existing = await prisma.associate.findUnique({ where: { id } });
@@ -1065,6 +1072,7 @@ orgRouter.get(
   '/associates/:id/payout-method',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const { payout } = await loadPrimaryPayoutMethod(req.params.id);
     if (!payout) {
       res.json({ hasPayoutMethod: false });
@@ -1202,6 +1210,7 @@ orgRouter.patch(
   '/associates/:id/payout-method',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const { bankName } = PayoutBankNameSchema.parse(req.body ?? {});
     const { payout } = await loadPrimaryPayoutMethod(req.params.id);
 
@@ -1310,6 +1319,7 @@ orgRouter.get(
   '/associates/:id/ssn',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const { associate, cipher, source } = await loadSsnSource(req.params.id);
     res.json({
       hasSsn: cipher !== null,
@@ -1397,6 +1407,7 @@ orgRouter.get(
   '/associates/:id/personal-info',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findUnique({
       where: { id: req.params.id },
       select: {
@@ -1450,6 +1461,7 @@ orgRouter.get(
   '/associates/:id/w4',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findUnique({
       where: { id: req.params.id },
       select: { id: true, deletedAt: true, employmentType: true, ssnLast4: true },
@@ -1492,6 +1504,7 @@ orgRouter.patch(
   '/associates/:id/w4',
   PAYROLL_OR_HR,
   async (req: Request, res: Response) => {
+    await assertSameTenant('associate', String(req.params.id));
     const input = HrW4UpdateSchema.parse(req.body);
     const associate = await prisma.associate.findUnique({
       where: { id: req.params.id },

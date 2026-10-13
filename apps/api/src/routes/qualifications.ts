@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
   effectiveClientIdFilter,
@@ -119,7 +121,8 @@ async function assertAssociateInScope(user: SessionUser, associateId: string) {
 
 async function assertShiftInScope(user: SessionUser, shiftId: string) {
   const found = await prisma.shift.findFirst({
-    where: { AND: [{ id: shiftId }, scopeShifts(user)] },
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+    where: { AND: [{ id: shiftId, tenantId: tenantIdForWrite() }, scopeShifts(user)] },
     select: { id: true },
   });
   if (!found) throw new HttpError(404, 'not_found', 'Shift not found.');
@@ -245,6 +248,7 @@ qualificationsRouter.get(
     // own client's roster. This used to guard the first and not the second,
     // so CLIENT_PORTAL and SHIFT_SUPERVISOR — both of which hold
     // view:scheduling — could read any worker in the company.
+    await assertSameTenant('associate', associateId);
     await assertAssociateInScope(req.user!, associateId);
     const rows = await prisma.associateQualification.findMany({
       take: 500,
@@ -272,6 +276,7 @@ qualificationsRouter.post(
   async (req, res) => {
     const associateId = req.params.associateId;
     const input = AssocQualInputSchema.parse(req.body);
+    await assertSameTenant('associate', associateId);
     await assertAssociateInScope(req.user!, associateId);
     await assertQualificationUsable(req.user!, input.qualificationId);
     // Upsert: if a soft-deleted row exists, reuse it; if a live row exists, update it.

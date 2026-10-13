@@ -24,6 +24,8 @@ import { nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { personName } from '../lib/floorLeads.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -57,6 +59,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
 
   const where = {
     deletedAt: null,
+    tenantId: tenantIdForWrite(),
     ...(role ? { role } : {}),
     ...(status ? { status } : {}),
     ...(q
@@ -586,7 +589,7 @@ usersRouter.patch(
  * status and the flags; counts first. Read-only (view:hr-admin).
  */
 usersRouter.get('/admin/users/access-report', requireCapability('view:hr-admin'), async (req, res) => {
-  const report = await buildAccessReport(prisma);
+  const report = await buildAccessReport(prisma, new Date(), { tenantId: tenantIdForWrite() });
   if (req.query.format === 'csv') {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="access-report-${report.generatedAt.slice(0, 10)}.csv"`);
@@ -629,6 +632,7 @@ usersRouter.post(
   // manage:org — write; view:hr-admin is read-only (see PATCH above).
   requireCapability('manage:org'),
   async (req, res) => {
+    await assertSameTenant('user', String(req.params.id));
     const id = z.string().uuid().parse(req.params.id);
 
     const target = await prisma.user.findUnique({
@@ -696,6 +700,7 @@ usersRouter.post(
   // session can fan out resets to every user in seconds.
   adminForcePasswordResetLimiter,
   async (req, res) => {
+    await assertSameTenant('user', String(req.params.id));
     const id = z.string().uuid().parse(req.params.id);
 
     if (id === req.user!.id) {

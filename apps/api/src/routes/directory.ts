@@ -14,6 +14,8 @@ import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * People directory.
@@ -284,6 +286,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         : {}),
       where: {
         deletedAt: null,
+        tenantId: tenantIdForWrite(),
         ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
         ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
         ...(filters.locationId
@@ -347,6 +350,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
  */
 directoryRouter.get('/directory/:id', VIEW, async (req, res, next) => {
   try {
+    await assertSameTenant('associate', String(req.params.id));
     const id = z.string().uuid().safeParse(req.params.id);
     const row = id.success
       ? await prisma.associate.findFirst({

@@ -148,7 +148,10 @@ function aggregateWeek(
 export async function computeExecutiveSummary(
   prisma: PrismaClient,
   now: Date = new Date(),
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
 ): Promise<ExecutiveSummary> {
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const thisWeekStart = startOfWeekUTC(now);
   // Walk week boundaries backwards — 36h back from a boundary lands
   // safely inside the previous org week regardless of DST week lengths.
@@ -176,7 +179,7 @@ export async function computeExecutiveSummary(
     newHireRows,
   ] = await Promise.all([
     prisma.timeEntry.findMany({
-      where: {
+      where: { ...T,
         status: { in: ['APPROVED', 'COMPLETED'] },
         clockInAt: { gte: oldestStart, lt: now },
       },
@@ -193,31 +196,31 @@ export async function computeExecutiveSummary(
     // Brief 1A-2: the one definition of active.
     activeBreakdown(now, prisma),
     prisma.associate.count({
-      where: { deletedAt: null, deactivatedAt: { not: null } },
+      where: { ...T, deletedAt: null, deactivatedAt: { not: null } },
     }),
     prisma.associate.count({
-      where: { deletedAt: null, hireDate: { gte: thirtyAgo } },
+      where: { ...T, deletedAt: null, hireDate: { gte: thirtyAgo } },
     }),
     prisma.associate.count({
-      where: { separatedAt: { gte: thirtyAgo } },
+      where: { ...T, separatedAt: { gte: thirtyAgo } },
     }),
     prisma.associate.count({
-      where: { separatedAt: { gte: new Date(now.getTime() - 90 * DAY_MS) } },
+      where: { ...T, separatedAt: { gte: new Date(now.getTime() - 90 * DAY_MS) } },
     }),
     prisma.application.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
       },
     }),
     prisma.attendanceEvent.groupBy({
       by: ['kind'],
-      where: { occurredOn: { gte: thirtyAgo }, excusedAt: null },
+      where: { ...T, occurredOn: { gte: thirtyAgo }, excusedAt: null },
       _count: { _all: true },
     }),
-    prisma.client.findMany({ where: { deletedAt: null }, select: { id: true, name: true }, take: 5_000 }),
+    prisma.client.findMany({ where: { ...T, deletedAt: null }, select: { id: true, name: true }, take: 5_000 }),
     prisma.associate.findMany({
-      where: { deletedAt: null, erasedAt: null, hireDate: { gte: thirtyAgo } },
+      where: { ...T, deletedAt: null, erasedAt: null, hireDate: { gte: thirtyAgo } },
       select: {
         id: true,
         firstName: true,
@@ -278,7 +281,7 @@ export async function computeExecutiveSummary(
     locationIds.length === 0
       ? []
       : await prisma.site.findMany({
-          where: { id: { in: locationIds } },
+          where: { ...T, id: { in: locationIds } },
           select: {
             id: true,
             name: true,

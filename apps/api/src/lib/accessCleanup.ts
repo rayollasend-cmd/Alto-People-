@@ -116,9 +116,10 @@ const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
 /** gmail-style: dots and +tags do not make a different person. */
 const normalizeLocalPart = (email: string) => (email.toLowerCase().split('@')[0] ?? '').split('+')[0]!.replace(/\./g, '');
 
-export async function buildAccessReport(db: Db = defaultPrisma, now: Date = new Date()): Promise<AccessReport> {
+export async function buildAccessReport(db: Db = defaultPrisma, now: Date = new Date(), opts: { tenantId?: string } = {}): Promise<AccessReport> {
+  // Brief 2-1: a route passes the caller's tenant; the prod script (no tenant) reads every row as before.
   const users = await db.user.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, ...(opts.tenantId ? { tenantId: opts.tenantId } : {}) },
     select: {
       id: true,
       email: true,
@@ -145,7 +146,10 @@ export async function buildAccessReport(db: Db = defaultPrisma, now: Date = new 
   // Last activity by day when lastSeenAt was never stamped (older accounts).
   const lastDays = await db.userActivityDay.groupBy({ by: ['userId'], _max: { day: true }, where: { userId: { in: users.map((u) => u.id) } } });
   const lastDay = new Map(lastDays.map((d) => [d.userId, d._max.day]));
-  const activeAssociates = await activeAssociateIds({}, now, db);
+  const activeAll = await activeAssociateIds({}, now, db);
+  const activeAssociates = opts.tenantId
+    ? new Set((await db.associate.findMany({ where: { id: { in: [...activeAll] }, tenantId: opts.tenantId }, select: { id: true } })).map((a) => a.id))
+    : activeAll;
 
   // Duplicates: the same person's name on two accounts, or the same mailbox
   // (gmail-style) under two addresses.

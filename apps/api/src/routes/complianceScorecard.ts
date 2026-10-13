@@ -36,6 +36,7 @@ import {
   type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { cardOn, loadRateCards } from '../lib/rateCards.js';
 import { placements } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
@@ -132,7 +133,7 @@ function getActiveAssociates(clientId?: string | null) {
   // in a worker), so sub-5s-apart tests would read each other's
   // populations — bypass it entirely there.
   if (process.env.NODE_ENV === 'test') return loadActiveAssociates(clientId);
-  const key = clientId ?? '*';
+  const key = `${tenantIdForWrite()}:${clientId ?? '*'}`;
   const now = Date.now();
   const hit = activeAssociatesCache.get(key);
   if (hit && now - hit.at < ACTIVE_ASSOCIATES_TTL_MS) return hit.value;
@@ -162,7 +163,7 @@ async function loadActiveAssociates(clientId?: string | null) {
     );
   }
   const people = await prisma.associate.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, tenantId: tenantIdForWrite() },
     select: { id: true, firstName: true, lastName: true, dob: true, hireDate: true },
   });
   // A client-less placement (a direct employer) is scored under no client.
@@ -982,6 +983,7 @@ export async function buildShiftsTile(
     by: ['status'],
     _count: { _all: true },
     where: {
+      tenantId: tenantIdForWrite(),
       startsAt: { gte: since },
       status: { in: ['OPEN', 'ASSIGNED', 'COMPLETED', 'CANCELLED'] },
       ...(clientId ? { clientId } : {}),
@@ -1087,6 +1089,7 @@ export async function buildBillingTile(
   const jobs = await prisma.job.findMany({
     take: 1000,
     where: {
+      tenantId: tenantIdForWrite(),
       isActive: true,
       billRate: { not: null },
       ...(clientId ? { clientId } : {}),
@@ -1135,6 +1138,7 @@ export async function buildBillingTile(
     prisma.clientStatement.findMany({
       take: 50,
       where: {
+        tenantId: tenantIdForWrite(),
         status: 'FINAL',
         paidAt: null,
         finalizedAt: { lte: sixtyDaysAgo },
@@ -1151,6 +1155,7 @@ export async function buildBillingTile(
     }),
     prisma.clientStatement.count({
       where: {
+        tenantId: tenantIdForWrite(),
         status: 'FINAL',
         paidAt: null,
         ...(clientId ? { clientId } : {}),
@@ -1308,6 +1313,7 @@ async function loadAttestationSignals(
 
     const rows = await prisma.manualComplianceAttestation.findMany({
       where: {
+        tenantId: tenantIdForWrite(),
         key: config.key,
         periodStart: {
           in: [periodStart, previousPeriod.periodStart],
@@ -1420,7 +1426,7 @@ export async function buildTrainingTile(
 
   const courses = await prisma.course.findMany({
     take: 1000,
-    where: { complianceTag: { not: null }, deletedAt: null },
+    where: { complianceTag: { not: null }, deletedAt: null, tenantId: tenantIdForWrite() },
     select: { id: true, complianceTag: true, title: true, status: true },
   });
   const courseIdsByTag = new Map<ComplianceTag, string[]>();
@@ -1594,7 +1600,7 @@ export async function buildSafetyTile(
 ): Promise<ScorecardSafetyResponse> {
   const now = new Date();
   const ytdStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
-  const scope = clientId ? { clientId } : {};
+  const scope = { tenantId: tenantIdForWrite(), ...(clientId ? { clientId } : {}) };
 
   const [ytdRecordables, lastRecordable, openRows, hours] = await Promise.all([
     prisma.oshaIncident.findMany({

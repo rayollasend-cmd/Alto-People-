@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { HeadcountOverview, HeadcountRow } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { activeBreakdown, EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { endOfWeekUTC, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesWithoutRate } from '../lib/rateCards.js';
@@ -18,7 +19,11 @@ export const headcount110Router = Router();
 
 const VIEW = requireCapability('view:org');
 
-async function overview(now: Date): Promise<HeadcountOverview> {
+async function overview(now: Date, tenantId: string): Promise<HeadcountOverview> {
+  // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite). The
+  // active totals still come from lib/activeDefinition, which is not
+  // tenant-scoped yet; only counts, never another tenant's ids.
+  const T = { tenantId };
   const active = await activeBreakdown(now, prisma);
   const placed = await placements({}, prisma);
   const withoutRate = await associatesWithoutRate(prisma, now);
@@ -33,28 +38,28 @@ async function overview(now: Date): Promise<HeadcountOverview> {
 
   const [scheduledRows, clients, locations, departments, assocRows, lastRun, snapshot, counts] = await Promise.all([
     prisma.shift.findMany({
-      where: { status: 'ASSIGNED', assignedAssociateId: { not: null }, startsAt: { gte: weekStart, lt: weekEnd } },
+      where: { ...T, status: 'ASSIGNED', assignedAssociateId: { not: null }, startsAt: { gte: weekStart, lt: weekEnd } },
       select: { assignedAssociateId: true, clientId: true, locationId: true },
       distinct: ['assignedAssociateId', 'clientId', 'locationId'],
       take: 20_000,
     }),
-    prisma.client.findMany({ where: { deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2_000 }),
-    prisma.site.findMany({ where: { deletedAt: null }, select: { id: true, name: true, clientId: true }, orderBy: { name: 'asc' }, take: 5_000 }),
-    prisma.department.findMany({ select: { id: true, name: true }, take: 1_000 }),
+    prisma.client.findMany({ where: { ...T, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2_000 }),
+    prisma.site.findMany({ where: { ...T, deletedAt: null }, select: { id: true, name: true, clientId: true }, orderBy: { name: 'asc' }, take: 5_000 }),
+    prisma.department.findMany({ where: T, select: { id: true, name: true }, take: 1_000 }),
     active.total
-      ? prisma.associate.findMany({ where: { id: { in: [...active.ids] } }, select: { id: true, departmentId: true, employmentType: true }, take: 20_000 })
+      ? prisma.associate.findMany({ where: { ...T, id: { in: [...active.ids] } }, select: { id: true, departmentId: true, employmentType: true }, take: 20_000 })
       : Promise.resolve([] as { id: string; departmentId: string | null; employmentType: string }[]),
     prisma.payrollRun.findFirst({
-      where: { status: { in: ['FINALIZED', 'DISBURSED'] } },
+      where: { ...T, status: { in: ['FINALIZED', 'DISBURSED'] } },
       orderBy: { periodEnd: 'desc' },
       select: { periodStart: true, periodEnd: true, _count: { select: { items: true } } },
     }),
-    prisma.reconciliationSnapshot.findFirst({ orderBy: [{ periodEnd: 'desc' }, { ranAt: 'desc' }] }),
+    prisma.reconciliationSnapshot.findFirst({ where: T, orderBy: [{ periodEnd: 'desc' }, { ranAt: 'desc' }] }),
     Promise.all([
-      prisma.associate.count({ where: { ...EMPLOYED_WHERE, applications: { some: { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] }, deletedAt: null } }, assignments: { none: { endedAt: null } } } }),
-      prisma.associate.count({ where: { deletedAt: null, separatedAt: { not: null } } }),
-      prisma.associate.count({ where: { deletedAt: null, separatedAt: null, deactivatedAt: { not: null } } }),
-      prisma.associate.count({ where: EMPLOYED_WHERE }),
+      prisma.associate.count({ where: { ...T, ...EMPLOYED_WHERE, applications: { some: { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] }, deletedAt: null } }, assignments: { none: { endedAt: null } } } }),
+      prisma.associate.count({ where: { ...T, deletedAt: null, separatedAt: { not: null } } }),
+      prisma.associate.count({ where: { ...T, deletedAt: null, separatedAt: null, deactivatedAt: { not: null } } }),
+      prisma.associate.count({ where: { ...T, ...EMPLOYED_WHERE } }),
     ]),
   ]);
   const [onboarding, separated, deactivated, employed] = counts;
@@ -128,17 +133,22 @@ async function overview(now: Date): Promise<HeadcountOverview> {
 }
 
 headcount110Router.get('/headcount/overview', VIEW, async (_req, res) => {
-  res.json(await overview(new Date()));
+  res.json(await overview(new Date(), tenantIdForWrite()));
 });
 
 /** Brief 1A-2: every placed associate whose role has no rate card at their client today. */
 headcount110Router.get('/headcount/without-rate', VIEW, async (_req, res) => {
-  res.json({ associates: await associatesWithoutRate(prisma) });
+  const rows = await associatesWithoutRate(prisma);
+  // Brief 2-1: only this tenant's people (cross-tenant suite) until the lib takes a tenant.
+  const mine = rows.length
+    ? new Set((await prisma.associate.findMany({ where: { id: { in: rows.map((r) => r.associateId) }, tenantId: tenantIdForWrite() }, select: { id: true } })).map((a) => a.id))
+    : new Set<string>();
+  res.json({ associates: rows.filter((r) => mine.has(r.associateId)) });
 });
 
 /** The older page's shape, now fed by the one definition. */
 headcount110Router.get('/headcount/snapshot', VIEW, async (_req, res) => {
-  const o = await overview(new Date());
+  const o = await overview(new Date(), tenantIdForWrite());
   res.json({
     total: o.active,
     byDepartment: o.byDepartment.map((d) => ({ departmentId: d.id, departmentName: d.name, count: d.active })),

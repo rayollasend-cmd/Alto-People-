@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -119,6 +120,7 @@ compensationRouter.get(
   '/associates/:id/records',
   requireCapability('view:comp'),
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associateId = req.params.id;
     const rows = await prisma.compensationRecord.findMany({
       take: 500,
@@ -133,6 +135,7 @@ compensationRouter.get(
   '/associates/:id/current',
   requireCapability('view:comp'),
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associateId = req.params.id;
     const row = await prisma.compensationRecord.findFirst({
       where: { associateId, effectiveTo: null },
@@ -145,6 +148,7 @@ compensationRouter.post(
   '/associates/:id/records',
   requireCapability('manage:comp'),
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associateId = req.params.id;
     const input = RecordCreateSchema.parse(req.body);
     const associate = await prisma.associate.findUnique({ where: { id: associateId } });
@@ -370,6 +374,7 @@ compensationRouter.get(
   '/cycles/:id/proposals',
   requireCapability('view:comp'),
   async (req, res) => {
+    await assertSameTenant('meritCycle', String(req.params.id));
     const cycleId = req.params.id;
     const rows = await prisma.meritProposal.findMany({
       take: 500,

@@ -87,6 +87,8 @@ import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
 import { ZipArchive } from 'archiver';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 export const payrollRouter = Router();
 
@@ -265,6 +267,7 @@ payrollRouter.get(
   PROCESS,
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.id));
       const associate = await prisma.associate.findUnique({
         where: { id: req.params.id },
         include: { payoutMethods: { where: { isPrimary: true }, take: 1 } },
@@ -308,6 +311,7 @@ payrollRouter.patch(
   PROCESS,
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.id));
       const associate = await prisma.associate.findUnique({
         where: { id: req.params.id },
         select: { id: true },
@@ -3578,7 +3582,7 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
 payrollRouter.get('/readiness', PROCESS, async (_req, res, next) => {
   try {
     const associates = await prisma.associate.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, tenantId: tenantIdForWrite() },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: {
         id: true,

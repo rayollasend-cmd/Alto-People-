@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getBlobStore } from '../lib/blobStore.js';
@@ -206,6 +207,7 @@ messagesRouter.get('/directory', requireAuth, async (req, res, next) => {
     const rows = await prisma.user.findMany({
       where: {
         ...directoryWhere(user, regionClients),
+        tenantId: tenantIdForWrite(),
         ...(q
           ? {
               OR: [
@@ -242,7 +244,7 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
     const ids = [...new Set(input.participantIds)].filter((id) => id !== user.id);
     if (ids.length === 0) throw new HttpError(400, 'no_participants', 'Pick at least one person.');
     const targets = await prisma.user.findMany({
-      where: { id: { in: ids }, status: 'ACTIVE', deletedAt: null },
+      where: { id: { in: ids }, tenantId: tenantIdForWrite(), status: 'ACTIVE', deletedAt: null },
       select: USER_SELECT,
     });
     if (targets.length !== ids.length) throw new HttpError(404, 'not_found', 'Someone on that list was not found.');

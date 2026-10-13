@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { ROLE_LABELS } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
@@ -92,6 +93,7 @@ discipline118Router.get(
   VIEW,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    await assertSameTenant('associate', associateId);
     const counts = await prisma.disciplinaryAction.groupBy({
       by: ['kind'],
       where: { associateId, status: { not: 'RESCINDED' } },

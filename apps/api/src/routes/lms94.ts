@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
@@ -113,6 +114,8 @@ lms94Router.delete('/courses/:id', MANAGE, async (req, res) => {
 // ----- Modules ----------------------------------------------------------
 
 lms94Router.get('/courses/:id/modules', VIEW, async (req, res) => {
+  const othersRow = await prisma.course.findFirst({ where: { id: req.params.id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+  if (othersRow) throw new HttpError(404, 'not_found', 'Course not found.');
   const rows = await prisma.courseModule.findMany({
     take: 500,
     where: { courseId: req.params.id },
@@ -131,6 +134,8 @@ lms94Router.get('/courses/:id/modules', VIEW, async (req, res) => {
 
 lms94Router.post('/courses/:id/modules', MANAGE, async (req, res) => {
   const input = ModuleInputSchema.parse(req.body);
+  const othersRow = await prisma.course.findFirst({ where: { id: req.params.id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+  if (othersRow) throw new HttpError(404, 'not_found', 'Course not found.');
   const created = await prisma.courseModule.create({
     data: {
       courseId: req.params.id,

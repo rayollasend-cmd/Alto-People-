@@ -11,6 +11,7 @@ import {
   type DrugTest,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDrugTests } from '../lib/scope.js';
@@ -126,6 +127,7 @@ drugTestsRouter.get('/pending', MANAGE, async (req, res, next) => {
       take: 501, // one past the cap so truncation is detectable
       where: {
         deletedAt: null,
+        tenantId: tenantIdForWrite(),
         // No result filed inside the window…
         documents: {
           none: { kind: RESULT_KIND, deletedAt: null, createdAt: { gte: cutoff } },

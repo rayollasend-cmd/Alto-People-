@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import {
@@ -274,6 +275,8 @@ internalMobility120Router.get(
   async (req, res) => {
     const postingId = z.string().uuid().parse(req.params.id);
     const status = STATUS.optional().parse(req.query.status);
+    const othersRow = await prisma.jobPosting.findFirst({ where: { id: postingId, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+    if (othersRow) throw new HttpError(404, 'not_found', 'Job not found.');
     const apps = await prisma.internalJobApplication.findMany({
       take: 100,
       where: { postingId, ...(status ? { status } : {}) },

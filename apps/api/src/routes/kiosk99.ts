@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { getBrandingSync } from '../lib/branding.js';
-import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite } from '../lib/tenant.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -1379,6 +1379,10 @@ kiosk99Router.delete(
   MANAGE,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite) —
+    // another tenant's associate is not found here.
+    const inTenant = await prisma.associate.findFirst({ where: { id: associateId, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!inTenant) throw new HttpError(404, 'not_found', 'Associate not found.');
     // Bounded roles can only clear enrollments for their own client's people.
     const faceDeleteClamp = kioskClientClamp(req.user!);
     if (faceDeleteClamp) {

@@ -42,8 +42,10 @@ export interface PayCycle {
   run: { id: string; status: 'DRAFT' | 'FINALIZED' | 'DISBURSED'; totalGross: number } | null;
 }
 
-export async function payCycle(now: Date = new Date()): Promise<PayCycle | null> {
-  const live = { isActive: true, deletedAt: null } as const;
+export async function payCycle(now: Date = new Date(), opts: { tenantId?: string } = {}): Promise<PayCycle | null> {
+  // Brief 2-1: a route passes the caller's tenant; callers without one read every row as before.
+  const tenant = opts.tenantId ? { tenantId: opts.tenantId } : {};
+  const live = { isActive: true, deletedAt: null, ...tenant };
   const select = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
   // The org's schedule first — the one Alto pays on — else any active one.
   const schedule =
@@ -58,12 +60,13 @@ export async function payCycle(now: Date = new Date()): Promise<PayCycle | null>
   const to = utcInstantOfLocalMidnight(addDays(w.periodEnd, 1), DEFAULT_TIMEZONE);
   const [entries, run] = await Promise.all([
     prisma.timeEntry.findMany({
-      where: { clockInAt: { gte: from, lt: to }, status: { in: ['APPROVED', 'COMPLETED'] }, clockOutAt: { not: null } },
+      where: { ...tenant, clockInAt: { gte: from, lt: to }, status: { in: ['APPROVED', 'COMPLETED'] }, clockOutAt: { not: null } },
       select: { clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
       take: 50_000,
     }),
     prisma.payrollRun.findFirst({
       where: {
+        ...tenant,
         status: { in: ['DRAFT', 'FINALIZED', 'DISBURSED'] },
         periodStart: { lte: new Date(`${w.periodEnd}T00:00:00Z`) },
         periodEnd: { gte: new Date(`${w.periodStart}T00:00:00Z`) },

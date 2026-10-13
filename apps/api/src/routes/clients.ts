@@ -17,6 +17,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { activeAssociateCountsByClient } from '../lib/associateClients.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { z } from 'zod';
 import { invitePortalAccount } from '../lib/portalInvite.js';
@@ -126,7 +127,8 @@ const CLIENTS_MAX_PAGE_SIZE = 500;
 
 clientsRouter.get('/', async (req, res, next) => {
   try {
-    const where: Prisma.ClientWhereInput = scopeClients(req.user!);
+    // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
+    const where: Prisma.ClientWhereInput = { ...scopeClients(req.user!), tenantId: tenantIdForWrite() };
     const statusParam = typeof req.query.status === 'string' ? req.query.status : null;
     if (statusParam) {
       const parsedStatus = ClientStatusSchema.safeParse(statusParam);
@@ -283,7 +285,7 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const existing = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
     });
     if (!existing) throw new HttpError(404, 'client_not_found', 'Client not found');
 
@@ -329,7 +331,7 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
 clientsRouter.delete('/:id', MANAGE, async (req, res, next) => {
   try {
     const existing = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
     });
     if (!existing) throw new HttpError(404, 'client_not_found', 'Client not found');
     await prisma.client.update({
@@ -346,7 +348,7 @@ clientsRouter.delete('/:id', MANAGE, async (req, res, next) => {
 clientsRouter.get('/:id', async (req, res, next) => {
   try {
     const row = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
     });
     if (!row) {
       throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -368,7 +370,7 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
     // This is the one /clients handler reachable by clamped roles (the
     // gate above admits them for exactly this path).
     const client = await prisma.client.findFirst({
-      where: { AND: [scopeClients(req.user!), { id: req.params.id }] },
+      where: { AND: [scopeClients(req.user!), { id: req.params.id, tenantId: tenantIdForWrite() }] },
       select: { id: true },
     });
     if (!client) {
@@ -425,7 +427,7 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
 clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -457,7 +459,7 @@ clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
 clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -495,7 +497,7 @@ clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
 clientsRouter.delete('/:id/locations/:lid', MANAGE, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -606,7 +608,7 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'state must be a 2-letter code or null', parsed.error.flatten());
     }
     const existing = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
     });
     if (!existing) throw new HttpError(404, 'client_not_found', 'Client not found');
 
@@ -757,6 +759,8 @@ clientsRouter.post('/statements/generate-due', STATEMENTS, async (req, res, next
 
 clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => {
   try {
+    const owner = await prisma.client.findFirst({ where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!owner) throw new HttpError(404, 'client_not_found', 'Client not found');
     const [rows, acks] = await Promise.all([
       prisma.clientStatement.findMany({
         where: { clientId: req.params.id },
@@ -799,7 +803,7 @@ clientsRouter.post('/:id/statements', STATEMENTS, async (req, res, next) => {
     }
     const endExclusive = new Date(end.getTime() + 24 * 3_600_000);
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -1020,7 +1024,7 @@ clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS_READ, async (req, res, 
 clientsRouter.get('/:id/service-report.pdf', STATEMENTS_READ, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true, name: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -1121,7 +1125,7 @@ clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS_READ, async (req, res, 
 clientsRouter.get('/:id/portal-users', async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -1182,7 +1186,7 @@ const PortalInviteSchema = z.object({
 clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true, name: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -1272,7 +1276,7 @@ clientsRouter.post('/:id/portal-users/:uid/disable', MANAGE, async (req, res, ne
 clientsRouter.get('/:id/portal-readiness', async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');

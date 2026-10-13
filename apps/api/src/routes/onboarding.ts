@@ -48,6 +48,7 @@ import { hasCapability, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
 import { INVITE_UNDO_SECONDS, invitesAreEmailed, scheduleInviteDelivery, sendInviteEmail } from '../lib/inviteDelivery.js';
@@ -615,6 +616,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
 
     const where: Prisma.ApplicationWhereInput = {
       ...scopeApplications(req.user!),
+      tenantId: tenantIdForWrite(),
       ...statusWhere,
       ...(clientId ? { clientId } : {}),
       ...(invitedFrom || invitedTo
@@ -872,7 +874,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
 onboardingRouter.get('/applications/:id', async (req, res, next) => {
   try {
     const row = await prisma.application.findFirst({
-      where: { ...scopeApplications(req.user!), id: req.params.id },
+      where: { ...scopeApplications(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
       include: {
         associate: {
           select: {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { formatRef } from '../lib/emailTemplates.js';
@@ -33,7 +34,8 @@ export const executiveRouter = Router();
 const EXEC = requireCapability('view:executive');
 
 executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
-  const s = await computeExecutiveSummary(prisma);
+  // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+  const s = await computeExecutiveSummary(prisma, new Date(), { tenantId: tenantIdForWrite() });
   // The narrative rides with the numbers so the dashboard, the digest and
   // the board pack say the same thing.
   res.json({ ...s, narrative: executiveNarrative(s) });
@@ -43,7 +45,7 @@ executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
 // chairman's decision queue, client health scores, capacity + the J-1
 // cliff, and the people worth knowing this week.
 executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
-  res.json(await computeExecutiveBriefing(prisma));
+  res.json(await computeExecutiveBriefing(prisma, new Date(), { tenantId: tenantIdForWrite() }));
 });
 
 // Who on the client side is using their site: last seen, sign-ins this
@@ -539,7 +541,7 @@ executiveRouter.patch('/prospects/:id', PROSPECT_WRITE, async (req: Request, res
   const id = z.string().uuid().parse(req.params.id);
   const input = ProspectInputSchema.partial().parse(req.body);
   const existing = await prisma.clientProspect.findFirst({
-    where: { id, deletedAt: null },
+    where: { id, deletedAt: null, tenantId: tenantIdForWrite() },
   });
   if (!existing) throw new HttpError(404, 'not_found', 'Prospect not found.');
   await prisma.clientProspect.update({ where: { id }, data: input });
@@ -548,6 +550,9 @@ executiveRouter.patch('/prospects/:id', PROSPECT_WRITE, async (req: Request, res
 
 executiveRouter.delete('/prospects/:id', PROSPECT_WRITE, async (req: Request, res: Response) => {
   const id = z.string().uuid().parse(req.params.id);
+  // Brief 2-1: another tenant's prospect is not found (cross-tenant suite).
+  const existing = await prisma.clientProspect.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
+  if (!existing) throw new HttpError(404, 'not_found', 'Prospect not found.');
   await prisma.clientProspect.updateMany({
     where: { id, deletedAt: null },
     data: { deletedAt: new Date() },

@@ -8,6 +8,7 @@ import {
   type EVerifyStatus,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { recordComplianceEvent } from '../lib/audit.js';
@@ -77,6 +78,7 @@ everifyRouter.get('/', async (_req, res, next) => {
     const rows = await prisma.associate.findMany({
       where: {
         deletedAt: null,
+        tenantId: tenantIdForWrite(),
         // Onboarded or onboarding: any application that wasn't declined.
         applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } },
       },
@@ -177,7 +179,7 @@ everifyRouter.get('/', async (_req, res, next) => {
 everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
   try {
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null },
+      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
       select: {
         id: true,
         firstName: true,
@@ -382,7 +384,7 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null },
+      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true, i9Verification: { select: { id: true } } },
     });
     if (!associate) {
@@ -464,7 +466,7 @@ everifyRouter.patch('/:associateId/identity', MANAGE, async (req, res, next) => 
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null },
+      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true, middleInitial: true, otherLastNames: true },
     });
     if (!associate) {

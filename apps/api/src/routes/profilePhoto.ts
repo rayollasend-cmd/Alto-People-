@@ -15,6 +15,7 @@ import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 
 /**
  * Profile photos.
@@ -173,6 +174,7 @@ profilePhotoRouter.post(
   requireCapability('manage:org'),
   upload.single('file'),
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findFirst({
       where: { id: req.params.id, deletedAt: null },
       select: { id: true },
@@ -204,6 +206,7 @@ profilePhotoRouter.delete(
   '/associates/:id/photo',
   requireCapability('manage:org'),
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findFirst({
       where: { id: req.params.id, deletedAt: null },
       select: { id: true, photoS3Key: true },
@@ -275,6 +278,7 @@ profilePhotoRouter.get(
   '/associates/:id/photo',
   requireAuth,
   async (req, res) => {
+    await assertSameTenant('associate', String(req.params.id));
     // Any authenticated user can see another user's profile photo — these
     // appear next to names everywhere in the app. We don't tenant-scope:
     // CLIENT_PORTAL still sees their associates' headshots, HR sees all.

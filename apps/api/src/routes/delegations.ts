@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -73,6 +74,7 @@ delegationsRouter.get('/candidates', TEAM, async (req, res, next) => {
     const rows = await prisma.user.findMany({
       where: {
         id: { not: req.user!.id },
+        tenantId: tenantIdForWrite(),
         status: 'ACTIVE',
         deletedAt: null,
         role: { in: ['MANAGER', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'HR_ADMINISTRATOR'] },
@@ -105,7 +107,7 @@ delegationsRouter.post('/', TEAM, async (req, res, next) => {
     if (end < start) throw new HttpError(400, 'bad_range', 'The end date is before the start date.');
     if ((end.getTime() - start.getTime()) / 86_400_000 > MAX_DAYS) throw new HttpError(400, 'too_long', `A delegation runs at most ${MAX_DAYS} days.`);
     const cover = await prisma.user.findFirst({
-      where: { id: toUserId, status: 'ACTIVE', deletedAt: null, role: { in: ['MANAGER', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'HR_ADMINISTRATOR'] } },
+      where: { id: toUserId, tenantId: tenantIdForWrite(), status: 'ACTIVE', deletedAt: null, role: { in: ['MANAGER', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'HR_ADMINISTRATOR'] } },
       select: { id: true },
     });
     if (!cover) throw new HttpError(400, 'not_a_cover', 'That person does not have a team inbox.');

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { BATON_LABELS, computeRelayBoard, computeSingleLane } from '../lib/relayBoard.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
@@ -58,11 +59,14 @@ function personOf(u: {
  */
 relayRouter.get('/relay/board', STAFF, async (req, res, next) => {
   try {
-    const board = await computeRelayBoard(prisma);
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+    const tenantId = tenantIdForWrite();
+    const board = await computeRelayBoard(prisma, new Date(), { tenantId });
     const laneIds = board.lanes.map((l) => l.associateId);
     const [deskUsers, claims, noteCounts] = await Promise.all([
       prisma.user.findMany({
         where: {
+          tenantId,
           status: 'ACTIVE',
           deletedAt: null,
           role: { in: [...new Set(Object.values(DESK_ROLES).flat())] as never[] },
@@ -73,6 +77,7 @@ relayRouter.get('/relay/board', STAFF, async (req, res, next) => {
       }),
       prisma.relayClaim.findMany({
         take: 1000,
+        where: { tenantId },
         select: {
           subjectType: true,
           subjectKey: true,
@@ -84,7 +89,7 @@ relayRouter.get('/relay/board', STAFF, async (req, res, next) => {
       laneIds.length
         ? prisma.workNote.groupBy({
             by: ['subjectKey'],
-            where: { subjectType: 'ASSOCIATE', subjectKey: { in: laneIds } },
+            where: { tenantId, subjectType: 'ASSOCIATE', subjectKey: { in: laneIds } },
             _count: { _all: true },
           })
         : Promise.resolve([]),

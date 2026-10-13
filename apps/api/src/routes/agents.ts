@@ -4,6 +4,7 @@ import { AgentApprovalStatusSchema, AgentCredentialIssueSchema, AgentDecisionSch
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
 import { addScenario, certifyAgent, controlState, listScenarios, removeScenario, resumeAgent, resumeAllAgents, runScenarios, scorecard, suspendAgent, suspendAllAgents } from '../lib/agentControls.js';
 
@@ -251,7 +252,14 @@ agentsRouter.post('/:id/certify', MANAGE, async (req, res, next) => {
 agentsRouter.get('/:id/scorecard', VIEW, async (req, res, next) => {
   try {
     const { days } = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) }).parse(req.query);
-    res.json(await scorecard(prisma, Id.parse(req.params.id), days));
+    const id = Id.parse(req.params.id);
+    // Brief 2-1: the agent must be this tenant's (cross-tenant suite), as the drift route already requires it to exist.
+    const exists = await prisma.worker.findFirst({ where: { id, type: 'AGENT', tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!exists) {
+      res.status(404).json({ error: { code: 'agent_not_found', message: 'No such agent.' } });
+      return;
+    }
+    res.json(await scorecard(prisma, id, days));
   } catch (err) {
     next(err);
   }

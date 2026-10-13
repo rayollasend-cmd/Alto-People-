@@ -259,13 +259,16 @@ function closeAfter(d: Date): Date {
 export async function computeRelayBoard(
   prisma: PrismaClient,
   now: Date = new Date(),
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
 ): Promise<RelayBoard> {
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const windowStart = new Date(now.getTime() - LANE_WINDOW_DAYS * DAY_MS);
 
   /* ---- LANES ------------------------------------------------------- */
 
   const apps = await prisma.application.findMany({
-    where: {
+    where: { ...T,
       status: 'APPROVED',
       approvedAt: { gte: windowStart },
       deletedAt: null,
@@ -292,7 +295,7 @@ export async function computeRelayBoard(
     laneIds.length > 0
       ? await Promise.all([
           prisma.shift.findMany({
-            where: {
+            where: { ...T,
               assignedAssociateId: { in: laneIds },
               status: { in: ['ASSIGNED', 'COMPLETED'] },
             },
@@ -301,17 +304,17 @@ export async function computeRelayBoard(
             take: 2000,
           }),
           prisma.fieldglassRegistration.findMany({
-            where: { associateId: { in: laneIds } },
+            where: { ...T, associateId: { in: laneIds } },
             select: { associateId: true, addedAt: true },
           }),
           prisma.timeEntry.findMany({
-            where: { associateId: { in: laneIds }, clockOutAt: { not: null } },
+            where: { ...T, associateId: { in: laneIds }, clockOutAt: { not: null } },
             orderBy: { clockInAt: 'asc' },
             select: { associateId: true, clockOutAt: true, status: true },
             take: 2000,
           }),
           prisma.payrollItem.findMany({
-            where: {
+            where: { ...T,
               associateId: { in: laneIds },
               payrollRun: { status: 'DISBURSED' },
             },
@@ -412,7 +415,7 @@ export async function computeRelayBoard(
   // In-flight/stalled/completed counts come from this board's window —
   // waves are near-term by nature, so the 45-day window covers them.
   const activeCohorts = await prisma.cohort.findMany({
-    where: { archivedAt: null },
+    where: { ...T, archivedAt: null },
     orderBy: { landByDate: 'asc' },
     take: 12,
     select: {
@@ -453,7 +456,7 @@ export async function computeRelayBoard(
   const [addCandidates, pendingEntries, settleRows, payrollCaseOld, hrCaseOld, incidentOld, payrollCasesOpen, hrCasesOpen, incidentsOpen, settleAggCount] =
     await Promise.all([
       prisma.application.findMany({
-        where: {
+        where: { ...T,
           status: 'APPROVED',
           approvedAt: { gte: new Date(now.getTime() - 60 * DAY_MS) },
           deletedAt: null,
@@ -468,50 +471,50 @@ export async function computeRelayBoard(
         take: 200,
       }),
       prisma.timeEntry.findMany({
-        where: { status: 'COMPLETED', clockOutAt: { not: null } },
+        where: { ...T, status: 'COMPLETED', clockOutAt: { not: null } },
         orderBy: { clockInAt: 'asc' },
         select: { clockInAt: true },
         take: 1,
       }),
       prisma.reimbursement.findFirst({
-        where: { status: 'MANAGER_APPROVED' },
+        where: { ...T, status: 'MANAGER_APPROVED' },
         orderBy: { managerApprovedAt: 'asc' },
         select: { managerApprovedAt: true },
       }),
       prisma.hrCase.findFirst({
-        where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+        where: { ...T, category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
       }),
       prisma.hrCase.findFirst({
-        where: { category: { not: 'PAYROLL' }, status: { in: [...CASE_OPEN] } },
+        where: { ...T, category: { not: 'PAYROLL' }, status: { in: [...CASE_OPEN] } },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
       }),
       prisma.oshaIncident.findFirst({
-        where: { status: { not: 'RESOLVED' } },
+        where: { ...T, status: { not: 'RESOLVED' } },
         orderBy: { reportedAt: 'asc' },
         select: { reportedAt: true },
       }),
       prisma.hrCase.count({
-        where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+        where: { ...T, category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
       }),
       prisma.hrCase.count({
-        where: { category: { not: 'PAYROLL' }, status: { in: [...CASE_OPEN] } },
+        where: { ...T, category: { not: 'PAYROLL' }, status: { in: [...CASE_OPEN] } },
       }),
-      prisma.oshaIncident.count({ where: { status: { not: 'RESOLVED' } } }),
-      prisma.reimbursement.count({ where: { status: 'MANAGER_APPROVED' } }),
+      prisma.oshaIncident.count({ where: { ...T, status: { not: 'RESOLVED' } } }),
+      prisma.reimbursement.count({ where: { ...T, status: 'MANAGER_APPROVED' } }),
     ]);
 
   const pendingCount = await prisma.timeEntry.count({
-    where: { status: 'COMPLETED', clockOutAt: { not: null } },
+    where: { ...T, status: 'COMPLETED', clockOutAt: { not: null } },
   });
 
   const candidateIds = [...new Set(addCandidates.map((a) => a.associateId))];
   const upcomingScheduled =
     candidateIds.length > 0
       ? await prisma.shift.findMany({
-          where: {
+          where: { ...T,
             assignedAssociateId: { in: candidateIds },
             status: 'ASSIGNED',
             startsAt: { gte: now },
@@ -716,7 +719,7 @@ export async function computeRelayBoard(
   // The client in the loop: their open requests are batons like any
   // other — except the person waiting is the customer.
   const openRequests = await prisma.clientRequest.findMany({
-    where: { status: { not: 'RESOLVED' } },
+    where: { ...T, status: { not: 'RESOLVED' } },
     orderBy: { createdAt: 'asc' },
     select: { kind: true, createdAt: true },
     take: 200,
@@ -761,7 +764,7 @@ export async function computeRelayBoard(
 
   // Decisions with receipts: a pending ruling is a baton on that desk.
   const pendingDecisions = await prisma.workNote.findMany({
-    where: { decisionStatus: 'PENDING' },
+    where: { ...T, decisionStatus: 'PENDING' },
     orderBy: { createdAt: 'asc' },
     select: { decisionDesk: true, createdAt: true },
     take: 200,
@@ -817,7 +820,7 @@ export async function computeRelayBoard(
     }
   }
   const openThisWeek = await prisma.shift.count({
-    where: {
+    where: { ...T,
       publishedAt: { not: null },
       status: 'OPEN',
       startsAt: { gte: now, lt: new Date(weekStart.getTime() + 7 * DAY_MS) },

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
@@ -118,11 +119,22 @@ docTemplatesRouter.delete(
   },
 );
 
+/**
+ * Brief 2-1, before enforce mode: another tenant's template answers as if
+ * it did not exist. A missing template keeps each handler's own answer.
+ */
+async function assertTemplateNotAnotherTenants(templateId: string): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(templateId)) return;
+  const other = await prisma.documentTemplate.findFirst({ where: { id: templateId, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
+  if (other) throw new HttpError(404, 'not_found', 'Template not found.');
+}
+
 docTemplatesRouter.get(
   '/document-templates/:id/versions',
   VIEW,
   async (req, res) => {
     const templateId = req.params.id;
+    await assertTemplateNotAnotherTenants(templateId);
     const rows = await prisma.documentTemplateVersion.findMany({
       take: 500,
       where: { templateId },
@@ -152,6 +164,7 @@ docTemplatesRouter.post(
   async (req, res) => {
     const templateId = req.params.id;
     const input = VersionInputSchema.parse(req.body);
+    await assertTemplateNotAnotherTenants(templateId);
     const t = await prisma.documentTemplate.findUnique({
       where: { id: templateId },
     });
@@ -459,6 +472,7 @@ docTemplatesRouter.get(
   VIEW,
   async (req, res) => {
     const templateId = req.params.id;
+    await assertTemplateNotAnotherTenants(templateId);
     const rows = await prisma.documentRender.findMany({
       where: { templateId },
       include: {

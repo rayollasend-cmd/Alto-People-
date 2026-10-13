@@ -10,6 +10,7 @@ import { invitePortalAccount } from '../lib/portalInvite.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 import { requireRegionApprover } from '../lib/accessCleanup.js';
 import { ensureRegionUnit, regionSiteIds } from '../lib/orgUnits.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * The region command center — the Manager, Business Operations Support's
@@ -176,8 +177,9 @@ const ADMIN = requireCapability('manage:org');
 
 regionsAdminRouter.get('/', requireCapability('view:org'), async (_req, res, next) => {
   try {
+    // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
     const rows = await prisma.region.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, tenantId: tenantIdForWrite() },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -192,7 +194,7 @@ regionsAdminRouter.get('/', requireCapability('view:org'), async (_req, res, nex
       take: 200,
     });
     const unassigned = await prisma.site.findMany({
-      where: { deletedAt: null, isActive: true, regionId: null },
+      where: { deletedAt: null, isActive: true, regionId: null, tenantId: tenantIdForWrite() },
       select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
       orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
       take: 500,
@@ -224,7 +226,7 @@ regionsAdminRouter.post('/', ADMIN, async (req, res, next) => {
     // Brief 2-1b step 5: the region is a REGION unit in the organizational tree; its stores are pinned there.
     const unit = await ensureRegionUnit(prisma, { id: region.id, name: input.name });
     if (input.locationIds?.length) {
-      await prisma.site.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
+      await prisma.site.updateMany({ where: { id: { in: input.locationIds }, tenantId: tenantIdForWrite() }, data: { regionId: region.id, orgUnitId: unit.id } });
     }
     res.status(201).json({ id: region.id });
   } catch (err) {
@@ -235,7 +237,7 @@ regionsAdminRouter.post('/', ADMIN, async (req, res, next) => {
 regionsAdminRouter.patch('/:id', ADMIN, async (req, res, next) => {
   try {
     const input = RegionInput.parse(req.body);
-    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true, name: true } });
+    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, name: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     await prisma.$transaction(async (tx) => {
       const unit = await ensureRegionUnit(tx, region);
@@ -247,7 +249,7 @@ regionsAdminRouter.patch('/:id', ADMIN, async (req, res, next) => {
         await tx.site.updateMany({ where: { regionId: region.id }, data: { regionId: null } });
         await tx.site.updateMany({ where: { orgUnitId: unit.id }, data: { orgUnitId: null } });
         if (input.locationIds.length) {
-          await tx.site.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
+          await tx.site.updateMany({ where: { id: { in: input.locationIds }, tenantId: tenantIdForWrite() }, data: { regionId: region.id, orgUnitId: unit.id } });
         }
       }
     });
@@ -272,7 +274,7 @@ const RegionInviteInput = z.object({
  */
 regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
   try {
-    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true, name: true } });
+    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, name: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     const input = RegionInviteInput.parse(req.body);
     const approver = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
@@ -310,7 +312,7 @@ regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
 
 regionsAdminRouter.delete('/:id', ADMIN, async (req, res, next) => {
   try {
-    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true } });
+    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     await prisma.$transaction([
       prisma.site.updateMany({ where: { regionId: region.id }, data: { regionId: null } }),

@@ -22,13 +22,16 @@ import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
 
 const DAY_MS = 86_400_000;
 
-export async function buildFieldglassQueue(now: Date = new Date()) {
+export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenantId?: string } = {}) {
+  // Brief 2-1: a route passes the caller's tenant; callers without one read every row as before.
+  const tenant = opts.tenantId ? { tenantId: opts.tenantId } : {};
   // The Fieldglass setup queue — approved+scheduled workers not yet
   // marked as registered. Windowed to recent approvals so the first
   // deploy never floods the list with historical associates.
   const fgWindowStart = new Date(now.getTime() - 60 * DAY_MS);
   const recentApproved = await prisma.application.findMany({
     where: {
+      ...tenant,
       status: 'APPROVED',
       approvedAt: { gte: fgWindowStart },
       deletedAt: null,
@@ -95,6 +98,7 @@ export async function buildFieldglassQueue(now: Date = new Date()) {
   // two-year associate can transfer.
   const regs = await prisma.fieldglassRegistration.findMany({
     take: 500,
+    where: tenant,
     select: {
       associateId: true,
       clientId: true,
@@ -236,6 +240,7 @@ export async function buildFieldglassQueue(now: Date = new Date()) {
   const workedSince = new Date(now.getTime() - 21 * DAY_MS);
   const workedEntries = await prisma.timeEntry.findMany({
     where: {
+      ...tenant,
       clockInAt: { gte: workedSince },
       status: { in: ['APPROVED', 'COMPLETED'] },
       clientId: { not: null },
@@ -329,9 +334,9 @@ export interface FieldglassRosterRow {
 }
 
 /** Everyone registered in Fieldglass, newest first. */
-export async function buildFieldglassRoster(): Promise<FieldglassRosterRow[]> {
+export async function buildFieldglassRoster(opts: { tenantId?: string } = {}): Promise<FieldglassRosterRow[]> {
   const regs = await prisma.fieldglassRegistration.findMany({
-    where: { associate: { deletedAt: null } },
+    where: { associate: { deletedAt: null }, ...(opts.tenantId ? { tenantId: opts.tenantId } : {}) },
     orderBy: { addedAt: 'desc' },
     take: 1000,
     select: {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { hasCapability, rolesWithCapability, type Role } from '@alto-people/shared';
@@ -420,7 +421,7 @@ hrCases123Router.get('/hr-cases-staff', requireAuth, async (req, res) => {
     ]),
   ];
   const users = await prisma.user.findMany({
-    where: { status: 'ACTIVE', role: { in: staffRoles } },
+    where: { status: 'ACTIVE', role: { in: staffRoles }, tenantId: tenantIdForWrite() },
     select: {
       id: true,
       email: true,

@@ -87,7 +87,10 @@ export interface ExecutiveBriefing {
 export async function computeExecutiveBriefing(
   prisma: PrismaClient,
   now: Date = new Date(),
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
 ): Promise<ExecutiveBriefing> {
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const todayKey = orgDateKey(now);
   const dayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
   // Org-local midnights for today+1 … today+7 — day boundaries for the
@@ -125,7 +128,7 @@ export async function computeExecutiveBriefing(
     anniversaryRows,
   ] = await Promise.all([
     prisma.shift.findMany({
-      where: {
+      where: { ...T,
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
         startsAt: { gte: dayStart, lt: dayEnd },
@@ -142,7 +145,7 @@ export async function computeExecutiveBriefing(
       take: 2_000,
     }),
     prisma.shift.findMany({
-      where: {
+      where: { ...T,
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
         startsAt: { gte: dayEnd, lt: dayBounds[7] },
@@ -151,7 +154,7 @@ export async function computeExecutiveBriefing(
       take: 10_000,
     }),
     prisma.attendanceEvent.findMany({
-      where: { occurredOn: { gte: new Date(now.getTime() - DAY_MS) }, excusedAt: null },
+      where: { ...T, occurredOn: { gte: new Date(now.getTime() - DAY_MS) }, excusedAt: null },
       select: {
         kind: true,
         associate: { select: { firstName: true, lastName: true } },
@@ -160,7 +163,7 @@ export async function computeExecutiveBriefing(
       take: 20,
     }),
     prisma.shift.findMany({
-      where: {
+      where: { ...T,
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
         startsAt: { gte: priorStart, lt: thisWeekStart },
@@ -174,7 +177,7 @@ export async function computeExecutiveBriefing(
       take: 20_000,
     }),
     prisma.attendanceEvent.findMany({
-      where: {
+      where: { ...T,
         occurredOn: { gte: recentStart },
         excusedAt: null,
         kind: { in: ['NO_CALL_NO_SHOW', 'LATE'] },
@@ -183,12 +186,12 @@ export async function computeExecutiveBriefing(
       take: 5_000,
     }),
     prisma.clientStatement.findMany({
-      where: { status: 'FINAL', paidAt: { not: null }, finalizedAt: { not: null } },
+      where: { ...T, status: 'FINAL', paidAt: { not: null }, finalizedAt: { not: null } },
       select: { clientId: true, finalizedAt: true, paidAt: true },
       take: 200,
     }),
     prisma.associate.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         erasedAt: null,
         separatedAt: null,
@@ -199,18 +202,18 @@ export async function computeExecutiveBriefing(
     }),
     prisma.application.groupBy({
       by: ['status'],
-      where: { deletedAt: null, status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } },
+      where: { ...T, deletedAt: null, status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } },
       _count: { _all: true },
     }),
     prisma.application.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         status: 'APPROVED',
         approvedAt: { gte: new Date(now.getTime() - 30 * DAY_MS) },
       },
     }),
     prisma.associate.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         separatedAt: null,
         deactivatedAt: null,
@@ -218,7 +221,7 @@ export async function computeExecutiveBriefing(
       },
     }),
     prisma.documentRecord.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         kind: { in: ['J1_VISA', 'J1_DS2019'] },
         expiresAt: { gte: now, lt: new Date(now.getTime() + 120 * DAY_MS) },
@@ -228,7 +231,7 @@ export async function computeExecutiveBriefing(
       take: 2_000,
     }),
     prisma.timeEntry.findMany({
-      where: {
+      where: { ...T,
         status: { in: ['APPROVED', 'COMPLETED'] },
         clockInAt: { gte: recentStart, lt: thisWeekStart },
       },
@@ -241,12 +244,12 @@ export async function computeExecutiveBriefing(
       take: 50_000,
     }),
     prisma.attendanceEvent.findMany({
-      where: { occurredOn: { gte: recentStart }, excusedAt: null },
+      where: { ...T, occurredOn: { gte: recentStart }, excusedAt: null },
       select: { associateId: true },
       take: 5_000,
     }),
     prisma.associate.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         erasedAt: null,
         separatedAt: null,
@@ -276,7 +279,7 @@ export async function computeExecutiveBriefing(
   for (const s of windowShifts) if (s.clientId && s.client) clientNames.set(s.clientId, s.client.name);
 
   /* ----- 2. Decisions — the full rule engine with human-state overlay --- */
-  const decisions = await computeExecutiveDecisions(prisma, now);
+  const decisions = await computeExecutiveDecisions(prisma, now, opts);
 
   /* ----- 3. Client health ------------------------------------------------ */
   interface WindowAgg {
@@ -400,7 +403,7 @@ export async function computeExecutiveBriefing(
     topIds.length === 0
       ? []
       : await prisma.associate.findMany({
-          where: { id: { in: topIds.map(([id]) => id) } },
+          where: { ...T, id: { in: topIds.map(([id]) => id) } },
           select: {
             id: true,
             firstName: true,

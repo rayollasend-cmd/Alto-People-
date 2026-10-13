@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import {
   PROGRAM_TYPE_LABELS,
@@ -205,6 +206,9 @@ programsRouter.get('/calendar', VIEW, async (req, res, next) => {
 programsRouter.get('/associate/:associateId', VIEW, async (req, res, next) => {
   try {
     const associateId = Id.parse(req.params.associateId);
+    // Another tenant's person is not found here (Brief 2-1, cross-tenant suite).
+    const known = await prisma.associate.findFirst({ where: { id: associateId, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!known) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     res.json({ program: await currentProgramFor(prisma, associateId) });
   } catch (err) {
     next(err);

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { assertClientInScope, effectiveClientIdFilter, scopeClients } from '../lib/scope.js';
@@ -322,6 +323,10 @@ projectsAndPayRouter.get(
   VIEW_PAY,
   async (req, res) => {
     const tipPoolId = req.params.id;
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite) —
+    // the pool must be this tenant's, as the POST already requires it to exist.
+    const pool = await prisma.tipPool.findFirst({ where: { id: tipPoolId, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!pool) throw new HttpError(404, 'not_found', 'Pool not found.');
     const rows = await prisma.tipPoolAllocation.findMany({
       take: 500,
       where: { tipPoolId },

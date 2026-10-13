@@ -258,9 +258,9 @@ export async function listEmergencies(db: Db = defaultPrisma): Promise<Emergency
 }
 
 /** Every active store, for the scope picker. */
-export async function emergencySites(db: Db = defaultPrisma): Promise<EmergencySiteRef[]> {
+export async function emergencySites(db: Db = defaultPrisma, opts: { tenantId?: string } = {}): Promise<EmergencySiteRef[]> {
   const rows = await db.site.findMany({
-    where: { isActive: true, deletedAt: null, client: { deletedAt: null, status: 'ACTIVE' } },
+    where: { isActive: true, deletedAt: null, client: { deletedAt: null, status: 'ACTIVE' }, ...(opts.tenantId ? { tenantId: opts.tenantId } : {}) },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
     orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
   });

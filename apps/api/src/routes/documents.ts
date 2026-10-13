@@ -20,6 +20,7 @@ import {
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -536,6 +537,7 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
     const status = parseStatuses(req.query.status?.toString());
     const where: Prisma.DocumentRecordWhereInput = {
       ...scopeDocuments(req.user!),
+      tenantId: tenantIdForWrite(),
       ...(status ? { status } : {}),
       ...(kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : {}),
       ...(associateId ? { associateId } : {}),
@@ -634,7 +636,7 @@ documentsRouter.get('/admin/vault/:associateId', MANAGE, async (req, res, next) 
   try {
     const associateId = req.params.associateId;
     const associate = await prisma.associate.findFirst({
-      where: { id: associateId, deletedAt: null },
+      where: { id: associateId, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!associate) {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import { EmergencyCheckInInputSchema, EmergencyDeclareInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -59,7 +60,8 @@ emergencyRouter.get('/', VIEW, async (_req, res, next) => {
 
 emergencyRouter.get('/sites', MANAGE, async (_req, res, next) => {
   try {
-    res.json({ sites: await emergencySites(prisma) });
+    // Explicit tenant (Brief 2-1, cross-tenant suite): the guard only observes until enforce mode.
+    res.json({ sites: await emergencySites(prisma, { tenantId: tenantIdForWrite() }) });
   } catch (err) {
     next(err);
   }

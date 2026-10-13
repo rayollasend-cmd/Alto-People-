@@ -65,6 +65,8 @@ const statementTotal = (snapshot: unknown): number => {
 async function generateRaw(
   prisma: PrismaClient,
   now: Date,
+  /** Brief 2-1: tenant filter for every query (empty = unchanged). */
+  T: { tenantId?: string } = {},
 ): Promise<Omit<ExecutiveDecision, 'status' | 'delegatedDays' | 'claimedBy'>[]> {
   const out: Omit<ExecutiveDecision, 'status' | 'delegatedDays' | 'claimedBy'>[] = [];
   const thisWeekStart = startOfWeekUTC(now);
@@ -87,7 +89,7 @@ async function generateRaw(
     j1Docs,
   ] = await Promise.all([
     prisma.clientStatement.findMany({
-      where: {
+      where: { ...T,
         status: 'FINAL',
         paidAt: null,
         finalizedAt: { lt: new Date(now.getTime() - 45 * DAY_MS) },
@@ -102,17 +104,17 @@ async function generateRaw(
       take: 20,
     }),
     prisma.clientStatement.findMany({
-      where: { status: 'DRAFT', updatedAt: { lt: new Date(now.getTime() - 7 * DAY_MS) } },
+      where: { ...T, status: 'DRAFT', updatedAt: { lt: new Date(now.getTime() - 7 * DAY_MS) } },
       select: { snapshot: true, updatedAt: true },
       take: 50,
     }),
     prisma.clientProspect.findMany({
-      where: { deletedAt: null, stage: 'VERBAL' },
+      where: { ...T, deletedAt: null, stage: 'VERBAL' },
       select: { id: true, name: true, estWeeklyHours: true, estBillRate: true, updatedAt: true },
       take: 10,
     }),
     prisma.clientProspect.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         stage: 'PROPOSAL',
         updatedAt: { lt: new Date(now.getTime() - 10 * DAY_MS) },
@@ -121,23 +123,23 @@ async function generateRaw(
       take: 10,
     }),
     prisma.execTarget.findUnique({
-      where: { quarter: quarterKey },
+      where: { ...T, quarter: quarterKey },
       select: { marginTarget: true },
     }),
     prisma.timeEntry.count({
-      where: { status: 'COMPLETED', clockInAt: { lt: thisWeekStart } },
+      where: { ...T, status: 'COMPLETED', clockInAt: { lt: thisWeekStart } },
     }),
     prisma.associateAssignment.findMany({
-      where: { endedAt: null },
+      where: { ...T, endedAt: null },
       select: { location: { select: { clientId: true, client: { select: { name: true } } } } },
       take: 5_000,
     }),
     prisma.user.findMany({
-      where: { role: 'SHIFT_SUPERVISOR', status: 'ACTIVE', deletedAt: null },
+      where: { ...T, role: 'SHIFT_SUPERVISOR', status: 'ACTIVE', deletedAt: null },
       select: { clientId: true },
     }),
     prisma.associate.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         deactivatedAt: { lt: new Date(now.getTime() - 42 * DAY_MS) },
       },
@@ -145,7 +147,7 @@ async function generateRaw(
       take: 10,
     }),
     prisma.documentRecord.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         kind: { in: ['ID', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
         expiresAt: { gte: now, lt: new Date(now.getTime() + 30 * DAY_MS) },
@@ -155,14 +157,14 @@ async function generateRaw(
       take: 500,
     }),
     prisma.application.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         status: { in: ['SUBMITTED', 'IN_REVIEW'] },
         updatedAt: { lt: new Date(now.getTime() - 5 * DAY_MS) },
       },
     }),
     prisma.associate.count({
-      where: {
+      where: { ...T,
         deletedAt: null,
         erasedAt: null,
         separatedAt: null,
@@ -178,10 +180,10 @@ async function generateRaw(
       },
     }),
     prisma.associate.count({
-      where: { deletedAt: null, separatedAt: null, deactivatedAt: null, j1Status: true },
+      where: { ...T, deletedAt: null, separatedAt: null, deactivatedAt: null, j1Status: true },
     }),
     prisma.documentRecord.findMany({
-      where: {
+      where: { ...T,
         deletedAt: null,
         kind: { in: ['J1_VISA', 'J1_DS2019'] },
         expiresAt: { gte: now, lt: new Date(now.getTime() + 60 * DAY_MS) },
@@ -266,7 +268,7 @@ async function generateRaw(
     // Pace check against last complete org week at standard rates.
     const lastWeekStart = startOfWeekUTC(new Date(thisWeekStart.getTime() - 36 * 3600_000));
     const entries = await prisma.timeEntry.findMany({
-      where: {
+      where: { ...T,
         status: { in: ['APPROVED', 'COMPLETED'] },
         clockInAt: { gte: lastWeekStart, lt: thisWeekStart },
       },
@@ -339,13 +341,13 @@ async function generateRaw(
     const dayAgoOps = new Date(now.getTime() - DAY_MS);
     const [opsTempAlerts, opsIncomplete, opsEscalations] = await Promise.all([
       prisma.opsTask.count({
-        where: { tempOutOfRange: true, updatedAt: { gte: dayAgoOps } },
+        where: { ...T, tempOutOfRange: true, updatedAt: { gte: dayAgoOps } },
       }),
       prisma.opsShift.count({
-        where: { closedIncomplete: true, closedAt: { gte: dayAgoOps } },
+        where: { ...T, closedIncomplete: true, closedAt: { gte: dayAgoOps } },
       }),
       prisma.opsHandoverItem.count({
-        where: {
+        where: { ...T,
           status: 'PENDING',
           createdAt: { gte: new Date(now.getTime() - 2 * DAY_MS) },
           OR: [{ kind: 'COACH_COMPLAINT' }, { kind: 'EQUIPMENT' }],
@@ -486,15 +488,18 @@ async function generateRaw(
 export async function computeExecutiveDecisions(
   prisma: PrismaClient,
   now: Date = new Date(),
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
 ): Promise<ExecutiveDecision[]> {
-  const raw = await generateRaw(prisma, now);
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
+  const raw = await generateRaw(prisma, now, T);
   if (raw.length === 0) return [];
   const [states, claims] = await Promise.all([
     prisma.execDecisionState.findMany({
-      where: { key: { in: raw.map((d) => d.key) } },
+      where: { ...T, key: { in: raw.map((d) => d.key) } },
     }),
     prisma.decisionClaim.findMany({
-      where: { key: { in: raw.map((d) => d.key) } },
+      where: { ...T, key: { in: raw.map((d) => d.key) } },
       include: {
         claimedBy: {
           select: {

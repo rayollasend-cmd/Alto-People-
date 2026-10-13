@@ -6,6 +6,7 @@ import { atClient } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 88 — OSHA + WC class codes + EEO-1.
@@ -388,12 +389,14 @@ const EeoInputSchema = z.object({
 });
 
 oshaWcEeoRouter.get('/eeo/associates/:id', VIEW_COMP, async (req, res) => {
+  await assertSameTenant('associate', String(req.params.id));
   const associateId = req.params.id;
   const row = await prisma.associateEeo.findUnique({ where: { associateId } });
   res.json({ eeo: row });
 });
 
 oshaWcEeoRouter.put('/eeo/associates/:id', MANAGE_COMP, async (req, res) => {
+  await assertSameTenant('associate', String(req.params.id));
   const associateId = req.params.id;
   const input = EeoInputSchema.parse(req.body);
   await prisma.associateEeo.upsert({

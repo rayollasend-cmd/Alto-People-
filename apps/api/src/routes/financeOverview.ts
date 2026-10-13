@@ -15,6 +15,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
 import { buildFieldglassQueue, buildFieldglassRoster } from '../lib/fieldglassQueue.js';
 import { billingWeek, marginTrend, payCycle, receivablesAging } from '../lib/financeCockpit.js';
+import { assertSameTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -46,11 +48,12 @@ financeOverviewRouter.get(
   async (req, res, next) => {
     try {
       const now = new Date();
+      const T = tenantIdForWrite();
 
       const [schedules, inFlightRun, lastDisbursed, pendingEntries, settleAgg, unpaidStatements, paidRecent, draftCount, weekBilled, weekRuns] =
         await Promise.all([
           prisma.payrollSchedule.findMany({
-            where: { isActive: true, deletedAt: null },
+            where: { isActive: true, deletedAt: null, tenantId: T },
             select: {
               name: true,
               frequency: true,
@@ -59,7 +62,7 @@ financeOverviewRouter.get(
             },
           }),
           prisma.payrollRun.findFirst({
-            where: { status: { in: ['DRAFT', 'FINALIZED'] } },
+            where: { status: { in: ['DRAFT', 'FINALIZED'] }, tenantId: T },
             orderBy: { periodEnd: 'desc' },
             select: {
               id: true,
@@ -70,12 +73,12 @@ financeOverviewRouter.get(
             },
           }),
           prisma.payrollRun.findFirst({
-            where: { status: 'DISBURSED' },
+            where: { status: 'DISBURSED', tenantId: T },
             orderBy: { periodEnd: 'desc' },
             select: { periodEnd: true, totalGross: true, updatedAt: true },
           }),
           prisma.timeEntry.findMany({
-            where: { status: 'COMPLETED', clockOutAt: { not: null } },
+            where: { status: 'COMPLETED', clockOutAt: { not: null }, tenantId: T },
             select: {
               clockInAt: true,
               clockOutAt: true,
@@ -85,28 +88,30 @@ financeOverviewRouter.get(
             take: 2000,
           }),
           prisma.reimbursement.aggregate({
-            where: { status: 'MANAGER_APPROVED' },
+            where: { status: 'MANAGER_APPROVED', tenantId: T },
             _count: true,
             _sum: { totalAmount: true },
           }),
           prisma.clientStatement.findMany({
-            where: { status: 'FINAL', paidAt: null },
+            where: { status: 'FINAL', paidAt: null, tenantId: T },
             select: { finalizedAt: true, snapshot: true, clientId: true, client: { select: { name: true } } },
           }),
           prisma.clientStatement.findMany({
             where: {
+              tenantId: T,
               status: 'FINAL',
               paidAt: { not: null, gte: new Date(now.getTime() - 120 * DAY_MS) },
             },
             select: { finalizedAt: true, paidAt: true },
           }),
-          prisma.clientStatement.count({ where: { status: 'DRAFT' } }),
+          prisma.clientStatement.count({ where: { status: 'DRAFT', tenantId: T } }),
           // Last CLOSED org week: [prevWeekStart, thisWeekStart)
           (async () => {
             const thisWeekStart = startOfWeekUTC(now);
             const prevWeekStart = new Date(thisWeekStart.getTime() - 7 * DAY_MS);
             return prisma.clientStatement.findMany({
               where: {
+                tenantId: T,
                 status: 'FINAL',
                 periodStart: { lt: thisWeekStart },
                 periodEnd: { gte: prevWeekStart },
@@ -119,6 +124,7 @@ financeOverviewRouter.get(
             const prevWeekStart = new Date(thisWeekStart.getTime() - 7 * DAY_MS);
             return prisma.payrollRun.findMany({
               where: {
+                tenantId: T,
                 status: { in: ['FINALIZED', 'DISBURSED'] },
                 periodStart: { lt: thisWeekStart },
                 periodEnd: { gte: prevWeekStart },
@@ -203,8 +209,8 @@ financeOverviewRouter.get(
       // The money questions — pay cycle, last week in Fieldglass, the
       // margin trend — alongside the queue, in parallel.
       const [fullFieldglassQueue, cycle, billing, margin] = await Promise.all([
-        buildFieldglassQueue(now),
-        payCycle(now),
+        buildFieldglassQueue(now, { tenantId: T }),
+        payCycle(now, { tenantId: T }),
         billingWeek(now),
         marginTrend(now),
       ]);
@@ -229,7 +235,7 @@ financeOverviewRouter.get(
       const CASE_OPEN = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
       const [casesOpen, casesMine] = await Promise.all([
         prisma.hrCase.count({
-          where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+          where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] }, tenantId: T },
         }),
         prisma.hrCase.count({
           where: {
@@ -313,12 +319,12 @@ financeOverviewRouter.get(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
-      const queue = await buildFieldglassQueue();
+      const queue = await buildFieldglassQueue(new Date(), { tenantId: tenantIdForWrite() });
       if (req.query.view === 'count') {
         res.json({ count: queue.length });
         return;
       }
-      res.json({ generatedAt: new Date().toISOString(), queue, roster: await buildFieldglassRoster() });
+      res.json({ generatedAt: new Date().toISOString(), queue, roster: await buildFieldglassRoster({ tenantId: tenantIdForWrite() }) });
     } catch (err) {
       next(err);
     }
@@ -343,6 +349,7 @@ financeOverviewRouter.post(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.associateId));
       const associate = await prisma.associate.findFirst({
         where: { id: req.params.associateId, deletedAt: null },
         select: { id: true },
@@ -397,6 +404,7 @@ financeOverviewRouter.get(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.associateId));
       const packet = await buildFieldglassPacket(z.string().uuid().parse(req.params.associateId));
       if (!packet) throw new HttpError(404, 'associate_not_found', 'Associate not found');
       enqueueAudit(
@@ -426,6 +434,7 @@ financeOverviewRouter.patch(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.associateId));
       const { workerId } = WorkerIdSchema.parse(req.body ?? {});
       const updated = await prisma.fieldglassRegistration.updateMany({
         where: { associateId: z.string().uuid().parse(req.params.associateId) },
@@ -457,6 +466,7 @@ financeOverviewRouter.patch(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.associateId));
       const associateId = z.string().uuid().parse(req.params.associateId);
       const parsed = TravelDocSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
@@ -491,6 +501,7 @@ financeOverviewRouter.delete(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
+      await assertSameTenant('associate', String(req.params.associateId));
       await prisma.fieldglassRegistration.deleteMany({
         where: { associateId: req.params.associateId },
       });

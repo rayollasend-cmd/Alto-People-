@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { activeAssociateIds, activeHeadcount } from '../lib/activeDefinition.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 
@@ -311,7 +312,8 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
     // Brief 1A-2: "active" on the retention table is the one definition.
     const activeIds = await activeAssociateIds({}, now);
     const associates = await prisma.associate.findMany({
-      where: { deletedAt: null },
+      // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+      where: { deletedAt: null, tenantId: tenantIdForWrite() },
       select: {
         id: true,
         hireDate: true,
@@ -328,6 +330,7 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
       take: 10_000,
     });
     const separations = await prisma.separation.findMany({
+      where: { tenantId: tenantIdForWrite() },
       select: { associateId: true, reason: true },
       take: 10_000,
     });
@@ -460,8 +463,11 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
     // Tenant clamp: CLIENT_PORTAL holds view:analytics — it gets its own
     // client's funnel, never the org's per-client breakdown.
     const clamped = effectiveClientIdFilter(req.user!, undefined);
-    const clientClamp: Prisma.ApplicationWhereInput =
-      clamped === undefined ? {} : { clientId: clamped ?? NO_CLIENT };
+    // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+    const clientClamp: Prisma.ApplicationWhereInput = {
+      tenantId: tenantIdForWrite(),
+      ...(clamped === undefined ? {} : { clientId: clamped ?? NO_CLIENT }),
+    };
     const now = new Date();
     const windowStart = new Date(now.getTime() - ANALYTICS_LOOKBACK_DAYS * ONE_DAY_MS);
     const monthlyStart = new Date(
