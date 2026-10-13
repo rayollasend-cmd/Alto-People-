@@ -307,7 +307,14 @@ Risks:
 
 Decisions for the owner:
 
-**Decided 2026-10-13 — items 1 to 9 approved as recommended**, with the owner's guardrails: the scope rules must fail closed on tenant and site when client is null, never open, and that test is written first (item 2); the W-2/1099 employer comes from the employment record, never from a Client row (item 3). Items 10 to 12 and the seven risks above were sent to the owner together. Two additions to the plan: the WhatsApp templates take the tenant display name and the assistant name as variables, and the Meta re-registration starts early because it takes days; the hotel seed's forbidden-word test is the acceptance line for 2-1b (no "client", "bill rate", "housing", "van", "store", "associate" when the tenant says "team member", or "Alto" in any screen or Hugo message), with the list kept in the test, not in prose.
+**Decided 2026-10-13 — items 1 to 9 approved as recommended**, with the owner's guardrails: the scope rules must fail closed on tenant and site when client is null, never open, and that test is written first (item 2); the W-2/1099 employer comes from the employment record, never from a Client row (item 3). **Items 10 to 12 approved as recommended (2026-10-13):** the housing-link, robotics and agent-builder flags only hide what exists; the business model sets defaults at creation and is otherwise informational; the transportation, driver and client-portal roles are hidden by module until Brief 2-3 makes roles tenant-defined.
+
+**The owner's rulings on the risks (2026-10-13), binding on every step:**
+- Risk 1: the forbidden-word test drives the vocabulary sweep; Turkish is added to the web dictionary as part of the top-30 labels, not later.
+- Risk 2: the fail-closed guardrail test lands before any scope code changes; the existing cross-client tests and the generated cross-tenant suite stay green through every step, no exceptions.
+- Risk 3: the partial unique indexes ship in the same migration as every nullable key, and the migration is not complete without them; a test attempts a duplicate rate card, roster order and onboarding template with a null client and is refused.
+- Risk 6: the per-tenant job loop from 2-1 comes before any cron is gated by module.
+- Risk 7: the ride deduction stays, inert for tenants with transportation off. Two additions to the plan: the WhatsApp templates take the tenant display name and the assistant name as variables, and the Meta re-registration starts early because it takes days; the hotel seed's forbidden-word test is the acceptance line for 2-1b (no "client", "bill rate", "housing", "van", "store", "associate" when the tenant says "team member", or "Alto" in any screen or Hugo message), with the list kept in the test, not in prose.
 
 
 1. **Rename `Location` to `Site` physically, or add `Location.type` and let the terminology table say "site"?** Twenty-two models, 199 web files and every URL (`/clients/:id/locations`) reference Location. Recommendation: add `type` and `@@map` later; the noun is the profile's job.
@@ -327,9 +334,10 @@ Decisions for the owner:
 
 | Step | Contents | Weight |
 |---|---|---|
+| 0. Per-tenant job loop | the 2-1 §9.4 cron wrapper (`runForEachTenant`) on every timed job, before any cron is gated by module (owner, risk 6) | Small |
 | 1. Profile, modules, terminology | `TenantProfile` (or Tenant columns), shared zod contracts (module keys, term keys, defaults per business model), `/auth/me` and branding payload, `requireModule` middleware on ~20 mounts, `visibleModules(modules)`, Hugo intent filter, cron check, Alto HR row, module-off route suite generated from the router | Medium; the one step everything else reads |
-| 2. Vocabulary plumbing | `useTerm()` hook over the profile; top-30 labels re-keyed (modules.ts labels, roles.ts labels, portal/region/wf/opsRun keys, WA `store` param, notify subjects); forbidden-word test harness | Medium |
-| 3. Optional Client on the hotel path | 15 models nullable, 5 unique constraints rewritten with partial indexes, `POST /org/sites`, `scope.ts` org-unit/site scope with fail-closed `NO_SCOPE`, `activeDefinition` Placement, kiosk, scheduling/onboarding creation paths | Large; the risky one |
+| 2. Vocabulary plumbing | `useTerm()` hook over the profile; Turkish added to the web dictionary for the top-30 labels (owner, risk 1); top-30 labels re-keyed (modules.ts labels, roles.ts labels, portal/region/wf/opsRun keys, WA `store` param, notify subjects); forbidden-word test harness | Medium |
+| 3. Optional Client on the hotel path | the fail-closed scope test FIRST (owner, risk 2); 15 models nullable, 5 unique constraints rewritten with partial indexes in the same migration plus the duplicate-refused test (owner, risk 3), `POST /org/sites`, `scope.ts` org-unit/site scope with fail-closed `NO_SCOPE`, `activeDefinition` Placement, kiosk, scheduling/onboarding creation paths | Large; the risky one |
 | 4. Employer of record | `EmployerOrganization`, `Employment`, backfill from Applications and Clients, 22 payroll/tax readers re-pointed, per-employer W-2 grouping | Medium |
 | 5. OrgUnit | model, `Location/Associate/Position/User.orgUnitId`, CostCenter fold, Region mirror and command-center re-point, permission scope at any level | Medium |
 | 6. Hotel tenant | seed block, e2e acceptance (onboarding, scheduling, time approval, HR case, payroll export) with the forbidden-word assertion, reconciliation report on both tenants | Small–medium |
