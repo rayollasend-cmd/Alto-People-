@@ -365,8 +365,8 @@ async function main() {
   // the store — so every demo shows "6 / 8", the Lead tag, and the Call
   // button instead of dashes.
   const demoStore =
-    (await prisma.location.findFirst({ where: { clientId: portalClient.id, name: 'Front Beach 218' } })) ??
-    (await prisma.location.create({
+    (await prisma.site.findFirst({ where: { clientId: portalClient.id, name: 'Front Beach 218' } })) ??
+    (await prisma.site.create({
       data: {
         clientId: portalClient.id,
         name: 'Front Beach 218',
@@ -421,7 +421,7 @@ async function main() {
     (await prisma.region.findFirst({ where: { name: 'Florida Panhandle', deletedAt: null } })) ??
     (await prisma.region.create({ data: { name: 'Florida Panhandle' } }));
   if (demoStore.regionId !== demoRegion.id) {
-    await prisma.location.update({ where: { id: demoStore.id }, data: { regionId: demoRegion.id } });
+    await prisma.site.update({ where: { id: demoStore.id }, data: { regionId: demoRegion.id } });
   }
   const regionEmail = 'region@coastalresort.example';
   if (!(await prisma.user.findUnique({ where: { email: regionEmail } }))) {
