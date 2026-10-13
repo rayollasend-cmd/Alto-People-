@@ -15,6 +15,10 @@ export interface BrandingSnapshot {
   orgName: string;
   /** What this tenant's team calls Hugo. */
   assistantName: string;
+  /** Brief 1A-2 company settings, cached here with the rest of OrgSetting. */
+  activeWindowDays: number;
+  weekStartsOn: number;
+  timezone: string;
   senderName: string | null;
   supportEmail: string | null;
   primaryColor: string | null;
@@ -30,6 +34,9 @@ export interface BrandingSnapshot {
 export const DEFAULT_BRANDING: BrandingSnapshot = {
   orgName: 'Alto HR',
   assistantName: 'Hugo',
+  activeWindowDays: 14,
+  weekStartsOn: 6,
+  timezone: 'America/New_York',
   senderName: null,
   supportEmail: null,
   primaryColor: null,
@@ -65,6 +72,9 @@ export async function refreshBranding(prisma: PrismaClient): Promise<BrandingSna
         cached = {
           orgName: row.orgName,
           assistantName: row.assistantName,
+          activeWindowDays: row.activeWindowDays,
+          weekStartsOn: row.weekStartsOn,
+          timezone: row.timezone,
           senderName: row.senderName,
           supportEmail: row.supportEmail,
           primaryColor: row.primaryColor,

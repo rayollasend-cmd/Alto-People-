@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { coveringManagerIds, teamScope } from '../lib/delegations.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -117,7 +118,8 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
   }
   const reportIdsRows = await prisma.associate.findMany({
     take: 1000,
-    where: await managerScope(user),
+    // Brief 1A-2: separated and deactivated people are not reports.
+    where: { AND: [await managerScope(user), EMPLOYED_WHERE] },
     select: { id: true },
   });
   const reportIds = reportIdsRows.map((r) => r.id);

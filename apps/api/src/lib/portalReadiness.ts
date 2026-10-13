@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { EMPLOYED_WHERE } from './activeDefinition.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { associatesOfClient } from './scope.js';
@@ -56,7 +57,8 @@ export async function computePortalReadiness(
       take: 50,
     }),
     prisma.associate.findMany({
-      where: { ...associatesOfClient(clientId), deletedAt: null },
+      // Brief 1A-2: employed people only.
+      where: { ...associatesOfClient(clientId), ...EMPLOYED_WHERE },
       select: { photoS3Key: true },
       take: 5000,
     }),

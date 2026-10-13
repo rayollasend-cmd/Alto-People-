@@ -57,6 +57,22 @@ async function mockApi(page: Page) {
 
 const here = (page: Page) => page.evaluate(() => `${location.pathname}${location.search}`);
 
+/**
+ * The drawer's history handover pops and pushes asynchronously; a Back issued
+ * inside that window skips an entry. Wait until history.length has stopped
+ * changing before judging or navigating (a fixed 800 ms was not always enough
+ * under CI's two workers).
+ */
+async function settleHistory(page: Page) {
+  let last = await page.evaluate(() => history.length);
+  for (let i = 0; i < 12; i++) {
+    await page.waitForTimeout(250);
+    const now = await page.evaluate(() => history.length);
+    if (now === last) return;
+    last = now;
+  }
+}
+
 async function issueAndReveal(page: Page) {
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^issue$/i }).click();
@@ -80,7 +96,7 @@ test('issuing from the Pins tab: Done keeps you on the kiosk page, and Back leav
   await page.getByRole('button', { name: /^done$/i }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // Give any stray history pop time to land before judging.
-  await page.waitForTimeout(800);
+  await settleHistory(page);
   expect(await here(page)).toBe('/time-attendance/kiosk?tab=pins');
 
   await page.goBack();
@@ -107,8 +123,8 @@ test('issuing from a People profile: "Back to People" lands on that profile, and
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // The drawer's history handover finishes after the dialog is gone (the
   // sibling test waits the same way). Under CI's two workers, going Back
-  // inside that window skipped the kiosk entry twice in five runs.
-  await page.waitForTimeout(800);
+  // inside that window skipped the kiosk entry in three runs of eight.
+  await settleHistory(page);
   await page.goBack();
   await expect.poll(() => here(page)).toBe('/time-attendance/kiosk?tab=pins');
 });

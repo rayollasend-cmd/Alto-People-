@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
@@ -405,15 +406,8 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
     hours * env.LABOR_OVERHEAD_PER_HOUR;
 
   const [headcount, separationsQtd, published, assigned] = await Promise.all([
-    prisma.associate.count({
-      where: {
-        deletedAt: null,
-        erasedAt: null,
-        separatedAt: null,
-        deactivatedAt: null,
-        applications: { some: { status: 'APPROVED', deletedAt: null } },
-      },
-    }),
+    // Brief 1A-2: the one definition of active.
+    activeHeadcount({}, now),
     prisma.associate.count({ where: { separatedAt: { gte: quarter.start } } }),
     prisma.shift.count({
       where: {

@@ -36,7 +36,7 @@ import {
   type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { primaryClientsForAssociates } from '../lib/associateClients.js';
+import { activeAssociateIds, activeBreakdown } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
@@ -147,43 +147,25 @@ function getActiveAssociates(clientId?: string | null) {
 }
 
 async function loadActiveAssociates(clientId?: string | null) {
-  const apps = await prisma.application.findMany({
-    take: ACTIVE_ASSOCIATES_CAP,
-    where: {
-      status: 'APPROVED',
-      deletedAt: null,
-      associate: { deletedAt: null },
-      // A client's people: applied there, or transferred in (their approved
-      // application stays filed under the client they started at). Who's
-      // REALLY here is settled below by where they work now.
-      ...(clientId
-        ? {
-            OR: [
-              { clientId },
-              { associate: { assignments: { some: { endedAt: null, location: { clientId } } } } },
-            ],
-          }
-        : {}),
-    },
-    select: {
-      associateId: true,
-      clientId: true,
-      associate: {
-        select: { firstName: true, lastName: true, dob: true, hireDate: true },
-      },
-      client: { select: { name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (apps.length === ACTIVE_ASSOCIATES_CAP) {
+  // Brief 1A-2: the one definition of active, by placement. Scoped to a
+  // client, the work must be at that client too.
+  const now = new Date();
+  const breakdown = await activeBreakdown(now, prisma);
+  const scoped = clientId ? await activeAssociateIds({ clientId }, now, prisma) : breakdown.ids;
+  const ids = [...scoped].filter((id) => breakdown.placements.has(id)).slice(0, ACTIVE_ASSOCIATES_CAP);
+  if (ids.length === ACTIVE_ASSOCIATES_CAP) {
     console.error(
-      `[compliance-scorecard] active-associate query hit the ${ACTIVE_ASSOCIATES_CAP}-row cap — ` +
+      `[compliance-scorecard] active-associate population hit the ${ACTIVE_ASSOCIATES_CAP}-row cap — ` +
         'the scorecard is no longer covering the whole workforce. Paginate loadActiveAssociates.',
     );
   }
-  // De-dup by associateId — one associate may have multiple historical
-  // approved applications; we keep the most recent.
-  const seen = new Set<string>();
+  const people = await prisma.associate.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, firstName: true, lastName: true, dob: true, hireDate: true },
+  });
+  const clientIds = [...new Set(ids.map((id) => breakdown.placements.get(id)!.clientId))];
+  const clients = await prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, name: true } });
+  const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const rows: Array<{
     associateId: string;
     associateName: string;
@@ -192,25 +174,19 @@ async function loadActiveAssociates(clientId?: string | null) {
     dob: Date | null;
     hireDate: Date | null;
   }> = [];
-  // Their client is where they work now — an open assignment wins over the
-  // application's client (lib/associateClients), so a transferred associate
-  // is scored at the client they moved to, not the one they started at.
-  const current = await primaryClientsForAssociates([...new Set(apps.map((a) => a.associateId))]);
-  for (const a of apps) {
-    if (seen.has(a.associateId)) continue;
-    seen.add(a.associateId);
-    const now = current.get(a.associateId);
-    const rowClientId = now?.clientId ?? a.clientId;
-    if (clientId && rowClientId !== clientId) continue;
+  for (const p of people) {
+    const placement = breakdown.placements.get(p.id)!;
+    const rowClientId = clientId ?? placement.clientId;
     rows.push({
-      associateId: a.associateId,
-      associateName: `${a.associate.firstName} ${a.associate.lastName}`,
+      associateId: p.id,
+      associateName: `${p.firstName} ${p.lastName}`,
       clientId: rowClientId,
-      clientName: now?.clientName ?? a.client.name,
-      dob: a.associate.dob,
-      hireDate: a.associate.hireDate,
+      clientName: clientName.get(rowClientId) ?? '',
+      dob: p.dob,
+      hireDate: p.hireDate,
     });
   }
+  rows.sort((a, b) => a.associateName.localeCompare(b.associateName));
   return rows;
 }
 

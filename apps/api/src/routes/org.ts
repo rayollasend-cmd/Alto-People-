@@ -24,6 +24,7 @@ import {
 import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
@@ -106,10 +107,12 @@ orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
     where,
     orderBy: [{ name: 'asc' }],
   });
+  // Brief 1A-2: the one definition of active.
+  const activeIds = await activeAssociateIds();
   const counts = await prisma.associate.groupBy({
     by: ['departmentId'],
     where: {
-      deletedAt: null,
+      id: { in: [...activeIds] },
       departmentId: { in: rows.map((r) => r.id) },
     },
     _count: { _all: true },
@@ -236,10 +239,12 @@ orgRouter.get('/cost-centers', VIEW, async (req: Request, res: Response) => {
     where,
     orderBy: [{ code: 'asc' }],
   });
+  // Brief 1A-2: the one definition of active.
+  const activeIds = await activeAssociateIds();
   const counts = await prisma.associate.groupBy({
     by: ['costCenterId'],
     where: {
-      deletedAt: null,
+      id: { in: [...activeIds] },
       costCenterId: { in: rows.map((r) => r.id) },
     },
     _count: { _all: true },
@@ -350,10 +355,12 @@ orgRouter.get('/job-profiles', VIEW, async (req: Request, res: Response) => {
     where,
     orderBy: [{ family: 'asc' }, { level: 'asc' }, { title: 'asc' }],
   });
+  // Brief 1A-2: the one definition of active.
+  const activeIds = await activeAssociateIds();
   const counts = await prisma.associate.groupBy({
     by: ['jobProfileId'],
     where: {
-      deletedAt: null,
+      id: { in: [...activeIds] },
       jobProfileId: { in: rows.map((r) => r.id) },
     },
     _count: { _all: true },

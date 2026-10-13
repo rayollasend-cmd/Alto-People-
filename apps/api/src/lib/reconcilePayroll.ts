@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { aggregatePayrollProjection } from './payrollAggregator.js';
-import { activeAssociateIds, DEFAULT_ACTIVE_WINDOW_DAYS } from './activeDefinition.js';
+import { activeAssociateIds, activeWindowDays } from './activeDefinition.js';
 import { startOfWeekUTC, endOfWeekUTC } from './timeAnomalies.js';
 import { ACTIVE_COUNT_SITES, DISTINCT_ACTIVE_RULES } from './activeInventory.js';
 
@@ -201,7 +201,8 @@ export interface PlatformSide {
 
 const dayStart = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
-export async function platformSide(db: Db, period: { start: string; end: string }, now: Date = new Date(), windowDays = DEFAULT_ACTIVE_WINDOW_DAYS): Promise<PlatformSide> {
+export async function platformSide(db: Db, period: { start: string; end: string }, now: Date = new Date(), windowDaysOverride?: number): Promise<PlatformSide> {
+  const windowDays = windowDaysOverride ?? (await activeWindowDays(db));
   const periodStart = dayStart(period.start);
   const periodEndExclusive = new Date(dayStart(period.end).getTime() + 86_400_000);
 

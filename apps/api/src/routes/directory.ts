@@ -8,6 +8,7 @@ import {
   type DirectoryStatus,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { atClient } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
@@ -126,6 +127,8 @@ type DirectoryRow = Prisma.AssociateGetPayload<{ select: typeof DIRECTORY_SELECT
 
 /** Rows → directory entries, with the live pay rate batch-fetched once. */
 async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[]> {
+  // Brief 1A-2: ACTIVE is the one definition of active.
+  const activeIds = await activeAssociateIds();
   // One open compensation row per associate ⇒ batch-fetch and index.
   const ids = associates.map((a) => a.id);
   const liveComp =
@@ -180,13 +183,16 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
     // A manual deactivation (temporary pause) hard-overrides everything:
     // INACTIVE until someone clicks Reactivate, no matter what
     // applications exist.
+    // Brief 1A-2: approved alone is no longer active. ACTIVE = placed and
+    // working (the one definition); PENDING = onboarding in flight; an
+    // approved person with no recent work and nothing scheduled is INACTIVE.
     const status: DirectoryStatus = a.deactivatedAt
       ? 'INACTIVE'
       : separated
         ? 'INACTIVE'
-        : approved
+        : activeIds.has(a.id)
           ? 'ACTIVE'
-          : inFlight
+          : inFlight && !approved
             ? 'PENDING'
             : 'INACTIVE';
 

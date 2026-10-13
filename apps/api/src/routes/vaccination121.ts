@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 
@@ -124,7 +125,8 @@ vaccination121Router.get(
 // ----- Coverage rollup -----------------------------------------------------
 
 vaccination121Router.get('/vaccinations/coverage', VIEW, async (_req, res) => {
-  const total = await prisma.associate.count({ where: { deletedAt: null } });
+  // Brief 1A-2: coverage is measured over the active workforce.
+  const total = await activeHeadcount();
   const byKind = await prisma.vaccinationRecord.groupBy({
     by: ['kind', 'associateId'],
   });

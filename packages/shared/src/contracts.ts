@@ -6709,6 +6709,11 @@ export const OrgBrandingSchema = z.object({
   orgName: z.string().min(1).max(120),
   /** The tenant's display name for Hugo. */
   assistantName: z.string().min(1).max(60),
+  /** Brief 1A-2: trailing days of work that make an associate active. */
+  activeWindowDays: z.number().int().min(1).max(90),
+  /** Brief 1A-2: the company workweek start (0 = Sunday … 6 = Saturday) and time zone. */
+  weekStartsOn: z.number().int().min(0).max(6),
+  timezone: z.string().min(1).max(64),
   senderName: z.string().min(1).max(120).nullable(),
   supportEmail: z
     .string()
@@ -6740,6 +6745,9 @@ export const UpdateOrgBrandingInputSchema = z
   .object({
     orgName: z.string().min(1).max(120).optional(),
     assistantName: z.string().trim().min(1).max(60).optional(),
+    activeWindowDays: z.number().int().min(1).max(90).optional(),
+    weekStartsOn: z.number().int().min(0).max(6).optional(),
+    timezone: z.string().trim().min(1).max(64).optional(),
     senderName: z.string().min(1).max(120).nullable().optional(),
     supportEmail: z
       .string()
@@ -8631,4 +8639,54 @@ export interface AgentDrift {
   driftErrorRatePct: number | null;
   driftCostPerTaskCents: number | null;
   lastDriftAlertAt: string | null;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Headcount (Brief 1A-2) — every number on the screen is the one definition
+ *  of active, beside what payroll last said.
+ * -------------------------------------------------------------------------- */
+
+export interface HeadcountRow {
+  id: string;
+  name: string;
+  /** For a store row, its client. */
+  clientName?: string;
+  active: number;
+  scheduledThisWeek: number;
+  /** Associates placed here whose role has no rate card (Brief 1A-2); null until the rate table exists. */
+  withoutRate: number | null;
+}
+
+export interface ReconciliationSummary {
+  periodStart: string;
+  periodEnd: string;
+  ranAt: string;
+  platformActive: number;
+  platformPaid: number;
+  payrollPaid: number | null;
+  headcountVariance: number | null;
+  hoursVariance: number | null;
+  grossVariance: number | null;
+  varianceLines: number | null;
+  payrollProvided: boolean;
+}
+
+export interface HeadcountOverview {
+  asOf: string;
+  windowDays: number;
+  /** The one definition, company-wide. */
+  active: number;
+  /** Associates on an ASSIGNED shift in the current org week. */
+  scheduledThisWeek: number;
+  /** Associates the payroll engine would pay for the last closed period, or null when no run exists. */
+  onPayrollLastPeriod: { count: number; periodStart: string; periodEnd: string } | null;
+  /** Associates with housing on file; null until the housing link (Helios) exists. */
+  inHousing: number | null;
+  /** On file but not active, by reason. */
+  notActive: { employedNotPlaced: number; placedNoRecentWork: number; separated: number; deactivated: number; onboarding: number };
+  byClient: HeadcountRow[];
+  byStore: HeadcountRow[];
+  byDepartment: { id: string | null; name: string; active: number }[];
+  byEmploymentType: { employmentType: string; active: number }[];
+  reconciliation: ReconciliationSummary | null;
 }

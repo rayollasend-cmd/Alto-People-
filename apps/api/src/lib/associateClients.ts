@@ -1,3 +1,4 @@
+import { activeBreakdown } from './activeDefinition.js';
 import { prisma } from '../db.js';
 
 export interface AssociateClientRef {
@@ -94,6 +95,22 @@ export async function clientNamesById(
  * number of clients.
  */
 export async function activeAssociateCountsByClient(
+  clientIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ids = [...new Set(clientIds)];
+  if (ids.length === 0) return out;
+  // Brief 1A-2: the one definition of active, by placement.
+  const breakdown = await activeBreakdown(new Date(), prisma);
+  for (const id of ids) {
+    const n = breakdown.byClient.get(id) ?? 0;
+    if (n > 0) out.set(id, n);
+  }
+  return out;
+}
+
+/** The placement rule alone (no recent-work test): who belongs to each client. Kept for callers that need everyone placed. */
+export async function placedAssociateCountsByClient(
   clientIds: string[],
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();

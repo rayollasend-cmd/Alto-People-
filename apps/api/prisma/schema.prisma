@@ -8075,6 +8075,11 @@ model OrgSetting {
   orgName                String                 @default("Alto HR") @db.VarChar(120)
   /// What this tenant's team calls Hugo, the assistant (product taxonomy 2026-10-13).
   assistantName          String                 @default("Hugo") @db.VarChar(60)
+  /// Brief 1A-2: the one definition of active counts work in this many trailing days.
+  activeWindowDays       Int                    @default(14)
+  /// Brief 1A-2: the company workweek — the day it starts (0 = Sunday … 6 = Saturday) in the company time zone. Sites keep their own zone on Location.timezone.
+  weekStartsOn           Int                    @default(6)
+  timezone               String                 @default("America/New_York") @db.VarChar(64)
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
@@ -9969,4 +9974,32 @@ model Tenant {
   features  Json         @default("{}")
   createdAt DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @db.Timestamptz(6)
+}
+
+// ===== Brief 1A-2 — the reconciliation snapshot ==============================
+//
+// One row per run of scripts/reconcile-payroll.ts --persist: the totals and
+// the variance the Headcount screen shows beside today's numbers.
+
+model ReconciliationSnapshot {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periodStart     DateTime @db.Date
+  periodEnd       DateTime @db.Date
+  ranAt           DateTime @default(now()) @db.Timestamptz(6)
+  windowDays      Int
+  platformActive  Int
+  platformPaid    Int
+  payrollPaid     Int?
+  platformHours   Decimal  @db.Decimal(12, 2)
+  payrollHours    Decimal? @db.Decimal(12, 2)
+  platformGross   Decimal  @db.Decimal(14, 2)
+  payrollGross    Decimal? @db.Decimal(14, 2)
+  varianceLines   Int?
+  payrollProvided Boolean  @default(false)
+  notes           String?  @db.VarChar(1000)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  @@index([periodEnd(sort: Desc)])
+  @@index([tenantId])
 }

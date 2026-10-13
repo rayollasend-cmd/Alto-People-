@@ -11,6 +11,7 @@ import {
 } from '@alto-people/shared';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { activeAssociateIds, activeHeadcount } from '../lib/activeDefinition.js';
 import { requireCapability } from '../middleware/auth.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
@@ -144,7 +145,8 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       trendApplications,
       trendHires,
     ] = await Promise.all([
-      prisma.associate.count({ where: { deletedAt: null, ...associateClamp } }),
+      // Brief 1A-2: the one definition of active, clamped to the caller's client.
+      activeHeadcount(boundedClientId ? { clientId: boundedClientId } : {}, now),
       prisma.shift.count({
         where: {
           status: { in: ['OPEN', 'ASSIGNED'] },
@@ -306,6 +308,8 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const now = new Date();
+    // Brief 1A-2: "active" on the retention table is the one definition.
+    const activeIds = await activeAssociateIds({}, now);
     const associates = await prisma.associate.findMany({
       where: { deletedAt: null },
       select: {
@@ -344,9 +348,7 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
             ? a.assignments.find((asg) => asg.location.clientId === clamped)
             : a.assignments[0]
           )?.location ?? null,
-        activeNow:
-          a.separatedAt === null &&
-          a.assignments.some((asg) => asg.endedAt === null),
+        activeNow: activeIds.has(a.id),
         clientIds: new Set(a.assignments.map((asg) => asg.location.clientId)),
       }))
       .filter((r) =>

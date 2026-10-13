@@ -10,6 +10,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
+import { activeBreakdown } from './activeDefinition.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
@@ -189,15 +190,8 @@ export async function computeExecutiveSummary(
       },
       take: 50_000,
     }),
-    prisma.associate.count({
-      where: {
-        deletedAt: null,
-        erasedAt: null,
-        separatedAt: null,
-        deactivatedAt: null,
-        applications: { some: { status: 'APPROVED', deletedAt: null } },
-      },
-    }),
+    // Brief 1A-2: the one definition of active.
+    activeBreakdown(now, prisma),
     prisma.associate.count({
       where: { deletedAt: null, deactivatedAt: { not: null } },
     }),
@@ -221,15 +215,7 @@ export async function computeExecutiveSummary(
       where: { occurredOn: { gte: thirtyAgo }, excusedAt: null },
       _count: { _all: true },
     }),
-    prisma.associateAssignment.findMany({
-      where: { endedAt: null },
-      select: {
-        location: {
-          select: { clientId: true, client: { select: { name: true } } },
-        },
-      },
-      take: 5_000,
-    }),
+    prisma.client.findMany({ where: { deletedAt: null }, select: { id: true, name: true }, take: 5_000 }),
     prisma.associate.findMany({
       where: { deletedAt: null, erasedAt: null, hireDate: { gte: thirtyAgo } },
       select: {
@@ -245,14 +231,11 @@ export async function computeExecutiveSummary(
     }),
   ]);
 
+  // Per client: the active associates placed there (the one definition), not open assignments.
   const byClient = new Map<string, { clientName: string; activeAssociates: number }>();
-  for (const a of openAssignments) {
-    const c = byClient.get(a.location.clientId) ?? {
-      clientName: a.location.client.name,
-      activeAssociates: 0,
-    };
-    c.activeAssociates += 1;
-    byClient.set(a.location.clientId, c);
+  for (const c of openAssignments) {
+    const n = active.byClient.get(c.id) ?? 0;
+    if (n > 0) byClient.set(c.id, { clientName: c.name, activeAssociates: n });
   }
 
   // Oldest → newest: window i runs weekStarts[i+1] → weekStarts[i].
@@ -346,7 +329,7 @@ export async function computeExecutiveSummary(
 
   return {
     generatedAt: now.toISOString(),
-    workforce: { active, deactivated, hires30d, separations30d, onboardingInFlight },
+    workforce: { active: active.total, deactivated, hires30d, separations30d, onboardingInFlight },
     lastWeek: aggregateWeek(entries, lastWeekStart, thisWeekStart),
     thisWeek: aggregateWeek(entries, thisWeekStart, now),
     trend,

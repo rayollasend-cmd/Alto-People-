@@ -34,6 +34,9 @@ describe('GET /admin/org/settings', () => {
     expect(res.body).toMatchObject({
       orgName: 'Alto HR',
       assistantName: 'Hugo',
+      activeWindowDays: 14,
+      weekStartsOn: 6,
+      timezone: 'America/New_York',
       senderName: null,
       supportEmail: null,
       primaryColor: null,
