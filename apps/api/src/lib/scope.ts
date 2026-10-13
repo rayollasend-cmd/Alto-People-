@@ -11,6 +11,32 @@ type Tx = Prisma.TransactionClient | PrismaClient;
 const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 
 /**
+ * Brief 2-1b, step 3 — what a client-bounded account stands on: its tenant,
+ * then its client or, with no client, its site. With neither it stands on
+ * nothing and every scope resolves to no rows. Written against the
+ * guardrail test (scopeFailClosed.test.ts) first: once Client is optional,
+ * rows with no client exist, and a filter must never fall open onto them,
+ * nor onto another tenant's rows.
+ */
+interface Bounds {
+  tenantId: string;
+  clientId: string | null;
+  locationId: string | null;
+}
+
+function boundsOf(user: SessionUser): Bounds | null {
+  if (!user.tenantId) return null;
+  if (user.clientId) return { tenantId: user.tenantId, clientId: user.clientId, locationId: user.locationId ?? null };
+  if (user.locationId) return { tenantId: user.tenantId, clientId: null, locationId: user.locationId };
+  return null;
+}
+
+/** The three roles that are bounded to a client (or a site). */
+function isBounded(user: SessionUser): boolean {
+  return user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR';
+}
+
+/**
  * Centralized multi-tenant + role scoping for Prisma queries.
  *
  * Every protected route should call the appropriate `scope*` helper
@@ -23,13 +49,10 @@ const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 
 export function scopeClients(user: SessionUser): Prisma.ClientWhereInput {
   const base: Prisma.ClientWhereInput = { deletedAt: null };
-  if (user.role === 'CLIENT_PORTAL') {
-    return { ...base, id: (user.clientId ?? NO_CLIENT) };
-  }
-  // SHIFT_ and FLOOR_SUPERVISOR only ever see their own client (fail
-  // closed if unset).
-  if (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR') {
-    return { ...base, id: user.clientId ?? NO_CLIENT };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    // A site-only account has no client to list.
+    return b?.clientId ? { ...base, tenantId: b.tenantId, id: b.clientId } : { ...base, id: NO_CLIENT };
   }
   return base;
 }
@@ -38,18 +61,14 @@ export function scopeApplications(
   user: SessionUser
 ): Prisma.ApplicationWhereInput {
   const base: Prisma.ApplicationWhereInput = { deletedAt: null };
-  if (user.role === 'CLIENT_PORTAL') {
-    return { ...base, clientId: (user.clientId ?? NO_CLIENT) };
-  }
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { ...base, associateId: user.associateId };
   }
-  // SHIFT_SUPERVISOR sends onboarding invites and watches checklist progress
-  // for its own client only (fail closed if unassigned). Without this branch
-  // the role reads every application org-wide the moment it holds
-  // view:onboarding — same hazard scopeClients guards against above.
-  if (user.role === 'SHIFT_SUPERVISOR') {
-    return { ...base, clientId: user.clientId ?? NO_CLIENT };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { ...base, clientId: NO_CLIENT };
+    if (b.clientId) return { ...base, tenantId: b.tenantId, clientId: b.clientId };
+    return { ...base, tenantId: b.tenantId, locationId: b.locationId };
   }
   return base;
 }
@@ -58,22 +77,24 @@ export function scopeTemplates(
   user: SessionUser
 ): Prisma.OnboardingTemplateWhereInput {
   if (user.role === 'CLIENT_PORTAL') {
-    // Client-portal users see global templates and their own client's.
-    return { OR: [{ clientId: null }, { clientId: (user.clientId ?? NO_CLIENT) }] };
+    // Org-wide templates plus the client's own; a site-only account gets the org-wide ones.
+    return { OR: [{ clientId: null }, { clientId: boundsOf(user)?.clientId ?? NO_CLIENT }] };
   }
   return {};
 }
 
 export function scopeBackgroundChecks(user: SessionUser): Prisma.BackgroundCheckWhereInput {
   if (user.role === 'CLIENT_PORTAL') {
-    return { clientId: (user.clientId ?? NO_CLIENT) };
+    const b = boundsOf(user);
+    return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
   return {};
 }
 
 export function scopeDrugTests(user: SessionUser): Prisma.DrugTestWhereInput {
   if (user.role === 'CLIENT_PORTAL') {
-    return { clientId: (user.clientId ?? NO_CLIENT) };
+    const b = boundsOf(user);
+    return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
   return {};
 }
@@ -83,59 +104,47 @@ export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInp
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { ...base, associateId: user.associateId };
   }
-  if (user.role === 'CLIENT_PORTAL') {
-    return { ...base, clientId: (user.clientId ?? NO_CLIENT) };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { ...base, clientId: NO_CLIENT };
+    if (b.clientId) return { ...base, tenantId: b.tenantId, clientId: b.clientId };
+    // A site-only account sees the documents of the people at its site.
+    return { ...base, tenantId: b.tenantId, associate: { is: atStore(b.locationId!) } };
   }
   return base;
 }
 
 export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput {
-  // CLIENT_PORTAL only ever sees runs for its own client (although it lacks
-  // view:payroll today; defense in depth for when finance roles are added).
-  if (user.role === 'CLIENT_PORTAL') {
-    return { clientId: (user.clientId ?? NO_CLIENT) };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
-  // ASSOCIATE doesn't list runs — they hit /payroll/me/items instead.
   return {};
 }
 
 export function scopePayrollSchedules(user: SessionUser): Prisma.PayrollScheduleWhereInput {
-  // Wave 1.1 — Pay schedules are managed by HR/finance. CLIENT_PORTAL only
-  // ever sees schedules for its own client (plus org-wide nulls); other
-  // privileged roles see everything not soft-deleted.
   const base: Prisma.PayrollScheduleWhereInput = { deletedAt: null };
   if (user.role === 'CLIENT_PORTAL') {
-    return { ...base, OR: [{ clientId: null }, { clientId: (user.clientId ?? NO_CLIENT) }] };
+    return { ...base, OR: [{ clientId: null }, { clientId: boundsOf(user)?.clientId ?? NO_CLIENT }] };
   }
   return base;
 }
 
 export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
-  // ASSOCIATE only ever sees shifts assigned to them — and only after
-  // they're published. DRAFT shifts are the manager's in-progress
-  // schedule; surfacing them to associates would leak edits-in-progress
-  // and break the Sling/Deputy convention every workforce-management
-  // product ships. `publishedAt` is stamped the first time a shift
-  // transitions out of DRAFT, so non-null = "the manager has shown this
-  // to people."
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return {
       assignedAssociateId: user.associateId,
       publishedAt: { not: null },
     };
   }
-  // CLIENT_PORTAL is restricted to its own client's shifts — and to its
-  // own store's, when the account is pinned to one.
-  if (user.role === 'CLIENT_PORTAL') {
-    return {
-      clientId: user.clientId ?? NO_CLIENT,
-      ...(user.locationId ? { locationId: user.locationId } : {}),
-    };
-  }
-  // SHIFT_SUPERVISOR manages its own client's shifts (fail closed). Not
-  // narrowed by store: covering another store for a night is the job.
-  if (user.role === 'SHIFT_SUPERVISOR') {
-    return { clientId: user.clientId ?? NO_CLIENT };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { clientId: NO_CLIENT };
+    if (b.clientId) {
+      // A portal account pinned to a store sees that store; a supervisor sees the client.
+      return { tenantId: b.tenantId, clientId: b.clientId, ...(user.role === 'CLIENT_PORTAL' && b.locationId ? { locationId: b.locationId } : {}) };
+    }
+    return { tenantId: b.tenantId, locationId: b.locationId };
   }
   return {};
 }
@@ -211,18 +220,12 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
   if (user.role === 'ASSOCIATE') {
     return { id: user.associateId ?? NO_CLIENT };
   }
-  if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
-    if (!user.clientId) return { id: NO_CLIENT };
-    // A CLIENT account pinned to a store has that building's roster, not
-    // the client's — without this a store manager could build an ad-hoc
-    // associate or time report and read every store on the account. Alto's
-    // own supervisors are deliberately left client-wide: they cover for
-    // each other across stores, and their store views are already scoped
-    // by the portal's own resolveScope.
-    if (user.role === 'CLIENT_PORTAL' && user.locationId) {
-      return atStore(user.locationId);
-    }
-    return associatesOfClient(user.clientId);
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { id: NO_CLIENT };
+    if (!b.clientId) return { tenantId: b.tenantId, ...atStore(b.locationId!) };
+    if (user.role === 'CLIENT_PORTAL' && b.locationId) return { tenantId: b.tenantId, ...atStore(b.locationId) };
+    return { tenantId: b.tenantId, ...associatesOfClient(b.clientId) };
   }
   return {};
 }
@@ -235,8 +238,10 @@ export function scopePayrollItems(user: SessionUser): Prisma.PayrollItemWhereInp
   if (user.role === 'ASSOCIATE') {
     return { associateId: user.associateId ?? NO_CLIENT };
   }
-  if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
-    return { payrollRun: { is: { clientId: user.clientId ?? NO_CLIENT } } };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    // Pay is a client's matter; a site-only account sees none of it.
+    return b?.clientId ? { payrollRun: { is: { tenantId: b.tenantId, clientId: b.clientId } } } : { payrollRun: { is: { clientId: NO_CLIENT } } };
   }
   return {};
 }
@@ -263,42 +268,34 @@ export function scopeTimeOffRequests(
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { associateId: user.associateId };
   }
-  // SHIFT_SUPERVISOR sees only requests from their own client's people
-  // (fail closed when unassigned). Without this, a supervisor could read
-  // and decide PTO org-wide.
-  if (user.role === 'SHIFT_SUPERVISOR') {
-    if (!user.clientId) return { associateId: NO_CLIENT };
-    return { associate: { is: associatesOfClient(user.clientId) } };
+  // A bounded account sees only requests from its own client's (or site's)
+  // people, and nothing when it has neither. Without this, a supervisor
+  // could read and decide PTO org-wide.
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { associateId: NO_CLIENT };
+    if (!b.clientId) return { associate: { is: { tenantId: b.tenantId, ...atStore(b.locationId!) } } };
+    return { associate: { is: { tenantId: b.tenantId, ...associatesOfClient(b.clientId) } } };
   }
   return {};
 }
 
 export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput {
-  // ASSOCIATE only ever sees their own entries (defense-in-depth on top of
-  // the route-level /me vs /admin split). HR/Ops see all.
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { associateId: user.associateId };
   }
-  // CLIENT_PORTAL doesn't have view:time so it shouldn't reach here, but if
-  // it ever does, scope to its own client's entries via denormalized clientId.
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    // A punch carries its own location (kiosk/geofence) or inherits its
-    // shift's, so a store account is clamped on either.
-    if (user.locationId) {
-      return {
-        clientId: user.clientId,
-        OR: [
-          { locationId: user.locationId },
-          { shift: { is: { locationId: user.locationId } } },
-        ],
-      };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { clientId: NO_CLIENT };
+    const atSite = (locationId: string): Prisma.TimeEntryWhereInput => ({
+      OR: [{ locationId }, { shift: { is: { locationId } } }],
+    });
+    if (b.clientId) {
+      return user.role === 'CLIENT_PORTAL' && b.locationId
+        ? { tenantId: b.tenantId, clientId: b.clientId, ...atSite(b.locationId) }
+        : { tenantId: b.tenantId, clientId: b.clientId };
     }
-    return { clientId: user.clientId };
-  }
-  // SHIFT_SUPERVISOR manages — and FLOOR_SUPERVISOR watches — only its
-  // own client's time (fail closed).
-  if (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR') {
-    return { clientId: user.clientId ?? NO_CLIENT };
+    return { tenantId: b.tenantId, ...atSite(b.locationId!) };
   }
   return {};
 }
@@ -322,7 +319,7 @@ export function isClientBoundedRole(user: SessionUser): boolean {
  */
 export function scopeQualifications(user: SessionUser): Prisma.QualificationWhereInput {
   if (isClientBoundedRole(user)) {
-    return { OR: [{ clientId: null }, { clientId: user.clientId ?? NO_CLIENT }] };
+    return { OR: [{ clientId: null }, { clientId: boundsOf(user)?.clientId ?? NO_CLIENT }] };
   }
   return {};
 }
@@ -342,7 +339,8 @@ export function scopeQualificationWrites(
   user: SessionUser,
 ): Prisma.QualificationWhereInput {
   if (isClientBoundedRole(user)) {
-    return { clientId: user.clientId ?? NO_CLIENT };
+    const b = boundsOf(user);
+    return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
   return {};
 }
