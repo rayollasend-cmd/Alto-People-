@@ -95,6 +95,11 @@ import { EmployersAdmin } from '@/pages/admin/EmployersAdmin';
 import { OrgUnitsAdmin } from '@/pages/admin/OrgUnitsAdmin';
 import { SitesAdmin } from '@/pages/admin/SitesAdmin';
 import { Settings } from '@/pages/Settings';
+import { MeHome } from '@/pages/me/MeHome';
+import { DocumentsHome } from '@/pages/documents/DocumentsHome';
+import { ReimbursementsHome } from '@/pages/reimbursements/ReimbursementsHome';
+import { InternalJobsHome } from '@/pages/internalJobs/InternalJobsHome';
+import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
 
 /* ------------------------------------------------------------------ *
  *  A lenient empty value: every property is another empty, every call
@@ -182,8 +187,11 @@ function TermSync({ profile }: { profile: TenantProfile }) {
   return null;
 }
 
-function renderUnder(profile: TenantProfile, ui: ReactNode, route = '/') {
-  const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
+/** The team member's own screens render as an ASSOCIATE with an associate record; everything else as HR. */
+type HarnessRole = 'HR_ADMINISTRATOR' | 'ASSOCIATE';
+
+function renderUnder(profile: TenantProfile, ui: ReactNode, route = '/', role: HarnessRole = 'HR_ADMINISTRATOR') {
+  const caps = ROLE_CAPABILITIES[role];
   const tenant: TenantSession = { id: 't', ...profile };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -199,10 +207,10 @@ function renderUnder(profile: TenantProfile, ui: ReactNode, route = '/') {
               value={{
                 isInitializing: false,
                 isOffline: false,
-                user: { id: 'u1', email: 'hr@hotel.example', role: 'HR_ADMINISTRATOR', status: 'ACTIVE', clientId: null, locationId: null, regionId: null, associateId: null, language: 'en', additionalRoles: [], activeRole: null, pinnedModules: [] } as never,
-                role: 'HR_ADMINISTRATOR',
-                primaryRole: 'HR_ADMINISTRATOR',
-                availableRoles: ['HR_ADMINISTRATOR'],
+                user: { id: 'u1', email: 'hr@hotel.example', role, status: 'ACTIVE', clientId: null, locationId: null, regionId: null, associateId: role === 'ASSOCIATE' ? 'a1' : null, language: 'en', additionalRoles: [], activeRole: null, pinnedModules: [] } as never,
+                role,
+                primaryRole: role,
+                availableRoles: [role],
                 capabilities: caps,
                 tenant,
                 signIn: vi.fn(),
@@ -259,7 +267,7 @@ function offenders(surface: string, text: string): string[] {
   return [...new Set(out)];
 }
 
-type Surface = { name: string; ui: () => ReactNode; route?: string; skip?: string };
+type Surface = { name: string; ui: () => ReactNode; route?: string; skip?: string; role?: HarnessRole };
 
 const SURFACES: Surface[] = [
   { name: 'Sidebar', ui: () => <Sidebar /> },
@@ -276,6 +284,13 @@ const SURFACES: Surface[] = [
   { name: 'Organizational tree', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
   { name: 'Sites', ui: () => <SitesAdmin />, route: '/admin/sites' },
   { name: 'Settings', ui: () => <Settings />, route: '/settings' },
+  // The team member's own screens (the hotel e2e walk's second browser).
+  { name: 'Team member: my profile', ui: () => <MeHome />, route: '/me', role: 'ASSOCIATE' },
+  { name: 'Team member: time', ui: () => <TimeHome />, route: '/time-attendance', role: 'ASSOCIATE' },
+  { name: 'Team member: documents', ui: () => <DocumentsHome />, route: '/documents', role: 'ASSOCIATE' },
+  { name: 'Team member: reimbursements', ui: () => <ReimbursementsHome />, route: '/reimbursements', role: 'ASSOCIATE' },
+  { name: 'Team member: internal jobs', ui: () => <InternalJobsHome />, route: '/internal-jobs', role: 'ASSOCIATE' },
+  { name: 'Team member: agreements', ui: () => <AgreementsHome />, route: '/agreements', role: 'ASSOCIATE' },
 ];
 
 beforeEach(() => {
@@ -291,7 +306,7 @@ afterEach(() => {
 describe('the hotel tenant sees none of the staffing words', () => {
   for (const s of SURFACES) {
     (s.skip ? it.skip : it)(`${s.name} is clean${s.skip ? ` — skipped: ${s.skip}` : ''}`, async () => {
-      renderUnder(HOTEL, s.ui(), s.route);
+      renderUnder(HOTEL, s.ui(), s.route, s.role);
       await settle();
       const found = offenders(s.name, visibleText());
       expect(found, found.join('\n')).toEqual([]);

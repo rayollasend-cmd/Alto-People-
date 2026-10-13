@@ -27,9 +27,10 @@ import type {
   DocumentSort,
   DocumentStatus,
 } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import {
   DOCUMENT_KIND_LABEL,
+  kindOffered,
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
   getDocumentStats,
@@ -258,6 +259,7 @@ const PAGE_SIZE = 50;
 
 export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const { can } = useAuth();
+  const { moduleOn } = useTenant();
   const queryClient = useQueryClient();
   // Two ways to slice the same data: a flat queue for daily HR triage, and
   // a per-associate folder view for auditing one person's full history.
@@ -1838,7 +1840,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 >
                   <option value="">Choose a kind…</option>
                   {Object.entries(DOCUMENT_KIND_LABEL)
-                    .filter(([k]) => k !== moveTarget.kind)
+                    .filter(([k]) => k !== moveTarget.kind && kindOffered(k, moduleOn))
                     .map(([k, label]) => (
                       <option key={k} value={k}>
                         {label}

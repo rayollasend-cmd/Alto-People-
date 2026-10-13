@@ -19,7 +19,7 @@ import {
   type AgreementStatus,
   type MyAgreement,
 } from '@/lib/agreements122Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -119,6 +119,7 @@ function statusText(
 
 export function AgreementsHome() {
   const { t } = useI18n();
+  const term = useTerm();
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
@@ -293,7 +294,7 @@ export function AgreementsHome() {
                 loading={rows === null && !loadError}
                 error={loadError}
                 onRetry={refresh}
-                search={{ placeholder: 'Associate, email, kind…' }}
+                search={{ placeholder: `${term('worker')}, email, kind…` }}
                 urlState={false}
                 exportCsv={{ filename: 'agreements' }}
                 empty={{
@@ -304,7 +305,7 @@ export function AgreementsHome() {
                 columns={[
                   {
                     key: 'associate',
-                    header: 'Associate',
+                    header: term('worker'),
                     accessor: (a) => a.associateName,
                     sortable: true,
                     primary: true,
@@ -489,6 +490,7 @@ function NewAgreementDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<AgreementKind>('NDA');
   const [customLabel, setCustomLabel] = useState('');
@@ -500,7 +502,7 @@ function NewAgreementDrawer({
 
   const submit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(`Pick ${/^[aeiou]/i.test(term('worker')) ? 'an' : 'a'} ${term('worker').toLowerCase()}.`);
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
@@ -518,7 +520,7 @@ function NewAgreementDrawer({
         expiresOn: expiresOn || null,
         notes: notes.trim() || null,
       });
-      toast.success('Issued — the associate has been notified.');
+      toast.success(`Issued — the ${term('worker').toLowerCase()} has been notified.`);
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -534,7 +536,7 @@ function NewAgreementDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
@@ -630,7 +632,7 @@ function NewAgreementDrawer({
           {saving ? 'Saving…' : 'Issue'}
         </Button>
         <p className="w-full text-right text-xs text-silver">
-          The associate is notified immediately and reminded weekly until
+          The {term('worker').toLowerCase()} is notified immediately and reminded weekly until
           signed.
         </p>
       </DrawerFooter>

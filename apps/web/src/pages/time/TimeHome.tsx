@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn';
 import { fmtTime } from '@/lib/format';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { Button } from '@/components/ui/Button';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { AssociateTimeView } from './AssociateTimeView';
@@ -16,6 +16,7 @@ import { MyWeekHours } from './MyWeekHours';
 
 export function TimeHome() {
   const { user, can } = useAuth();
+  const term = useTerm();
   const isAssociate = user?.role === 'ASSOCIATE';
   const canManage = can('manage:time');
   const hasAssociateRecord = !!user?.associateId;
@@ -36,7 +37,7 @@ export function TimeHome() {
       return (
         <AssociateKioskOnlyView
           title="My time"
-          body="Floor supervisors clock in and out at the store tablet with their 4-digit PIN — not in the app. Your punches land here."
+          body={`Floor supervisors clock in and out at the ${term('site').toLowerCase()} tablet with their 4-digit PIN — not in the app. Your punches land here.`}
           headerActions={
             <Button size="sm" variant="ghost" asChild>
               <Link to="/time-attendance">
@@ -98,6 +99,7 @@ export function TimeHome() {
 /** The viewer's own clock, read-only — for someone who punches at the
  *  store tablet only (a floor supervisor). */
 function TabletClockStrip() {
+  const term = useTerm();
   const q = useQuery({ queryKey: ['time', 'active'], queryFn: getActiveTimeEntry, staleTime: 30_000 });
   const active = q.data?.active ?? null;
   return (
@@ -118,7 +120,7 @@ function TabletClockStrip() {
               ? `On the clock since ${fmtTime(active.clockInAt)}`
               : 'Not clocked in'}
         </div>
-        <div className="text-xs text-silver">Punch in and out at the store tablet with your PIN.</div>
+        <div className="text-xs text-silver">Punch in and out at the {term('site').toLowerCase()} tablet with your PIN.</div>
       </div>
       <Link to="/time-attendance?mine=1" className="text-xs text-gold underline-offset-2 hover:underline">
         My time →

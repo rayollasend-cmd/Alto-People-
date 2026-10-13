@@ -24,6 +24,7 @@ import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import {
   deleteMyDocument,
+  kindOffered,
   listMyDocuments,
   previewDocumentUrl,
   uploadMyDocument,
@@ -45,6 +46,7 @@ import { DocumentPreview } from '@/components/DocumentPreview';
 import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useTenant } from '@/lib/auth';
 
 const KIND_VALUES: DocumentKind[] = [
   'ID',
@@ -124,6 +126,8 @@ export function AssociateDocumentsView() {
     false,
   );
   const [kind, setKind] = useState<DocumentKind>('ID');
+  const { moduleOn } = useTenant();
+  const kindValues = useMemo(() => KIND_VALUES.filter((v) => kindOffered(v, moduleOn)), [moduleOn]);
   const [busy, setBusy] = useState(false);
   const [errorLocal, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -552,7 +556,7 @@ export function AssociateDocumentsView() {
               value={kind}
               onChange={(e) => setKind(e.target.value as DocumentKind)}
             >
-              {KIND_VALUES.map((v) => (
+              {kindValues.map((v) => (
                 <option key={v} value={v}>
                   {kindLabel(t, v)}
                 </option>

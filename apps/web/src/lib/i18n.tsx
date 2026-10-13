@@ -226,7 +226,7 @@ const en = {
   'me.fld.state': 'State',
   'me.fld.zip': 'ZIP',
   'me.stateChangeNote':
-    'Changing your work state opens a record on your associate history so HR can re-check tax setup.',
+    'Changing your work state opens a record on your {workerLc} history so HR can re-check tax setup.',
   'me.face.title': 'Kiosk face verification',
   'me.face.loadFailed': 'Couldn’t load your face-verification setting.',
   'me.face.onTitle': 'Turn on face verification?',
@@ -1418,7 +1418,7 @@ const en = {
   'kb.backToResults': 'Back to results',
   // Agreements (associate-facing)
   'agr.title': 'Agreements',
-  'agr.subtitle': 'NDAs, non-competes, IP assignments, arbitration, equity grants. Per-associate one-off legal documents.',
+  'agr.subtitle': 'NDAs, non-competes, IP assignments, arbitration, equity grants. Per-{workerLc} one-off legal documents.',
   'agr.crumbSection': 'Compliance',
   'agr.viewAria': 'Agreements view',
   'agr.tab.mine': 'Mine',
@@ -1517,7 +1517,7 @@ const en = {
   'rmb.acrossReports': 'across {count} reports',
   'rmb.newReport': 'New report',
   'rmb.filterAll': 'All',
-  'rmb.searchPlaceholder': 'Search associate or title…',
+  'rmb.searchPlaceholder': 'Search {workerLc} or title…',
   'rmb.retry': 'Retry',
   'rmb.cancel': 'Cancel',
   'rmb.close': 'Close',
@@ -2226,7 +2226,7 @@ const en = {
   'time.subtitle': 'Clock in at the worksite kiosk.',
   'time.kioskHeading': 'Use the time-clock tablet at your worksite',
   'time.kioskBody':
-    "Hourly associates clock in and out using the kiosk tablet installed at your site, not from a personal phone. Tap your 4-digit PIN, take the selfie, and you're punched in. Ask your manager if you don't know your PIN yet.",
+    "Hourly {workersLc} clock in and out using the kiosk tablet installed at your site, not from a personal phone. Tap your 4-digit PIN, take the selfie, and you're punched in. Ask your manager if you don't know your PIN yet.",
   'time.myTimesheet': 'My timesheet',
   'time.myTimesheetDesc':
     'Every kiosk punch with your hours and approval status.',
@@ -4247,7 +4247,7 @@ const es: Record<MessageKey, string> = {
   'kb.backToResults': 'Volver a los resultados',
   // Agreements (associate-facing)
   'agr.title': 'Acuerdos',
-  'agr.subtitle': 'Acuerdos de confidencialidad, no competencia, cesión de PI, arbitraje y otorgamiento de acciones. Documentos legales puntuales por asociado.',
+  'agr.subtitle': 'Acuerdos de confidencialidad, no competencia, cesión de PI, arbitraje y otorgamiento de acciones. Documentos legales puntuales por {workerLc}.',
   'agr.crumbSection': 'Cumplimiento',
   'agr.viewAria': 'Vista de acuerdos',
   'agr.tab.mine': 'Míos',
@@ -4346,7 +4346,7 @@ const es: Record<MessageKey, string> = {
   'rmb.acrossReports': 'en {count} reportes',
   'rmb.newReport': 'Nuevo reporte',
   'rmb.filterAll': 'Todos',
-  'rmb.searchPlaceholder': 'Buscar por asociado o título…',
+  'rmb.searchPlaceholder': 'Buscar por {workerLc} o título…',
   'rmb.retry': 'Reintentar',
   'rmb.cancel': 'Cancelar',
   'rmb.close': 'Cerrar',
@@ -5052,7 +5052,7 @@ const es: Record<MessageKey, string> = {
   'time.subtitle': 'Marca tu entrada en el quiosco del sitio de trabajo.',
   'time.kioskHeading': 'Usa la tableta de marcaje en tu sitio de trabajo',
   'time.kioskBody':
-    'Los asociados por hora marcan entrada y salida en la tableta del quiosco instalada en su sitio, no desde un teléfono personal. Ingresa tu PIN de 4 dígitos, tómate la selfie y quedas registrado. Pregunta a tu gerente si aún no conoces tu PIN.',
+    'Los {workersLc} por hora marcan entrada y salida en la tableta del quiosco instalada en su sitio, no desde un teléfono personal. Ingresa tu PIN de 4 dígitos, tómate la selfie y quedas registrado. Pregunta a tu gerente si aún no conoces tu PIN.',
   'time.myTimesheet': 'Mi hoja de horas',
   'time.myTimesheetDesc':
     'Cada marcaje del quiosco con tus horas y su estado de aprobación.',

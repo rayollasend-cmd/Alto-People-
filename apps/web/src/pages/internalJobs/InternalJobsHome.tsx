@@ -18,7 +18,7 @@ import {
   type JobRow,
   type MyApplicationRow,
 } from '@/lib/internalMobility120Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
@@ -88,6 +88,8 @@ function errMessage(err: unknown, fallback: string): string {
 
 export function InternalJobsHome() {
   const { user } = useAuth();
+  // Brief 2-1b: a tenant with no clients is not offered a client to search by.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
   const [tab, setTab] = useState<'browse' | 'mine'>('browse');
@@ -178,7 +180,7 @@ export function InternalJobsHome() {
               <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search title, client, or location…"
+                placeholder={hasClients ? 'Search title, client, or location…' : 'Search title or location…'}
                 aria-label="Search internal jobs"
               />
             </div>
@@ -569,6 +571,7 @@ function ReviewDrawer({
   // REJECTED is destructive from the applicant's side, so it routes
   // through a confirm with an optional reviewer note; other statuses
   // apply immediately.
+  const term = useTerm();
   const [rejectTarget, setRejectTarget] = useState<ApplicationDetail | null>(null);
   const [deciding, setDeciding] = useState(false);
 
@@ -616,7 +619,7 @@ function ReviewDrawer({
           <EmptyState
             icon={Users}
             title="No applicants yet"
-            description="Associates who apply to this posting will show up here."
+            description={`${term('workers')} who apply to this posting will show up here.`}
           />
         ) : (
           apps.map((a) => (

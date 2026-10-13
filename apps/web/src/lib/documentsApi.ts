@@ -7,6 +7,7 @@ import type {
   DocumentStats,
   DocumentStatus,
   DocumentVaultResponse,
+  TenantModule,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -193,6 +194,24 @@ export function requestDocumentReupload(id: string): Promise<DocumentRecord> {
   return apiFetch<DocumentRecord>(`/documents/admin/${id}/request-reupload`, {
     method: 'POST',
   });
+}
+
+/**
+ * Brief 2-1b: the kinds that belong to a module. A picker offers them only
+ * when the tenant runs that module; a document someone already has still
+ * shows its real kind everywhere.
+ */
+export const DOCUMENT_KIND_MODULE: Partial<Record<DocumentKind, TenantModule>> = {
+  HOUSING_AGREEMENT: 'housingLink',
+  TRANSPORT_AGREEMENT: 'transportation',
+  J1_DS2019: 'programs',
+  J1_VISA: 'programs',
+};
+
+/** Whether a picker offers this kind to the tenant. */
+export function kindOffered(kind: string, moduleOn: (m: TenantModule) => boolean): boolean {
+  const m = DOCUMENT_KIND_MODULE[kind as DocumentKind];
+  return !m || moduleOn(m);
 }
 
 /** Human labels for every document kind bucket. */

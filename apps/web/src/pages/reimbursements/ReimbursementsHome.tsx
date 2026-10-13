@@ -21,7 +21,7 @@ import {
   type ReimbursementStatus,
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -147,6 +147,7 @@ const lineKindLabel = (
 
 export function ReimbursementsHome() {
   const { user } = useAuth();
+  const term = useTerm();
   const { t } = useI18n();
   const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
   const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
@@ -225,7 +226,7 @@ export function ReimbursementsHome() {
         subtitle={
           // Admins keep the fuller workflow line; associates get their own voice.
           canApprove || canSettle
-            ? 'Submit, approve, and pay associate expense reports.'
+            ? `Submit, approve, and pay ${term('worker').toLowerCase()} expense reports.`
             : t('rmb.subtitle')
         }
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
@@ -718,6 +719,7 @@ function SettleDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const term = useTerm();
   const missingReceipts = data.lines.filter(
     (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
   );
@@ -774,7 +776,7 @@ function SettleDialog({
             className="mt-1"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Internal note shown to the associate."
+            placeholder={`Internal note shown to the ${term('worker').toLowerCase()}.`}
           />
         </div>
         {needsWaiver && (
