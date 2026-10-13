@@ -3,8 +3,9 @@ import { DEFAULT_TEST_PASSWORD, createUser, prisma, truncateAll } from '../../..
 import { agent, loginAs } from '../../../test/http.js';
 import { hashPassword } from '../../lib/passwords.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
-import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
+import { invalidateTenantProfile, loadTenantProfile } from '../../lib/tenantProfile.js';
 import { defaultEmployerOrg } from '../../lib/employment.js';
+import { WA_REPLY, WA_TEMPLATES } from '../../lib/whatsappContent.js';
 
 /**
  * Brief 2-1b — the hotel's journey through the API, with no client
@@ -106,5 +107,31 @@ describe('a direct employer with no clients', () => {
     // The modules that are off are gone, not forbidden.
     expect((await admin.get('/transport/settings')).status).toBe(404);
     expect((await admin.get('/clients')).status).toBe(404);
+
+    // Hugo speaks the hotel's words. The list lives here, not in prose; the
+    // one exemption is the product name in his introduction (owner's ruling pending).
+    expect((await admin.patch('/admin/org/settings').send({ orgName: 'The Grand Hotel' })).status).toBe(200);
+    await loadTenantProfile(ALTO_TENANT_ID);
+    const FORBIDDEN = /\b(clients?|bill rates?|housing|vans?|stores?|associates?|alto)\b/i;
+    const exempt = (s: string) => s.replace(/Alto People/g, '');
+    for (const lang of ['en', 'es', 'tr'] as const) {
+      const lines = [
+        WA_REPLY.intro(lang, 'Hugo'),
+        WA_REPLY.whoAmI(lang, 'Hugo'),
+        WA_REPLY.optedIn(lang, 'Hugo'),
+        WA_REPLY.optedOut(lang),
+        WA_REPLY.noPayday(lang),
+        WA_REPLY.noShifts(lang),
+        WA_REPLY.handoff(lang, null),
+        WA_REPLY.unknownNumber(lang),
+      ];
+      for (const line of lines) expect(exempt(line), `${lang}: ${line}`).not.toMatch(FORBIDDEN);
+    }
+    expect(WA_REPLY.handoff('en', null)).toMatch(/property manager/);
+    expect(WA_REPLY.noShifts('en')).toMatch(/The Grand Hotel app/);
+    // The templates the hotel can be sent: every one that needs no module it has off.
+    for (const t of WA_TEMPLATES.filter((t) => !t.requiresModule)) for (const body of Object.values(t.body)) expect(body, t.metaName).not.toMatch(FORBIDDEN);
+    expect(WA_TEMPLATES.find((t) => t.key === 'alto_shift_reminder')?.fallbackKey).toBe('alto_shift_reminder_plain');
+    await admin.patch('/admin/org/settings').send({ orgName: 'Alto HR' });
   });
 });

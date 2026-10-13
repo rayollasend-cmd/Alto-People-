@@ -23,6 +23,7 @@ export type WaTemplateKey =
   | 'alto_shift_changed'
   | 'alto_shift_cancelled'
   | 'alto_shift_reminder'
+  | 'alto_shift_reminder_plain'
   | 'alto_ride_pickup'
   | 'alto_ride_near'
   | 'alto_payday'
@@ -38,6 +39,9 @@ export interface WaTemplateDef {
   params: string[];
   /** Brief 2-1b: brand values appended after `params` by the sender — the tenant's display name and the assistant's name. */
   brandParams?: Array<'orgName' | 'assistantName'>;
+  /** Brief 2-1b: sent only when the tenant runs this module; with a fallback, that template goes instead. */
+  requiresModule?: 'transportation';
+  fallbackKey?: WaTemplateKey;
   description: string;
   body: Record<WaLang, string>;
 }
@@ -99,7 +103,9 @@ export const WA_TEMPLATES: readonly WaTemplateDef[] = [
     metaName: 'alto_shift_reminder',
     metaCategory: 'UTILITY',
     params: ['position', 'store', 'when'],
-    description: 'The day-before reminder.',
+    description: 'The day-before reminder, with the van offer (tenants with transportation on).',
+    requiresModule: 'transportation',
+    fallbackKey: 'alto_shift_reminder_plain',
     body: {
       en: 'Reminder: {{1}} at {{2}} tomorrow, {{3}}. Reply RIDE if you need a van.',
       es: 'Recordatorio: {{1}} en {{2}} mañana, {{3}}. Responde VIAJE si necesitas una van.',
@@ -107,7 +113,20 @@ export const WA_TEMPLATES: readonly WaTemplateDef[] = [
     },
   },
   {
+    key: 'alto_shift_reminder_plain',
+    metaName: 'alto_shift_reminder_plain',
+    metaCategory: 'UTILITY',
+    params: ['position', 'site', 'when'],
+    description: 'The day-before reminder without the van offer (tenants with transportation off).',
+    body: {
+      en: 'Reminder: {{1}} at {{2}} tomorrow, {{3}}.',
+      es: 'Recordatorio: {{1}} en {{2}} mañana, {{3}}.',
+      tr: 'Hatırlatma: yarın {{1}}, {{2}}, {{3}}.',
+    },
+  },
+  {
     key: 'alto_ride_pickup',
+    requiresModule: 'transportation',
     metaName: 'alto_ride_pickup',
     metaCategory: 'UTILITY',
     params: ['van', 'pickup time and place'],
@@ -120,6 +139,7 @@ export const WA_TEMPLATES: readonly WaTemplateDef[] = [
   },
   {
     key: 'alto_ride_near',
+    requiresModule: 'transportation',
     metaName: 'alto_ride_near',
     metaCategory: 'UTILITY',
     params: ['van', 'minutes'],

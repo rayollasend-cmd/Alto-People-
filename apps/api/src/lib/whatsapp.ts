@@ -5,6 +5,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
 import { metaLanguageCode, renderTemplate, templateDef, toWaLang, type WaLang, type WaTemplateKey } from './whatsappContent.js';
+import { moduleOn } from './tenantProfile.js';
 
 /**
  * WHATSAPP AS A DELIVERY CHANNEL (Meta Cloud API).
@@ -128,9 +129,17 @@ export async function sendWhatsApp(db: Db, o: SendOptions, now: Date = new Date(
     payload = { to: consent.phone, text: body };
     if (!o.kind) kind = 'TEXT';
   } else if (o.template) {
-    const def = templateDef(o.template.key);
+    // Brief 2-1b: a template that belongs to a module the tenant does not run is
+    // not sent; where a plain twin exists, that goes instead.
+    let key = o.template.key;
+    const first = templateDef(key);
+    if (first.requiresModule && !(await moduleOn(first.requiresModule))) {
+      if (!first.fallbackKey) return null;
+      key = first.fallbackKey;
+    }
+    const def = templateDef(key);
     const params = [...o.template.params(lang), ...brandParamsFor(def)];
-    body = renderTemplate(o.template.key, lang, params);
+    body = renderTemplate(key, lang, params);
     templateName = def.metaName;
     payload = { to: consent.phone, template: { name: def.metaName, language: metaLanguageCode(lang), params } };
   } else if (o.text) {
