@@ -1,5 +1,6 @@
 import type { TimeAnomaly } from '@alto-people/shared';
 import { getLaborPolicy } from './stateLaborPolicy.js';
+import { getBrandingSync } from './branding.js';
 
 /**
  * Pure functions for detecting anomalies on a completed TimeEntry.
@@ -167,7 +168,18 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
  * The functions still RETURN UTC instants (hence the names): the exact
  * moment the local Saturday begins, DST-correct.
  */
-const WEEK_TZ_FALLBACK = 'America/New_York';
+/**
+ * Brief 1A-2: the company workweek is a setting (OrgSetting.weekStartsOn,
+ * 0 = Sunday ... 6 = Saturday, and OrgSetting.timezone), read from the
+ * branding cache so these helpers stay synchronous. Saturday in
+ * America/New_York is the default, so nothing moves until the setting does.
+ * A site's hours use the site's own zone: pass Location.timezone to the
+ * ...InZone helpers; the UTC-named helpers are the company week.
+ */
+export function companyWorkweek(): { weekStartsOn: number; timezone: string } {
+  const b = getBrandingSync();
+  return { weekStartsOn: b.weekStartsOn, timezone: b.timezone };
+}
 
 /** UTC instant of local midnight for a YYYY-MM-DD in `tz`, DST-correct.
  *  Classic two-pass correction: guess, measure the local rendering of the
@@ -215,25 +227,24 @@ export function dateKeyInZone(d: Date, tz: string): string {
 
 /** YYYY-MM-DD of the instant in the org zone. */
 export function orgDateKey(d: Date): string {
-  return dateKeyInZone(d, WEEK_TZ_FALLBACK);
+  return dateKeyInZone(d, companyWorkweek().timezone);
 }
 
 /** UTC instant of the Saturday 00:00 (zone-local) beginning the workweek
  *  that contains `d`. */
-export function startOfWeekInZone(d: Date, tz: string): Date {
+export function startOfWeekInZone(d: Date, tz: string, weekStartsOn: number = companyWorkweek().weekStartsOn): Date {
   const localKey = dateKeyInZone(d, tz);
-  // Noon-UTC anchor keeps the weekday stable across DST edges — same
-  // trick as timesheetWeek.saturdayWeek.
   const anchor = new Date(`${localKey}T12:00:00Z`);
-  const back = (anchor.getUTCDay() + 1) % 7; // Sat→0, Sun→1, … Fri→6
+  // Days back to the week's first day (Saturday by default: Sat->0, Sun->1, ... Fri->6).
+  const back = (anchor.getUTCDay() - weekStartsOn + 7) % 7;
   anchor.setUTCDate(anchor.getUTCDate() - back);
   return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
 }
 
 /** UTC instant of the NEXT Saturday 00:00 (zone-local) — the exclusive end
  *  of the workweek containing `d`. DST weeks are 167/169 real hours. */
-export function endOfWeekInZone(d: Date, tz: string): Date {
-  const start = startOfWeekInZone(d, tz);
+export function endOfWeekInZone(d: Date, tz: string, weekStartsOn: number = companyWorkweek().weekStartsOn): Date {
+  const start = startOfWeekInZone(d, tz, weekStartsOn);
   const anchor = new Date(`${dateKeyInZone(start, tz)}T12:00:00Z`);
   anchor.setUTCDate(anchor.getUTCDate() + 7);
   return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
@@ -241,10 +252,15 @@ export function endOfWeekInZone(d: Date, tz: string): Date {
 
 /** The org workweek (Sat 00:00 Eastern) containing `d`. */
 export function startOfWeekUTC(d: Date): Date {
-  return startOfWeekInZone(d, WEEK_TZ_FALLBACK);
+  return startOfWeekInZone(d, companyWorkweek().timezone);
 }
 
 /** The exclusive end of the org workweek containing `d`. */
 export function endOfWeekUTC(d: Date): Date {
-  return endOfWeekInZone(d, WEEK_TZ_FALLBACK);
+  return endOfWeekInZone(d, companyWorkweek().timezone);
+}
+
+/** The company week containing `d` as a site sees it: the site's zone, the company's start day. */
+export function startOfWeekForSite(d: Date, siteTimezone: string | null | undefined): Date {
+  return startOfWeekInZone(d, siteTimezone ?? companyWorkweek().timezone);
 }

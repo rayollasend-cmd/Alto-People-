@@ -10,8 +10,10 @@ import {
   type MfaRequirement,
   type OrgBranding,
   type UnverifiedPayoutPolicy,
+  SUPPORTED_TIMEZONES,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
 import {
@@ -49,6 +51,8 @@ export function BrandingHome() {
 
   const [orgName, setOrgName] = useState('Alto HR');
   const [assistantName, setAssistantName] = useState('Hugo');
+  const [weekStartsOn, setWeekStartsOn] = useState(6);
+  const [timezone, setTimezone] = useState('America/New_York');
   const [senderName, setSenderName] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
   const [supportEmailTouched, setSupportEmailTouched] = useState(false);
@@ -74,6 +78,8 @@ export function BrandingHome() {
     setBranding(b);
     setOrgName(b.orgName);
     setAssistantName(b.assistantName ?? 'Hugo');
+    setWeekStartsOn(b.weekStartsOn ?? 6);
+    setTimezone(b.timezone ?? 'America/New_York');
     setSenderName(b.senderName ?? '');
     setSupportEmail(b.supportEmail ?? '');
     setSupportEmailTouched(false);
@@ -132,6 +138,8 @@ export function BrandingHome() {
       const updated = await patchOrgBranding({
         orgName: orgName.trim() || 'Alto HR',
         assistantName: assistantName.trim() || 'Hugo',
+        weekStartsOn,
+        timezone,
         senderName: senderName.trim() === '' ? null : senderName.trim(),
         supportEmail: supportEmail.trim() === '' ? null : supportEmail.trim(),
         primaryColor: primaryColor.trim() === '' ? null : primaryColor.trim(),
@@ -278,6 +286,31 @@ export function BrandingHome() {
                     placeholder="Hugo"
                     {...p}
                   />
+                )}
+              </Field>
+              <Field
+                label="Workweek starts on"
+                hint="The company week for overtime, digests and every weekly number. Each site keeps its own time zone on its location record; the week turns at midnight in that zone."
+              >
+                {(p) => (
+                  <Select value={weekStartsOn} onChange={(e) => setWeekStartsOn(Number(e.target.value))} {...p}>
+                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
+                      <option key={d} value={i}>
+                        {d}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Company time zone" hint="Where the company week turns. Sites in Central time keep their own zone on the location record.">
+                {(p) => (
+                  <Select value={timezone} onChange={(e) => setTimezone(e.target.value)} {...p}>
+                    {SUPPORTED_TIMEZONES.map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
+                  </Select>
                 )}
               </Field>
               <Field

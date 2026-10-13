@@ -1,5 +1,5 @@
 import { Prisma, type W4FilingStatus } from '@prisma/client';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { startOfWeekForSite } from './timeAnomalies.js';
 
 /**
  * PHASE 8 PLACEHOLDER WITHHOLDING.
@@ -57,6 +57,8 @@ export interface PayableEntry {
   clockInAt: Date;
   clockOutAt: Date | null;
   breaks?: Array<{ startedAt: Date; endedAt: Date | null }>;
+  /** Brief 1A-2: the site's zone decides which week an hour belongs to (a Central site's Friday night is still Friday). */
+  location?: { timezone: string } | null;
 }
 
 /**
@@ -121,16 +123,17 @@ export function pickHourlyRate(
 export function splitWeeklyOvertime(
   entries: PayableEntry[]
 ): { regularHours: number; overtimeHours: number } {
-  // Bucket APPROVED net-of-break hours by the ORG workweek — Saturday →
-  // Friday, Florida-local (startOfWeekUTC). One convention everywhere:
-  // payroll, exports, statements, and the OT radar must never disagree
-  // on which week an hour belongs to.
+  // Bucket APPROVED net-of-break hours by the company workweek (the
+  // start day is a setting, Saturday by default) as the SITE sees it: a
+  // Central site's week turns at midnight Central. One convention
+  // everywhere: payroll, exports, statements and the OT radar must never
+  // disagree on which week an hour belongs to.
   const weeks = new Map<string, number>();
   for (const e of entries) {
     if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
     const ms = payableMs(e);
     if (ms <= 0) continue;
-    const key = String(startOfWeekUTC(e.clockInAt).getTime());
+    const key = String(startOfWeekForSite(e.clockInAt, e.location?.timezone).getTime());
     weeks.set(key, (weeks.get(key) ?? 0) + ms);
   }
   let reg = 0;
