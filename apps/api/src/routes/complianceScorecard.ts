@@ -37,7 +37,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { cardOn, loadRateCards } from '../lib/rateCards.js';
-import { activeAssociateIds, activeBreakdown } from '../lib/activeDefinition.js';
+import { placements } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
@@ -148,12 +148,13 @@ function getActiveAssociates(clientId?: string | null) {
 }
 
 async function loadActiveAssociates(clientId?: string | null) {
-  // Brief 1A-2: the one definition of active, by placement. Scoped to a
-  // client, the work must be at that client too.
-  const now = new Date();
-  const breakdown = await activeBreakdown(now, prisma);
-  const scoped = clientId ? await activeAssociateIds({ clientId }, now, prisma) : breakdown.ids;
-  const ids = [...scoped].filter((id) => breakdown.placements.has(id)).slice(0, ACTIVE_ASSOCIATES_CAP);
+  // Brief 1A-2: the compliance population is everyone EMPLOYED and PLACED
+  // (lib/activeDefinition placements), not the headcount rule's "worked
+  // in the window": a new hire's I-9 clock runs before their first punch,
+  // and a scorecard that waited for a punch would miss exactly the
+  // overdue it exists to catch. Scoped to a client by the placement.
+  const placed = await placements(clientId ? { clientId } : {}, prisma);
+  const ids = [...placed.keys()].slice(0, ACTIVE_ASSOCIATES_CAP);
   if (ids.length === ACTIVE_ASSOCIATES_CAP) {
     console.error(
       `[compliance-scorecard] active-associate population hit the ${ACTIVE_ASSOCIATES_CAP}-row cap — ` +
@@ -164,7 +165,7 @@ async function loadActiveAssociates(clientId?: string | null) {
     where: { id: { in: ids } },
     select: { id: true, firstName: true, lastName: true, dob: true, hireDate: true },
   });
-  const clientIds = [...new Set(ids.map((id) => breakdown.placements.get(id)!.clientId))];
+  const clientIds = [...new Set(ids.map((id) => placed.get(id)!.clientId))];
   const clients = await prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, name: true } });
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const rows: Array<{
@@ -176,7 +177,7 @@ async function loadActiveAssociates(clientId?: string | null) {
     hireDate: Date | null;
   }> = [];
   for (const p of people) {
-    const placement = breakdown.placements.get(p.id)!;
+    const placement = placed.get(p.id)!;
     const rowClientId = clientId ?? placement.clientId;
     rows.push({
       associateId: p.id,

@@ -107,6 +107,7 @@ const TABLES = [
   'TransportStop',
   'TransportSettings',
   'TransportRate',
+  'ReconciliationSnapshot',
   'GeoCache',
   'ExecDecisionState',
   'ExecTarget',

@@ -76,11 +76,11 @@ async function overview(now: Date): Promise<HeadcountOverview> {
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const byClient: HeadcountRow[] = clients
     .map((c) => ({ id: c.id, name: c.name, active: active.byClient.get(c.id) ?? 0, scheduledThisWeek: scheduledByClient.get(c.id)?.size ?? 0, withoutRate: noRateByClient.get(c.id) ?? 0 }))
-    .filter((r) => r.active > 0 || r.scheduledThisWeek > 0)
+    .filter((r) => r.active > 0 || r.scheduledThisWeek > 0 || r.withoutRate > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
   const byStore: HeadcountRow[] = locations
     .map((l) => ({ id: l.id, name: l.name, clientName: clientName.get(l.clientId) ?? '', active: active.byLocation.get(l.id) ?? 0, scheduledThisWeek: scheduledByLocation.get(l.id)?.size ?? 0, withoutRate: noRateByLocation.get(l.id) ?? 0 }))
-    .filter((r) => r.active > 0 || r.scheduledThisWeek > 0)
+    .filter((r) => r.active > 0 || r.scheduledThisWeek > 0 || r.withoutRate > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
 
   const deptName = new Map(departments.map((d) => [d.id, d.name]));

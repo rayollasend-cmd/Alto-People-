@@ -59,6 +59,19 @@ async function seed(opts: { registeredAt?: 'walmart' | 'target' } = {}) {
   await prisma.associateAssignment.create({
     data: { associateId: maria.id, locationId: walmartStore.id, startedAt: new Date('2026-06-02') },
   });
+  // Brief 1A-2: active = placed and worked in the window. She punched
+  // yesterday at Walmart; after the transfer she counts at Target because
+  // the placement says where she belongs.
+  await prisma.timeEntry.create({
+    data: {
+      associateId: maria.id,
+      clientId: walmart.id,
+      locationId: walmartStore.id,
+      clockInAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+      clockOutAt: new Date(Date.now() - 18 * 60 * 60 * 1000),
+      status: 'APPROVED',
+    },
+  });
   if (opts.registeredAt) {
     await prisma.fieldglassRegistration.create({
       data: { associateId: maria.id, clientId: opts.registeredAt === 'walmart' ? walmart.id : target.id },

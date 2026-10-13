@@ -112,6 +112,8 @@ describe('the surfaces', () => {
     const covered = await mk('Ana', 'Associate');
     const lead = await mk('Bo', 'Lead');
     const noRole = await mk('Cy', null);
+    // The overview lists a client by its active people; Ana punched yesterday.
+    await prisma.timeEntry.create({ data: { associateId: covered.id, clientId: coastal.id, locationId: siteA.id, clockInAt: new Date(Date.now() - 26 * 3_600_000), clockOutAt: new Date(Date.now() - 18 * 3_600_000), status: 'APPROVED' } });
     const flagged = await associatesWithoutRate(prisma, new Date('2026-10-14T12:00:00.000Z'));
     expect(flagged.map((f) => f.associateId).sort()).toEqual([lead.id, noRole.id].sort());
     expect(flagged.find((f) => f.associateId === lead.id)).toMatchObject({ position: 'Lead', clientName: 'Coastal Resort', locationId: siteA.id });

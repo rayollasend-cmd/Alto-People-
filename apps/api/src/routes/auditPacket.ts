@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { activeAssociateIds, EMPLOYED_WHERE } from '../lib/activeDefinition.js';
+import { EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
@@ -252,8 +252,11 @@ auditPacketRouter.post(
       const everyone = await prisma.associate.findMany({ select: { id: true } });
       rosterIds = everyone.map((a) => a.id);
     } else if (input.scope === 'ACTIVE_WORKFORCE') {
-      // Brief 1A-2: the one definition of active.
-      rosterIds = [...(await activeAssociateIds())];
+      // Brief 1A-2: an auditor's "active workforce" is everyone employed
+      // and placed (lib/activeDefinition placements), whether or not they
+      // punched in the headcount window — a hire who has not started yet
+      // is still on the books.
+      rosterIds = [...(await placements({}, prisma)).keys()];
     } else if (input.scope === 'INACTIVE_WORKFORCE') {
       const inactive = await prisma.associate.findMany({
         where: INACTIVE_WHERE,

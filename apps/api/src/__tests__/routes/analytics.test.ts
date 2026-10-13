@@ -65,6 +65,17 @@ describe('GET /analytics/dashboard', () => {
       where: { id: app2.id },
       data: { status: 'APPROVED' },
     });
+    // Brief 1A-2: active = placed AND worked in the window (or scheduled);
+    // a2 is approved and punched yesterday, a1 is still an applicant.
+    await prisma.timeEntry.create({
+      data: {
+        associateId: a2.id,
+        clientId: client.id,
+        clockInAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+        clockOutAt: new Date(Date.now() - 18 * 60 * 60 * 1000),
+        status: 'APPROVED',
+      },
+    });
 
     // One open shift in the next 30 days, one cancelled.
     await prisma.shift.create({
@@ -100,7 +111,7 @@ describe('GET /analytics/dashboard', () => {
     const agent = await loginAs(hr.email);
     const res = await agent.get('/analytics/dashboard');
     expect(res.status).toBe(200);
-    expect(res.body.activeAssociates).toBe(2);
+    expect(res.body.activeAssociates).toBe(1);
     expect(res.body.openShiftsNext30d).toBe(1);
     expect(res.body.associatesClockedIn).toBe(1);
     expect(res.body.pendingOnboardingApplications).toBe(1);

@@ -61,6 +61,17 @@ async function mkHired(clientId: string, firstName: string, lastName: string) {
       approvedAt: new Date('2026-01-15T00:00:00Z'),
     },
   });
+  // Brief 1A-2: the directory badge is the one definition of active
+  // (placed + worked in the window), so the hire has punched yesterday.
+  await prisma.timeEntry.create({
+    data: {
+      associateId: associate.id,
+      clientId,
+      clockInAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+      clockOutAt: new Date(Date.now() - 18 * 60 * 60 * 1000),
+      status: 'APPROVED',
+    },
+  });
   const { user } = await createUser({
     role: 'ASSOCIATE',
     email: associate.email,

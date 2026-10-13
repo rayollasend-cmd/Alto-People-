@@ -21,7 +21,8 @@ afterAll(async () => {
 });
 
 const DAY = 86_400_000;
-const NOW = new Date('2026-10-14T15:00:00.000Z');
+// A minute ago: the route surfaces read the real clock, so the fixture's punches must be in the past and its shifts in the future.
+const NOW = new Date(Date.now() - 60_000);
 
 async function world() {
   const coastal = await createClient('Coastal Resort');
