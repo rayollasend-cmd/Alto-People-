@@ -165,7 +165,7 @@ describe('GET /auth/me', () => {
   it('returns { user: null } when no cookie is present', async () => {
     const res = await request(app()).get('/auth/me');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ user: null });
+    expect(res.body).toEqual({ user: null, tenant: null });
   });
 
   it('returns the current user when authenticated', async () => {

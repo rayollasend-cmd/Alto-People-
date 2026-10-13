@@ -230,7 +230,7 @@ export type TenantProfile = z.infer<typeof TenantProfileSchema>;
 /** A partial update: switches and terms given replace the stored ones; the rest keep their value. */
 export const UpdateTenantProfileInputSchema = z.object({
   businessModel: BusinessModelSchema.optional(),
-  modules: TenantModulesSchema.partial().optional(),
+  modules: TenantModulesSchema.partial().strict().optional(),
   terminology: z.record(TermKeySchema, TermTextSchema.partial()).optional(),
   /** Reset modules and terminology to the business model's defaults before applying the rest. */
   resetToDefaults: z.boolean().optional(),

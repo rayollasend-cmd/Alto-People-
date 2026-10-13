@@ -83,7 +83,12 @@ export function applicationCallSite(stack: string | undefined): string {
 }
 
 function record(kind: TenantObservationKind, model: string, operation: string): TenantObservation {
-  const callSite = applicationCallSite(new Error().stack);
+  // The application frame sits under Prisma's own frames; the default stack depth (10) cuts it off.
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 40;
+  const stack = new Error().stack;
+  Error.stackTraceLimit = limit;
+  const callSite = applicationCallSite(stack);
   const key = `${kind}|${model}|${operation}|${callSite}`;
   const now = new Date().toISOString();
   const existing = observations.get(key);

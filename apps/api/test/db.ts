@@ -107,6 +107,8 @@ const TABLES = [
   'TransportStop',
   'TransportSettings',
   'TransportRate',
+  'Employment',
+  'EmployerOrganization',
   'ReconciliationSnapshot',
   'GeoCache',
   'ExecDecisionState',
@@ -137,6 +139,9 @@ export async function truncateAll(): Promise<void> {
   // The same for notification chains (shift notices, emails, WhatsApp): a
   // late insert against a wiped table is an FK error in the next test's log.
   await flushPendingNotifications();
+  // Brief 2-1: the Tenant table is preserved (Alto HR is seeded once), but a test's
+  // second tenant must not outlive it — no table references Tenant by key.
+  await prisma.tenant.deleteMany({ where: { id: { not: '00000000-0000-4000-8000-000000000001' } } });
   // Quote each identifier so PascalCase table names are preserved. CASCADE
   // handles the FK graph; RESTART IDENTITY isn't required (UUIDs everywhere).
   const quoted = TABLES.map((t) => `"alto_test"."${t}"`).join(', ');
@@ -164,9 +169,6 @@ export async function truncateAll(): Promise<void> {
       await new Promise((r) => setTimeout(r, backoff));
     }
   }
-  // Brief 2-1: the Tenant table is preserved (Alto HR is seeded once), but a test's
-  // second tenant must not outlive it — no table references Tenant by key.
-  await prisma.tenant.deleteMany({ where: { id: { not: '00000000-0000-4000-8000-000000000001' } } });
 }
 
 interface CreateUserOpts {

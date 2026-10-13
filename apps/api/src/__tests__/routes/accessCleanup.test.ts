@@ -75,8 +75,8 @@ describe('the access report', () => {
     expect(report.rows.find((r) => r.id === boUser.id)?.employment).toBe('SEPARATED');
     expect(report.rows.find((r) => r.id === hr.id)?.employment).toBe('NOT_APPLICABLE');
     expect(report.counts).toMatchObject({
-      totalAccounts: 11,
-      byStatus: { ACTIVE: 10, INVITED: 1, DISABLED: 0 },
+      totalAccounts: 10,
+      byStatus: { ACTIVE: 9, INVITED: 1, DISABLED: 0 },
       flaggedAccounts: 7,
       byFlag: { PORTAL_PERSONAL_EMAIL: 1, REGION_SCOPE: 1, DUPLICATE_PERSON: 2, NO_EMPLOYMENT_RECORD: 2, EMPLOYMENT_ENDED: 1, NO_SIGN_IN_90D: 1, PENDING_DELETION: 0 },
     });
@@ -173,7 +173,8 @@ describe('portal scope', () => {
   it('region scope needs a named approver who holds manage:org, on the account and in the audit log', async () => {
     const region = await prisma.region.create({ data: { name: 'Panhandle' } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const { user: chairman } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    // A second HR administrator: an approver who is not the actor (the chairman is read-only and holds no manage:org).
+    const { user: chairman } = await createUser({ role: 'HR_ADMINISTRATOR' });
     // An associate account holds no manage:org: not an approver.
     const { user: recruiter } = await createUser({ role: 'ASSOCIATE' });
     const admin = await loginAs(agent(), hr.email);

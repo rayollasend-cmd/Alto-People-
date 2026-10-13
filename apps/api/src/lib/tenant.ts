@@ -45,8 +45,14 @@ export function tenantIdForWrite(): string {
   return storage.getStore()?.tenantId ?? ALTO_TENANT_ID;
 }
 
-export function runWithTenant<T>(tenantId: string, source: TenantSource, fn: () => Promise<T> | T): Promise<T> | T {
-  return storage.run({ tenantId, source, platform: false }, fn);
+/**
+ * Runs `fn` inside the tenant's context. The await happens INSIDE the
+ * context on purpose: a Prisma call is a lazy promise that executes when
+ * it is awaited, so `runWithTenant(id, src, () => prisma.x.findMany())`
+ * must settle before the context ends, or the query runs outside it.
+ */
+export function runWithTenant<T>(tenantId: string, source: TenantSource, fn: () => Promise<T> | T): Promise<T> {
+  return storage.run({ tenantId, source, platform: false }, async () => await fn());
 }
 
 type PlatformScopeHook = (ctx: TenantContext, callSite: string) => void;
@@ -68,7 +74,7 @@ function callerOf(stack: string | undefined): string {
 }
 
 /** Jobs and scripts that must see every tenant run here; every use is on the record (onPlatformScope). */
-export function withPlatformScope<T>(fn: () => Promise<T> | T): Promise<T> | T {
+export function withPlatformScope<T>(fn: () => Promise<T> | T): Promise<T> {
   const current = storage.getStore();
   const ctx: TenantContext = { tenantId: current?.tenantId ?? ALTO_TENANT_ID, source: 'platform', platform: true };
   const callSite = callerOf(new Error().stack);
@@ -79,7 +85,7 @@ export function withPlatformScope<T>(fn: () => Promise<T> | T): Promise<T> | T {
       console.error('[tenancy] platform scope hook failed:', err);
     }
   }
-  return storage.run(ctx, fn);
+  return storage.run(ctx, async () => await fn());
 }
 
 /**
