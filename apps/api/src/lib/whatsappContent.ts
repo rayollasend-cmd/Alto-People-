@@ -1,4 +1,6 @@
+import { defaultTenantProfile, termsIn } from '@alto-people/shared';
 import { getBrandingSync } from './branding.js';
+import { tenantProfileSync } from './tenantProfile.js';
 /**
  * What Alto says on WhatsApp, in the three languages the platform speaks.
  *
@@ -183,6 +185,8 @@ const say = (w: Words, lang: WaLang) => w[lang];
 
 /** The tenant's display name: what "the app" is called in a reply (Brief 2-1b). */
 const app = () => getBrandingSync().orgName;
+/** The tenant's word for the person a question is handed to (Brief 2-1b), lower-cased for the sentence. */
+const manager = (lang: WaLang) => termsIn(tenantProfileSync() ?? defaultTenantProfile('WORKFORCE_PROVIDER'), lang).manager.toLowerCase();
 
 export const WA_REPLY = {
   optedOut: (lang: WaLang) =>
@@ -198,9 +202,9 @@ export const WA_REPLY = {
   intro: (lang: WaLang, name: string) =>
     say(
       {
-        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. Ask me about your next payday, your ride or your schedule; anything else I pass to your supervisor.`,
-        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. Pregúntame por tu próximo día de pago, tu viaje o tu horario; todo lo demás se lo paso a tu supervisor.`,
-        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. Bana bir sonraki maaş gününü, servisini veya programını sorabilirsin; diğer her şeyi amirine iletirim.`,
+        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. Ask me about your next payday, your ride or your schedule; anything else I pass to your ${manager('en')}.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. Pregúntame por tu próximo día de pago, tu viaje o tu horario; todo lo demás se lo paso a tu ${manager('es')}.`,
+        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. Bana bir sonraki maaş gününü, servisini veya programını sorabilirsin; diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
       },
       lang,
     ),
@@ -208,9 +212,9 @@ export const WA_REPLY = {
   whoAmI: (lang: WaLang, name: string) =>
     say(
       {
-        en: `I'm ${name}, the AI assistant in Alto People, by Alto People. I'm not a person: I answer from your own records (payday, ride, schedule) and hand everything else to your supervisor.`,
-        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People, por Alto People. No soy una persona: respondo con tus propios datos (pago, viaje, horario) y paso todo lo demás a tu supervisor.`,
-        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım (Alto People tarafından). Bir insan değilim: kendi kayıtlarından yanıt veririm (maaş, servis, program), diğer her şeyi amirine iletirim.`,
+        en: `I'm ${name}, the AI assistant in Alto People, by Alto People. I'm not a person: I answer from your own records (payday, ride, schedule) and hand everything else to your ${manager('en')}.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People, por Alto People. No soy una persona: respondo con tus propios datos (pago, viaje, horario) y paso todo lo demás a tu ${manager('es')}.`,
+        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım (Alto People tarafından). Bir insan değilim: kendi kayıtlarından yanıt veririm (maaş, servis, program), diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
       },
       lang,
     ),
@@ -237,9 +241,9 @@ export const WA_REPLY = {
   noPayday: (lang: WaLang) =>
     say(
       {
-        en: 'There is no pay schedule on your record yet. I have passed this to your supervisor.',
-        es: 'Aún no hay un calendario de pago en tu registro. Se lo pasé a tu supervisor.',
-        tr: 'Kaydında henüz bir ödeme takvimi yok. Bunu amirine ilettim.',
+        en: `There is no pay schedule on your record yet. I have passed this to your ${manager('en')}.`,
+        es: `Aún no hay un calendario de pago en tu registro. Se lo pasé a tu ${manager('es')}.`,
+        tr: `Kaydında henüz bir ödeme takvimi yok. Bunu ${manager('tr')} adlı kişiye ilettim.`,
       },
       lang,
     ),
@@ -282,9 +286,9 @@ export const WA_REPLY = {
   handoff: (lang: WaLang, who: string | null) =>
     say(
       {
-        en: who ? `I have passed this to ${who}, who will answer in the ${app()} app messages.` : 'I have passed this to your supervisor, who will answer in the ${app()} app messages.',
-        es: who ? `Se lo pasé a ${who}, que te responderá en los mensajes de la app de ${app()}.` : 'Se lo pasé a tu supervisor, que te responderá en los mensajes de la app de ${app()}.',
-        tr: who ? `Bunu ${who} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.` : 'Bunu amirine ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.',
+        en: who ? `I have passed this to ${who}, who will answer in the ${app()} app messages.` : `I have passed this to your ${manager('en')}, who will answer in the ${app()} app messages.`,
+        es: who ? `Se lo pasé a ${who}, que te responderá en los mensajes de la app de ${app()}.` : `Se lo pasé a tu ${manager('es')}, que te responderá en los mensajes de la app de ${app()}.`,
+        tr: who ? `Bunu ${who} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.` : `Bunu ${manager('tr')} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.`,
       },
       lang,
     ),
