@@ -1,8 +1,10 @@
 import { useLocation } from 'react-router-dom';
 
 import type { Capability } from './roles';
+import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/shared';
 
 export type ModuleKey =
+  | 'tenant-profile'
   | 'product-analytics'
   | 'reliability'
   | 'emergency'
@@ -363,13 +365,103 @@ const DRIVER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 /** Capability-filtered module list, with per-role curation applied.
  *  `scope.regionId` marks a CLIENT_PORTAL command-center account, whose nav
  *  is the region and messages — never the single-store pages. */
+/**
+ * Brief 2-1b: which tenant module each navigation entry belongs to. An
+ * entry with no gate is always on (the core of the product). The table
+ * follows docs/tenant-profiles-investigation.md §5.2.
+ */
+export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
+  scheduling: 'scheduling',
+  marketplace: 'scheduling',
+  approvals: 'scheduling',
+  holidays: 'scheduling',
+  'time-attendance': 'time',
+  timesheets: 'time',
+  kiosk: 'time',
+  'time-off': 'time',
+  'hr-cases': 'hrCases',
+  discipline: 'hrCases',
+  hotline: 'hrCases',
+  compliance: 'compliance',
+  documents: 'compliance',
+  'doc-templates': 'compliance',
+  expirations: 'compliance',
+  vaccinations: 'compliance',
+  agreements: 'compliance',
+  audit: 'compliance',
+  'payroll-compliance': 'compliance',
+  fieldglass: 'payrollSync',
+  'fieldglass-setup': 'payrollSync',
+  integrations: 'payrollSync',
+  rides: 'transportation',
+  transport: 'transportation',
+  programs: 'programs',
+  'season-planner': 'programs',
+  statements: 'billRates',
+  billing: 'billRates',
+  portal: 'clientPortal',
+  'portal-today': 'clientPortal',
+  'portal-ops': 'clientPortal',
+  'portal-schedule': 'clientPortal',
+  'portal-history': 'clientPortal',
+  'portal-requests': 'clientPortal',
+  'portal-candidates': 'clientPortal',
+  region: 'clientPortal',
+  regions: 'clientPortal',
+  clients: 'clientPortal',
+  dircomms: 'clientPortal',
+  workers: 'robotics',
+};
+
+/** The roles that exist only with a module on. */
+export const ROLE_MODULE: Partial<Record<Role, TenantModule>> = {
+  TRANSPORTATION_DIRECTOR: 'transportation',
+  DRIVER: 'transportation',
+  CLIENT_PORTAL: 'clientPortal',
+};
+
+export function roleOfferedFor(role: Role, modules: TenantModules | undefined): boolean {
+  const gate = ROLE_MODULE[role];
+  return !gate || !modules || modules[gate];
+}
+
+/** The navigation labels the terminology table renames. */
+export const NAV_TERM: Partial<Record<ModuleKey, TermKey>> = {
+  people: 'nav.people',
+  scheduling: 'nav.scheduling',
+  'time-attendance': 'nav.time',
+  kiosk: 'nav.kiosk',
+  'hr-cases': 'nav.hrCases',
+  compliance: 'nav.compliance',
+  documents: 'nav.documents',
+  payroll: 'nav.payroll',
+  transport: 'nav.transport',
+  clients: 'nav.clients',
+  programs: 'nav.programs',
+  headcount: 'nav.headcount',
+};
+
+/** The same entries with the tenant's words on them. */
+export function applyTerms(modules: ModuleNav[], term: (key: TermKey) => string): ModuleNav[] {
+  return modules.map((m) => {
+    const key = NAV_TERM[m.key];
+    return key ? { ...m, label: term(key) } : m;
+  });
+}
+
 export function visibleModules(
   role: string | undefined,
   can: (c: Capability) => boolean,
-  scope: { regionId?: string | null } = {},
+  scope: { regionId?: string | null; modules?: TenantModules } = {},
 ): ModuleNav[] {
   const base = MODULES.filter(
     (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
+  ).filter(
+    // Brief 2-1b: a module the tenant has off is not on the nav for anyone.
+    (m) => {
+      const gate = MODULE_GATE[m.key];
+      return !gate || !scope.modules || scope.modules[gate];
+    },
   ).filter(
     // "My store" only makes sense for a client account — internal roles
     // preview portals from the Clients page instead.
@@ -1154,6 +1246,14 @@ export const MODULES: ModuleNav[] = [
     label: 'Users & access',
     description:
       'List every account, change a role or status, and force a password reset (revokes active sessions).',
+    requires: 'view:hr-admin',
+    group: 'platform',
+  },
+  {
+    key: 'tenant-profile',
+    path: '/admin/organization',
+    label: 'Organization profile',
+    description: 'Business model, the modules this organization runs, and what it calls things.',
     requires: 'view:hr-admin',
     group: 'platform',
   },

@@ -196,3 +196,29 @@ describe('visibleModules — the supervisor Today page', () => {
     }
   });
 });
+
+describe('visibleModules — tenant modules (Brief 2-1b)', () => {
+  it('a module the tenant has off is not on the nav for anyone; a role that needs it is not offered', async () => {
+    const { defaultModulesFor } = await import('@alto-people/shared');
+    const { roleOfferedFor, applyTerms } = await import('@/lib/modules');
+    const all = defaultModulesFor('WORKFORCE_PROVIDER');
+    const hotel = defaultModulesFor('DIRECT_EMPLOYER');
+    const withAll = visibleModules('HR_ADMINISTRATOR', canFor('HR_ADMINISTRATOR'), { modules: all }).map((m) => m.key);
+    const withHotel = visibleModules('HR_ADMINISTRATOR', canFor('HR_ADMINISTRATOR'), { modules: hotel }).map((m) => m.key);
+    expect(withAll).toContain('transport');
+    expect(withAll).toContain('clients');
+    expect(withHotel).not.toContain('transport');
+    expect(withHotel).not.toContain('clients');
+    expect(withHotel).not.toContain('programs');
+    expect(withHotel).toContain('scheduling');
+    expect(withHotel).toContain('people');
+    // No modules given: nothing is gated (older sessions, tests).
+    expect(keysFor('HR_ADMINISTRATOR')).toContain('transport');
+    expect(roleOfferedFor('DRIVER', hotel)).toBe(false);
+    expect(roleOfferedFor('CLIENT_PORTAL', hotel)).toBe(false);
+    expect(roleOfferedFor('HR_ADMINISTRATOR', hotel)).toBe(true);
+    expect(roleOfferedFor('DRIVER', all)).toBe(true);
+    const named = applyTerms(MODULES.filter((m) => m.key === 'people'), () => 'Team');
+    expect(named[0]!.label).toBe('Team');
+  });
+});

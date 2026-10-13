@@ -13,7 +13,8 @@ import {
 import { toast } from 'sonner';
 import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
 import { SecondRoleDialog } from './SecondRoleDialog';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { roleOfferedFor } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -102,6 +103,9 @@ function statusVariant(status: UserStatus) {
  */
 export function UsersAdmin() {
   const { user: me, can } = useAuth();
+  const tenant = useTenant();
+  const termOf = useTerm();
+  const storeNoun = termOf('label.store').toLowerCase();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [rows, setRows] = useState<AdminUser[] | null>(null);
@@ -197,7 +201,7 @@ export function UsersAdmin() {
     setPendingId(u.id);
     try {
       await patchAdminUser(u.id, { locationId: newLocationId || null });
-      toast.success(newLocationId ? 'Store assigned.' : 'Now sees the whole client.');
+      toast.success(newLocationId ? `${termOf('label.store')} assigned.` : 'Now sees the whole client.');
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -576,7 +580,7 @@ export function UsersAdmin() {
               onChange={(e) => onChangeRole(u, e.target.value as Role)}
               disabled={isMe || busy}
             >
-              {ROLE_OPTIONS.map((r) => (
+              {ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                 <option key={r} value={r}>
                   {ROLE_LABELS[r]}
                 </option>
@@ -755,7 +759,7 @@ export function UsersAdmin() {
                 onFocus={() => void ensureLocations(u.clientId!)}
                 onChange={(e) => onAssignLocation(u, e.target.value)}
                 disabled={isMe || busy}
-                aria-label="Assign store"
+                aria-label={`Assign ${storeNoun}`}
                 title="A store manager sees one store; leave on 'Whole client' for a market or district manager."
               >
                 <option value="">Whole client</option>
@@ -878,7 +882,7 @@ export function UsersAdmin() {
                 {...p}
               >
                 <option value="">All roles</option>
-                {ROLE_OPTIONS.map((r) => (
+                {ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                   <option key={r} value={r}>
                     {ROLE_LABELS[r]}
                   </option>
@@ -996,7 +1000,7 @@ export function UsersAdmin() {
                     aria-label="Set role for selected users"
                   >
                     <option value="">Set role…</option>
-                    {BULK_ROLE_OPTIONS.map((r) => (
+                    {BULK_ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                       <option key={r} value={r}>
                         {ROLE_LABELS[r]}
                       </option>

@@ -198,6 +198,7 @@ const Settings = lazyNamed(() => import('@/pages/Settings'), 'Settings');
 const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPage');
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
+const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
@@ -256,6 +257,7 @@ registerPrefetch('/me', () => import('@/pages/me/MeHome'));
 registerPrefetch('/settings', () => import('@/pages/Settings'));
 registerPrefetch('/admin/users', () => import('@/pages/admin/UsersAdmin'));
 registerPrefetch('/admin/branding', () => import('@/pages/admin/BrandingHome'));
+registerPrefetch('/admin/organization', () => import('@/pages/admin/TenantProfileHome'));
 registerPrefetch('/admin/billing', () => import('@/pages/admin/BillingHome'));
 registerPrefetch('/reports', () => import('@/pages/reports/ReportsHome'));
 // Public, no-auth routes. Prefetched from any link that points at them
@@ -444,6 +446,7 @@ const LAYOUT_ROUTES = [
   { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },
   { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
+  { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
   // No dedicated view:benefits capability exists — benefits elections are

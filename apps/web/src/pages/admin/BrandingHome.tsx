@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -228,7 +229,16 @@ export function BrandingHome() {
     <div>
       <PageHeader
         title="Branding"
-        subtitle="Org-wide overrides for the name, sender display, support email, primary colour, and logo shown on every outbound email."
+        subtitle={
+          <>
+            Org-wide overrides for the name, sender display, support email, primary colour, and logo shown on every outbound email. The business model, the
+            modules and the words live on the{' '}
+            <Link to="/admin/organization" className="text-gold underline-offset-2 hover:underline">
+              Organization profile
+            </Link>
+            .
+          </>
+        }
         breadcrumbs={[
           { label: 'Home', to: '/' },
           { label: 'Branding' },

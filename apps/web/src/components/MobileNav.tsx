@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
 import {
+  applyTerms,
   DASHBOARD_NAV,
   GROUP_LABEL,
   visibleModules,
@@ -10,7 +11,7 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
@@ -39,12 +40,14 @@ interface MobileNavProps {
 
 export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
   const { can, user } = useAuth();
+  const tenant = useTenant();
+  const term = useTerm();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
-  const visible = visibleModules(user?.role, can, { regionId: user?.regionId });
+  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))

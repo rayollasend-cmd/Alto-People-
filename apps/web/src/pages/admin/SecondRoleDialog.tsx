@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useTenant } from '@/lib/auth';
+import { roleOfferedFor } from '@/lib/modules';
 import { toast } from 'sonner';
 import {
   MAX_ADDITIONAL_ROLES,
@@ -69,16 +71,17 @@ export function SecondRoleDialog({
     () => new Set(user.additionalRoles ?? []),
   );
   const [saving, setSaving] = useState(false);
+  const tenant = useTenant();
 
   // Only combinations the server will actually accept — showing a role
   // that is going to be refused is a form that lies to the person using it.
   const offered = useMemo(
     () =>
-      ROLE_ORDER.filter((r) => !additionalRoleRefusal(user.role, r)).map((r) => ({
+      ROLE_ORDER.filter((r) => roleOfferedFor(r, tenant.modules) && !additionalRoleRefusal(user.role, r)).map((r) => ({
         role: r,
         refusal: null as string | null,
       })),
-    [user.role],
+    [user.role, tenant.modules],
   );
 
   const atCap = picked.size >= MAX_ADDITIONAL_ROLES;

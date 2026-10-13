@@ -20,9 +20,9 @@ import {
   UserPlus,
   type LucideIcon,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
-import { DASHBOARD_NAV, visibleModules } from '@/lib/modules';
+import { DASHBOARD_NAV, visibleModules, applyTerms } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
 import { usePeopleSearch, useUniversalSearch } from '@/lib/usePaletteSearch';
@@ -124,6 +124,8 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
+  const tenant = useTenant();
+  const term = useTerm();
   const [search, setSearch] = useState('');
 
   // Reset search when reopening so the user always starts on a clean list.
@@ -182,7 +184,7 @@ export function CommandPalette({
     // visibleModules, not a raw capability slice — the palette must offer
     // the same curated nav the sidebar shows (an associate was getting all
     // 25 HR modules here while their sidebar showed 14).
-    ...visibleModules(user?.role, can, { regionId: user?.regionId }).map<PaletteItem>((m) => ({
+    ...applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term).map<PaletteItem>((m) => ({
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,
@@ -312,7 +314,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ], [can, user, onShowKeyboardShortcuts]);
+  ], [can, user, onShowKeyboardShortcuts, tenant.modules, term]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.

@@ -21,6 +21,8 @@ import {
   ROLE_CAPABILITIES,
   hasCapability,
 } from '@alto-people/shared';
+import { defaultTenantProfile, termsIn, type TenantModule, type TenantProfile, type TermKey } from '@alto-people/shared';
+import { useI18n } from './i18n';
 import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
 import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
 import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
@@ -56,6 +58,8 @@ interface AuthState {
    */
   availableRoles: Role[];
   capabilities: ReadonlySet<Capability>;
+  /** Brief 2-1b: the signed-in user's tenant profile — modules and terminology. A safe default before /auth/me answers. */
+  tenant: TenantSession;
   /**
    * POST /auth/login. Returns `{ mfaRequired: true }` when the account
    * has two-step sign-in turned on — the caller is expected to drive a
@@ -91,6 +95,11 @@ interface AuthState {
   switchRole: (role: Role) => Promise<void>;
   can: (capability: Capability) => boolean;
 }
+
+export type TenantSession = TenantProfile & { id: string };
+
+/** Everything on, Alto HR's words: what an older server or an offline session implies. */
+export const DEFAULT_TENANT: TenantSession = { id: '', ...defaultTenantProfile('WORKFORCE_PROVIDER') };
 
 export const AuthContext = createContext<AuthState | null>(null);
 
@@ -151,6 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [tenant, setTenant] = useState<TenantSession>(DEFAULT_TENANT);
 
   // Refs, not state, inside the listeners: the subscriptions are
   // mounted once and must always see the CURRENT user without
@@ -184,6 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
         if (cancelled) return;
         setUser(me.user);
+        setTenant(me.tenant ?? DEFAULT_TENANT);
         saveOfflineSession(me.user);
         setIsOffline(false);
       } catch (err) {
@@ -291,6 +302,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // endpoint 401s under the old grant. Same update-in-place
             // refreshUser does: chrome + capability gates re-render.
             setUser(me.user);
+        setTenant(me.tenant ?? DEFAULT_TENANT);
             saveOfflineSession(me.user);
           } else {
             die();
@@ -337,6 +349,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // The login responses carry the user only; the tenant profile comes from /auth/me.
+  const loadTenant = useCallback(async () => {
+    try {
+      const me = await apiFetch<MeResponse>('/auth/me');
+      setTenant(me.tenant ?? DEFAULT_TENANT);
+    } catch {
+      // Keep the default; the next /auth/me read will set it.
+    }
+  }, []);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await apiFetch<LoginResponse>('/auth/login', {
       method: 'POST',
@@ -358,8 +380,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(res.user);
     setIsOffline(false);
+    void loadTenant();
     return { mfaRequired: false, mfaEnrollmentRequired: false };
-  }, [setUser]);
+  }, [setUser, loadTenant]);
 
   const submitMfaChallenge = useCallback(async (input: MfaChallengeInput) => {
     const res = await apiFetch<MfaChallengeResponse>('/auth/mfa-challenge', {
@@ -369,7 +392,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
     saveOfflineSession(res.user);
     setIsOffline(false);
-  }, [setUser]);
+    void loadTenant();
+  }, [setUser, loadTenant]);
 
   const signOut = useCallback(async () => {
     try {
@@ -410,6 +434,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // is how a driver ends up looking at a store's roster.
     void clearPersistedQueries();
     setUser(res.user);
+    setTenant(res.tenant ?? DEFAULT_TENANT);
     saveOfflineSession(res.user);
     setIsOffline(false);
   }, [setUser]);
@@ -418,6 +443,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await apiFetch<MeResponse>('/auth/me');
       setUser(me.user);
+        setTenant(me.tenant ?? DEFAULT_TENANT);
       saveOfflineSession(me.user);
       setIsOffline(false);
     } catch {
@@ -440,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // one", and the switcher stays hidden.
       availableRoles: user?.availableRoles ?? (role ? [role] : []),
       capabilities,
+      tenant,
       signIn,
       submitMfaChallenge,
       signOut,
@@ -451,6 +478,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isInitializing,
     isOffline,
     user,
+    tenant,
     signIn,
     submitMfaChallenge,
     signOut,
@@ -465,6 +493,24 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
+}
+
+/** Brief 2-1b: the tenant's profile, with a module check. Falls back to the defaults outside a provider. */
+export function useTenant(): TenantSession & { moduleOn: (module: TenantModule) => boolean } {
+  const ctx = useContext(AuthContext);
+  const tenant = ctx?.tenant ?? DEFAULT_TENANT;
+  return useMemo(() => ({ ...tenant, moduleOn: (module: TenantModule) => tenant.modules[module] }), [tenant]);
+}
+
+/** Brief 2-1b: the tenant's word for a thing, in the app's language. */
+export function useTerm(): (key: TermKey) => string {
+  const ctx = useContext(AuthContext);
+  const { lang } = useI18n();
+  const terminology = (ctx?.tenant ?? DEFAULT_TENANT).terminology;
+  return useMemo(() => {
+    const terms = termsIn({ terminology }, lang);
+    return (key: TermKey) => terms[key];
+  }, [terminology, lang]);
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {

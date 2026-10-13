@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import {
+  applyTerms,
   DASHBOARD_NAV,
   GROUP_LABEL,
   visibleModules,
@@ -27,7 +28,7 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useFieldglassSetupCount } from '@/lib/useFieldglassSetupCount';
 import { useQuery } from '@tanstack/react-query';
@@ -119,7 +120,9 @@ function writeRailCollapsed(value: boolean): void {
 
 export function Sidebar() {
   const { can, user } = useAuth();
-  const visible = visibleModules(user?.role, can, { regionId: user?.regionId });
+  const tenant = useTenant();
+  const term = useTerm();
+  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term);
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
   // Same key as the phone tab bar's badge, so one request serves both.

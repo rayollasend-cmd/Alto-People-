@@ -115,6 +115,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'compliance': ShieldCheck,
   'audit': ScrollText,
   'users': UsersIcon,
+  'tenant-profile': BrandingIcon,
   'branding': BrandingIcon,
   'billing': BillingIcon,
   'dircomms': MegaphoneIcon,
