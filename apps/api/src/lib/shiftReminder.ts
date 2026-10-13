@@ -13,7 +13,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
-import { formatShiftLine, notifyShift } from './notifyShift.js';
+import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
 import {
   recordNoShowAttendance,
@@ -106,6 +106,7 @@ export async function runShiftReminderSweep(
         })}`,
         category: 'shift_reminder',
         senderUserId: null,
+        wa: shiftWa('alto_shift_reminder', { position: shift.position, clientName: shift.client?.name ?? null, locationName: null, startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone ?? null }),
       });
       reminded++;
     } catch (err) {

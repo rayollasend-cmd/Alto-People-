@@ -35,6 +35,9 @@ const TABLES = [
   'ProgramAlertSetting',
   // A company-wide SeasonPlan has no client, so nothing cascades into it.
   'SeasonPlan',
+  // WhatsAppMessage keeps its row when the associate goes (SET NULL), so
+  // nothing cascades into it either.
+  'WhatsAppMessage',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

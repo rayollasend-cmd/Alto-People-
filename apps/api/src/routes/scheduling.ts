@@ -88,7 +88,7 @@ import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { z } from 'zod';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
-import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
+import { formatShiftLine, notifyShift, shiftWa } from '../lib/notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
@@ -3108,6 +3108,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
           body: `You've been assigned: ${line}`,
           category: 'shift_assigned',
           senderUserId: req.user!.id,
+          wa: shiftWa('alto_shift_assigned', { position: input.position, clientName: client.name, locationName: null, startsAt: n.startsAt, endsAt: n.endsAt, timezone: location.timezone }),
         });
       }
     }
@@ -3407,6 +3408,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
         })}`,
         category: 'shift_published',
         senderUserId: req.user!.id,
+        wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
 
@@ -3595,6 +3597,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
         })}`,
         category: 'shift_assigned',
         senderUserId: req.user!.id,
+        wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
 
@@ -3650,6 +3653,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
         })}`,
         category: 'shift_unassigned',
         senderUserId: req.user!.id,
+        wa: shiftWa('alto_shift_changed', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
 
@@ -3750,6 +3754,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
         })}\nReason: ${parsed.data.reason}`,
         category: 'shift_cancelled',
         senderUserId: req.user!.id,
+        wa: shiftWa('alto_shift_cancelled', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
 

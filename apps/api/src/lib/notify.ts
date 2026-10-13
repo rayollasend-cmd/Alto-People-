@@ -50,6 +50,8 @@ import { activeDelegationsFrom } from './delegations.js';
 import { EmailSuppressedError, send, type SendAttachment } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
+import { sendWhatsAppForUser } from './whatsapp.js';
+import type { WaLang, WaTemplateKey } from './whatsappContent.js';
 import {
   genericNotificationTemplate,
   onboardingCompleteTemplate,
@@ -199,6 +201,12 @@ export interface NotifyOpts {
    * changes what someone gets paid must NOT be quiet.
    */
   quiet?: boolean;
+  /**
+   * WhatsApp (Brief 1C-4): the registered template this notice goes out
+   * as, with its positional parameters rendered per language. Without it
+   * the subject and body ride the generic template.
+   */
+  wa?: { template: WaTemplateKey; params: (lang: WaLang) => string[] };
 }
 
 /** notifyAllAdmins email tiers — the bell row still reaches every admin
@@ -307,6 +315,8 @@ export function emailUserForCategory(
           body: opts.body,
           url: opts.linkUrl,
         }),
+        // WhatsApp, when they opted in — the same mute applies.
+        sendWhatsAppForUser(userId, opts).catch(() => undefined),
       ]);
     })().catch((err: unknown) => {
       console.warn(
@@ -365,6 +375,7 @@ export function notifyUser(
               url: opts.linkUrl,
             }),
           );
+          void track(sendWhatsAppForUser(userId, opts).catch(() => undefined));
         }
       }
     })().catch((err: unknown) => {

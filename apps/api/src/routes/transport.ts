@@ -2093,6 +2093,7 @@ async function tellRidersTheyreScheduled(runId: string, rideIds: string[]) {
           `${r.direction === 'TO_WORK' ? `To ${r.location.name}.` : 'Home.'} Be ready a few minutes early.`,
         category: 'transport',
         linkUrl: '/rides',
+        wa: { template: 'alto_ride_pickup', params: () => [run.van.name, `${fmtWhen(r.pickupAt ?? r.targetAt, tz)} at ${where}`] },
       }),
     );
   }

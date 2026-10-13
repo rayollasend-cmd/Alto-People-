@@ -270,7 +270,7 @@ export async function emergencySites(db: Db = defaultPrisma): Promise<EmergencyS
 async function tellAssociate(
   db: Db,
   a: ScopedAssociate,
-  words: { subject: (l: EmailLang) => string; body: (l: EmailLang) => string; line: (l: EmailLang) => string },
+  words: { title: string; subject: (l: EmailLang) => string; body: (l: EmailLang) => string; line: (l: EmailLang) => string },
 ): Promise<void> {
   const user = await db.user.findFirst({
     where: { associateId: a.id, status: 'ACTIVE', deletedAt: null },
@@ -283,6 +283,8 @@ async function tellAssociate(
       body: words.body(lang),
       category: EMERGENCY_CATEGORY,
       linkUrl: '/',
+      // WhatsApp, when they opted in: the emergency template, in their language.
+      wa: { template: 'alto_emergency', params: (l) => [words.title, words.body(l)] },
     });
   } else {
     await notifyAssociate(a.id, {
@@ -420,6 +422,7 @@ export async function declareEmergency(
 
   const people = await associatesInScope(db, e);
   const words = {
+    title: e.title,
     subject: (l: EmailLang) => emergencySubject(l, e.title),
     body: (l: EmailLang) =>
       emergencyDeclaredBody(l, { title: e.title, message: messageFor(e, l), startsAt: e.startsAt, pickupAt: e.pickupAt }),
@@ -516,6 +519,7 @@ export async function standDownEmergency(
   const e = await getEmergency(db, id);
   const people = await associatesInScope(db, e);
   const words = {
+    title: e.title,
     subject: (l: EmailLang) => standDownSubject(l, e.title),
     body: (l: EmailLang) => standDownBody(l, e.title, now),
     line: (l: EmailLang) => standDownSubject(l, e.title),

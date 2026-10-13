@@ -349,6 +349,7 @@ export async function afterPing(runId: string, now = new Date()): Promise<void> 
         body: `${run.van.name} is about ${mins} min from ${where}. Be ready a few minutes early.`,
         category: 'transport',
         linkUrl: '/rides',
+        wa: { template: 'alto_ride_near', params: () => [run.van.name, String(mins)] },
       }),
     );
   }

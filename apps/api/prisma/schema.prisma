@@ -320,6 +320,7 @@ enum NotificationChannel {
   PUSH // FCM (Phase 12 stubbed)
   EMAIL // SES / Resend (Phase 12 stubbed)
   IN_APP // delivered via the web inbox; no external service
+  WHATSAPP // Meta Cloud API (Brief 1C-4); receipts arrive by webhook
 }
 
 enum NotificationStatus {
@@ -329,6 +330,7 @@ enum NotificationStatus {
   READ // IN_APP only — recipient opened it
   BOUNCED // EMAIL only — provider reported a bounce (async via Resend webhook)
   COMPLAINED // EMAIL only — recipient marked it as spam (async via Resend webhook)
+  DELIVERED // WHATSAPP — the handset took it (read is READ)
   SUPPRESSED // EMAIL only — send short-circuited because the address is on the suppression list
 }
 
@@ -1775,6 +1777,8 @@ model Associate {
   ridePlaces               RidePlace[]
   emergencyCheckIns        EmergencyCheckIn[]
   rideConsent              RideConsent?
+  whatsAppConsent          WhatsAppConsent?
+  whatsAppMessages         WhatsAppMessage[]
   assignedShifts           Shift[]
   payrollItems             PayrollItem[]
   externalPayments         ExternalPayment[]
@@ -8768,4 +8772,88 @@ model SeasonPlanSite {
   location Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([planId, locationId])
+}
+
+// ===== WhatsApp (Brief 1C-4) ==============================================
+// A delivery channel, not a new inbox: every associate-facing notification
+// also goes to WhatsApp when the associate opted in, in their language,
+// through Meta's Cloud API. Receipts come back by webhook. Inbound text
+// goes to a small assistant that answers three routine questions from the
+// associate's own data and hands everything else to their supervisor.
+
+enum WhatsAppConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum WhatsAppDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RECEIVED
+}
+
+enum WhatsAppMessageKind {
+  TEMPLATE
+  TEXT
+  QUESTION
+  ANSWER
+  HANDOFF
+  SYSTEM
+}
+
+model WhatsAppConsent {
+  associateId   String                @id @db.Uuid
+  /// E.164 digits without the plus, the way Meta addresses a handset.
+  phone         String                @db.VarChar(20)
+  status        WhatsAppConsentStatus @default(OPTED_IN)
+  /// 'app' (Settings), 'reply' (they texted START/STOP), 'admin'.
+  source        String                @default("app") @db.VarChar(20)
+  optedInAt     DateTime              @default(now()) @db.Timestamptz(6)
+  optedOutAt    DateTime?             @db.Timestamptz(6)
+  /// The last message they sent us — inside 24 hours we may send free text.
+  lastInboundAt DateTime?             @db.Timestamptz(6)
+  updatedAt     DateTime              @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([phone])
+}
+
+/// The message record: what went out and what came in, with the receipt.
+model WhatsAppMessage {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String?               @db.Uuid
+  phone          String                @db.VarChar(20)
+  direction      WhatsAppDirection
+  kind           WhatsAppMessageKind
+  /// Meta's message id — unique, so a replayed webhook is a no-op.
+  waMessageId    String?               @unique @db.VarChar(120)
+  templateName   String?               @db.VarChar(80)
+  language       String                @default("en") @db.VarChar(2)
+  body           String                @db.VarChar(4000)
+  category       String?               @db.VarChar(80)
+  status         WhatsAppMessageStatus @default(QUEUED)
+  statusAt       DateTime?             @db.Timestamptz(6)
+  failureReason  String?               @db.VarChar(500)
+  /// The Notification row this delivery belongs to, when it came from one.
+  notificationId String?               @db.Uuid
+  /// The thread an unanswered question was handed to.
+  conversationId String?               @db.Uuid
+  /// The inbound message an ANSWER or HANDOFF replies to.
+  replyToId      String?               @db.Uuid
+  createdAt      DateTime              @default(now()) @db.Timestamptz(6)
+
+  associate Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, createdAt(sort: Desc)])
+  @@index([phone, createdAt(sort: Desc)])
+  @@index([status, createdAt])
 }

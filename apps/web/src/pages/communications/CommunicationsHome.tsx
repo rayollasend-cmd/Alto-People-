@@ -1,8 +1,9 @@
 import { useSearchParams } from 'react-router-dom';
-import { Inbox, Send } from 'lucide-react';
+import { Inbox, MessageCircle, Send } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { AssociateInboxView } from './AssociateInboxView';
 import { AdminCommsView } from './AdminCommsView';
+import { WhatsAppAdmin } from './WhatsAppAdmin';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 /**
@@ -22,7 +23,8 @@ export function CommunicationsHome() {
     return <AssociateInboxView />;
   }
 
-  const tab = params.get('tab') === 'sends' ? 'sends' : 'inbox';
+  const requested = params.get('tab');
+  const tab = requested === 'sends' || requested === 'whatsapp' ? requested : 'inbox';
   const setTab = (next: string) => {
     const p = new URLSearchParams(params);
     if (next === 'inbox') p.delete('tab');
@@ -39,12 +41,18 @@ export function CommunicationsHome() {
         <TabsTrigger value="sends">
           <Send className="mr-2 h-4 w-4" /> Sends & broadcasts
         </TabsTrigger>
+        <TabsTrigger value="whatsapp">
+          <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
+        </TabsTrigger>
       </TabsList>
       <TabsContent value="inbox">
         <AssociateInboxView />
       </TabsContent>
       <TabsContent value="sends">
         <AdminCommsView canManage={canManageComms} />
+      </TabsContent>
+      <TabsContent value="whatsapp">
+        <WhatsAppAdmin />
       </TabsContent>
     </Tabs>
   );

@@ -57,6 +57,7 @@ function statusVariant(
 ): 'pending' | 'success' | 'destructive' | 'info' {
   switch (s) {
     case 'SENT':
+    case 'DELIVERED':
       return 'success';
     case 'FAILED':
     case 'BOUNCED':
@@ -78,6 +79,7 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   BOUNCED: 'Bounced',
   COMPLAINED: 'Marked as spam',
   SUPPRESSED: 'Suppressed',
+  DELIVERED: 'Delivered',
 };
 
 const recipientOf = (n: Notification) =>
@@ -88,6 +90,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   EMAIL: 'Email',
   SMS: 'SMS',
   PUSH: 'Push',
+  WHATSAPP: 'WhatsApp',
 };
 
 interface AdminCommsViewProps {

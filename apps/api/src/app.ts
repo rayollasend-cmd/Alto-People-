@@ -53,6 +53,7 @@ import { benefitsRouter } from './routes/benefits.js';
 import { quickbooksRouter } from './routes/quickbooks.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { resendWebhookRouter } from './routes/resendWebhook.js';
+import { whatsappRouter, whatsappWebhookRouter } from './routes/whatsapp.js';
 import { emailUnsubscribeRouter } from './routes/emailUnsubscribe.js';
 import { orgRouter } from './routes/org.js';
 import { externalPaymentsRouter } from './routes/externalPayments.js';
@@ -329,6 +330,8 @@ export function createApp() {
   // Same deal for Resend's email-event webhook — the Svix signature is
   // computed over the exact raw bytes.
   app.use('/resend/webhook', resendWebhookRouter);
+  // And Meta's WhatsApp webhook — X-Hub-Signature-256 over the raw body.
+  app.use('/whatsapp/webhook', whatsappWebhookRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
@@ -428,6 +431,8 @@ export function createApp() {
   // Emergency Mode: the switch and the board are capability-gated inside;
   // /me and /check-in are for any signed-in associate.
   app.use('/emergency', emergencyRouter);
+  // WhatsApp consent (any associate) and the admin record (view:communications).
+  app.use('/whatsapp', whatsappRouter);
   // Program Lifecycle: J-1 / H-2B records, sponsors, alerts, the
   // transition calendar and sponsor reports (view/manage:compliance).
   app.use('/programs', programsRouter);

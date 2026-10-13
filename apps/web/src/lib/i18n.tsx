@@ -2843,6 +2843,18 @@ const en = {
   'emergency.sending': 'Sending…',
   'emergency.failed': 'That did not go through. Try again, or call your supervisor.',
   'emergency.noAddress': 'We have no address on file for you. Add your home in the Rides tab, then try again.',
+
+  // WhatsApp updates (Brief 1C-4)
+  'settings.whatsapp.title': 'WhatsApp updates',
+  'settings.whatsapp.comingSoon': 'WhatsApp updates are coming soon.',
+  'settings.whatsapp.onSince': 'On for {phone} since {date}.',
+  'settings.whatsapp.turnOff': 'Turn off',
+  'settings.whatsapp.turnOn': 'Turn on',
+  'settings.whatsapp.phoneLabel': 'Mobile number with WhatsApp',
+  'settings.whatsapp.consent': 'I agree to receive Alto People messages on WhatsApp at this number. Message and data rates may apply. Reply STOP any time.',
+  'settings.whatsapp.languageNote': 'Messages arrive in your language (Settings → Language).',
+  'settings.whatsapp.optedOutDone': 'WhatsApp updates are off.',
+  'settings.whatsapp.optedInDone': 'WhatsApp updates are on.',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -5641,6 +5653,17 @@ const es: Record<MessageKey, string> = {
   'emergency.sending': 'Enviando…',
   'emergency.failed': 'No se envió. Inténtalo de nuevo o llama a tu supervisor.',
   'emergency.noAddress': 'No tenemos tu dirección. Agrega tu casa en la pestaña Viajes y vuelve a intentar.',
+
+  'settings.whatsapp.title': 'Avisos por WhatsApp',
+  'settings.whatsapp.comingSoon': 'Los avisos por WhatsApp llegarán pronto.',
+  'settings.whatsapp.onSince': 'Activado para {phone} desde el {date}.',
+  'settings.whatsapp.turnOff': 'Desactivar',
+  'settings.whatsapp.turnOn': 'Activar',
+  'settings.whatsapp.phoneLabel': 'Número de celular con WhatsApp',
+  'settings.whatsapp.consent': 'Acepto recibir mensajes de Alto People por WhatsApp en este número. Pueden aplicarse tarifas de mensajes y datos. Responde BAJA en cualquier momento.',
+  'settings.whatsapp.languageNote': 'Los mensajes llegan en tu idioma (Ajustes → Idioma).',
+  'settings.whatsapp.optedOutDone': 'Los avisos por WhatsApp están desactivados.',
+  'settings.whatsapp.optedInDone': 'Los avisos por WhatsApp están activados.',
 };
 
 const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, es };

@@ -4,7 +4,7 @@ import {
   formatDateInZone,
   formatTimeInZone,
 } from './timezone.js';
-import { emailUserForCategory } from './notify.js';
+import { emailUserForCategory, type NotifyOpts } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
@@ -47,6 +47,31 @@ export interface NotifyShiftParams {
   /** In-app deeplink the bell row and push notification open. Defaults
    *  to /scheduling — every notifyShift event is schedule-related. */
   linkUrl?: string;
+  /** The WhatsApp template for this event, with its parameters per language (Brief 1C-4). */
+  wa?: NotifyOpts['wa'];
+}
+
+/**
+ * The WhatsApp rendering of a shift event: position, store, and the time
+ * in the associate's language. Callers that have the shift at hand pass
+ * this so the message goes out as its registered template.
+ */
+export function shiftWa(
+  template: 'alto_shift_assigned' | 'alto_shift_changed' | 'alto_shift_cancelled' | 'alto_shift_reminder',
+  s: { position: string; clientName: string | null; locationName?: string | null; startsAt: Date | string; endsAt: Date | string; timezone?: string | null },
+): NonNullable<NotifyOpts['wa']> {
+  const start = new Date(s.startsAt);
+  const end = new Date(s.endsAt);
+  const tz = s.timezone ?? DEFAULT_TIMEZONE;
+  return {
+    template,
+    params: (lang) => {
+      const locale = lang === 'es' ? 'es-US' : lang === 'tr' ? 'tr-TR' : 'en-US';
+      const day = new Intl.DateTimeFormat(locale, { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric' }).format(start);
+      const time = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
+      return [s.position, s.locationName ?? s.clientName ?? 'Alto', `${day}, ${time(start)}–${time(end)}`];
+    },
+  };
 }
 
 /**
@@ -110,6 +135,7 @@ async function notifyShiftInner(
     body: params.body,
     category: params.category,
     linkUrl,
+    wa: params.wa,
   });
 }
 

@@ -3957,7 +3957,7 @@ export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
  *  Communications — Phase 12 (stubbed providers; queue-based)
  * -------------------------------------------------------------------------- */
 
-export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP']);
+export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP', 'WHATSAPP']);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 
 export const NotificationStatusSchema = z.enum([
@@ -3970,6 +3970,8 @@ export const NotificationStatusSchema = z.enum([
   'BOUNCED',
   'COMPLAINED',
   'SUPPRESSED',
+  // WHATSAPP — the handset took it (Brief 1C-4); read lands as READ.
+  'DELIVERED',
 ]);
 export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
 
@@ -8076,4 +8078,65 @@ export interface SeasonPlanListResponse {
 export interface SeasonPlanCompareResponse {
   a: SeasonPlanComputed;
   b: SeasonPlanComputed;
+}
+
+/* -------------------------------------------------------------------------- *
+ *  WhatsApp (Brief 1C-4) — a delivery channel with consent, receipts, and a
+ *  small assistant. Templates are registered with Meta under the names the
+ *  admin page lists.
+ * -------------------------------------------------------------------------- */
+
+export type WhatsAppConsentStatus = 'OPTED_IN' | 'OPTED_OUT';
+
+export interface WhatsAppMeResponse {
+  configured: boolean;
+  phoneOnFile: string | null;
+  consent: { status: WhatsAppConsentStatus; phone: string; optedInAt: string; optedOutAt: string | null } | null;
+}
+
+export const WhatsAppConsentInputSchema = z.object({
+  optIn: z.boolean(),
+  phone: z.string().trim().max(40).optional(),
+});
+export type WhatsAppConsentInput = z.infer<typeof WhatsAppConsentInputSchema>;
+
+export type WhatsAppMessageStatus = 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED';
+export type WhatsAppMessageKind = 'TEMPLATE' | 'TEXT' | 'QUESTION' | 'ANSWER' | 'HANDOFF' | 'SYSTEM';
+
+export interface WhatsAppMessageRow {
+  id: string;
+  associateId: string | null;
+  associateName: string | null;
+  /** Last four digits only. */
+  phone: string;
+  direction: 'OUTBOUND' | 'INBOUND';
+  kind: WhatsAppMessageKind;
+  templateName: string | null;
+  language: string;
+  body: string;
+  category: string | null;
+  status: WhatsAppMessageStatus;
+  statusAt: string | null;
+  failureReason: string | null;
+  conversationId: string | null;
+  createdAt: string;
+}
+
+export interface WhatsAppTemplateInfo {
+  key: string;
+  metaName: string;
+  metaCategory: string;
+  params: string[];
+  description: string;
+  body: { en: string; es: string; tr: string };
+}
+
+export interface WhatsAppOverview {
+  configured: boolean;
+  webhookConfigured: boolean;
+  apiVersion: string;
+  phoneNumberId: string | null;
+  consent: { optedIn: number; optedOut: number };
+  last7Days: { sent: number; delivered: number; read: number; failed: number; questions: number; handoffs: number };
+  templates: WhatsAppTemplateInfo[];
 }

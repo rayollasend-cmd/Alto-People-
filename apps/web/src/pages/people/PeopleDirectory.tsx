@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ProgramSection } from './ProgramSection';
+import { WhatsAppStatusLine } from './WhatsAppStatusLine';
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -30,6 +31,7 @@ import {
   Plane,
   ShieldCheck,
   Mail,
+  MessageCircle,
   MapPin,
   Pencil,
   Phone,
@@ -1289,6 +1291,11 @@ function ProfileTab({
         <PhoneField
           associate={a}
           onSaved={(phone) => onAssociateChange({ phone })}
+        />
+        <InfoRow
+          icon={<MessageCircle className="h-3.5 w-3.5" />}
+          label="WhatsApp"
+          value={<WhatsAppStatusLine associateId={a.id} />}
         />
       </Section>
 

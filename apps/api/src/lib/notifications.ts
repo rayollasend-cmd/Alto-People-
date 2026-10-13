@@ -253,6 +253,10 @@ async function dispatch(input: SendInput): Promise<SendResult> {
       return sendEmail(input);
     case 'IN_APP':
       return { externalRef: null, providerMessageId: null };
+    case 'WHATSAPP':
+      // Real WhatsApp sends go through lib/whatsapp (templates, receipts);
+      // a WHATSAPP row reaching this generic sender is recorded as a stub.
+      return { externalRef: `STUB-WA-${Math.random().toString(36).slice(2, 10)}`, providerMessageId: null };
   }
 }
 

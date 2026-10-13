@@ -489,6 +489,16 @@ const EnvSchema = z.object({
   // US SaaS by default; EU orgs are at https://de.sentry.io, self-hosted
   // wherever it is.
   SENTRY_API_URL: z.string().url().default('https://sentry.io'),
+  // WhatsApp (Meta Cloud API, Brief 1C-4). All optional: unset, sends are
+  // recorded as stubs and the webhook answers 503. The access token is a
+  // System User token with whatsapp_business_messaging; the phone number
+  // id is the sender; the verify token is the string Meta echoes on
+  // webhook setup; the app secret signs every webhook payload.
+  WHATSAPP_ACCESS_TOKEN: z.string().min(1).optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1).optional(),
+  WHATSAPP_VERIFY_TOKEN: z.string().min(8).optional(),
+  WHATSAPP_APP_SECRET: z.string().min(1).optional(),
+  WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
