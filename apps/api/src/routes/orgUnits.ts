@@ -142,6 +142,9 @@ orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {
 
 orgUnitsRouter.get('/admin/org-units/:id/sites', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
+  // Another tenant's unit is not found (the cross-tenant suite counts a 2xx on a foreign id as a leak).
+  const unit = await prisma.orgUnit.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
+  if (!unit) throw new HttpError(404, 'org_unit_not_found', 'That unit does not exist.');
   const ids = await siteIdsUnder(prisma, id);
   const sites = ids.length
     ? await prisma.site.findMany({ where: { id: { in: ids }, tenantId: tenantIdForWrite() }, select: { id: true, name: true, clientId: true, orgUnitId: true, client: { select: { name: true } } }, orderBy: { name: 'asc' } })

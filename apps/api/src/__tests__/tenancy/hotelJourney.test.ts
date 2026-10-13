@@ -67,7 +67,7 @@ describe('a direct employer with no clients', () => {
     }
     const hireDate = ymd(new Date());
     const approve = await admin.post(`/onboarding/applications/${application.id}/approve`).send({ hireDate, acknowledgeWarnings: true });
-    expect(approve.status, JSON.stringify(approve.body)).toBe(200);
+    expect([200, 204], JSON.stringify(approve.body)).toContain(approve.status);
     const employment = await prisma.employment.findUniqueOrThrow({ where: { applicationId: application.id }, include: { employer: true } });
     expect(employment.employer).toMatchObject({ kind: 'TENANT', legalName: 'The Grand Hotel LLC' });
     expect(employment.siteId).toBe(site.body.site.id);

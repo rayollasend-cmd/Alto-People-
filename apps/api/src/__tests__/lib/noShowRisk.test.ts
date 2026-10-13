@@ -54,7 +54,7 @@ async function supervisor(where: { locationId?: string; orgUnitId?: string }) {
 }
 
 const digestFor = (userId: string) =>
-  prisma.notification.findMany({ where: { recipientUserId: userId, category: 'noshow_risk' }, select: { body: true, linkUrl: true } });
+  prisma.notification.findMany({ where: { recipientUserId: userId, category: 'noshow_risk', channel: 'IN_APP' }, select: { body: true, linkUrl: true } });
 
 describe('the no-show radar for a shift with no client', () => {
   it("reaches the site's supervisors with a deep link and backups placed at that site, and nobody else", async () => {
