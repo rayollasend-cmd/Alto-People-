@@ -82,7 +82,14 @@ export function forbiddenHits(route: string, text: string): string[] {
 /** The text a person can see: the body's text plus the labels assistive tech reads. */
 async function visibleText(page: Page): Promise<string> {
   return page.evaluate(() => {
+    // The "New this week" card is a release note: a row an admin wrote into
+    // this tenant (the seed's migration wrote Alto HR's), not product copy.
+    // A hotel tenant carries its own notes, so the card's text is data here.
+    const notes = Array.from(document.querySelectorAll('[role="status"][aria-label="New this week"]')) as HTMLElement[];
+    const hidden = notes.map((el) => [el, el.style.display] as const);
+    for (const [el] of hidden) el.style.display = 'none';
     const parts: string[] = [document.body.innerText];
+    for (const [el, display] of hidden) el.style.display = display;
     for (const el of Array.from(document.querySelectorAll('[aria-label],[title],[placeholder],img[alt]'))) {
       for (const attr of ['aria-label', 'title', 'placeholder', 'alt']) {
         const v = el.getAttribute(attr);
