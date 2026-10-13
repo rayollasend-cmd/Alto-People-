@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { endEmployment } from '../lib/employment.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -285,6 +286,8 @@ separation119Router.post(
         where: { id: existing.associateId },
         data: { separatedAt: new Date() },
       });
+      // Brief 2-1b: the employment spell ends on the last day worked.
+      await endEmployment(tx, existing.associateId, existing.lastDayWorked ?? new Date());
       // Close any open site assignment as of the last day worked, so
       // location rosters and the audit packet's assignment spans reflect
       // reality. Guarded: a last day worked that precedes the start of the

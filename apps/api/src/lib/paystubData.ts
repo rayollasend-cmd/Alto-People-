@@ -1,4 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { prisma as defaultPrisma } from '../db.js';
+import { employerFor } from './employment.js';
 import { decryptString } from './crypto.js';
 import type { PaystubData, PaystubEarningLine, PaystubLine } from './paystub.js';
 
@@ -197,15 +199,15 @@ export async function buildPaystubDataFromItem(
     postTaxDeductions.push({ label: 'Post-tax deductions', current: otherPostTax, ytd: round2(ytd.postTax - ytd.rides) });
   }
 
+  // Brief 2-1b: the company block is the employer of record. A client that
+  // carries no legal facts of its own keeps its name on the stub, as before.
+  const employer = await employerFor(defaultPrisma, item.associateId, item.payrollRun.periodEnd);
+  const company =
+    employer.kind !== 'TENANT' || !client
+      ? { name: employer.legalName, addressLine1: employer.addressLine1, city: employer.city, state: employer.state, zip: employer.zip, ein: employer.ein }
+      : { name: client.legalName || client.name, addressLine1: client.addressLine1 ?? null, city: client.city ?? null, state: client.state ?? null, zip: client.zip ?? null, ein: client.ein ?? null };
   return {
-    company: {
-      name: client?.legalName || client?.name || 'Alto Etho LLC',
-      addressLine1: client?.addressLine1 ?? null,
-      city: client?.city ?? null,
-      state: client?.state ?? null,
-      zip: client?.zip ?? null,
-      ein: client?.ein ?? null,
-    },
+    company,
     associate: {
       firstName: item.associate.firstName,
       lastName: item.associate.lastName,

@@ -84,7 +84,7 @@ export async function aggregateW2Wages(
    * cross-client internal runs) scopes the boxes to wages paid under
    * that employer's EIN, so a worker paid by two clients gets two W-2s.
    */
-  employerClientId?: string | null,
+  employerClientId?: string | null | { kind: 'TENANT' | 'THIRD_PARTY' },
 ): Promise<W2Boxes> {
   const yearStart = new Date(Date.UTC(taxYear, 0, 1));
   const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
@@ -100,7 +100,13 @@ export async function aggregateW2Wages(
       payrollRun: {
         status: { not: 'CANCELLED' },
         disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-        ...(employerClientId !== undefined ? { clientId: employerClientId } : {}),
+        // Brief 2-1b: a client employer = that client's runs; the tenant's own
+        // employer = the client-less runs and the runs of clients with no employer row of their own.
+        ...(employerClientId === undefined
+          ? {}
+          : employerClientId !== null && typeof employerClientId === 'object'
+            ? { OR: [{ clientId: null }, { client: { employerOrganization: null } }] }
+            : { clientId: employerClientId }),
       },
     },
     select: {

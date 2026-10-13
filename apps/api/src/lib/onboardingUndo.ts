@@ -1,4 +1,5 @@
 import type { ApplicationStatus, Prisma } from '@prisma/client';
+import { dropEmploymentOfApplication } from './employment.js';
 import { getBrandingSync } from './branding.js';
 import type { Request } from 'express';
 import { prisma } from '../db.js';
@@ -93,6 +94,8 @@ async function closeApplication(
       inviteEmailDueAt: null,
     },
   });
+  // Brief 2-1b: the employment spell this application opened goes with it.
+  await dropEmploymentOfApplication(tx, app.id);
   const [otherLive, employed] = await Promise.all([
     tx.application.count({ where: { associateId: app.associateId, id: { not: app.id }, status: { in: LIVE }, deletedAt: null } }),
     tx.application.count({ where: { associateId: app.associateId, status: 'APPROVED', deletedAt: null } }),

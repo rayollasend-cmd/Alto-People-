@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { employerByEin, employerFor, employersForYear } from '../lib/employment.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -10,7 +11,6 @@ import { decryptString, encryptString } from '../lib/crypto.js';
 import { dispatchFinancialChange, recordFinancialChange, ssnSummary } from '../lib/financialChanges.js';
 import {
   aggregateW2Wages,
-  listEmployerClientIds,
   listW2EligibleAssociates,
   type W2Boxes,
 } from '../lib/w2Aggregator.js';
@@ -825,19 +825,10 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
     // aggregate independently (the first-run single-EIN heuristic is
     // retired). Legacy rows with a null ein still block regeneration so
     // re-running never duplicates a pre-split form.
-    const employerClientIds = await listEmployerClientIds(
-      prisma,
-      associateId,
-      input.taxYear,
-    );
-    for (const employerClientId of employerClientIds) {
-      const employer = employerClientId
-        ? await prisma.client.findUnique({
-            where: { id: employerClientId },
-            select: { ein: true },
-          })
-        : null;
-      const ein = employer?.ein ?? null;
+    // Brief 2-1b: one W-2 per employer of record in the year, from the employment record.
+    const employers = await employersForYear(prisma, associateId, input.taxYear);
+    for (const employer of employers) {
+      const ein = employer.ein ?? null;
       const existing = await prisma.taxForm.findFirst({
         where: {
           kind: 'W2',
@@ -857,7 +848,7 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
         prisma,
         associateId,
         input.taxYear,
-        employerClientId,
+        employer.kind === 'CLIENT' ? employer.clientId : { kind: employer.kind },
       );
       if (boxes.sourceItemCount === 0) continue;
 
@@ -1205,29 +1196,17 @@ async function renderW2ForForm(
     );
   }
 
-  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
-  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
   // Tier-2 � a form stamped with an EIN resolves its employer block from
   // the client carrying that EIN; legacy null-EIN forms keep the
   // first-disbursed-run heuristic.
-  const sampleItem = await prisma.payrollItem.findFirst({
-    where: {
-      associateId: form.associateId,
-      payrollRun: {
-        status: { not: 'CANCELLED' },
-        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-        ...(form.ein ? { client: { ein: form.ein } } : {}),
-      },
-    },
-    include: { payrollRun: { include: { client: true } } },
-    orderBy: { createdAt: 'asc' },
-  });
-  const client = sampleItem?.payrollRun.client ?? null;
-  if (!client?.legalName || !client.ein) {
+  // Brief 2-1b: the employer of record comes from the employment record (the EIN the
+  // form was stamped with, else the employer on the last day of the year), never from a client row.
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,
       'missing_employer_info',
-      'Cannot render W-2: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+      'Cannot render W-2: the employer of record is missing its legal name or EIN. Set them under Organization → Employers before generating tax forms.',
     );
   }
 
@@ -1390,25 +1369,14 @@ async function renderF1099NecForForm(formId: string): Promise<{
   // Pull payer (client) info from a sample disbursed item, same trick as
   // the W-2 path. Contractors might invoice multiple clients; we pick the
   // one tied to the chronologically-first disbursed item in the year.
-  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
-  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
-  const sampleItem = await prisma.payrollItem.findFirst({
-    where: {
-      associateId: form.associateId,
-      payrollRun: {
-        status: { not: 'CANCELLED' },
-        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-      },
-    },
-    include: { payrollRun: { include: { client: true } } },
-    orderBy: { createdAt: 'asc' },
-  });
-  const client = sampleItem?.payrollRun.client ?? null;
-  if (!client?.legalName || !client.ein) {
+  // Brief 2-1b: the employer of record comes from the employment record (the EIN the
+  // form was stamped with, else the employer on the last day of the year), never from a client row.
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,
       'missing_payer_info',
-      'Cannot render 1099-NEC: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+      'Cannot render 1099-NEC: the employer of record is missing its legal name or EIN. Set them under Organization → Employers before generating tax forms.',
     );
   }
 
@@ -1487,25 +1455,14 @@ async function renderF1099MiscForForm(formId: string): Promise<{
     );
   }
 
-  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
-  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
-  const sampleItem = await prisma.payrollItem.findFirst({
-    where: {
-      associateId: form.associateId,
-      payrollRun: {
-        status: { not: 'CANCELLED' },
-        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-      },
-    },
-    include: { payrollRun: { include: { client: true } } },
-    orderBy: { createdAt: 'asc' },
-  });
-  const client = sampleItem?.payrollRun.client ?? null;
-  if (!client?.legalName || !client.ein) {
+  // Brief 2-1b: the employer of record comes from the employment record (the EIN the
+  // form was stamped with, else the employer on the last day of the year), never from a client row.
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,
       'missing_payer_info',
-      'Cannot render 1099-MISC: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+      'Cannot render 1099-MISC: the employer of record is missing its legal name or EIN. Set them under Organization → Employers before generating tax forms.',
     );
   }
 

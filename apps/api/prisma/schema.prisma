@@ -680,56 +680,58 @@ model User {
 }
 
 model Client {
-  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId             String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  tenantId             String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name                 String
   industry             String?
-  status               ClientStatus @default(ACTIVE)
+  status               ClientStatus          @default(ACTIVE)
   contactEmail         String?
   // This client's scheduling week start, 0=Sunday … 6=Saturday. Some
   // clients run Sun–Sat weeks, others Wed–Tue; drives the associate
   // week-ahead digest (sent the evening before this day) and future
   // per-client week math.
-  weekStartsOn         Int          @default(0)
+  weekStartsOn         Int                   @default(0)
   // Tier-2 — this employer's actual SUTA experience rate + wage base
   // from the state agency's annual notice. Null = the new-employer
   // defaults baked into the engine's per-state table.
-  sutaRateOverride     Decimal?     @db.Decimal(6, 5)
-  sutaWageBaseOverride Decimal?     @db.Decimal(12, 2)
+  sutaRateOverride     Decimal?              @db.Decimal(6, 5)
+  sutaWageBaseOverride Decimal?              @db.Decimal(12, 2)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
   // formatted as "XX-XXXXXXX". HR fills these in before generating W-2s.
-  legalName            String?      @db.VarChar(255)
-  ein                  String?      @db.VarChar(20)
+  legalName            String?               @db.VarChar(255)
+  ein                  String?               @db.VarChar(20)
   // Gap 1 — Employer address used on tax forms. `state` already lives
   // below as the work-site code; reused for the W-2 employer block too.
-  addressLine1         String?      @db.VarChar(255)
-  addressLine2         String?      @db.VarChar(255)
-  city                 String?      @db.VarChar(120)
-  zip                  String?      @db.VarChar(10)
+  addressLine1         String?               @db.VarChar(255)
+  addressLine2         String?               @db.VarChar(255)
+  city                 String?               @db.VarChar(120)
+  zip                  String?               @db.VarChar(10)
   // Verbatim SAP Fieldglass "Site" label for this client engagement (e.g.
   // "1 - Onsite - FL - Destin"), rendered on the Timesheets export so the
   // Site column matches Fieldglass character-for-character. Null = fall back
   // to the worksite/client name.
-  fieldglassSiteName   String?      @db.VarChar(255)
+  fieldglassSiteName   String?               @db.VarChar(255)
   // Fieldglass bill rate ($/hr) for this SOW — the client-billed "Rate" on
   // the Fieldglass timesheet accounting block (Amount = rate × hours). Not
   // the associate pay rate. Null = accounting Amount can't be computed.
-  fieldglassBillRate   Decimal?     @db.Decimal(8, 2)
+  fieldglassBillRate   Decimal?              @db.Decimal(8, 2)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
-  state                String?      @db.VarChar(2)
+  state                String?               @db.VarChar(2)
   // Phase 131 — geofence moved to Location. Each physical site has its
   // own coordinates and radius; lookups read Location.geofence with a
   // "first active Location under this client" fallback for associates
   // who haven't been placed at a Location yet.
-  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?    @db.Timestamptz(6)
+  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?             @db.Timestamptz(6)
+  /// Brief 2-1b: the employer-of-record row that carries this client's legal facts, when it is one.
+  employerOrganization EmployerOrganization?
 
   applications            Application[]
   petitionPrograms        Program[]                 @relation("PetitionClient")
@@ -857,6 +859,7 @@ model Location {
   deletedAt            DateTime? @db.Timestamptz(6)
 
   client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  employments            Employment[]            @relation("EmploymentSite")
   assignments            AssociateAssignment[]
   applications           Application[]
   shifts                 Shift[]
@@ -1901,6 +1904,7 @@ model Associate {
   ridePlaces               RidePlace[]
   emergencyCheckIns        EmergencyCheckIn[]
   rideConsent              RideConsent?
+  employments              Employment[]
   whatsAppConsent          WhatsAppConsent?
   whatsAppMessages         WhatsAppMessage[]
   assignedShifts           Shift[]
@@ -2103,6 +2107,7 @@ model Application {
   cohortId             String?              @db.Uuid
   associate            Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client               Client?              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  employment           Employment?
   location             Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   cohort               Cohort?              @relation(fields: [cohortId], references: [id], onDelete: SetNull)
   checklist            OnboardingChecklist?
@@ -10022,6 +10027,68 @@ enum BusinessModel {
   WORKFORCE_PROVIDER
   MANAGED_PROGRAM
   HYBRID
+}
+
+/// Brief 2-1b, step 4: who legally employs a person. The tenant itself,
+/// a client whose legal facts moved here, or a third-party employer of
+/// record. The W-2/1099 employer comes from the Employment record's
+/// employer, never from a Client row (the owner's decision 3).
+enum EmployerKind {
+  TENANT
+  CLIENT
+  THIRD_PARTY
+}
+
+model EmployerOrganization {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  kind                 EmployerKind
+  legalName            String       @db.VarChar(255)
+  ein                  String?      @db.VarChar(20)
+  addressLine1         String?      @db.VarChar(255)
+  addressLine2         String?      @db.VarChar(255)
+  city                 String?      @db.VarChar(120)
+  state                String?      @db.VarChar(2)
+  zip                  String?      @db.VarChar(10)
+  sutaRateOverride     Decimal?     @db.Decimal(6, 5)
+  sutaWageBaseOverride Decimal?     @db.Decimal(12, 2)
+  /// When kind = CLIENT: the Client whose facts this row carries.
+  clientId             String?      @unique @db.Uuid
+  /// The tenant's own row: the employer when nothing else says otherwise.
+  isDefault            Boolean      @default(false)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
+
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  employments Employment[]
+
+  @@index([tenantId, isDefault])
+}
+
+/// One employment spell: this person, employed by this organization, from
+/// hireDate to endDate. Opened at approval, ended at separation.
+model Employment {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId    String         @db.Uuid
+  employerOrgId  String         @db.Uuid
+  employmentType EmploymentType @default(W2_EMPLOYEE)
+  hireDate       DateTime       @db.Date
+  endDate        DateTime?      @db.Date
+  /// The approved application that opened the spell, when one did.
+  applicationId  String?        @unique @db.Uuid
+  siteId         String?        @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+
+  associate   Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  employer    EmployerOrganization @relation(fields: [employerOrgId], references: [id], onDelete: Restrict)
+  application Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  site        Location?            @relation("EmploymentSite", fields: [siteId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, endDate])
+  @@index([employerOrgId])
+  @@index([tenantId])
 }
 
 model Tenant {

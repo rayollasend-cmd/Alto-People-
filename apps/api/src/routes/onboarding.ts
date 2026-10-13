@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { openEmployment } from '../lib/employment.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
@@ -1148,6 +1149,8 @@ async function approveOneApplication(
       where: { id: app.associateId },
       data: { hireDate: hireDateValue },
     });
+    // Brief 2-1b: the employment spell — who employs them from this day.
+    await openEmployment(tx, { associateId: app.associateId, applicationId: app.id, clientId: app.clientId, siteId: storeId, hireDate: hireDateValue });
     // Activate the associate's User (if one exists). tokenVersion bump
     // invalidates any pre-hire invite session so they must sign in via
     // the now-activated account.
