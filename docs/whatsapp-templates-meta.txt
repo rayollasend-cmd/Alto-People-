@@ -1,0 +1,51 @@
+alto_notice_v2  [UTILITY]  params: {{1}}=subject, {{2}}=message, {{3}}=orgName
+  en_US {{1}} /  / {{2}} /  / Open the {{3}} app for details. Reply STOP to leave WhatsApp updates.
+  es    {{1}} /  / {{2}} /  / Abre la app de {{3}} para ver los detalles. Responde BAJA para dejar de recibir avisos por WhatsApp.
+  tr    {{1}} /  / {{2}} /  / Ayrıntılar için {{3}} uygulamasını aç. WhatsApp bildirimlerini bırakmak için DUR yaz.
+
+alto_shift_assigned_v2  [UTILITY]  params: {{1}}=position, {{2}}=store, {{3}}=when, {{4}}=orgName
+  en_US New shift: {{1}} at {{2}}, {{3}}. Tap "I'll be there" in the {{4}} app to confirm.
+  es    Nuevo turno: {{1}} en {{2}}, {{3}}. Toca "Ahí estaré" en la app de {{4}} para confirmar.
+  tr    Yeni vardiya: {{1}}, {{2}}, {{3}}. Onaylamak için {{4}} uygulamasında "Orada olacağım"a dokun.
+
+alto_shift_changed_v2  [UTILITY]  params: {{1}}=position, {{2}}=store, {{3}}=when, {{4}}=orgName
+  en_US Schedule change: {{1}} at {{2}} is now {{3}}. Check the {{4}} app.
+  es    Cambio de horario: {{1}} en {{2}} ahora es {{3}}. Revisa la app de {{4}}.
+  tr    Program değişikliği: {{1}}, {{2}} artık {{3}}. {{4}} uygulamasına bak.
+
+alto_shift_cancelled  [UTILITY]  params: {{1}}=position, {{2}}=store, {{3}}=when
+  en_US Cancelled: {{1}} at {{2}}, {{3}}. You do not need to come in for it.
+  es    Cancelado: {{1}} en {{2}}, {{3}}. No necesitas presentarte para ese turno.
+  tr    İptal: {{1}}, {{2}}, {{3}}. Bu vardiya için gelmen gerekmiyor.
+
+alto_shift_reminder  [UTILITY]  params: {{1}}=position, {{2}}=store, {{3}}=when
+  en_US Reminder: {{1}} at {{2}} tomorrow, {{3}}. Reply RIDE if you need a van.
+  es    Recordatorio: {{1}} en {{2}} mañana, {{3}}. Responde VIAJE si necesitas una van.
+  tr    Hatırlatma: yarın {{1}}, {{2}}, {{3}}. Minibüs gerekiyorsa SERVİS yaz.
+
+alto_shift_reminder_plain  [UTILITY]  params: {{1}}=position, {{2}}=site, {{3}}=when
+  en_US Reminder: {{1}} at {{2}} tomorrow, {{3}}.
+  es    Recordatorio: {{1}} en {{2}} mañana, {{3}}.
+  tr    Hatırlatma: yarın {{1}}, {{2}}, {{3}}.
+
+alto_ride_pickup  [UTILITY]  params: {{1}}=van, {{2}}=pickup time and place
+  en_US Your van: {{1}}. Pickup {{2}}. Be outside a few minutes early.
+  es    Tu van: {{1}}. Recogida {{2}}. Sal unos minutos antes.
+  tr    Minibüsün: {{1}}. Alış {{2}}. Birkaç dakika erken dışarıda ol.
+
+alto_ride_near  [UTILITY]  params: {{1}}=van, {{2}}=minutes
+  en_US {{1}} is about {{2}} minutes away. Please be ready.
+  es    {{1}} está a unos {{2}} minutos. Prepárate.
+  tr    {{1}} yaklaşık {{2}} dakika uzakta. Lütfen hazır ol.
+
+alto_payday_v2  [UTILITY]  params: {{1}}=pay date, {{2}}=period, {{3}}=orgName
+  en_US Payday: {{1}}, for {{2}}. Your paystub is in the {{3}} app under Pay.
+  es    Día de pago: {{1}}, por {{2}}. Tu recibo está en la app de {{3}}, en Pago.
+  tr    Maaş günü: {{1}}, {{2}} dönemi için. Bordron {{3}} uygulamasında Maaş altında.
+
+alto_emergency  [UTILITY]  params: {{1}}=title, {{2}}=message
+  en_US EMERGENCY — {{1}} /  / {{2}}
+  es    EMERGENCIA — {{1}} /  / {{2}}
+  tr    ACİL DURUM — {{1}} /  / {{2}}
+
+10 templates, 30 language versions. Submit each in WhatsApp Manager under the name shown; approval takes days.
