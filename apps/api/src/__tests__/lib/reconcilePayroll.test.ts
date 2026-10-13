@@ -155,6 +155,37 @@ describe('the self-check', () => {
     const overview = await a.get('/headcount/overview');
     expect(overview.body.reconciliation).toMatchObject({ payrollProvided: true, varianceLines: 0 });
   });
+
+  it('Brief 2-1b: a direct employer with no clients reconciles too — client-less time at a site, zero variance', async () => {
+    // A property with no client, one team member placed there, approved hours with no client on them.
+    const site = await prisma.site.create({ data: { name: 'The Grand Hotel', clientId: null, type: 'PROPERTY', timezone: 'America/Chicago' } });
+    const tess = await createAssociate({ firstName: 'Tess', lastName: 'Member', email: 'tess@example.com' });
+    await prisma.associateAssignment.create({ data: { associateId: tess.id, locationId: site.id, startedAt: new Date('2026-05-01') } });
+    await prisma.compensationRecord.create({ data: { associateId: tess.id, payType: 'HOURLY', amount: 17, currency: 'USD', reason: 'HIRE', effectiveFrom: new Date('2026-05-01T00:00:00Z') } });
+    for (const day of ['2026-09-28', '2026-09-29']) {
+      await prisma.timeEntry.create({
+        data: { associateId: tess.id, clientId: null, locationId: site.id, clockInAt: new Date(`${day}T13:00:00.000Z`), clockOutAt: new Date(`${day}T21:00:00.000Z`), status: 'APPROVED' },
+      });
+    }
+
+    const platform = await platformSide(prisma, { start: START, end: END }, NOW);
+    const row = platform.rows.find((r) => r.associateId === tess.id);
+    expect(row, 'the client-less hours are on the platform side').toBeTruthy();
+    expect(row!.hours).toBe(16);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(agent(), hr.email);
+    const run = await a.post('/payroll/runs').send({ periodStart: START, periodEnd: END });
+    expect(run.status, JSON.stringify(run.body)).toBe(201);
+    await prisma.payrollRun.update({ where: { id: run.body.id }, data: { status: 'FINALIZED' } });
+
+    const { result } = await runReconciliation(prisma, { start: START, end: END, now: NOW, selfCheck: true });
+    expect(result.payrollProvided).toBe(true);
+    expect(result.variances).toEqual([]);
+    expect(result.totals.hours.variance).toBe(0);
+    expect(result.totals.gross.variance).toBe(0);
+    expect(result.totals.headcount.variance).toBe(0);
+  });
 });
 
 describe('the inventory', () => {
