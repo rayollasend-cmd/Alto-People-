@@ -49,10 +49,37 @@ export function runWithTenant<T>(tenantId: string, source: TenantSource, fn: () 
   return storage.run({ tenantId, source, platform: false }, fn);
 }
 
-/** Jobs and scripts that must see every tenant run here; the extension (step two) logs each use. */
+type PlatformScopeHook = (ctx: TenantContext, callSite: string) => void;
+const platformScopeHooks: PlatformScopeHook[] = [];
+
+/** Step two: what to do each time the platform scope opens (the boot registers the audit line). */
+export function onPlatformScope(hook: PlatformScopeHook): void {
+  platformScopeHooks.push(hook);
+}
+
+function callerOf(stack: string | undefined): string {
+  for (const raw of (stack ?? '').split('\n').slice(2)) {
+    const line = raw.trim();
+    if (!line.startsWith('at ') || /tenant\.ts|node_modules|node:internal/.test(line)) continue;
+    const m = /\(?((?:file:\/\/\/)?[^()]+?):(\d+):\d+\)?$/.exec(line);
+    if (m) return `${m[1]!.replace(/^file:\/\/\//, '')}:${m[2]}`;
+  }
+  return 'unknown';
+}
+
+/** Jobs and scripts that must see every tenant run here; every use is on the record (onPlatformScope). */
 export function withPlatformScope<T>(fn: () => Promise<T> | T): Promise<T> | T {
   const current = storage.getStore();
-  return storage.run({ tenantId: current?.tenantId ?? ALTO_TENANT_ID, source: 'platform', platform: true }, fn);
+  const ctx: TenantContext = { tenantId: current?.tenantId ?? ALTO_TENANT_ID, source: 'platform', platform: true };
+  const callSite = callerOf(new Error().stack);
+  for (const hook of platformScopeHooks) {
+    try {
+      hook(ctx, callSite);
+    } catch (err) {
+      console.error('[tenancy] platform scope hook failed:', err);
+    }
+  }
+  return storage.run(ctx, fn);
 }
 
 /**

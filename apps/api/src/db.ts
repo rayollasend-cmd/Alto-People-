@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { guardTenantQuery } from './lib/tenantGuard.js';
 
 // Singleton across `tsx watch` reloads — without this, dev mode opens a new
 // Prisma connection pool on every file change and exhausts Postgres slots.
@@ -66,6 +67,8 @@ function makeClient(): PrismaClient {
         },
       },
       $allOperations: async ({ args, query, model, operation }) => {
+        // Brief 2-1, step two: the tenant wall in observe mode (lib/tenantGuard).
+        args = guardTenantQuery(model, operation, args) as typeof args;
         const delays = [0, 800, 2000];
         let lastErr: unknown;
         for (let i = 0; i < delays.length; i++) {

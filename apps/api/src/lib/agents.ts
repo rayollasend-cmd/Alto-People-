@@ -64,6 +64,8 @@ export interface AgentContext {
   scopes: AgentScope[];
   credentialId: string;
   rateLimitPerMinute: number;
+  /** Brief 2-1: the tenant the agent belongs to (its profile row). */
+  tenantId: string | null;
 }
 
 export type AgentDenial = {
@@ -556,7 +558,7 @@ export async function authenticateAgent(db: Db, presented: string, now: Date = n
   ]).catch(() => {});
   return {
     ok: true,
-    agent: { workerId, name: w.name, ownerUserId: w.ownerUserId, status: w.status, scopes: c.agent.scopes as AgentScope[], credentialId: c.id, rateLimitPerMinute: c.agent.rateLimitPerMinute },
+    agent: { workerId, name: w.name, ownerUserId: w.ownerUserId, status: w.status, scopes: c.agent.scopes as AgentScope[], credentialId: c.id, rateLimitPerMinute: c.agent.rateLimitPerMinute, tenantId: c.agent.tenantId ?? null },
   };
 }
 

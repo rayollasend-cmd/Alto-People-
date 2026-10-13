@@ -50,6 +50,8 @@ import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
+import { onPlatformScope } from './lib/tenant.js';
+import { enqueueAudit } from './lib/audit.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
@@ -146,6 +148,13 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startAgentDriftCron();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
+  // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.
+  onPlatformScope((ctx, callSite) => {
+    enqueueAudit(
+      { actorUserId: null, clientId: null, action: 'platform.scope_opened', entityType: 'Tenant', entityId: ctx.tenantId, metadata: { callSite } },
+      'tenancy',
+    );
+  });
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

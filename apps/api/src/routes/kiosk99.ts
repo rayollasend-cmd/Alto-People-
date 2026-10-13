@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -1436,6 +1437,22 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
 });
 
 // ----- Public: kiosk punch ----------------------------------------------
+
+/**
+ * Brief 2-1, step two: a request that carries a device token runs as the
+ * device's tenant. The handlers below resolve the device again for the
+ * real work; this only sets the context.
+ */
+kiosk99Router.use(async function kioskTenantResolver(req, _res, next) {
+  const token = (req.body as { deviceToken?: unknown } | undefined)?.deviceToken;
+  if (typeof token !== 'string' || token.length < 10) return next();
+  try {
+    const device = await prisma.kioskDevice.findFirst({ where: { tokenHash: hashDeviceToken(token) }, select: { tenantId: true } });
+    runWithTenant(device?.tenantId ?? ALTO_TENANT_ID, 'kiosk', () => next());
+  } catch (err) {
+    next(err);
+  }
+});
 
 const PunchInputSchema = z.object({
   deviceToken: z.string().min(10),

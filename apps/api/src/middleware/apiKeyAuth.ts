@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
 import type { Capability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { verifyPassword } from '../lib/passwords.js';
@@ -83,6 +84,7 @@ export function requireApiKey(opts: PerformOpts) {
           capabilities: true,
           keyHash: true,
           name: true,
+          tenantId: true,
         },
       });
 
@@ -117,7 +119,8 @@ export function requireApiKey(opts: PerformOpts) {
         })
         .catch(() => {});
 
-      next();
+      // Brief 2-1, step two: the key's tenant is the request's tenant.
+      runWithTenant(matched.tenantId ?? ALTO_TENANT_ID, 'api-key', () => next());
     } catch (err) {
       next(err);
     }

@@ -404,6 +404,8 @@ const EnvSchema = z.object({
   // scripts/migrate-blobs-to-s3.ts BEFORE flipping this to `s3` on an
   // existing deployment. See apps/api/STORAGE.md.
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  /** Brief 2-1, step two: the tenant wall. observe records, enforce throws, off disables the hook. */
+  TENANCY_MODE: z.enum(['off', 'observe', 'enforce']).default('observe'),
   // Required when STORAGE_DRIVER=s3 (fail-loud guard below); ignored for
   // local. ENDPOINT only for non-AWS providers. Credentials are optional —
   // when unset, the SDK default provider chain (IAM role / env) applies;

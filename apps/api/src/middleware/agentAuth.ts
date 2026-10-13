@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
 import type { AgentScope } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { enqueueAudit } from '../lib/audit.js';
@@ -72,7 +73,8 @@ function guard(scopes: AgentScope[], opts: { allowOnboarding?: boolean }) {
         return;
       }
       req.agent = auth.agent;
-      next();
+      // Brief 2-1, step two: the agent's tenant is the request's tenant.
+      runWithTenant(auth.agent.tenantId ?? ALTO_TENANT_ID, 'agent', () => next());
     } catch (err) {
       next(err);
     }

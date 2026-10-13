@@ -128,6 +128,7 @@ import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
 import { transportRouter } from './routes/transport.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
+import { tenancyRouter } from './routes/tenancy.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
 import { attachUser, requireAuth, requireCapability } from './middleware/auth.js';
@@ -616,6 +617,7 @@ export function createApp() {
   // view:hr-admin; the logo GET is open so any signed-in chrome can
   // render it (and so HTML emails — which are public — can fetch it).
   app.use('/', orgSettingsRouter);
+  app.use('/', tenancyRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
