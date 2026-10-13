@@ -176,3 +176,7 @@ Payloads carry the §5.3 public shape, never internal rows. Existing event names
 | 2-4: the OpenAPI spec validates and matches every live endpoint | the validator test and the `listRoutes()` ↔ spec test, both directions |
 | 2-7: an external agent connects, reads a week, proposes a fill that lands in the queue, is refused after revocation | the sample agent script and its CI twin |
 | 2-7: every tool call on the trail with the scope and the approval | an AuditLog assertion per tool call in the same test |
+
+## Owner approval
+
+**Approved 2026-10-13: every decision in this report, as recommended.** Building proceeds step by step in the order of the plan; each step lands with its tests and is reported before the next.

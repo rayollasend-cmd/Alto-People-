@@ -158,3 +158,7 @@ About 5 weeks. Steps 0–4 change nothing for Alto HR's pay by construction; ste
 | Alto HR's current pay results reproduced exactly under the Florida pack | Golden test (§6.2) green in CI and the signed dry run over the last closed periods with zero differences (§6.3) |
 | A California test week produces the expected daily-OT and meal-penalty outcomes | Fixed-week test in step 5: a week with a 10-hour day, a 13-hour day, a seventh consecutive day and a late meal, expected buckets and premiums written in the test with each reason line, values confirmed by counsel |
 | Changing a rule for one tenant does not affect another | Step 6 test: T2's weekly threshold changed, Alto's pay for the same fixtures unchanged, and the cross-tenant suite covers the Rules routes |
+
+## Owner approval
+
+**Approved 2026-10-13: every decision in this report, as recommended.** Building proceeds step by step in the order of the plan; each step lands with its tests and is reported before the next.

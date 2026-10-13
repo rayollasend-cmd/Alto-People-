@@ -167,3 +167,7 @@ The Agents page gains a **Gates** tab: one table of the tenant's policies, each 
 | An invoice is generated from usage and matches the worker counts | Steps 4 and 6: a seeded month of snapshots gives a `BillingInvoice` (and a Stripe test invoice) whose quantities equal the distinct active PERSON, AGENT and ROBOT counts recomputed from `activeDefinition.ts` |
 
 Sources opened 2026-10-13: [NYC DCWP AEDT page](https://www.nyc.gov/site/dca/about/automated-employment-decision-tools.page); [DCWP AEDT FAQ (2023-06-29)](https://www.nyc.gov/assets/dca/downloads/pdf/about/DCWP-AEDT-FAQ.pdf); [Colorado SB25B-004](https://leg.colorado.gov/bills/sb25b-004); [Colorado SB26-189](https://leg.colorado.gov/bills/sb26-189).
+
+## Owner approval
+
+**Approved 2026-10-13: every decision in this report, as recommended.** Building proceeds step by step in the order of the plan; each step lands with its tests and is reported before the next.

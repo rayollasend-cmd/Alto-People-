@@ -141,3 +141,7 @@ About four weeks. Steps 1 and 2 can start at once; step 3 depends on step 2; ste
 ## 9. Sources in the repo
 
 `apps/api/src/lib/crypto.ts`, `src/lib/mfaCrypto.ts`, `src/lib/kioskAuth.ts`, `src/lib/financialChanges.ts`, `src/routes/pulseSurveys109.ts`, `src/routes/kiosk99.ts:483`, `scripts/audit-encryption-key.ts`, `src/lib/accessCleanup.ts`, `scripts/access-report.ts`, `src/lib/uploadsBackup.ts`, `apps/api/BACKUPS.md`, `src/lib/blobStore.ts`, `src/app.ts`, `src/routes/auth.ts`, `src/middleware/rateLimit.ts`, `src/lib/audit.ts`, `src/routes/users.ts`, `prisma/migrations/20261107090000_agent_registry/migration.sql`, `src/lib/reliability.ts`, `.github/workflows/ci.yml`, `railway.json`, `docs/access-cleanup-1a4.md`.
+
+## Owner approval
+
+**Approved 2026-10-13: every decision in this report, as recommended.** Building proceeds step by step in the order of the plan; each step lands with its tests and is reported before the next.

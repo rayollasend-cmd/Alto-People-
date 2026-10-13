@@ -125,3 +125,7 @@ Run as one test against a fresh tenant; each must produce exactly the expected r
 |---|---|
 | A user provisioned from Okta signs in by SSO, holds the mapped role, is deactivated by SCIM within one minute | Step 5 run against an Okta dev org (owner provides): SCIM POST with a group → mapped tenant role; OIDC (and SAML) sign-in; SCIM DELETE → `tokenVersion` bump; a test asserts the next request is 401 and the 30 s cache bound. An automated twin in CI uses a local fake IdP (signed JWTs/assertions) and the SCIM routes. |
 | The audit log captures a scripted set of 20 actions completely and cannot be altered | §7 as one CI test from step 1 (rows present) and step 4 (masked before/after, chain intact, UPDATE/DELETE/TRUNCATE refused, a forged edit detected by the verifier). |
+
+## Owner approval
+
+**Approved 2026-10-13: every decision in this report, as recommended.** Building proceeds step by step in the order of the plan; each step lands with its tests and is reported before the next.
