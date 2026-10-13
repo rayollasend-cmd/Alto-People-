@@ -43,6 +43,11 @@ export const EMPLOYED_WHERE = {
 export interface ActiveScope {
   locationId?: string | null;
   clientId?: string | null;
+  /**
+   * Brief 2-1: count only this tenant's people. Omitted, every tenant
+   * counts (today's behaviour, and every existing row is Alto HR's).
+   */
+  tenantId?: string | null;
 }
 
 export interface ActiveDefinitionOptions extends ActiveScope {
@@ -70,6 +75,16 @@ async function clientOfLocation(db: Db, locationId: string): Promise<string | nu
 }
 
 /**
+ * Brief 2-1b: a site scope needs to know whether the site exists at all
+ * (unknown → nobody) apart from whether it has a client (a direct
+ * employer's property has none, and is scoped to the site alone).
+ */
+async function siteScope(db: Db, locationId: string): Promise<{ exists: boolean; clientId: string | null }> {
+  const loc = await db.site.findUnique({ where: { id: locationId }, select: { clientId: true } });
+  return { exists: !!loc, clientId: loc?.clientId ?? null };
+}
+
+/**
  * Where each employed associate is placed, in scope. The open assignment
  * wins; an approved application places only someone with no open
  * assignment anywhere (a transfer moves the assignment, the application
@@ -77,14 +92,17 @@ async function clientOfLocation(db: Db, locationId: string): Promise<string | nu
  */
 export async function placements(scope: ActiveScope = {}, db: Db = defaultPrisma): Promise<Map<string, Placement>> {
   const out = new Map<string, Placement>();
-  const scopeClientId = scope.clientId ?? (scope.locationId ? await clientOfLocation(db, scope.locationId) : null);
-  if (scope.locationId && !scopeClientId) return out;
+  const site = scope.locationId ? await siteScope(db, scope.locationId) : null;
+  if (site && !site.exists) return out;
+  const scopeClientId = scope.clientId ?? site?.clientId ?? null;
+  // A client-less site (a direct employer's property): the site alone, never the client-wide fallbacks.
+  const siteOnly = !!scope.locationId && !scopeClientId;
 
   const assigned = await db.associateAssignment.findMany({
     where: {
       endedAt: null,
       ...(scope.locationId ? { locationId: scope.locationId } : scopeClientId ? { location: { clientId: scopeClientId } } : {}),
-      associate: EMPLOYED_WHERE,
+      associate: { ...EMPLOYED_WHERE, ...(scope.tenantId ? { tenantId: scope.tenantId } : {}) },
     },
     select: { associateId: true, locationId: true, location: { select: { clientId: true } } },
     orderBy: { startedAt: 'desc' },
@@ -98,8 +116,8 @@ export async function placements(scope: ActiveScope = {}, db: Db = defaultPrisma
       status: 'APPROVED',
       deletedAt: null,
       ...(scopeClientId ? { clientId: scopeClientId } : {}),
-      ...(scope.locationId ? { OR: [{ locationId: scope.locationId }, { locationId: null }] } : {}),
-      associate: { ...EMPLOYED_WHERE, assignments: { none: { endedAt: null } } },
+      ...(siteOnly ? { locationId: scope.locationId! } : scope.locationId ? { OR: [{ locationId: scope.locationId }, { locationId: null }] } : {}),
+      associate: { ...EMPLOYED_WHERE, assignments: { none: { endedAt: null } }, ...(scope.tenantId ? { tenantId: scope.tenantId } : {}) },
     },
     select: { associateId: true, clientId: true, locationId: true },
     orderBy: { approvedAt: 'desc' },
@@ -116,7 +134,10 @@ async function workedOrScheduled(ids: string[], scope: ActiveScope, since: Date,
   if (ids.length === 0) return out;
   const scopeClientId = scope.clientId ?? (scope.locationId ? await clientOfLocation(db, scope.locationId) : null);
   // A kiosk punch may carry no location; under a site scope it counts when the client matches.
-  const entryScope: Prisma.TimeEntryWhereInput = scope.locationId
+  // A client-less site counts only punches at the site: a punch with neither location nor client is not this site's.
+  const entryScope: Prisma.TimeEntryWhereInput = scope.locationId && !scopeClientId
+    ? { locationId: scope.locationId }
+    : scope.locationId
     ? { OR: [{ locationId: scope.locationId }, { locationId: null, clientId: scopeClientId }] }
     : scopeClientId
       ? { clientId: scopeClientId }
@@ -170,9 +191,9 @@ export interface ActiveBreakdown {
  * belongs, the per-site view (activeAssociateIds with a scope) says where
  * they worked.
  */
-export async function activeBreakdown(now: Date = new Date(), db: Db = defaultPrisma, windowDays?: number): Promise<ActiveBreakdown> {
+export async function activeBreakdown(now: Date = new Date(), db: Db = defaultPrisma, windowDays?: number, opts: { tenantId?: string | null } = {}): Promise<ActiveBreakdown> {
   const days = windowDays ?? (await activeWindowDays(db));
-  const placed = await placements({}, db);
+  const placed = await placements(opts.tenantId ? { tenantId: opts.tenantId } : {}, db);
   const since = new Date(now.getTime() - days * DAY_MS);
   const ids = await workedOrScheduled([...placed.keys()], {}, since, now, db);
   const byClient = new Map<string, number>();

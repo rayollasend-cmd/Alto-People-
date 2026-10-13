@@ -129,6 +129,36 @@ describe('the rule', () => {
     expect(breakdown.byClient.get(w.coastal.id)).toBe(2);
     expect(breakdown.byLocation.get(w.siteA.id)).toBe(2);
   });
+
+  it('Brief 2-1b: a client-less site counts the people placed and working there, and none of the client-wide fallbacks', async () => {
+    const hotel = await prisma.site.create({ data: { name: 'The Grand Hotel', clientId: null, type: 'PROPERTY' } });
+    const inn = await prisma.site.create({ data: { name: 'The Other Inn', clientId: null, type: 'PROPERTY' } });
+    const punchAt = (associateId: string, locationId: string | null) =>
+      prisma.timeEntry.create({ data: { associateId, clientId: null, locationId, clockInAt: new Date(NOW.getTime() - DAY), clockOutAt: new Date(NOW.getTime() - DAY + 8 * 3_600_000), status: 'APPROVED' } });
+
+    // Tess: placed at the hotel, worked there.
+    const tess = await createAssociate({ firstName: 'Tess', lastName: 'Member' });
+    await prisma.associateAssignment.create({ data: { associateId: tess.id, locationId: hotel.id, startedAt: new Date('2026-05-01') } });
+    await punchAt(tess.id, hotel.id);
+    // Omar: hired by an application that names the hotel, no assignment yet, scheduled there.
+    const omar = await createAssociate({ firstName: 'Omar', lastName: 'New' });
+    await prisma.application.create({ data: { associateId: omar.id, clientId: null, locationId: hotel.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: NOW } });
+    await prisma.shift.create({ data: { clientId: null, locationId: hotel.id, position: 'Housekeeper', startsAt: new Date(NOW.getTime() + 2 * DAY), endsAt: new Date(NOW.getTime() + 2 * DAY + 8 * 3_600_000), status: 'ASSIGNED', assignedAssociateId: omar.id, publishedAt: NOW } });
+    // Nia: an application with no site at all, and a punch with neither site nor client — not the hotel's.
+    const nia = await createAssociate({ firstName: 'Nia', lastName: 'Nowhere' });
+    await prisma.application.create({ data: { associateId: nia.id, clientId: null, locationId: null, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: NOW } });
+    await punchAt(nia.id, null);
+    // Ivy: placed at the other inn, worked there.
+    const ivy = await createAssociate({ firstName: 'Ivy', lastName: 'Elsewhere' });
+    await prisma.associateAssignment.create({ data: { associateId: ivy.id, locationId: inn.id, startedAt: new Date('2026-05-01') } });
+    await punchAt(ivy.id, inn.id);
+
+    expect([...(await activeAssociateIds({ locationId: hotel.id }, NOW))].sort()).toEqual([tess.id, omar.id].sort());
+    expect([...(await activeAssociateIds({ locationId: inn.id }, NOW))]).toEqual([ivy.id]);
+    // An unknown site is nobody.
+    expect([...(await activeAssociateIds({ locationId: '00000000-0000-4000-8000-0000000000ff' }, NOW))]).toEqual([]);
+    expect(await activeHeadcount({ locationId: hotel.id }, NOW)).toBe(2);
+  });
 });
 
 describe('the surfaces read it', () => {
