@@ -41,6 +41,25 @@ export async function placedClientIds(associateId: string, db: Db = prisma): Pro
   return [...new Set([...apps.map((a) => a.clientId), ...assignments.map((a) => a.location.clientId)].filter((id): id is string => id !== null))];
 }
 
+/**
+ * Sites where the associate is placed with no client in between (a direct
+ * employer's properties): the open assignment's site, or — for someone with
+ * no open assignment anywhere — an approved application's site. The same
+ * rule as lib/scope.placedAtSite, read from the associate's side.
+ */
+export async function placedSiteIds(associateId: string, db: Db = prisma): Promise<string[]> {
+  const assignments = await db.associateAssignment.findMany({
+    where: { associateId, endedAt: null },
+    select: { locationId: true },
+  });
+  if (assignments.length > 0) return [...new Set(assignments.map((a) => a.locationId))];
+  const apps = await db.application.findMany({
+    where: { associateId, status: 'APPROVED', deletedAt: null, locationId: { not: null } },
+    select: { locationId: true },
+  });
+  return [...new Set(apps.map((a) => a.locationId).filter((id): id is string => id !== null))];
+}
+
 /** "YYYY-MM-DD" of an instant in `tz` — shifts vs day-granular records. */
 function dayKeyInZone(d: Date, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
@@ -63,16 +82,23 @@ export async function eligibleOpenShifts(
   opts: { before?: Date; shiftIds?: string[]; db?: Db } = {},
 ): Promise<Array<{ id: string; startsAt: Date; endsAt: Date }>> {
   const db = opts.db ?? prisma;
-  const placed = await placedClientIds(associateId, db);
-  // An H-2B petition narrows "placed" to the one client it was certified for.
+  const [placed, placedSites] = await Promise.all([placedClientIds(associateId, db), placedSiteIds(associateId, db)]);
+  // An H-2B petition narrows "placed" to the one client it was certified
+  // for — and to client shifts only: a petition certifies an employer-client.
   const restriction = await clientRestrictionFor(db as PrismaClient, associateId);
   const clientIds = restriction ? placed.filter((c) => c === restriction.clientId) : placed;
-  if (clientIds.length === 0) return [];
+  const siteIds = restriction ? [] : placedSites;
+  if (clientIds.length === 0 && siteIds.length === 0) return [];
   const now = new Date();
   const [rows, quals] = await Promise.all([
     db.shift.findMany({
       where: {
-        clientId: { in: clientIds },
+        // A client's shift at a client they're placed with, or a shift that
+        // names no client at a site they're placed at (a direct employer).
+        OR: [
+          ...(clientIds.length > 0 ? [{ clientId: { in: clientIds } }] : []),
+          ...(siteIds.length > 0 ? [{ clientId: null, locationId: { in: siteIds } }] : []),
+        ],
         status: 'OPEN',
         assignedAssociateId: null,
         publishedAt: { not: null },
@@ -144,6 +170,7 @@ export async function assertCanClaimOpenShift(associateId: string, shiftId: stri
     select: {
       id: true,
       clientId: true,
+      locationId: true,
       startsAt: true,
       endsAt: true,
       locationRel: { select: { timezone: true } },
@@ -151,13 +178,20 @@ export async function assertCanClaimOpenShift(associateId: string, shiftId: stri
     },
   });
   if (!shift) throw new HttpError(404, 'shift_not_available', 'This shift is no longer open');
-  // A client-less open shift is not claimable until placement by site lands (step 5): fail closed.
-  if (!shift.clientId || !(await placedClientIds(associateId, db)).includes(shift.clientId)) {
-    throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
-  }
-  const claimant = await db.associate.findUnique({ where: { id: associateId }, select: { id: true, firstName: true, lastName: true } });
-  if (claimant) {
-    await assertClientAllowed(db as PrismaClient, claimant, shift.clientId, { actorUserId: null, via: 'claim', shiftId: shift.id });
+  if (shift.clientId) {
+    if (!(await placedClientIds(associateId, db)).includes(shift.clientId)) {
+      throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
+    }
+    const claimant = await db.associate.findUnique({ where: { id: associateId }, select: { id: true, firstName: true, lastName: true } });
+    if (claimant) {
+      await assertClientAllowed(db as PrismaClient, claimant, shift.clientId, { actorUserId: null, via: 'claim', shiftId: shift.id });
+    }
+  } else {
+    // A shift that names no client (a direct employer) is claimable by the
+    // site's people; one that names neither client nor site by nobody.
+    if (!shift.locationId || !(await placedSiteIds(associateId, db)).includes(shift.locationId)) {
+      throw new HttpError(403, 'not_placed_at_site', 'You are not placed at this site');
+    }
   }
   const quals = await liveQualIds(associateId, db);
   const missing = shift.qualReqs.filter((r) => !quals.has(r.qualificationId));

@@ -226,6 +226,37 @@ export function atStore(locationId: string): Prisma.AssociateWhereInput {
 }
 
 /**
+ * "Placed at this site" — atClient's two branches, one level down, for a
+ * site that names no client (a direct employer's property). The open
+ * assignment at the site; or, for someone with no open assignment
+ * anywhere, an approved application that names the site. Never wider.
+ */
+export function placedAtSite(locationId: string, opts: { approvedOnly?: boolean } = {}): Prisma.AssociateWhereInput {
+  return {
+    OR: [
+      { assignments: { some: { endedAt: null, locationId } } },
+      {
+        AND: [
+          { applications: { some: { locationId, deletedAt: null, ...(opts.approvedOnly ? { status: 'APPROVED' as const } : {}) } } },
+          { assignments: { none: { endedAt: null } } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * The bench a shift may be offered to: the client's people when the shift
+ * names a client, the site's people when it names only a site, and nobody
+ * (null) when it names neither — fail closed, never the whole tenant.
+ */
+export function benchFor(shift: { clientId: string | null; locationId: string | null }): Prisma.AssociateWhereInput | null {
+  if (shift.clientId) return atClient(shift.clientId, { approvedOnly: true });
+  if (shift.locationId) return placedAtSite(shift.locationId, { approvedOnly: true });
+  return null;
+}
+
+/**
  * Associates visible to this caller. CLIENT_PORTAL and SHIFT_SUPERVISOR
  * are clamped to their own client's roster (fail closed when the client
  * is unset); an ASSOCIATE only ever resolves to themselves.

@@ -77,6 +77,7 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
   associatesOfClient,
   atClient,
+  benchFor,
   effectiveClientIdFilter,
   scopeClients,
   scopeShifts,
@@ -3993,6 +3994,7 @@ schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) =>
       select: {
         id: true,
         clientId: true,
+        locationId: true,
         startsAt: true,
         endsAt: true,
         locationRel: { select: { timezone: true } },
@@ -4011,9 +4013,10 @@ schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) =>
         AND: [
           ACTIVE_ASSOCIATE_FILTER,
           { id: { not: user.associateId } },
-          // Placed at THIS client now (a transfer moves them) — lib/scope.
-          // A client-less shift (a direct employer) notifies nobody until placement by site lands (step 5): fail closed.
-          shift.clientId ? atClient(shift.clientId, { approvedOnly: true }) : { id: '00000000-0000-0000-0000-000000000000' },
+          // Placed at THIS client now (a transfer moves them), or at THIS
+          // site for a shift that names no client (a direct employer); a
+          // shift naming neither offers to nobody — lib/scope.benchFor.
+          benchFor(shift) ?? { id: '00000000-0000-0000-0000-000000000000' },
         ],
       },
       select: { id: true, firstName: true, lastName: true },

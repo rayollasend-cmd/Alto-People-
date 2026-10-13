@@ -10,7 +10,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
-import { atClient } from './scope.js';
+import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 
@@ -40,22 +40,27 @@ export async function runShiftAutofillSweep(
     select: {
       id: true,
       clientId: true,
+      locationId: true,
       position: true,
       startsAt: true,
       endsAt: true,
       location: true,
       client: { select: { name: true } },
+      locationRel: { select: { name: true } },
     },
     take: 100,
   });
   let invitesSent = 0;
 
   for (const shift of shifts) {
-    // The bench is "placed at this client"; a client-less shift (a direct employer) gets no autofill until placement by site lands (step 5).
-    if (!shift.clientId) continue;
+    // The bench is the client's people, or the site's for a shift that names
+    // no client (a direct employer); a shift naming neither has no bench
+    // (lib/scope.benchFor, fail closed).
+    const bench = benchFor(shift);
+    if (!bench) continue;
     const linkUrl = `/marketplace?shift=${shift.id}`;
-    // Eligible bench: active-approved associates placed at this client
-    // with a portal login, not already working an overlapping shift.
+    // Eligible bench: active-approved associates placed at this client or
+    // site with a portal login, not already working an overlapping shift.
     const candidates = await prisma.user.findMany({
       where: {
         role: 'ASSOCIATE',
@@ -66,9 +71,9 @@ export async function runShiftAutofillSweep(
           erasedAt: null,
           separatedAt: null,
           deactivatedAt: null,
-          // At this client now — a transferred associate is theirs, not
-          // the old client's (lib/scope.atClient).
-          AND: [atClient(shift.clientId, { approvedOnly: true })],
+          // At this client (or site) now — a transferred associate is
+          // theirs, not the old client's (lib/scope.atClient / placedAtSite).
+          AND: [bench],
           assignedShifts: {
             none: {
               status: { notIn: ['CANCELLED'] },
@@ -98,7 +103,7 @@ export async function runShiftAutofillSweep(
       if (invited.has(c.id)) continue;
       if (sentForShift >= MAX_INVITES_PER_SHIFT_PER_SWEEP) break;
       await notifyUser(c.id, {
-        subject: `Open shift: ${shift.position} at ${shift.client?.name ?? shift.location ?? ''}`,
+        subject: `Open shift: ${shift.position} at ${shift.client?.name ?? shift.locationRel?.name ?? shift.location ?? ''}`,
         body: `${formatTimeInZone(shift.startsAt, DEFAULT_TIMEZONE)}–${formatTimeInZone(shift.endsAt, DEFAULT_TIMEZONE)}${shift.location ? ` · ${shift.location}` : ''}. First come, first served — tap to claim it.`,
         category: CATEGORY,
         linkUrl,
