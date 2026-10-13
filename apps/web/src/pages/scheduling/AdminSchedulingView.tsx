@@ -48,7 +48,7 @@ import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { DraftsDialog } from './DraftsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
-import { listShiftPositions } from '@/lib/orgApi';
+import { listShiftPositions, listSites } from '@/lib/orgApi';
 import {
   addShiftTeamMember,
   removeShiftTeamMember,
@@ -162,19 +162,101 @@ const NO_CANDIDATES: AutoFillCandidate[] = [];
 // Loads the curated shift-position names for a client (Org → Shift positions).
 // null = still loading / no client picked. The dropdown in the shift dialogs
 // is sourced from this; admins manage the list in org settings.
-function useShiftPositionNames(clientId: string | null | undefined): string[] | null {
+function useShiftPositionNames(clientId: string | null | undefined, orgWide = false): string[] | null {
   const positions = useQuery({
     queryKey: ['scheduling', 'positions', clientId ?? ''],
-    queryFn: () => listShiftPositions(clientId!),
-    enabled: Boolean(clientId),
+    queryFn: () => listShiftPositions(clientId || undefined),
+    // Brief 2-1b: a tenant without clients reads the org-wide list.
+    enabled: Boolean(clientId) || orgWide,
   });
   return useMemo(() => {
-    if (!clientId) return [];
+    if (!clientId && !orgWide) return [];
     // Non-fatal: fall back to an empty list (the field still preserves
     // any current value and shows a "manage positions" hint).
     if (positions.isError) return [];
     return positions.data ? positions.data.shiftPositions.map((p) => p.name) : null;
-  }, [clientId, positions.data, positions.isError]);
+  }, [clientId, orgWide, positions.data, positions.isError]);
+}
+
+/**
+ * Brief 2-1b: the create dialog's multi-copy path for a shift with no
+ * client. POST /scheduling/shifts/bulk still requires a client, so each
+ * copy goes through the single create (which takes a site alone) and is
+ * assigned once it lands; a copy whose assignment is refused (time off, a
+ * clash, the rest gap) is deleted again and reported as skipped, the same
+ * outcome the bulk path gives. Open slots are plain creates.
+ */
+async function createAtSiteCopyByCopy(
+  shared: Omit<Parameters<typeof createShift>[0], 'startsAt' | 'endsAt'>,
+  occurrences: Array<{ startsAt: string; endsAt: string }>,
+  associateIds: string[],
+  openCount: number,
+  nameOf: (id: string) => string,
+): Promise<{ created: number; skipped: Array<{ associateName: string; startsAt: string; reason: string }> }> {
+  let created = 0;
+  const skipped: Array<{ associateName: string; startsAt: string; reason: string }> = [];
+  for (const occ of occurrences) {
+    for (const associateId of associateIds) {
+      const shift = await createShift({ ...shared, ...occ });
+      try {
+        await assignShift(shift.id, { associateId });
+        created += 1;
+      } catch (err) {
+        await deleteShift(shift.id).catch(() => undefined);
+        skipped.push({
+          associateName: nameOf(associateId),
+          startsAt: occ.startsAt,
+          reason: err instanceof ApiError ? err.message : 'Could not assign.',
+        });
+      }
+    }
+    for (let i = 0; i < openCount; i++) {
+      await createShift({ ...shared, ...occ });
+      created += 1;
+    }
+  }
+  return { created, skipped };
+}
+
+/**
+ * Brief 2-1b: the sites a tenant without clients schedules on. An org-wide
+ * scheduler (view:org) reads the tenant's sites; a site-bound account has
+ * only its own. null while loading; empty when there are none (or the
+ * read failed). `enabled` false → null, and nothing is fetched.
+ */
+function useOrgSites(enabled: boolean): LocationSummary[] | null {
+  const { user, can } = useAuth();
+  const orgWide = can('view:org');
+  const sites = useQuery({
+    queryKey: ['org', 'sites'],
+    queryFn: listSites,
+    enabled: enabled && orgWide,
+  });
+  return useMemo(() => {
+    if (!enabled) return null;
+    const summary = (s: { id: string; name: string; state: string | null; timezone: string | null; isActive: boolean }): LocationSummary => ({
+      id: s.id,
+      clientId: null,
+      name: s.name,
+      addressLine1: null,
+      addressLine2: null,
+      city: null,
+      state: s.state,
+      zip: null,
+      latitude: null,
+      longitude: null,
+      geofenceRadiusMeters: null,
+      isActive: s.isActive,
+      timezone: s.timezone ?? browserTimeZone(),
+    });
+    if (!orgWide) {
+      return user?.locationId
+        ? [summary({ id: user.locationId, name: user.locationName ?? 'My site', state: null, timezone: null, isActive: true })]
+        : NO_LOCATIONS;
+    }
+    if (sites.isError) return NO_LOCATIONS;
+    return sites.data ? sites.data.sites.filter((s) => s.isActive).map(summary) : null;
+  }, [enabled, orgWide, user?.locationId, user?.locationName, sites.data, sites.isError]);
 }
 
 // Shared position dropdown for the shift create/edit/template dialogs. Sources
@@ -1434,9 +1516,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     queryFn: () => listClientLocations(clientFilter),
     enabled: Boolean(clientFilter),
   });
-  const clientLocations: LocationSummary[] = clientFilter
-    ? (clientLocationsQuery.data?.locations ?? NO_LOCATIONS)
-    : NO_LOCATIONS;
+  // Brief 2-1b: without clients the filter lists the tenant's sites from the start.
+  const orgSites = useOrgSites(!clientsOn);
+  const clientLocations: LocationSummary[] = !clientsOn
+    ? (orgSites ?? NO_LOCATIONS)
+    : clientFilter
+      ? (clientLocationsQuery.data?.locations ?? NO_LOCATIONS)
+      : NO_LOCATIONS;
 
   // Position is the only client-side narrowing left — client and location
   // are both filtered server-side (clientId + locationId params). Exact
@@ -1901,6 +1987,36 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         // (global template needs a target client).
         const targetClientId =
           tpl.clientId ?? (clientFilter || boundedClient?.id || '');
+        // Brief 2-1b: a tenant without clients applies a template at the
+        // site in the filter — the create path takes a site with no client.
+        if (!clientsOn && !tpl.clientId) {
+          const atSite = clientLocations.find((l) => l.id === locationFilter) ?? null;
+          if (!atSite) {
+            toast.error('Pick a location in the filter first, then apply the template.');
+            return;
+          }
+          const tz = atSite.timezone ?? null;
+          const yy = dayStart.getFullYear();
+          const mm = dayStart.getMonth() + 1;
+          const dd = dayStart.getDate();
+          const s = zonedWallTimeToUtc(yy, mm, dd, Math.floor(tpl.startMinute / 60), tpl.startMinute % 60, tz);
+          let e = zonedWallTimeToUtc(yy, mm, dd, Math.floor(tpl.endMinute / 60), tpl.endMinute % 60, tz);
+          if (e <= s) e = zonedWallTimeToUtc(yy, mm, dd + 1, Math.floor(tpl.endMinute / 60), tpl.endMinute % 60, tz);
+          const made = await createShift({
+            locationId: atSite.id,
+            position: tpl.position,
+            startsAt: s.toISOString(),
+            endsAt: e.toISOString(),
+            ...(tpl.location ? { location: tpl.location } : {}),
+            ...(tpl.hourlyRate != null ? { hourlyRate: tpl.hourlyRate } : {}),
+            ...(tpl.payRate != null ? { payRate: tpl.payRate } : {}),
+            ...(tpl.notes ? { notes: tpl.notes } : {}),
+          });
+          if (associateId) await assignShift(made.id, { associateId });
+          toast.success(`Applied "${tpl.name}".`);
+          await refresh();
+          return;
+        }
         if (!targetClientId) {
           toast.error(
             clientsOn
@@ -5016,7 +5132,7 @@ function EditShiftDialog({
 
 /* ===== Create-shift dialog ================================================ */
 
-function CreateShiftDialog({
+export function CreateShiftDialog({
   open,
   clients,
   boundedClient,
@@ -5067,13 +5183,17 @@ function CreateShiftDialog({
   onPositionUsed?: (position: string) => void;
 }) {
   const term = useTerm();
+  const tenant = useTenant();
   // The client bill rate is never a store-bound role's to see or set.
-  const billRatesOn = useTenant().moduleOn('billRates');
+  const billRatesOn = tenant.moduleOn('billRates');
+  // Brief 2-1b: a tenant without clients creates a shift at a site.
+  const clientsOn = tenant.moduleOn('clientPortal');
   const hideBillRate = useClientBounded() || !billRatesOn;
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
   const [position, setPosition] = useState('');
-  const positionOptions = useShiftPositionNames(clientId);
+  const positionOptions = useShiftPositionNames(clientsOn ? clientId : '', !clientsOn);
+  const orgSites = useOrgSites(open && !clientsOn);
   // One Date field + time-only start/end. Opened from a calendar cell the
   // date is the clicked day; from the toolbar it defaults to today. An end
   // at or before the start rolls past midnight — no second date to type.
@@ -5112,34 +5232,49 @@ function CreateShiftDialog({
   const locationsQuery = useQuery({
     queryKey: ['clients', clientId, 'locations'],
     queryFn: () => listClientLocations(clientId),
-    enabled: open && Boolean(clientId),
+    enabled: open && clientsOn && Boolean(clientId),
   });
-  const locations: LocationSummary[] | null = !clientId
-    ? null
-    : locationsQuery.isError
-      ? NO_LOCATIONS
-      : (locationsQuery.data?.locations ?? null);
+  const locations: LocationSummary[] | null = !clientsOn
+    ? orgSites
+    : !clientId
+      ? null
+      : locationsQuery.isError
+        ? NO_LOCATIONS
+        : (locationsQuery.data?.locations ?? null);
   useEffect(() => {
     if (!open || !locations || locations.length === 0) return;
     const preferred =
-      initialLocationId && clientId === initialClientId
+      initialLocationId && (!clientsOn || clientId === initialClientId)
         ? locations.find((l) => l.id === initialLocationId)
         : undefined;
     setLocationId((cur) => cur || preferred?.id || locations[0]!.id);
-  }, [open, locations, clientId, initialClientId, initialLocationId]);
+  }, [open, locations, clientsOn, clientId, initialClientId, initialLocationId]);
 
   // Scope the multi-assign picker to the chosen client's employees. Without
   // a client we fall back to the page roster prop. (Scoped by client, not
   // the specific location, so you can still staff a new site with any of
   // the client's people.) When a shift team is selected (and the dialog is
   // still on that team's client), the picker narrows to the crew.
-  const teamId = team && team.clientId === clientId ? team.id : '';
+  // Without clients the picker is the people placed at the chosen site
+  // (the roster's by-location branch), narrowed to the crew when the
+  // selected team works there.
+  const teamId = clientsOn
+    ? team && team.clientId === clientId ? team.id : ''
+    : team && team.locationId === locationId ? team.id : '';
+  const rosterClientId = clientsOn ? clientId : '';
+  const rosterLocationId = clientsOn ? '' : locationId;
+  const rosterScoped = Boolean(rosterClientId || rosterLocationId);
   const scopedQuery = useQuery({
-    queryKey: ['scheduling', 'roster', clientId, '', teamId],
-    queryFn: () => listSchedulingAssociates({ clientId, ...(teamId ? { teamId } : {}) }),
-    enabled: open && Boolean(clientId),
+    queryKey: ['scheduling', 'roster', rosterClientId, rosterLocationId, teamId],
+    queryFn: () =>
+      listSchedulingAssociates({
+        ...(rosterClientId ? { clientId: rosterClientId } : {}),
+        ...(rosterLocationId ? { locationId: rosterLocationId } : {}),
+        ...(teamId ? { teamId } : {}),
+      }),
+    enabled: open && rosterScoped,
   });
-  const scopedAssociates: AssociateLite[] = !clientId
+  const scopedAssociates: AssociateLite[] = !rosterScoped
     ? associates
     : scopedQuery.isError
       ? []
@@ -5147,7 +5282,7 @@ function CreateShiftDialog({
   // A failed roster fetch used to silently render "no employees" — which
   // reads as "nobody works here", not "the request failed". Say so and
   // offer a retry.
-  const rosterError = Boolean(clientId) && scopedQuery.isError;
+  const rosterError = rosterScoped && scopedQuery.isError;
 
   // Seeded-values fingerprint for the discard guard: any field differing
   // from what this reset effect stamped means real typed input worth a
@@ -5304,6 +5439,10 @@ function CreateShiftDialog({
       toast.error('Enter the day plus start and end times.');
       return;
     }
+    if (!clientsOn && !locationId) {
+      toast.error('Pick a location for the shift.');
+      return;
+    }
     // Compose final ISO timestamps. The times the admin types are wall-clock
     // at the WORK SITE — interpret them in the selected location's zone (the
     // grid renders shifts in that zone too), not the admin's browser zone.
@@ -5347,7 +5486,8 @@ function CreateShiftDialog({
     const assignList = [...assignIds];
     const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
     const shared = {
-      clientId,
+      // Brief 2-1b: a tenant without clients names only the site.
+      ...(clientsOn ? { clientId } : {}),
       ...(locationId ? { locationId } : {}),
       position,
       startsAt: startISO,
@@ -5361,7 +5501,39 @@ function CreateShiftDialog({
     };
     setSubmitting(true);
     try {
-      if (assignList.length > 0 || open > 0 || extras.length > 0) {
+      if (!clientsOn && (assignList.length > 0 || open > 0 || extras.length > 0)) {
+        // The bulk endpoint still names a client; a site-only shift goes
+        // copy by copy through the single create, each assigned after it
+        // lands. A copy whose assignment is refused is taken back out, so
+        // the outcome matches the bulk path: no shift for that person.
+        const effOpen =
+          assignList.length === 0 && open === 0 && extras.length > 0 ? 1 : open;
+        const res = await createAtSiteCopyByCopy(
+          shared,
+          [{ startsAt: startISO, endsAt: endISO }, ...extras],
+          assignList,
+          effOpen,
+          (id) => {
+            const a = scopedAssociates.find((x) => x.id === id);
+            return a ? `${a.firstName} ${a.lastName}`.trim() : id;
+          },
+        );
+        const made = `${res.created} shift${res.created === 1 ? '' : 's'}`;
+        const across = extras.length > 0 ? ` across ${extras.length + 1} days` : '';
+        if (res.skipped.length > 0) {
+          const skipLines = [
+            ...res.skipped.slice(0, 5).map(
+              (k) => `${k.associateName} ${fmtWeekdayTz(k.startsAt, siteTz)} — ${k.reason}`,
+            ),
+            ...(res.skipped.length > 5 ? [`+ ${res.skipped.length - 5} more`] : []),
+          ];
+          toast.warning(`Created ${made}${across} · ${res.skipped.length} skipped`, {
+            description: skipLines.join(' · '),
+          });
+        } else {
+          toast.success(`Created ${made}${across}.`);
+        }
+      } else if (assignList.length > 0 || open > 0 || extras.length > 0) {
         // Create one copy per selected employee (+ any open slots) per
         // selected day in a single call; employees already scheduled at a
         // given time are skipped for that day only. Extra days with no
@@ -5372,6 +5544,7 @@ function CreateShiftDialog({
             : open;
         const res = await bulkCreateShifts({
           ...shared,
+          clientId,
           associateIds: assignList,
           openCount: effOpen,
           ...(extras.length > 0 ? { extraOccurrences: extras } : {}),
@@ -5457,6 +5630,7 @@ function CreateShiftDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {clientsOn && (
             <Field label="Client" required>
               {(p) =>
                 boundedClient ? (
@@ -5501,6 +5675,7 @@ function CreateShiftDialog({
                 )
               }
             </Field>
+            )}
             <Field
               label="Location"
               required
@@ -5510,16 +5685,18 @@ function CreateShiftDialog({
                 <Select
                   value={locationId}
                   onChange={(e) => setLocationId(e.target.value)}
-                  disabled={!clientId || locations === null || locations.length === 0}
+                  disabled={(clientsOn && !clientId) || locations === null || locations.length === 0}
                   {...p}
                 >
                   <option value="">
-                    {!clientId
+                    {clientsOn && !clientId
                       ? 'Pick a client first'
                       : locations === null
                         ? 'Loading…'
                         : locations.length === 0
-                          ? 'No locations under this client'
+                          ? clientsOn
+                            ? 'No locations under this client'
+                            : `No ${term('sites').toLowerCase()} yet`
                           : 'Select a location'}
                   </option>
                   {locations?.map((l) => (
@@ -5537,7 +5714,7 @@ function CreateShiftDialog({
                   value={position}
                   onChange={setPosition}
                   options={positionOptions}
-                  disabled={!clientId}
+                  disabled={clientsOn && !clientId}
                   fieldProps={p}
                 />
               )}
