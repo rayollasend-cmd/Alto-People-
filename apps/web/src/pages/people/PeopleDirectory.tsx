@@ -93,7 +93,7 @@ import type {
   ExternalPaymentInput,
   ExternalPaymentMethod,
 } from '@alto-people/shared';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
@@ -1280,6 +1280,10 @@ function ProfileTab({
   const [transferOpen, setTransferOpen] = useState(false);
   const canTransfer = Boolean(a.workplaceClientId);
   const qc = useQueryClient();
+  const term = useTerm();
+  const { moduleOn } = useTenant();
+  // A tenant without clients has no client to show on a person's workplace.
+  const hasClients = moduleOn('clientPortal');
   return (
     <div className="space-y-4">
       <PersonalInfoSection associate={a} />
@@ -1309,6 +1313,7 @@ function ProfileTab({
       </Section>
 
       <Section title="Workplace">
+        {hasClients && (
         <InfoRow
           icon={<Building2 className="h-3.5 w-3.5" />}
           label="Client"
@@ -1325,6 +1330,7 @@ function ProfileTab({
             )
           }
         />
+        )}
         <InfoRow
           icon={<MapPin className="h-3.5 w-3.5" />}
           label="Location"
@@ -1335,7 +1341,7 @@ function ProfileTab({
           label="Position"
           display={a.position ?? '—'}
           current={a.position ?? ''}
-          placeholder="e.g. Stocking Associate"
+          placeholder={hasClients ? 'e.g. Stocking Associate' : 'e.g. Cashier'}
           onSave={async (next) => {
             await patchAssociateProfile(a.id, { position: next });
             onAssociateChange({ position: next });
@@ -1516,7 +1522,7 @@ function ProfileTab({
                 to={`/separations?associateId=${a.id}`}
                 className="text-gold hover:text-gold-bright"
               >
-                Start a separation to permanently offboard this associate
+                Start a separation to permanently offboard this {term('worker').toLowerCase()}
               </Link>
             }
           />
@@ -1551,6 +1557,7 @@ function DeactivationSection({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const term = useTerm();
 
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const isDeactivated = Boolean(a.deactivatedAt);
@@ -1639,7 +1646,7 @@ function DeactivationSection({
               }}
             >
               <UserX className="mr-2 h-3.5 w-3.5" />
-              Deactivate associate
+              Deactivate {term('worker').toLowerCase()}
             </Button>
           </div>
 
@@ -1713,6 +1720,7 @@ function DangerZoneSection({
   onErased: () => void;
 }) {
   const { user } = useAuth();
+  const term = useTerm();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
@@ -1759,7 +1767,7 @@ function DangerZoneSection({
   return (
     <Section title="Danger zone">
       <p className="text-xs text-silver/80">
-        Permanently anonymize this associate’s identity, delete their login
+        Permanently anonymize this {term('worker').toLowerCase()}’s identity, delete their login
         credentials, biometrics and document files. Pay and tax history is
         kept, as required by law, under the anonymized record.
       </p>
@@ -1800,7 +1808,7 @@ function DangerZoneSection({
             </div>
             <div className="grid gap-1">
               <Label htmlFor="erase-confirm-name">
-                Type the associate’s last name (“{a.lastName}”) to confirm
+                Type the {term('worker').toLowerCase()}’s last name (“{a.lastName}”) to confirm
               </Label>
               <Input
                 id="erase-confirm-name"
@@ -1819,7 +1827,7 @@ function DangerZoneSection({
                 className="mt-0.5"
               />
               <span>
-                Erase even though this associate is not marked separated
+                Erase even though this {term('worker').toLowerCase()} is not marked separated
                 (only needed when the server refuses with “not separated”).
               </span>
             </label>
@@ -3131,6 +3139,7 @@ function RevealPayoutDialog({
   associateId: string;
   onClose: () => void;
 }) {
+  const term = useTerm();
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [revealed, setRevealed] = useState<PayoutMethodReveal | null>(null);
@@ -3207,7 +3216,7 @@ function RevealPayoutDialog({
                 rows={3}
                 maxLength={500}
                 className="mt-1"
-                placeholder="e.g. ACH return R03 on payroll run 2026-05-10 — verify routing matches associate's bank record"
+                placeholder={`e.g. ACH return R03 on payroll run 2026-05-10 — verify routing matches ${term('worker').toLowerCase()}'s bank record`}
                 autoFocus
               />
               <div className="text-xs text-silver mt-1">
@@ -4021,6 +4030,7 @@ const PAYMENT_METHOD_LABEL: Record<ExternalPaymentMethod, string> = {
 };
 
 function PaymentsTab({ associateId }: { associateId: string }) {
+  const term = useTerm();
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ['external-payments', associateId],
@@ -4063,7 +4073,7 @@ function PaymentsTab({ associateId }: { associateId: string }) {
         <EmptyState
           icon={Landmark}
           title="No payments recorded"
-          description="Record the associate's first externally-processed pay period and attach the paystub or proof of payment."
+          description={`Record the ${term('worker').toLowerCase()}'s first externally-processed pay period and attach the paystub or proof of payment.`}
         />
       ) : (
         <ul className="space-y-3">
@@ -4105,6 +4115,7 @@ function PaymentCard({
   onEdit: () => void;
   onChanged: () => void;
 }) {
+  const term = useTerm();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -4247,7 +4258,7 @@ function PaymentCard({
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Delete this payment record?"
-        description={`Removes the ${period} pay period from this list. Uploaded evidence files are kept in the associate's document vault.`}
+        description={`Removes the ${period} pay period from this list. Uploaded evidence files are kept in the ${term('worker').toLowerCase()}'s document vault.`}
         confirmLabel={busy ? 'Deleting…' : 'Delete'}
         busy={busy}
         onConfirm={remove}
@@ -4791,6 +4802,7 @@ function vaultChips(
 }
 
 function DocumentsTab({ associateId }: { associateId: string }) {
+  const term = useTerm();
   const queryClient = useQueryClient();
   const { user } = useAuth();
   // Same capability that gates the admin Document vault's actions
@@ -4892,7 +4904,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     setActingId(d.id);
     try {
       await requestDocumentReupload(d.id);
-      toast.success('Asked the associate to upload a current copy.');
+      toast.success(`Asked the ${term('worker').toLowerCase()} to upload a current copy.`);
       setReuploadRequested((s) => new Set(s).add(d.id));
     } catch (err) {
       toast.error(
@@ -5040,7 +5052,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                         title={
                           reuploadRequested.has(d.id)
                             ? 'Re-upload requested'
-                            : 'Ask the associate to upload a current copy'
+                            : `Ask the ${term('worker').toLowerCase()} to upload a current copy`
                         }
                         className="text-gold hover:text-gold"
                       >
@@ -5081,7 +5093,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
               ? 'Nothing on file yet — every document uploaded anywhere on the site lands here.'
               : `${vault.total} document${vault.total === 1 ? '' : 's'} on file${
                   vault.total > docs.length ? ` · showing latest ${docs.length}` : ''
-                } — the associate's complete file, grouped by compliance domain.`}
+                } — the ${term('worker').toLowerCase()}'s complete file, grouped by compliance domain.`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -5097,7 +5109,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
               href={downloadAllDocumentsUrl(associateId)}
               download
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 text-xs text-silver hover:border-gold/60 hover:text-white"
-              title="One zip of this associate's entire file (audited)"
+              title={`One zip of this ${term('worker').toLowerCase()}'s entire file (audited)`}
             >
               <Download className="h-3.5 w-3.5" />
               Download all
@@ -5220,6 +5232,7 @@ function UploadResultDialog({
   associateId: string;
   onUploaded: (doc: DocumentRecord) => void;
 }) {
+  const term = useTerm();
   const [kind, setKind] = useState<DocumentKind>('BACKGROUND_CHECK_RESULT');
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -5256,7 +5269,7 @@ function UploadResultDialog({
           <DialogTitle>Upload result document</DialogTitle>
           <DialogDescription>
             Attach a PDF or image (background-check report, drug-test result,
-            E-Verify confirmation, etc.) to this associate&apos;s profile.
+            E-Verify confirmation, etc.) to this {term('worker').toLowerCase()}&apos;s profile.
             The document is marked verified on upload.
           </DialogDescription>
         </DialogHeader>

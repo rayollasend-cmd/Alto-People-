@@ -433,7 +433,7 @@ function readStoredAnchors(): {
 // csvCell comes from lib/csv — this file used to keep a private RFC-4180
 // copy (and a private BOM); both now live in the shared helper.
 
-function csvRow(s: Shift, withBillRate = true): Array<string | number | null> {
+function csvRow(s: Shift, withBillRate = true, withClient = true): Array<string | number | null> {
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
   const hours = (s.scheduledMinutes / 60).toFixed(2);
@@ -443,7 +443,7 @@ function csvRow(s: Shift, withBillRate = true): Array<string | number | null> {
     fmtTime(end),
     hours,
     s.position,
-    s.clientName ?? '',
+    ...(withClient ? [s.clientName ?? ''] : []),
     s.location ?? '',
     s.assignedAssociateName ?? '',
     s.status,
@@ -527,6 +527,9 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const term = useTerm();
+  const { moduleOn } = useTenant();
+  // A tenant without clients: no client column, filter or client-only hint.
+  const clientsOn = moduleOn('clientPortal');
   const confirm = useConfirm();
   const { user, can } = useAuth();
   // Client-scoped ROLES (SHIFT_SUPERVISOR) can't list clients — /clients
@@ -1296,8 +1299,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // hiding the arrows — "the feature doesn't exist" and "the feature is off"
   // look identical otherwise.
   const reorderHint =
-    canManage && !clientFilter
-      ? 'To reorder the roster rows (drag the ⠿ grip), pick a single client first.'
+    canManage && !clientFilter && clientsOn
+      ? `To reorder the roster rows (drag the ⠿ grip), pick a single ${term('label.client').toLowerCase()} first.`
       : null;
   const reorderBusy = useRef(false);
   // Anchor move: reposition `associateId` directly above/below its VISIBLE
@@ -1648,9 +1651,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       'End',
       'Hours',
       'Position',
-      'Client',
+      ...(clientsOn ? ['Client'] : []),
       'Location',
-      'Associate',
+      term('worker'),
       'Status',
       // The client bill rate — never in a store-bound role's export.
       ...(boundedClient ? [] : ['Hourly rate']),
@@ -1659,7 +1662,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // Shared helper carries RFC-4180 quoting AND the Excel BOM now.
     downloadCsv(`shifts-${exportRange.from}-to-${exportRange.to}.csv`, [
       header,
-      ...rows.map((s) => csvRow(s, !boundedClient)),
+      ...rows.map((s) => csvRow(s, !boundedClient, clientsOn)),
     ]);
   };
 
@@ -1754,7 +1757,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const reason = await new Promise<string | null>((resolve) => {
         setReasonPrompt({
           title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-          description: `Assigned associates will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
+          description: `Assigned ${term('workers').toLowerCase()} will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
           reasonLabel: `Reason for short notice (applies to all ${noticeWindowDrafts} shift${noticeWindowDrafts === 1 ? '' : 's'})`,
           initial: heldPublishReasonRef.current,
           resolve,
@@ -1765,7 +1768,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     } else {
       const ok = await confirm({
         title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-        description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${truncatedWarning}${health}`,
+        description: `Assigned ${term('workers').toLowerCase()} will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${truncatedWarning}${health}`,
         confirmLabel: 'Publish week',
       });
       if (!ok) return;
@@ -1847,7 +1850,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const ok = await confirm({
       title: `Auto-schedule ${openInWeek} unassigned shift${openInWeek === 1 ? '' : 's'}?`,
       description:
-        'Picks the best-scoring associate for each unassigned shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Drafts stay drafts — nothing is visible to associates until you publish the week.',
+        `Picks the best-scoring ${term('worker').toLowerCase()} for each unassigned shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Drafts stay drafts — nothing is visible to ${term('workers').toLowerCase()} until you publish the week.`,
       confirmLabel: 'Auto-schedule',
     });
     if (!ok) return;
@@ -1899,7 +1902,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         const targetClientId =
           tpl.clientId ?? (clientFilter || boundedClient?.id || '');
         if (!targetClientId) {
-          toast.error('Pick a client filter first — global templates need a target.');
+          toast.error(
+            clientsOn
+              ? 'Pick a client filter first — global templates need a target.'
+              : 'This template has no target on this schedule.',
+          );
           return;
         }
         // Resolve the WORK SITE so we can stamp the template's start/end
@@ -1968,7 +1975,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
       }
     },
-    [clientFilter, locationFilter, clientLocations, refresh, boundedClient],
+    [clientFilter, locationFilter, clientLocations, refresh, boundedClient, clientsOn],
   );
 
   // Optimistic local-state helpers — patch the one changed shift immediately so
@@ -2137,7 +2144,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     s.id,
                     target.associateId,
                     confirm,
-                    patch.assignedAssociateName ?? 'This associate',
+                    patch.assignedAssociateName ?? `This ${term('worker').toLowerCase()}`,
                   );
                   if (!ok) {
                     if (timesWritten) {
@@ -2183,7 +2190,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         commitFailedMessage: 'Move failed.',
       });
     },
-    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm]
+    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm, term]
   );
 
   const onAutoFill = async (id: string) => {
@@ -2207,6 +2214,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         autoFillForShift.shiftId,
         associateId,
         confirm,
+        `This ${term('worker').toLowerCase()}`,
       );
       if (assigned) {
         setAutoFillForShift(null);
@@ -2617,7 +2625,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 size="sm"
                 onClick={() => setCopyWeeksOpen(true)}
                 loading={copyingWeek}
-                title="Repeat this week's shifts — associates and all — into the next N weeks as drafts"
+                title={`Repeat this week's shifts — ${term('workers').toLowerCase()} and all — into the next N weeks as drafts`}
               >
                 <Copy className="h-3.5 w-3.5" />
                 Repeat week…
@@ -3250,8 +3258,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               larger than one page
             </div>
             <div className="text-silver text-xs mt-0.5">
-              Rows past that aren’t on the grid. Narrow by client, location, or
-              team to see everyone in scope.
+              Rows past that aren’t on the grid. Narrow by{' '}
+              {clientsOn ? 'client, location, or team' : 'location or team'} to see everyone in scope.
             </div>
           </div>
         </div>
@@ -3269,7 +3277,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             exportCsv={{ filename: 'shifts' }}
             columns={[
               { key: 'position', header: 'Position', accessor: (sh) => sh.position, sortable: true, primary: true, className: 'font-medium' },
-              ...(!boundedClient
+              ...(!boundedClient && clientsOn
                 ? [{ key: 'client', header: 'Client', accessor: (sh: NonNullable<typeof filteredShifts>[number]) => sh.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (sh: NonNullable<typeof filteredShifts>[number]) => sh.clientName ?? '—' }]
                 : []),
               {
@@ -3510,7 +3518,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <DialogTitle>Repeat this week</DialogTitle>
             <DialogDescription>
               Copies every non-cancelled shift from the visible week — keeping
-              each shift&rsquo;s associate — into the following weeks as
+              each shift&rsquo;s {term('worker').toLowerCase()} — into the following weeks as
               drafts you review and publish. Running it twice for the same
               weeks creates duplicates.
             </DialogDescription>
@@ -3567,7 +3575,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             placeholder="Search names…"
             value={crewSearch}
             onChange={(e) => setCrewSearch(e.target.value)}
-            aria-label="Search site associates"
+            aria-label={`Search site ${term('workers').toLowerCase()}`}
           />
           <div className="mt-2 max-h-72 overflow-y-auto flex flex-col gap-0.5">
             {crewCandidates === null ? (
@@ -3915,6 +3923,7 @@ function AssignDialog({
    *  dialog and opens that shift (its edit dialog). */
   onViewShift?: (shiftId: string) => void;
 }) {
+  const term = useTerm();
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
   const confirmOverride = useConfirm();
@@ -4122,7 +4131,7 @@ function AssignDialog({
         >
           <div>
             <Label htmlFor="assign-name" required>
-              Associate
+              {term('worker')}
             </Label>
             {picked ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
@@ -4245,7 +4254,7 @@ function AssignDialog({
                 )}
                 {query.trim() && matches.length === 0 && (
                   <div className="mt-1 px-3 py-2 text-xs text-silver/70 rounded-md border border-navy-secondary bg-navy">
-                    No associates match “{query}”.
+                    No {term('workers').toLowerCase()} match “{query}”.
                   </div>
                 )}
               </div>
@@ -4496,7 +4505,7 @@ function AutoFillDialog({
         </DialogHeader>
         {target?.candidates.length === 0 && (
           <p className="text-silver text-sm">
-            No candidates returned. Check that associates have set availability.
+            No candidates returned. Check that {term('workers').toLowerCase()} have set availability.
           </p>
         )}
         {target && target.candidates.length > 0 && (
@@ -4621,6 +4630,7 @@ function DuplicateToEmployeeDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { moduleOn } = useTenant();
   const term = useTerm();
   const [search, setSearch] = useState('');
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -4664,9 +4674,9 @@ function DuplicateToEmployeeDialog({
         associateIds: [pickedId],
       });
       if (res.created === 0) {
-        toast.error('That associate is already scheduled then.');
+        toast.error(`That ${term('worker').toLowerCase()} is already scheduled then.`);
       } else {
-        toast.success('Copied to associate as a draft.');
+        toast.success(`Copied to ${term('worker').toLowerCase()} as a draft.`);
         onDone();
         return;
       }
@@ -4685,7 +4695,7 @@ function DuplicateToEmployeeDialog({
           <DialogDescription>
             {source.position} ·{' '}
             {fmtDateTime(source.startsAt)} — creates a draft copy on the
-            associate you pick.
+            {term('worker').toLowerCase()} you pick.
           </DialogDescription>
         </DialogHeader>
         {/* A real form, like the Create/Edit dialogs, so Enter submits from
@@ -4694,9 +4704,9 @@ function DuplicateToEmployeeDialog({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search associates…"
+            placeholder={`Search ${term('workers').toLowerCase()}…`}
             className="h-9 text-sm"
-            aria-label="Search associates"
+            aria-label={`Search ${term('workers').toLowerCase()}`}
           />
           <div className="max-h-64 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
             {associates === null ? (
@@ -4705,7 +4715,9 @@ function DuplicateToEmployeeDialog({
               </div>
             ) : filtered.length === 0 ? (
               <div className="p-3 text-xs text-silver/70">
-                No associates for this client.
+                {moduleOn('clientPortal')
+                  ? `No ${term('workers').toLowerCase()} for this client.`
+                  : `No ${term('workers').toLowerCase()} to pick from.`}
               </div>
             ) : (
               filtered.map((a) => (
@@ -4753,7 +4765,8 @@ function EditShiftDialog({
   onSaved: () => void;
 }) {
   // The client bill rate is never a store-bound role's to see or set.
-  const hideBillRate = useClientBounded();
+  const billRatesOn = useTenant().moduleOn('billRates');
+  const hideBillRate = useClientBounded() || !billRatesOn;
   const [dateStr, setDateStr] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -5055,7 +5068,8 @@ function CreateShiftDialog({
 }) {
   const term = useTerm();
   // The client bill rate is never a store-bound role's to see or set.
-  const hideBillRate = useClientBounded();
+  const billRatesOn = useTenant().moduleOn('billRates');
+  const hideBillRate = useClientBounded() || !billRatesOn;
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
   const [position, setPosition] = useState('');
@@ -5757,7 +5771,7 @@ function CreateShiftDialog({
                       step="0.01"
                       value={payRate}
                       onChange={(e) => setPayRate(e.target.value)}
-                      placeholder="What the associate is paid"
+                      placeholder={`What the ${term('worker').toLowerCase()} is paid`}
                       {...p}
                     />
                   )}
@@ -5865,6 +5879,7 @@ function TemplatesDialog({
   weekStart: Date;
   onApplied: () => void;
 }) {
+  const { moduleOn } = useTenant();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const confirmDialog = useConfirm();
@@ -5895,7 +5910,9 @@ function TemplatesDialog({
       // created shifts against the wrong company.
       if (!activeClientId) {
         toast.error(
-          'Pick a client in the schedule filter first, then apply the global template.',
+          moduleOn('clientPortal')
+            ? 'Pick a client in the schedule filter first, then apply the global template.'
+            : 'This template has no target on this schedule.',
         );
         return;
       }
@@ -6071,8 +6088,10 @@ function CreateTemplateDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
+  const { moduleOn } = useTenant();
   // The client bill rate is never a store-bound role's to see or set.
-  const hideBillRate = useClientBounded();
+  const billRatesOn = useTenant().moduleOn('billRates');
+  const hideBillRate = useClientBounded() || !billRatesOn;
   const [name, setName] = useState('');
   const [position, setPosition] = useState('');
   const [clientId, setClientId] = useState<string>('');
@@ -6167,20 +6186,22 @@ function CreateTemplateDialog({
                 )
               }
             </Field>
-            <Field label="Client (or global)">
-              {(p) => (
-                <Select
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  {...p}
-                >
-                  <option value="">— Global —</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {moduleOn('clientPortal') && (
+              <Field label="Client (or global)">
+                {(p) => (
+                  <Select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    {...p}
+                  >
+                    <option value="">— Global —</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
             <Field label="Day of week" required>
               {(p) => (
                 <Select
@@ -6561,11 +6582,12 @@ function AutoScheduleRibbon({
   onAutoSchedule: () => void;
   loading: boolean;
 }) {
+  const term = useTerm();
   return (
     <div className="mb-3 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-silver/30 bg-silver/[0.04]">
       <div className="text-sm text-white">
         <span className="font-medium tabular-nums">{count}</span>{' '}
-        open shift{count === 1 ? '' : 's'} this week need an associate.
+        open shift{count === 1 ? '' : 's'} this week need {withArticle(term('worker').toLowerCase())}.
         <span className="text-silver/70 ml-1">
           Auto-schedule picks the best fit per shift — you still publish.
         </span>
@@ -6586,14 +6608,14 @@ function shiftRowLabel(s: Shift): string {
 }
 
 /** Reason-specific "what to do about it" line for a skipped shift. */
-function skipReasonCopy(reason: PublishWeekSkip['reason'] | AutoScheduleSkip['reason']): string {
+function skipReasonCopy(reason: PublishWeekSkip['reason'] | AutoScheduleSkip['reason'], worker = 'associate'): string {
   switch (reason) {
     case 'predictive_schedule_violation':
       return 'Late notice — add a late-notice reason via Edit, then publish again.';
     case 'double_booking':
       return 'Double-booked — overlaps another assigned shift. Change the times or reassign.';
     case 'no_eligible_candidate':
-      return 'No eligible associate — everyone had a conflict, was on PTO, or was unscored. Assign manually.';
+      return `No eligible ${worker} — everyone had a conflict, was on PTO, or was unscored. Assign manually.`;
     case 'all_candidates_overtime':
       return 'Every candidate would go over 40h — assign manually if the overtime is intended.';
     default:
@@ -6615,6 +6637,7 @@ function SkipRows({
   onEdit: (s: Shift) => void;
   onReassign: (s: Shift) => void;
 }) {
+  const term = useTerm();
   const byId = new Map((shifts ?? []).map((s) => [s.id, s]));
   return (
     <ul className="max-h-64 overflow-y-auto rounded-md border border-navy-secondary divide-y divide-navy-secondary/50">
@@ -6631,7 +6654,7 @@ function SkipRows({
                     {s.assignedAssociateName ?? 'Open'}
                   </div>
                   <div className="text-xs2 text-silver/80">
-                    {skipReasonCopy(k.reason)}
+                    {skipReasonCopy(k.reason, term('worker').toLowerCase())}
                     {k.detail ? ` (${k.detail})` : ''}
                   </div>
                 </>
@@ -6640,7 +6663,7 @@ function SkipRows({
                 // list) — name what we know instead of dropping the row.
                 <div className="text-xs2 text-silver/80">
                   A shift not in the loaded view was skipped —{' '}
-                  {skipReasonCopy(k.reason)}
+                  {skipReasonCopy(k.reason, term('worker').toLowerCase())}
                   {k.detail ? ` (${k.detail})` : ''}
                 </div>
               )}
@@ -6743,6 +6766,7 @@ function AutoScheduleReviewDialog({
   onReassign: (s: Shift) => void;
   onSelectSkipped: (ids: string[]) => void;
 }) {
+  const term = useTerm();
   const [unassigningId, setUnassigningId] = useState<string | null>(null);
   // Assignments = "was unassigned before the run, is assigned now" —
   // recomputed from the live shift list, so a per-row Unassign removes its
@@ -6760,7 +6784,7 @@ function AutoScheduleReviewDialog({
     try {
       await unassignShift(s.id);
       toast.success(
-        `Unassigned ${s.assignedAssociateName ?? 'associate'} from ${s.position}.`,
+        `Unassigned ${s.assignedAssociateName ?? term('worker').toLowerCase()} from ${s.position}.`,
       );
       await onRefresh();
     } catch (err) {
@@ -6869,6 +6893,7 @@ function LateNoticeReasonDialog({
   /** Trimmed reason; empty string = publish while skipping notice-window drafts. */
   onSubmit: (reason: string) => void;
 }) {
+  const { moduleOn } = useTenant();
   const [reason, setReason] = useState(initial);
   return (
     <Dialog open onOpenChange={(o) => !o && onCancel()}>
@@ -6896,7 +6921,11 @@ function LateNoticeReasonDialog({
               autoFocus
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Volume spike — client added coverage after the posting deadline"
+              placeholder={
+                moduleOn('clientPortal')
+                  ? 'e.g. Volume spike — client added coverage after the posting deadline'
+                  : 'e.g. Volume spike — coverage added after the posting deadline'
+              }
               maxLength={500}
               rows={4}
             />
