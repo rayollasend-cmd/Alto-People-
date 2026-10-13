@@ -64,7 +64,8 @@ describe('the access report', () => {
     expect(flagsOf(portalCorp.id)).toEqual([]);
     expect(flagsOf(regional.id)).toEqual(['REGION_SCOPE']);
     expect(flagsOf(ana1.id)).toEqual(['DUPLICATE_PERSON']);
-    expect(flagsOf(ana2.id)).toEqual(['DUPLICATE_PERSON']);
+    // A shift supervisor account with no associate record behind it is also a workforce role without employment.
+    expect(flagsOf(ana2.id)).toEqual(['DUPLICATE_PERSON', 'NO_EMPLOYMENT_RECORD']);
     expect(flagsOf(boUser.id)).toEqual(['EMPLOYMENT_ENDED']);
     expect(flagsOf(cy.id)).toEqual(['NO_EMPLOYMENT_RECORD']);
     expect(flagsOf(diUser.id)).toEqual(['NO_SIGN_IN_90D']);
@@ -77,7 +78,7 @@ describe('the access report', () => {
       totalAccounts: 11,
       byStatus: { ACTIVE: 10, INVITED: 1, DISABLED: 0 },
       flaggedAccounts: 7,
-      byFlag: { PORTAL_PERSONAL_EMAIL: 1, REGION_SCOPE: 1, DUPLICATE_PERSON: 2, NO_EMPLOYMENT_RECORD: 1, EMPLOYMENT_ENDED: 1, NO_SIGN_IN_90D: 1, PENDING_DELETION: 0 },
+      byFlag: { PORTAL_PERSONAL_EMAIL: 1, REGION_SCOPE: 1, DUPLICATE_PERSON: 2, NO_EMPLOYMENT_RECORD: 2, EMPLOYMENT_ENDED: 1, NO_SIGN_IN_90D: 1, PENDING_DELETION: 0 },
     });
     expect(isPersonalEmail('Someone@Yahoo.com')).toBe(true);
     expect(isPersonalEmail('someone@walmart.com')).toBe(false);
@@ -173,7 +174,8 @@ describe('portal scope', () => {
     const region = await prisma.region.create({ data: { name: 'Panhandle' } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const { user: chairman } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
-    const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    // An associate account holds no manage:org: not an approver.
+    const { user: recruiter } = await createUser({ role: 'ASSOCIATE' });
     const admin = await loginAs(agent(), hr.email);
 
     const none = await admin.post(`/regions/${region.id}/portal-users`).send({ email: 'lead@coastal.example', name: 'Sam Ortiz' });

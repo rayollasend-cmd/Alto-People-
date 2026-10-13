@@ -164,6 +164,9 @@ export async function truncateAll(): Promise<void> {
       await new Promise((r) => setTimeout(r, backoff));
     }
   }
+  // Brief 2-1: the Tenant table is preserved (Alto HR is seeded once), but a test's
+  // second tenant must not outlive it — no table references Tenant by key.
+  await prisma.tenant.deleteMany({ where: { id: { not: '00000000-0000-4000-8000-000000000001' } } });
 }
 
 interface CreateUserOpts {

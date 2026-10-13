@@ -1035,7 +1035,7 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
       (await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'x@y.example', locationId: s.otherStore.id }))
         .status,
     ).toBe(400);
-    expect((await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: hr.email })).status).toBe(409);
+    expect((await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: hr.email, locationId: s.storeB.id })).status).toBe(409);
 
     // Readiness: store B has no headcount, no lead position, no supervisor phone…
     await flushPendingNotifications();
