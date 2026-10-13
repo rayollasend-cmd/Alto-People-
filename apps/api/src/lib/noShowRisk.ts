@@ -5,12 +5,13 @@
 // evening before, with suggested bench backups — so the 6 AM surprise
 // gets pre-arranged out of existence the night before.
 
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { currentTenantId } from './tenant.js';
 import { prisma as defaultPrisma } from '../db.js';
-import { atClient } from './scope.js';
+import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
-import { supervisorRecipients } from './shiftWindows.js';
+import { siteSupervisorRecipients, supervisorRecipients } from './shiftWindows.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 
@@ -98,17 +99,18 @@ export async function computeNoShowRisk(
     }));
 }
 
-/** Bench suggestions for a client: active-approved, placed there, no
- *  shift tomorrow. */
-async function suggestBackups(prisma: PrismaClient, clientId: string, dayStart: Date, dayEnd: Date) {
+/** Bench suggestions for a desk: active-approved, on the shift's bench
+ *  (the client's people, or for a direct employer the site's), no shift
+ *  tomorrow. */
+async function suggestBackups(prisma: PrismaClient, bench: Prisma.AssociateWhereInput, dayStart: Date, dayEnd: Date) {
   const rows = await prisma.associate.findMany({
     where: {
       deletedAt: null,
       erasedAt: null,
       separatedAt: null,
       deactivatedAt: null,
-      // At this client now (lib/scope.atClient) — a transfer moves them.
-      AND: [atClient(clientId, { approvedOnly: true })],
+      // On the shift's bench now (lib/scope.benchFor) — a transfer moves them.
+      AND: [bench],
       assignedShifts: {
         none: {
           status: { notIn: ['CANCELLED'] },
@@ -146,40 +148,54 @@ export async function runNoShowRiskSweep(
   // Once per org-local day: the day's first send claims it.
   const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');
   const already = await prisma.notification.findFirst({
-    where: { category: CATEGORY, createdAt: { gte: dayStart } },
+    // Per tenant: one tenant's evening send must not mark another's as done.
+    where: { category: CATEGORY, createdAt: { gte: dayStart }, ...(currentTenantId() ? { tenantId: currentTenantId()! } : {}) },
     select: { id: true },
   });
   if (already) return { sent: 0, skipped: 'already_sent' };
 
-  const byClient = new Map<string, RiskyShift[]>();
+  // One desk per client, as before; Brief 2-1b: a client-less shift (a
+  // direct employer) goes to its site's desk; a shift with neither has no
+  // desk and reaches nobody (fail closed — never every admin).
+  type Desk = { clientId: string | null; locationId: string | null; rows: RiskyShift[] };
+  const desks = new Map<string, Desk>();
   for (const r of risky) {
-    // The digest is routed per client; a client-less shift (a direct employer) has no desk yet.
-    if (!r.clientId) continue;
-    (byClient.get(r.clientId) ?? byClient.set(r.clientId, []).get(r.clientId)!).push(r);
+    const key = r.clientId ? `client:${r.clientId}` : r.locationId ? `site:${r.locationId}` : null;
+    if (!key) continue;
+    const desk = desks.get(key) ?? desks.set(key, { clientId: r.clientId, locationId: r.clientId ? null : r.locationId, rows: [] }).get(key)!;
+    desk.rows.push(r);
   }
   let sent = 0;
-  for (const [clientId, clientRows] of byClient) {
+  for (const desk of desks.values()) {
+    const { clientId, locationId } = desk;
     // Each supervisor's digest holds the risky shifts in the windows they
     // lead — or every row nobody leads (lib/shiftWindows routing).
     const rowsBySupervisor = new Map<string, RiskyShift[]>();
-    for (const r of clientRows) {
-      for (const s of await supervisorRecipients(prisma, clientId, {
-        locationId: r.locationId,
-        startsAt: r.startsAt,
-      })) {
+    for (const r of desk.rows) {
+      const recipients = clientId
+        ? await supervisorRecipients(prisma, clientId, { locationId: r.locationId, startsAt: r.startsAt })
+        : await siteSupervisorRecipients(prisma, locationId!, { startsAt: r.startsAt });
+      for (const s of recipients) {
         (rowsBySupervisor.get(s.id) ?? rowsBySupervisor.set(s.id, []).get(s.id)!).push(r);
       }
     }
     if (rowsBySupervisor.size === 0) continue;
+    const bench = benchFor({ clientId, locationId });
+    if (!bench) continue;
     const t = new Date(`${orgDateKey(now)}T12:00:00Z`);
     t.setUTCDate(t.getUTCDate() + 1);
     const dStart = utcInstantOfLocalMidnight(t.toISOString().slice(0, 10), 'America/New_York');
     const backups = await suggestBackups(
       prisma,
-      clientId,
+      bench,
       dStart,
       new Date(dStart.getTime() + 26 * 3600_000),
     );
+    // The desk's name in the digest: the client's, or the site's for a direct employer.
+    const deskName = clientId
+      ? desk.rows[0].clientName
+      : ((await prisma.site.findFirst({ where: { id: locationId! }, select: { name: true } }))?.name ?? '');
+    const linkUrl = clientId ? '/scheduling' : `/scheduling?location=${encodeURIComponent(locationId!)}`;
     for (const [supervisorId, rows] of rowsBySupervisor) {
       const lines = rows
         .map(
@@ -187,12 +203,12 @@ export async function runNoShowRiskSweep(
             `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — held by ${r.holderName} (${r.points} attendance points, 90d)`,
         )
         .join('\n');
-      const body = `Tomorrow's coverage risk at ${rows[0].clientName}:\n${lines}${backups.length > 0 ? `\n\nAvailable backups: ${backups.join(', ')}` : ''}\n\nWorth a confirmation text tonight or a pre-arranged backup.`;
+      const body = `Tomorrow's coverage risk at ${deskName}:\n${lines}${backups.length > 0 ? `\n\nAvailable backups: ${backups.join(', ')}` : ''}\n\nWorth a confirmation text tonight or a pre-arranged backup.`;
       await notifyUser(supervisorId, {
         subject: `Tomorrow's coverage risk — ${rows.length} shift${rows.length === 1 ? '' : 's'}`,
         body,
         category: CATEGORY,
-        linkUrl: '/scheduling',
+        linkUrl,
       });
       sent += 1;
     }
@@ -204,11 +220,11 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startNoShowRiskCron(): void {
   if (timer) return;
-  void tenantJob('noShowRisk', runNoShowRiskSweep)().catch((err) => {
+  void tenantJob('noShowRisk', runNoShowRiskSweep, { module: 'scheduling' })().catch((err) => {
     console.error('[alto-people/api] no-show risk sweep failed:', err);
   });
   timer = setInterval(() => {
-    void tenantJob('noShowRisk', runNoShowRiskSweep)().catch((err) => {
+    void tenantJob('noShowRisk', runNoShowRiskSweep, { module: 'scheduling' })().catch((err) => {
       console.error('[alto-people/api] no-show risk sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

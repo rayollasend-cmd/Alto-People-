@@ -181,3 +181,45 @@ export async function supervisorRecipients(
   const owners = everyone.filter((u) => leads.has(u.id));
   return owners.length > 0 ? owners : everyone;
 }
+
+/**
+ * Brief 2-1b: who hears about a shift-shaped event at a site with no client
+ * (a direct employer). The active shift supervisors of the site's tenant who
+ * stand on that site: pinned to it, or pinned to an organizational unit the
+ * site sits under. Of those, the ones leading the window the shift starts in
+ * hear first; when nobody leads it, all of them. Fails closed: an unknown or
+ * deleted site, or a site nobody stands on, reaches nobody, never the admins.
+ */
+export async function siteSupervisorRecipients(
+  db: Db,
+  locationId: string,
+  at?: { startsAt: Date } | null,
+): Promise<Array<{ id: string; email: string }>> {
+  const site = await db.site.findFirst({
+    where: { id: locationId, deletedAt: null },
+    select: { tenantId: true, orgUnit: { select: { path: true, deletedAt: true } } },
+  });
+  if (!site?.tenantId) return [];
+  // The unit path is "/root/…/leaf"; every id on it is a unit the site sits under.
+  const unitIds = site.orgUnit && !site.orgUnit.deletedAt ? site.orgUnit.path.split('/').filter(Boolean) : [];
+  const everyone = await db.user.findMany({
+    where: {
+      role: 'SHIFT_SUPERVISOR',
+      status: 'ACTIVE',
+      deletedAt: null,
+      tenantId: site.tenantId,
+      clientId: null,
+      OR: [{ locationId }, ...(unitIds.length > 0 ? [{ locationId: null, orgUnitId: { in: unitIds } }] : [])],
+    },
+    select: { id: true, email: true },
+    orderBy: { email: 'asc' },
+  });
+  if (!at || everyone.length === 0) return everyone;
+  const leads = new Set<string>();
+  for (const u of everyone) {
+    const windows = await ledWindows(db, { userId: u.id });
+    if (windows.some((w) => windowCovers(w, { locationId, startsAt: at.startsAt }))) leads.add(u.id);
+  }
+  const owners = everyone.filter((u) => leads.has(u.id));
+  return owners.length > 0 ? owners : everyone;
+}
