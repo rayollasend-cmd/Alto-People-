@@ -118,8 +118,8 @@ describe('GET /transport/driver/trip-map', () => {
   async function world() {
     setGeocoderForTests(async () => null); // nothing typed gets found
     const client = await createClient('Coastal');
-    const first = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const store = await prisma.location.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
+    const first = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
     const stop = await prisma.transportStop.create({ data: { name: 'Seaside Housing', address: '100 Gulf Blvd', ...SEASIDE } });
     const { user: director } = await createUser({ role: 'TRANSPORTATION_DIRECTOR' });
     const mike = await createAssociate({ firstName: 'Mike', lastName: 'Chen' });

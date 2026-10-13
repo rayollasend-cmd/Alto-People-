@@ -39,7 +39,7 @@ async function overview(now: Date): Promise<HeadcountOverview> {
       take: 20_000,
     }),
     prisma.client.findMany({ where: { deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2_000 }),
-    prisma.location.findMany({ where: { deletedAt: null }, select: { id: true, name: true, clientId: true }, orderBy: { name: 'asc' }, take: 5_000 }),
+    prisma.site.findMany({ where: { deletedAt: null }, select: { id: true, name: true, clientId: true }, orderBy: { name: 'asc' }, take: 5_000 }),
     prisma.department.findMany({ select: { id: true, name: true }, take: 1_000 }),
     active.total
       ? prisma.associate.findMany({ where: { id: { in: [...active.ids] } }, select: { id: true, departmentId: true, employmentType: true }, take: 20_000 })

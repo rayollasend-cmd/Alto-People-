@@ -250,7 +250,7 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
     // for the same reason as positions: without it, invites simply fall
     // back to the no-site behavior until an admin adds one.
     try {
-      await prisma.location.create({
+      await prisma.site.create({
         data: {
           clientId: created.id,
           name: created.name,
@@ -377,7 +377,7 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
     const includeInactive =
       typeof req.query.includeInactive === 'string' &&
       req.query.includeInactive.toLowerCase() === 'true';
-    const rows = await prisma.location.findMany({
+    const rows = await prisma.site.findMany({
       take: 500,
       where: {
         clientId: client.id,
@@ -431,7 +431,7 @@ clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     const input = LocationCreateInputSchema.parse(req.body);
     const geo = normalizeGeofence(input);
-    const created = await prisma.location.create({
+    const created = await prisma.site.create({
       data: {
         clientId: client.id,
         name: input.name,
@@ -461,7 +461,7 @@ clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
-    const existing = await prisma.location.findFirst({
+    const existing = await prisma.site.findFirst({
       where: { id: req.params.lid, clientId: client.id, deletedAt: null },
     });
     if (!existing) {
@@ -469,7 +469,7 @@ clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
     }
     const input = LocationUpdateInputSchema.parse(req.body);
     const geo = normalizeGeofence(input);
-    const updated = await prisma.location.update({
+    const updated = await prisma.site.update({
       where: { id: existing.id },
       data: {
         name: input.name,
@@ -499,14 +499,14 @@ clientsRouter.delete('/:id/locations/:lid', MANAGE, async (req, res, next) => {
       select: { id: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
-    const existing = await prisma.location.findFirst({
+    const existing = await prisma.site.findFirst({
       where: { id: req.params.lid, clientId: client.id, deletedAt: null },
       select: { id: true },
     });
     if (!existing) {
       throw new HttpError(404, 'location_not_found', 'Location not found');
     }
-    await prisma.location.update({
+    await prisma.site.update({
       where: { id: existing.id },
       data: { deletedAt: new Date(), isActive: false },
     });
@@ -1193,7 +1193,7 @@ clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
     }
     let location: { id: string; name: string } | null = null;
     if (input.locationId) {
-      location = await prisma.location.findFirst({
+      location = await prisma.site.findFirst({
         where: { id: input.locationId, clientId: client.id, deletedAt: null },
         select: { id: true, name: true },
       });
@@ -1202,7 +1202,7 @@ clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
       }
     }
 
-    const storeCount = await prisma.location.count({ where: { clientId: client.id, deletedAt: null, isActive: true } });
+    const storeCount = await prisma.site.count({ where: { clientId: client.id, deletedAt: null, isActive: true } });
     // A store account gets the store-manager note; a client-wide account
     // is a market manager over this client's stores and gets that note.
     const { user, expiresAt, emailFailed } = await invitePortalAccount({

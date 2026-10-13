@@ -889,7 +889,7 @@ async function resolveOpsLocation(
   usersOwn: string | null,
 ): Promise<string | null> {
   if (named) {
-    const ok = await prisma.location.findFirst({
+    const ok = await prisma.site.findFirst({
       where: { id: named, clientId, deletedAt: null },
       select: { id: true },
     });
@@ -899,13 +899,13 @@ async function resolveOpsLocation(
     return ok.id;
   }
   if (usersOwn) {
-    const mine = await prisma.location.findFirst({
+    const mine = await prisma.site.findFirst({
       where: { id: usersOwn, clientId, deletedAt: null },
       select: { id: true },
     });
     if (mine) return mine.id;
   }
-  const only = await prisma.location.findMany({
+  const only = await prisma.site.findMany({
     where: { clientId, deletedAt: null, isActive: true },
     select: { id: true },
     take: 2,
@@ -1095,7 +1095,7 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
       }),
     ]);
     const location = shift.locationId
-      ? await prisma.location.findUnique({ where: { id: shift.locationId }, select: { name: true } })
+      ? await prisma.site.findUnique({ where: { id: shift.locationId }, select: { name: true } })
       : null;
     const counts =
       shift.status === 'ACTIVE'
@@ -1742,7 +1742,7 @@ opsRouter.get('/store-shifts', LIB_READ, async (req, res, next) => {
   try {
     const clientId = resolveClientId(req, req.query.clientId?.toString());
     await ensureOpsSeed(prisma);
-    const stores = await prisma.location.findMany({
+    const stores = await prisma.site.findMany({
       where: { clientId, deletedAt: null, isActive: true },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
@@ -1821,7 +1821,7 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const { locationId, label, templateId, removeTemplateId } = parsed.data;
-    const store = await prisma.location.findFirst({
+    const store = await prisma.site.findFirst({
       where: { id: locationId, deletedAt: null },
       select: { id: true, clientId: true },
     });
@@ -3214,7 +3214,7 @@ opsRouter.get('/report/recipients', BOARD, async (req, res, next) => {
     const locationId = req.query.locationId?.toString() || null;
     let clientId = clamp ?? req.query.clientId?.toString() ?? null;
     if (locationId) {
-      const loc = await prisma.location.findFirst({
+      const loc = await prisma.site.findFirst({
         where: { id: locationId, ...(clamp !== undefined ? { clientId: clamp } : {}) },
         select: { clientId: true },
       });
@@ -3254,7 +3254,7 @@ opsRouter.post('/report/email', BOARD, async (req, res, next) => {
     // Only the store's own portal accounts (or the client's) can be chosen —
     // a user id from anywhere else is ignored, never mailed.
     const clientId = report.store
-      ? ((await prisma.location.findUnique({ where: { id: report.store.id }, select: { clientId: true } }))
+      ? ((await prisma.site.findUnique({ where: { id: report.store.id }, select: { clientId: true } }))
           ?.clientId ?? null)
       : (clamp ?? input.clientId ?? null);
     const allowed = await reportRecipients(clientId, report.store?.id ?? null);

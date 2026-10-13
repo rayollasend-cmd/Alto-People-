@@ -80,7 +80,7 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
     const unit = await getOrgUnit(prisma, input.orgUnitId);
     if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
   }
-  const created = await prisma.location.create({
+  const created = await prisma.site.create({
     data: {
       clientId: null,
       orgUnitId: input.orgUnitId ?? null,
@@ -104,13 +104,13 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
 orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const input = LocationUpdateInputSchema.partial().extend({ orgUnitId: z.string().uuid().nullable().optional() }).strict().parse(req.body);
-  const existing = await prisma.location.findFirst({ where: { id, deletedAt: null }, select: { id: true, name: true, orgUnitId: true } });
+  const existing = await prisma.site.findFirst({ where: { id, deletedAt: null }, select: { id: true, name: true, orgUnitId: true } });
   if (!existing) throw new HttpError(404, 'site_not_found', 'That site does not exist.');
   if (input.orgUnitId) {
     const unit = await getOrgUnit(prisma, input.orgUnitId);
     if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
   }
-  const updated = await prisma.location.update({
+  const updated = await prisma.site.update({
     where: { id },
     data: {
       ...(input.name !== undefined ? { name: input.name } : {}),
@@ -131,7 +131,7 @@ orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
 });
 
 orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {
-  const rows = await prisma.location.findMany({
+  const rows = await prisma.site.findMany({
     where: { deletedAt: null },
     select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } } },
     orderBy: [{ clientId: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }],
@@ -143,7 +143,7 @@ orgUnitsRouter.get('/admin/org-units/:id/sites', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const ids = await siteIdsUnder(prisma, id);
   const sites = ids.length
-    ? await prisma.location.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, clientId: true, orgUnitId: true, client: { select: { name: true } } }, orderBy: { name: 'asc' } })
+    ? await prisma.site.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, clientId: true, orgUnitId: true, client: { select: { name: true } } }, orderBy: { name: 'asc' } })
     : [];
   res.json({ sites: sites.map((s) => ({ id: s.id, name: s.name, clientId: s.clientId, clientName: s.client?.name ?? null, orgUnitId: s.orgUnitId })) });
 });

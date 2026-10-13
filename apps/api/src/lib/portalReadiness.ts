@@ -33,7 +33,7 @@ export async function computePortalReadiness(
   prisma: PrismaClient = defaultPrisma,
 ): Promise<PortalReadiness> {
   const [stores, accounts, leadPositions, supervisors, associates, org] = await Promise.all([
-    prisma.location.findMany({
+    prisma.site.findMany({
       where: { clientId, deletedAt: null, isActive: true },
       select: {
         id: true,

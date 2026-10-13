@@ -15,7 +15,7 @@ export async function firstLocationForClient(
   prisma: PrismaClient,
   clientId: string,
 ): Promise<{ id: string; timezone: string }> {
-  const loc = await prisma.location.findFirst({
+  const loc = await prisma.site.findFirst({
     where: { clientId, deletedAt: null, isActive: true },
     orderBy: { createdAt: 'asc' },
     select: { id: true, timezone: true },

@@ -38,7 +38,7 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 async function seed() {
   const client = await createClient('Coastal');
-  const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const kim = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
   await prisma.application.create({
     data: { associateId: kim.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' },

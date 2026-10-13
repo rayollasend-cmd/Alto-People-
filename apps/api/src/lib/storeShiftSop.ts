@@ -158,7 +158,7 @@ async function storeShiftAtLocation(
   input: { userId: string; locationId: string; at: Date },
 ): Promise<StoreShift | null> {
   const [loc, defs, assigned] = await Promise.all([
-    db.location.findUnique({
+    db.site.findUnique({
       where: { id: input.locationId },
       select: { id: true, name: true, timezone: true },
     }),
@@ -301,7 +301,7 @@ export async function createOpsShift(
             })
             .then((t) => (t ? [t] : [])),
     input.locationId
-      ? db.location.findUnique({ where: { id: input.locationId }, select: { timezone: true } })
+      ? db.site.findUnique({ where: { id: input.locationId }, select: { timezone: true } })
       : Promise.resolve(null),
   ]);
   const primary = templates[0] ?? null;

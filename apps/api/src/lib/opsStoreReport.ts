@@ -211,7 +211,7 @@ export async function buildOpsStoreReport(
   if (days.length > 92) return null;
 
   const store = q.locationId
-    ? await prisma.location.findFirst({
+    ? await prisma.site.findFirst({
         where: {
           id: q.locationId,
           ...(clientClamp !== undefined ? { clientId: clientClamp } : q.clientId ? { clientId: q.clientId } : {}),

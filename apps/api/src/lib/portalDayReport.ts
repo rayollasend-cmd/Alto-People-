@@ -207,7 +207,7 @@ export async function portalScopeFor(clientId: string, locationId: string | null
   const client = await prisma.client.findFirst({ where: { id: clientId, deletedAt: null }, select: { id: true, name: true } });
   if (!client) return null;
   const location = locationId
-    ? await prisma.location.findFirst({
+    ? await prisma.site.findFirst({
         where: { id: locationId, clientId, deletedAt: null },
         select: { id: true, name: true, timezone: true, addressLine1: true, addressLine2: true, city: true, state: true, zip: true },
       })

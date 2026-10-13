@@ -51,8 +51,8 @@ const DOORSTEP = { lat: 30.211, lng: -85.8655 };
 
 async function onTheRoad(opts: { arriveInMinutes?: number } = {}) {
   const client = await createClient('Coastal');
-  const first = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  const store = await prisma.location.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
+  const first = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  const store = await prisma.site.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
   const stop = await prisma.transportStop.create({ data: { name: 'Seaside Housing', address: '100 Gulf Blvd', ...SEASIDE } });
   const { user: director } = await createUser({ role: 'TRANSPORTATION_DIRECTOR' });
   const mike = await createAssociate({ firstName: 'Mike', lastName: 'Chen' });
@@ -294,7 +294,7 @@ describe('addresses on the map', () => {
       async () => '9 Harbor Rd, Panama City Beach, FL 32413',
     );
     const client = await createClient('Coastal');
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const a = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
     await prisma.application.create({ data: { associateId: a.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' } });
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: a.id });

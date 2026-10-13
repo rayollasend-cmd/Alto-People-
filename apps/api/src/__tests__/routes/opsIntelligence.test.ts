@@ -303,7 +303,7 @@ describe('client statements', () => {
   it('computes the billed snapshot with the weekly OT split, finalizes immutably', async () => {
     const client = await createClient();
     const assoc = await createAssociate({ firstName: 'Bill', lastName: 'Able' });
-    const location = await prisma.location.findFirstOrThrow({
+    const location = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
     // One week (Mon Jun 8 – Fri Jun 12 2026), 5 × 10h approved = 50h:
@@ -369,7 +369,7 @@ describe('client statements', () => {
 describe('retention analytics', () => {
   it('reports cohort survival and per-store separations', async () => {
     const client = await createClient();
-    const location = await prisma.location.findFirstOrThrow({
+    const location = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
     const mk = async (hiredDaysAgo: number, separatedDaysAgo: number | null) => {

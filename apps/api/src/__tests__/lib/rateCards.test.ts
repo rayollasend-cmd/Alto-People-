@@ -70,7 +70,7 @@ describe('effective dating', () => {
 describe('the surfaces', () => {
   it('the rate editor writes dated cards and lists the current ones; history on request; a statement prices with the card in force at period end', async () => {
     const client = await createClient('Coastal Resort');
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(agent(), hr.email);
     const first = await a.put('/scheduling/rate-defaults').send({ clientId: client.id, position: 'Associate', payRate: 15, billRate: 20, effectiveFrom: '2026-01-01' });
@@ -100,7 +100,7 @@ describe('the surfaces', () => {
 
   it('flags every placed associate whose role has no card at their client, and the Headcount overview counts them', async () => {
     const coastal = await createClient('Coastal Resort');
-    const siteA = await prisma.location.findFirstOrThrow({ where: { clientId: coastal.id } });
+    const siteA = await prisma.site.findFirstOrThrow({ where: { clientId: coastal.id } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     await setRateCard(prisma, { clientId: coastal.id, position: 'Associate', payRate: 15, billRate: 21, effectiveFrom: '2026-01-01' }, hr.id);
     const mk = async (first: string, position: string | null) => {

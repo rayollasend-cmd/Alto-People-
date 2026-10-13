@@ -217,7 +217,7 @@ describe('POST /org/associates/:id/deactivate + reactivate', () => {
 describe('kiosk employment gate', () => {
   async function setupKiosk() {
     const client = await createClient();
-    const location = await prisma.location.findFirstOrThrow({
+    const location = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
     const associate = await createAssociate({ firstName: 'Badge', lastName: 'Holder' });
@@ -375,7 +375,7 @@ describe('audit packet workforce scopes', () => {
         status: 'SUBMITTED',
       },
     });
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.timeEntry.create({
       data: {
         associateId: unapproved.id,

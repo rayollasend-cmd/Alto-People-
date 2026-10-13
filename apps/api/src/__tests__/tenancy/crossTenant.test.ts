@@ -61,7 +61,7 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 /** Tenant one's world: one id per entity type the routes name. */
 async function seedTenantOne() {
   const client = await createClient('Tenant One Client');
-  const location = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const location = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const associate = await createAssociate({ firstName: 'One', lastName: 'Tenant' });
   const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
   const { user: associateUser } = await createUser({ role: 'ASSOCIATE', associateId: associate.id });

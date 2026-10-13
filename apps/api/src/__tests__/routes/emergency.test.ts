@@ -28,9 +28,9 @@ const HOUR = 3_600_000;
 
 async function world() {
   const clientA = await createClient('Coastal Resort');
-  const siteA = await prisma.location.findFirstOrThrow({ where: { clientId: clientA.id } });
+  const siteA = await prisma.site.findFirstOrThrow({ where: { clientId: clientA.id } });
   const clientB = await createClient('Inland Mart');
-  const siteB = await prisma.location.findFirstOrThrow({ where: { clientId: clientB.id } });
+  const siteB = await prisma.site.findFirstOrThrow({ where: { clientId: clientB.id } });
 
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
   const { user: chair } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });

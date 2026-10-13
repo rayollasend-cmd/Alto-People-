@@ -34,11 +34,11 @@ const STORES: Array<[string, number, number, number, number]> = [
 
 async function world() {
   const client = await createClient('Walmart');
-  const first = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: first.id }, data: { name: STORES[0]![0] } });
+  const first = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: first.id }, data: { name: STORES[0]![0] } });
   const locations = [first];
   for (const [name] of STORES.slice(1)) {
-    locations.push(await prisma.location.create({ data: { clientId: client.id, name } }));
+    locations.push(await prisma.site.create({ data: { clientId: client.id, name } }));
   }
   const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
   const { user: chair } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });

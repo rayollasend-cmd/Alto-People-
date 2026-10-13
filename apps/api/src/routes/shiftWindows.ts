@@ -57,7 +57,7 @@ shiftWindowsRouter.get('/me/shift-windows', requireAuth, async (req, res) => {
 const CAN_READ = requireAnyCapability('view:hr-admin', 'manage:org');
 
 shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) => {
-  const stores = await prisma.location.findMany({
+  const stores = await prisma.site.findMany({
     where: { deletedAt: null, isActive: true, client: { deletedAt: null, status: 'ACTIVE' } },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
   });
@@ -169,7 +169,7 @@ shiftWindowsRouter.get(
   CAN_READ,
   async (req, res) => {
     const clientId = z.string().uuid().parse(req.query.clientId);
-    const stores = await prisma.location.findMany({
+    const stores = await prisma.site.findMany({
       where: { clientId, deletedAt: null, isActive: true },
       select: { id: true, name: true, timezone: true },
       orderBy: { name: 'asc' },
@@ -252,7 +252,7 @@ shiftWindowsRouter.put(
     if (!target.clientId) {
       throw new HttpError(400, 'client_required', 'Assign the supervisor a client first.');
     }
-    const stores = await prisma.location.findMany({
+    const stores = await prisma.site.findMany({
       where: { clientId: target.clientId, deletedAt: null },
       select: { id: true },
     });

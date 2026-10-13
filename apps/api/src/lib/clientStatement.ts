@@ -95,7 +95,7 @@ export async function computeStatementSnapshot(
       where: { clientId, deletedAt: null },
       select: { name: true, isLead: true },
     }),
-    db.location.findMany({
+    db.site.findMany({
       where: { clientId },
       select: { id: true, name: true },
     }),

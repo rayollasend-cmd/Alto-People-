@@ -188,10 +188,10 @@ describe('the SOP packet', () => {
 
   it('narrows the scorecard and the insights to the filtered store', async () => {
     const client = await createClient();
-    const a = await prisma.location.create({
+    const a = await prisma.site.create({
       data: { clientId: client.id, name: 'Destin' },
     });
-    const b = await prisma.location.create({
+    const b = await prisma.site.create({
       data: { clientId: client.id, name: 'Front Beach 218' },
     });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });

@@ -33,7 +33,7 @@ async function main() {
 
   const walmart = clients.find(c => c.name === 'Walmart');
   if (walmart) {
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: { clientId: walmart.id },
       orderBy: { name: 'asc' },
       select: { name: true, state: true, isActive: true },

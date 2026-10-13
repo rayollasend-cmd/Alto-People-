@@ -44,11 +44,11 @@ describe('GET /scheduling/shifts — full-schedule cascading filter', () => {
     const clientB = await createClient('Target Pier Park');
 
     // clientA's default Location (created by createClient) + a second one.
-    const locA1 = await prisma.location.findFirstOrThrow({ where: { clientId: clientA.id } });
-    const locA2 = await prisma.location.create({
+    const locA1 = await prisma.site.findFirstOrThrow({ where: { clientId: clientA.id } });
+    const locA2 = await prisma.site.create({
       data: { clientId: clientA.id, name: 'Garden Center', timezone: 'America/Chicago' },
     });
-    const locB1 = await prisma.location.findFirstOrThrow({ where: { clientId: clientB.id } });
+    const locB1 = await prisma.site.findFirstOrThrow({ where: { clientId: clientB.id } });
 
     const mkShift = (clientId: string, locationId: string, position: string) =>
       prisma.shift.create({
@@ -97,7 +97,7 @@ describe('GET /scheduling/shifts — full-schedule cascading filter', () => {
 
   it('defaults a shift to the deployment timezone when its location has none set explicitly', async () => {
     const client = await createClient('Acme');
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.shift.create({
       data: {
         clientId: client.id,

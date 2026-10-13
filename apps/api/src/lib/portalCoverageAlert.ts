@@ -76,7 +76,7 @@ export async function runPortalCoverageAlertSweep(
   if (portalUsers.length === 0) return { waves: 0, rung: 0 };
   const regionIds = [...new Set(portalUsers.filter((u) => !u.clientId && u.regionId).map((u) => u.regionId!))];
   const regionStores = regionIds.length
-    ? await prisma.location.findMany({
+    ? await prisma.site.findMany({
         where: { regionId: { in: regionIds }, deletedAt: null },
         select: { id: true, clientId: true, regionId: true },
         take: 1000,

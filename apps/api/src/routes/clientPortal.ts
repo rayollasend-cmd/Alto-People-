@@ -98,7 +98,7 @@ async function resolveScope(
     // by naming it — validated below to belong to the region, never wider.
     const loc =
       typeof query.locationId === 'string' && query.locationId
-        ? await prisma.location.findFirst({
+        ? await prisma.site.findFirst({
             where: { AND: [{ id: query.locationId }, { id: { in: await regionSiteIds(prisma, user.regionId) } }], deletedAt: null },
             select: { id: true, clientId: true },
           })
@@ -162,7 +162,7 @@ async function resolveScope(
 
   let location: PortalScope['location'] = null;
   if (locationId) {
-    location = await prisma.location.findFirst({
+    location = await prisma.site.findFirst({
       where: { id: locationId, clientId, deletedAt: null },
       select: {
         id: true,
@@ -191,7 +191,7 @@ type RosterState = 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
 async function dayWindowLeads(scope: PortalScope) {
   const stores = scope.locationId
     ? [{ id: scope.locationId }]
-    : await prisma.location.findMany({
+    : await prisma.site.findMany({
         where: { clientId: scope.clientId, deletedAt: null },
         select: { id: true },
       });
@@ -431,7 +431,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       currentTarget(scope, now),
       scope.locationId
         ? Promise.resolve([])
-        : prisma.location.findMany({
+        : prisma.site.findMany({
             where: { clientId, deletedAt: null, isActive: true },
             select: { id: true, name: true },
             orderBy: { name: 'asc' },
@@ -1466,7 +1466,7 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
     }> = [];
     if (!scope.locationId) {
-      const locations = await prisma.location.findMany({
+      const locations = await prisma.site.findMany({
         where: { clientId: scope.clientId, deletedAt: null, isActive: true },
         select: { id: true, name: true },
         take: 200,

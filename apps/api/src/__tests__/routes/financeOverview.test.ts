@@ -205,7 +205,7 @@ describe('GET /finance/overview', () => {
       data: { associateId: a1.id, clientId: clientA.id },
     });
     // …but now OPEN-assigned at B (the org transfer flow's end state).
-    const locB = await prisma.location.findFirst({
+    const locB = await prisma.site.findFirst({
       where: { clientId: clientB.id },
       select: { id: true },
     });

@@ -39,7 +39,7 @@ const hoursFromNow = (h: number) => new Date(Date.now() + h * 3_600_000);
 async function mkPlaced(clientId: string, firstName: string, lastName: string) {
   const a = await createAssociate({ firstName, lastName });
   const { user } = await createUser({ role: 'ASSOCIATE', email: a.email, associateId: a.id });
-  const loc = await prisma.location.findFirstOrThrow({ where: { clientId } });
+  const loc = await prisma.site.findFirstOrThrow({ where: { clientId } });
   await prisma.associateAssignment.create({
     data: { associateId: a.id, locationId: loc.id, startedAt: new Date() },
   });

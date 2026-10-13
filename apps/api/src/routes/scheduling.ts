@@ -1155,7 +1155,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           })
         : Promise.resolve([]),
       entryLocationIds.length
-        ? prisma.location.findMany({
+        ? prisma.site.findMany({
             where: { id: { in: entryLocationIds } },
             select: { id: true, name: true, timezone: true },
           })
@@ -1492,7 +1492,7 @@ schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => 
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const stClientId = clamped === null ? NO_MATCH_ID : clamped;
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: {
         deletedAt: null,
         isActive: true,
@@ -1583,7 +1583,7 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const clamped = effectiveClientIdFilter(req.user!, undefined);
-    const location = await prisma.location.findFirst({
+    const location = await prisma.site.findFirst({
       where: {
         id: parsed.data.locationId,
         deletedAt: null,
@@ -1768,7 +1768,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     const locMeta =
       locIds.length === 0
         ? []
-        : await prisma.location.findMany({
+        : await prisma.site.findMany({
             where: { id: { in: locIds } },
             select: { id: true, name: true, client: { select: { name: true } } },
           });
@@ -1825,7 +1825,7 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const fnClientId = clamped === null ? NO_MATCH_ID : clamped;
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: {
         deletedAt: null,
         isActive: true,
@@ -2682,7 +2682,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       client = found;
       noticeState = found.state;
       if (input.locationId) {
-        const picked = await prisma.location.findFirst({
+        const picked = await prisma.site.findFirst({
           where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
           select: { id: true },
         });
@@ -2695,7 +2695,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       }
     } else {
       if (!input.locationId) throw new HttpError(400, 'site_required', 'Name the site for this shift.');
-      const site = await prisma.location.findFirst({ where: { id: input.locationId, deletedAt: null, isActive: true }, select: { id: true, clientId: true, state: true } });
+      const site = await prisma.site.findFirst({ where: { id: input.locationId, deletedAt: null, isActive: true }, select: { id: true, clientId: true, state: true } });
       if (!site) throw new HttpError(404, 'location_not_found', 'Site not found.');
       if (site.clientId) throw new HttpError(400, 'client_required', 'This site belongs to a client; name the client.');
       // A site-only account schedules its own site and nowhere else.
@@ -2802,7 +2802,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     // Resolve the work-site (explicit pick or the client's first Location).
     let location: { id: string; timezone: string };
     if (input.locationId) {
-      const picked = await prisma.location.findFirst({
+      const picked = await prisma.site.findFirst({
         where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
         select: { id: true, timezone: true },
       });
@@ -2816,7 +2816,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       location = picked;
     } else {
       const first = await firstLocationForClient(prisma, client.id);
-      const full = await prisma.location.findUniqueOrThrow({
+      const full = await prisma.site.findUniqueOrThrow({
         where: { id: first.id },
         select: { id: true, timezone: true },
       });
@@ -5878,7 +5878,7 @@ schedulingRouter.post('/teams', MANAGE, async (req, res, next) => {
     if (bounded !== undefined && i.clientId !== bounded) {
       throw new HttpError(403, 'client_forbidden', 'Cannot create a team for another client');
     }
-    const location = await prisma.location.findFirst({
+    const location = await prisma.site.findFirst({
       where: { id: i.locationId, clientId: i.clientId, deletedAt: null },
     });
     if (!location) {

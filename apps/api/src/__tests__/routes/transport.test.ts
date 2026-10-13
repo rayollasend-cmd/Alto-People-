@@ -45,7 +45,7 @@ const inHours = (h: number) => new Date(Date.now() + h * 3_600_000);
 
 async function seed() {
   const client = await createClient('Coastal');
-  const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const kim = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
   await prisma.application.create({
     data: { associateId: kim.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' },
@@ -174,7 +174,7 @@ describe('picking a pickup, not typing one', () => {
   // reported as "it keeps giving me Walmart's address".
   it('says when "where I am" is the store itself, rather than calling it home', async () => {
     const { kimAgent, store } = await seed();
-    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    await prisma.site.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
     let reversed = 0;
     setGeocoderForTests(null, async () => {
       reversed += 1;
@@ -192,7 +192,7 @@ describe('picking a pickup, not typing one', () => {
   it('refuses a pickup at the store being booked to, whichever way it arrived', async () => {
     const { kimAgent, store } = await seed();
     await sign(kimAgent);
-    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    await prisma.site.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
     const ride = { direction: 'TO_WORK', locationId: store.id, targetAt: inHours(20).toISOString() };
 
     const fromGps = await book(kimAgent, { ...ride, address: '15017 Emerald Coast Pkwy, Destin, FL', lat: 30.3926, lng: -86.4127 });
@@ -218,7 +218,7 @@ describe('picking a pickup, not typing one', () => {
     await sign(kimAgent);
     // An address and no geofence: the store's point is the geocoder's
     // guess, which this test's geocoder puts right on the rider's door.
-    await prisma.location.update({
+    await prisma.site.update({
       where: { id: store.id },
       data: { addressLine1: '15017 Emerald Coast Pkwy', city: 'Destin', state: 'FL', zip: '32541' },
     });
@@ -281,7 +281,7 @@ describe('the Ride tab — booking a seat', () => {
     const { kimAgent, store } = await seed();
     await sign(kimAgent);
     const other = await createClient('Target');
-    const otherStore = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
+    const otherStore = await prisma.site.findFirstOrThrow({ where: { clientId: other.id } });
     const denied = await book(kimAgent, {
       direction: 'TO_WORK',
       locationId: otherStore.id,
@@ -451,7 +451,7 @@ describe('ride charges come out of the pay period’s paycheck (Brief 1A-3)', ()
   /** A rider in Florida (minimum wage $15/h) with 4 approved hours, signed. */
   async function rider(opts: { rate?: number } = {}) {
     const client = await createClient();
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const associate = await createAssociate({ firstName: 'Ana', lastName: 'Reyes' });
     await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
     await prisma.application.create({
@@ -628,7 +628,7 @@ describe('ride charges come out of the pay period’s paycheck (Brief 1A-3)', ()
 describe('who rides where', () => {
   it('an associate on the schedule at a client rides to its stores, even before their application is approved', async () => {
     const client = await createClient('Seaside');
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
     await prisma.shift.create({
       data: {
@@ -652,7 +652,7 @@ describe('who rides where', () => {
 describe('supervisors ride too', () => {
   it('a shift supervisor books a ride to a store of their own client, without an application there', async () => {
     const client = await createClient('Coastal');
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const dana = await createAssociate({ firstName: 'Dana', lastName: 'Reyes' });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: dana.id });
     const agent = await loginAs(sup.email);
@@ -789,7 +789,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
     expect(refused.body.error.message).toMatch(/"Home".*drop a pin/);
 
     // Where the map opens: the store, since the lookup found nothing.
-    await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
+    await prisma.site.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
     const locate = await kimAgent.get(`/transport/me/places/${place.id}/locate?locationId=${store.id}`);
     expect(locate.body).toEqual({ point: null, center: { lat: 30.3925, lng: -86.4128 } });
 
@@ -809,7 +809,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
 
   it('their own store comes first and is the default — not the first store alphabetically', async () => {
     const { kimAgent, kim, client, store } = await seed();
-    await prisma.location.create({ data: { clientId: client.id, name: 'Aardvark Plaza' } });
+    await prisma.site.create({ data: { clientId: client.id, name: 'Aardvark Plaza' } });
     await prisma.application.updateMany({ where: { associateId: kim.id }, data: { locationId: store.id } });
     const me = await kimAgent.get('/transport/me');
     expect(me.body.stores[0]).toMatchObject({ id: store.id, mine: true });

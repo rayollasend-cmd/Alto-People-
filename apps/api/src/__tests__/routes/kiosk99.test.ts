@@ -44,11 +44,11 @@ const OUTSIDE = { lat: 40.7628, lng: -74.006 };
  */
 async function setupKiosk(opts: { geofence?: boolean } = {}) {
   const client = await createClient();
-  const location = await prisma.location.findFirstOrThrow({
+  const location = await prisma.site.findFirstOrThrow({
     where: { clientId: client.id },
   });
   if (opts.geofence) {
-    await prisma.location.update({
+    await prisma.site.update({
       where: { id: location.id },
       data: {
         latitude: FENCE.lat,
@@ -580,7 +580,7 @@ describe('kiosk PIN client re-homing + attributed rejects', () => {
     // A second client with its own paired device — the PIN belongs to the
     // first client, so punching here must bounce as pin_wrong_client.
     const otherClient = await createClient('Other Corp');
-    const otherLoc = await prisma.location.findFirstOrThrow({
+    const otherLoc = await prisma.site.findFirstOrThrow({
       where: { clientId: otherClient.id },
     });
     const { plaintext, prefix } = generateDeviceToken();

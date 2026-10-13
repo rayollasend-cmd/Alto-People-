@@ -341,7 +341,7 @@ export async function inviteOneApplicant(
     // The RESOLVED site for this hire — what the application actually stores.
     let resolvedLocationId: string | null = input.locationId ?? null;
     if (input.locationId) {
-      const location = await tx.location.findFirst({
+      const location = await tx.site.findFirst({
         where: { id: input.locationId, clientId: client?.id ?? null, deletedAt: null },
         select: { id: true },
       });
@@ -364,7 +364,7 @@ export async function inviteOneApplicant(
       // answer is exactly the friction that used to get skipped. Only a
       // genuinely ambiguous choice (2+ sites) is bounced back to the
       // caller; clients with no sites keep the old behavior.
-      const sites = await tx.location.findMany({
+      const sites = await tx.site.findMany({
         take: 2,
         where: { clientId: client?.id ?? null, deletedAt: null, isActive: true },
         select: { id: true },
@@ -1116,7 +1116,7 @@ async function approveOneApplication(
   // store needs no choice; a chosen store is stamped on the application.
   let storeId = app.locationId;
   if (locationId) {
-    const chosen = await prisma.location.findFirst({
+    const chosen = await prisma.site.findFirst({
       where: { id: locationId, clientId: app.clientId, deletedAt: null, isActive: true },
       select: { id: true },
     });
@@ -1126,7 +1126,7 @@ async function approveOneApplication(
     storeId = chosen.id;
   }
   if (!storeId) {
-    const stores = await prisma.location.findMany({
+    const stores = await prisma.site.findMany({
       where: { clientId: app.clientId, deletedAt: null, isActive: true },
       select: { id: true },
       take: 2,
@@ -4117,7 +4117,7 @@ onboardingRouter.get('/invite-locations', INVITE, async (req, res, next) => {
       res.json(LocationListResponseSchema.parse({ locations: [] }));
       return;
     }
-    const rows = await prisma.location.findMany({
+    const rows = await prisma.site.findMany({
       take: 500,
       where: { clientId, deletedAt: null, isActive: true },
       orderBy: { name: 'asc' },
@@ -4186,7 +4186,7 @@ onboardingRouter.post(
       // the single-invite path keeps identical behavior.)
       let batchLocationId = parsed.data.locationId;
       if (batchLocationId) {
-        const location = await prisma.location.findFirst({
+        const location = await prisma.site.findFirst({
           where: { id: batchLocationId, clientId, deletedAt: null },
           select: { id: true },
         });
@@ -4198,7 +4198,7 @@ onboardingRouter.post(
           );
         }
       } else {
-        const sites = await prisma.location.findMany({
+        const sites = await prisma.site.findMany({
           take: 2,
           where: { clientId, deletedAt: null, isActive: true },
           select: { id: true },
@@ -4965,7 +4965,7 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
       // helper). Multi-site clients get NULL here rather than a hard
       // error — the CSV has no location column, and blocking a whole
       // migration on it would be worse; HR places/transfers them after.
-      const sites = await prisma.location.findMany({
+      const sites = await prisma.site.findMany({
         take: 2,
         where: { clientId, deletedAt: null, isActive: true },
         select: { id: true },

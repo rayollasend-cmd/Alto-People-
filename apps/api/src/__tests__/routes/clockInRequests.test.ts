@@ -32,7 +32,7 @@ const app = () => createApp();
 
 async function setupKiosk() {
   const client = await createClient();
-  const location = await prisma.location.findFirstOrThrow({
+  const location = await prisma.site.findFirstOrThrow({
     where: { clientId: client.id },
   });
   const associate = await createAssociate({ firstName: 'Walk', lastName: 'In' });

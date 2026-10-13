@@ -43,8 +43,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 async function seed(opts: { registeredAt?: 'walmart' | 'target' } = {}) {
   const walmart = await createClient('Walmart');
   const target = await createClient('Target');
-  const walmartStore = await prisma.location.findFirstOrThrow({ where: { clientId: walmart.id } });
-  const targetStore = await prisma.location.findFirstOrThrow({ where: { clientId: target.id } });
+  const walmartStore = await prisma.site.findFirstOrThrow({ where: { clientId: walmart.id } });
+  const targetStore = await prisma.site.findFirstOrThrow({ where: { clientId: target.id } });
   await prisma.client.update({ where: { id: target.id }, data: { fieldglassSiteName: '4 - Onsite - FL - Destin' } });
   const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
   await prisma.application.create({

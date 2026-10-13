@@ -15,7 +15,7 @@ async function makeDevice(opts: {
   lastSeenAt?: Date | null;
 }) {
   const client = await createClient();
-  const location = await prisma.location.findFirstOrThrow({
+  const location = await prisma.site.findFirstOrThrow({
     where: { clientId: client.id },
   });
   const { plaintext, prefix } = generateDeviceToken();

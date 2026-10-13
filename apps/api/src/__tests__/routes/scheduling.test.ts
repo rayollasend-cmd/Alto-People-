@@ -444,7 +444,7 @@ describe('calendar feed URL rotation', () => {
       email: me.email,
       associateId: me.id,
     });
-    const loc = await prisma.location.create({
+    const loc = await prisma.site.create({
       data: { clientId: client.id, name: 'Store 1424', timezone: 'America/New_York' },
     });
     await prisma.shift.create({
@@ -472,10 +472,10 @@ describe('calendar feed URL rotation', () => {
 describe('GET /scheduling/me/shifts/:id — detail + teammates', () => {
   it('returns overlapping published teammates at the same site only', async () => {
     const client = await createClient();
-    const loc = await prisma.location.findFirstOrThrow({
+    const loc = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
-    const otherLoc = await prisma.location.create({
+    const otherLoc = await prisma.site.create({
       data: { clientId: client.id, name: 'Annex' },
     });
     const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
@@ -580,7 +580,7 @@ describe('GET /scheduling/me/shifts/:id — detail + teammates', () => {
 describe('GET /scheduling/me/shifts/:id/swap-candidates', () => {
   it('lists the schedulable pool minus me, flagging overlaps as busy', async () => {
     const client = await createClient();
-    const loc = await prisma.location.findFirstOrThrow({
+    const loc = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
     const mkQualified = async (firstName: string, lastName: string) => {
@@ -893,7 +893,7 @@ describe('POST /scheduling/copy-week', () => {
 /** ACTIVE_ASSOCIATE_FILTER needs an approved application OR an open
  *  assignment — give the fixture associate an open assignment at a site. */
 async function placeAtSite(associateId: string, clientId: string) {
-  const location = await prisma.location.create({
+  const location = await prisma.site.create({
     data: { clientId, name: `Site ${Math.random().toString(36).slice(2, 8)}` },
   });
   await prisma.associateAssignment.create({
@@ -988,7 +988,7 @@ describe('POST /scheduling/templates/:id/apply — site-timezone times', () => {
   it('stamps template minutes as wall-clock at the site, not server-local', async () => {
     const client = await createClient();
     // Default Location timezone is America/New_York.
-    await prisma.location.create({
+    await prisma.site.create({
       data: { clientId: client.id, name: 'Front Beach' },
     });
     const tpl = await prisma.shiftTemplate.create({
@@ -1018,7 +1018,7 @@ describe('POST /scheduling/templates/:id/apply — site-timezone times', () => {
 describe('drafts: the unpublished work nobody could find', () => {
   async function seedDraftSite() {
     const client = await createClient();
-    const location = await prisma.location.create({
+    const location = await prisma.site.create({
       data: { clientId: client.id, name: 'Front Beach' },
     });
     return { client, location };
@@ -1100,7 +1100,7 @@ describe('drafts: the unpublished work nobody could find', () => {
 describe('Shift teams', () => {
   async function seedSite() {
     const client = await createClient();
-    const location = await prisma.location.create({
+    const location = await prisma.site.create({
       data: { clientId: client.id, name: 'Front Beach' },
     });
     return { client, location };
@@ -1201,7 +1201,7 @@ describe('Shift teams', () => {
     // to this team must NOT move her — silently transferring someone out
     // of another store's roster is not a side effect a team edit should
     // have. That is what leaves the badge showing and assign-here for.
-    const otherSite = await prisma.location.create({
+    const otherSite = await prisma.site.create({
       data: { clientId: client.id, name: 'Other site', timezone: 'America/Chicago' },
     });
     await prisma.associateAssignment.create({

@@ -44,7 +44,7 @@ const RANGE = {
 describe('GET /scheduling/labor-costs', () => {
   it('prices shifts (explicit rate else default), punches (snapshot), and flags no-rate rows', async () => {
     const client = await createClient('Costed LLC');
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.shiftRateDefault.create({
       data: { clientId: client.id, position: 'Cashier', payRate: 10, billRate: 21 },
     });
@@ -249,7 +249,7 @@ describe('GET /scheduling/labor-costs', () => {
 
   it('staffing targets: set + read current, effective-dated per day', async () => {
     const client = await createClient('Targeted LLC');
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
 
@@ -315,7 +315,7 @@ describe('GET /scheduling/labor-costs', () => {
 
   it('floor-now compares clocked-in against the current shift window, else the total', async () => {
     const client = await createClient('LiveCo');
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.staffingTarget.create({
       data: { locationId: loc.id, targetCount: 5, effectiveFrom: new Date('2026-01-01T00:00:00Z') },
     });
@@ -394,7 +394,7 @@ describe('GET /scheduling/labor-costs', () => {
   it('staffing targets clamp: a supervisor sees and sets only their own client', async () => {
     const mine = await createClient('Mine LLC');
     const other = await createClient('Other Corp');
-    const otherLoc = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
+    const otherLoc = await prisma.site.findFirstOrThrow({ where: { clientId: other.id } });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: mine.id });
     const a = await loginAs(sup.email);
 
@@ -414,8 +414,8 @@ describe('GET /scheduling/labor-costs', () => {
   it('refuses a supervisor outright — labor cost is not a store-bound read', async () => {
     const mine = await createClient('Mine LLC');
     const other = await createClient('Other Corp');
-    const mineLoc = await prisma.location.findFirstOrThrow({ where: { clientId: mine.id } });
-    const otherLoc = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
+    const mineLoc = await prisma.site.findFirstOrThrow({ where: { clientId: mine.id } });
+    const otherLoc = await prisma.site.findFirstOrThrow({ where: { clientId: other.id } });
     await prisma.shift.create({
       data: {
         clientId: mine.id,

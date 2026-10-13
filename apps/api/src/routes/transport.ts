@@ -355,7 +355,7 @@ async function pointFor(address: string, lat?: number, lng?: number) {
 
 /** Where a store is, by id — null when it can't be placed. */
 async function storePointById(locationId: string): Promise<GeoPoint | null> {
-  const loc = await prisma.location.findUnique({
+  const loc = await prisma.site.findUnique({
     where: { id: locationId },
     select: {
       addressLine1: true, city: true, state: true, zip: true,
@@ -494,7 +494,7 @@ transportRouter.get('/me/where', RIDE, async (req, res) => {
     .parse(req.query);
   const here = { lat: q.lat, lng: q.lng };
   const loc = q.locationId
-    ? await prisma.location.findUnique({
+    ? await prisma.site.findUnique({
         where: { id: q.locationId },
         select: { addressLine1: true, city: true, state: true, zip: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
       })
@@ -641,7 +641,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   // built on that would leave someone who lives nearby no way to book.
   const home = at ?? stopAt;
   const fence = home
-    ? await prisma.location.findUnique({
+    ? await prisma.site.findUnique({
         where: { id: store.id },
         select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
       })
@@ -1502,7 +1502,7 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
     take: 60,
     select: rideSelect,
   });
-  const location = await prisma.location.findUnique({
+  const location = await prisma.site.findUnique({
     where: { id: q.locationId },
     select: {
       id: true,

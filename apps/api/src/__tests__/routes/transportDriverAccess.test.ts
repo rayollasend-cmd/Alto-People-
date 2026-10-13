@@ -41,8 +41,8 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 async function world() {
   const coastal = await createClient('Coastal');
   const harbor = await createClient('Harbor');
-  const storeA = await prisma.location.findFirstOrThrow({ where: { clientId: coastal.id } });
-  const storeB = await prisma.location.findFirstOrThrow({ where: { clientId: harbor.id } });
+  const storeA = await prisma.site.findFirstOrThrow({ where: { clientId: coastal.id } });
+  const storeB = await prisma.site.findFirstOrThrow({ where: { clientId: harbor.id } });
   const { user: director } = await createUser({ role: 'TRANSPORTATION_DIRECTOR' });
   const mikeA = await createAssociate({ firstName: 'Mike', lastName: 'Chen' });
   const { user: mike } = await createUser({ role: 'DRIVER', associateId: mikeA.id });

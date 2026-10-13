@@ -226,8 +226,8 @@ describe('GET /time/admin/entries', () => {
   it('filters the queue and the live board by locationId', async () => {
     const client = await createClient();
     const [siteA, siteB] = await Promise.all([
-      prisma.location.create({ data: { clientId: client.id, name: 'Site A' } }),
-      prisma.location.create({ data: { clientId: client.id, name: 'Site B' } }),
+      prisma.site.create({ data: { clientId: client.id, name: 'Site A' } }),
+      prisma.site.create({ data: { clientId: client.id, name: 'Site B' } }),
     ]);
     const atA = await createAssociate({ firstName: 'Ada', lastName: 'AtA' });
     const atB = await createAssociate({ firstName: 'Bea', lastName: 'AtB' });

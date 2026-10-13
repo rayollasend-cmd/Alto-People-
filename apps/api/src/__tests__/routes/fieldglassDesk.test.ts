@@ -77,7 +77,7 @@ describe('the registration packet', () => {
         zip: '32541',
       },
     });
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: w.client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: w.client.id } });
     // The store's Overnight window, 10 PM → 6 AM; their shift starts in it
     // (03:00 UTC is 10 or 11 PM Eastern).
     await prisma.staffingTarget.create({

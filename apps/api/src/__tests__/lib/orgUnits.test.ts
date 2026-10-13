@@ -57,9 +57,9 @@ describe('the tree', () => {
     await expect(updateOrgUnit(prisma, division.id, { parentId: cc.id })).rejects.toMatchObject({ code: 'org_unit_cycle' });
 
     const client = await createClient('Coastal Resort');
-    const a = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const b = await prisma.location.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago', orgUnitId: west.id } });
-    await prisma.location.update({ where: { id: a.id }, data: { orgUnitId: east.id } });
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const b = await prisma.site.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago', orgUnitId: west.id } });
+    await prisma.site.update({ where: { id: a.id }, data: { orgUnitId: east.id } });
     expect((await siteIdsUnder(prisma, division.id)).sort()).toEqual([a.id, b.id].sort());
     expect(await siteIdsUnder(prisma, east.id)).toEqual([a.id]);
     expect(await siteIdsUnder(prisma, cc.id)).toEqual([]);
@@ -73,7 +73,7 @@ describe('the tree', () => {
     const reg = await admin.post('/admin/org-units').send({ type: 'REGION', name: 'Florida', parentId: div.body.unit.id, glCode: '5000' });
     expect(reg.body.unit.path).toBe(`/${div.body.unit.id}/${reg.body.unit.id}`);
     const client = await createClient('Coastal Resort');
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     expect((await admin.put(`/admin/org-units/${reg.body.unit.id}/sites`).send({ locationIds: [site.id] })).status).toBe(204);
     const under = await admin.get(`/admin/org-units/${div.body.unit.id}/sites`);
     expect(under.body.sites.map((s: { id: string }) => s.id)).toEqual([site.id]);
@@ -84,7 +84,7 @@ describe('the tree', () => {
     const after = await admin.get('/admin/org-units');
     expect(after.body.units).toHaveLength(1);
     expect(after.body.units[0]).toMatchObject({ name: 'Florida', parentId: null, path: `/${reg.body.unit.id}` });
-    expect((await prisma.location.findUniqueOrThrow({ where: { id: site.id } })).orgUnitId).toBe(reg.body.unit.id);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: site.id } })).orgUnitId).toBe(reg.body.unit.id);
     // Nobody below manage:org writes the tree.
     const a = await createAssociate();
     const { user: assoc } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
@@ -117,14 +117,14 @@ describe('Region reads the tree', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const admin = await loginAs(agent(), hr.email);
     const client = await createClient('Coastal Resort');
-    const a = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const b = await prisma.location.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago' } });
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const b = await prisma.site.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago' } });
     const created = await admin.post('/regions').send({ name: 'Panhandle', locationIds: [a.id] });
     expect(created.status).toBe(201);
     const unit = await prisma.orgUnit.findUniqueOrThrow({ where: { legacyRegionId: created.body.id } });
     expect(unit).toMatchObject({ type: 'REGION', name: 'Panhandle' });
     expect(await regionSiteIds(prisma, created.body.id)).toEqual([a.id]);
-    expect((await prisma.location.findUniqueOrThrow({ where: { id: a.id } })).orgUnitId).toBe(unit.id);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: a.id } })).orgUnitId).toBe(unit.id);
 
     expect((await admin.patch(`/regions/${created.body.id}`).send({ name: 'Florida Panhandle', locationIds: [a.id, b.id] })).status).toBe(204);
     expect((await regionSiteIds(prisma, created.body.id)).sort()).toEqual([a.id, b.id].sort());
@@ -137,7 +137,7 @@ describe('Region reads the tree', () => {
 
     expect((await admin.delete(`/regions/${created.body.id}`)).status).toBe(204);
     expect((await prisma.orgUnit.findUniqueOrThrow({ where: { legacyRegionId: created.body.id } })).deletedAt).not.toBeNull();
-    expect((await prisma.location.findUniqueOrThrow({ where: { id: a.id } })).orgUnitId).toBeNull();
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: a.id } })).orgUnitId).toBeNull();
   });
 });
 
@@ -147,9 +147,9 @@ describe('permission at any level', () => {
     const east = await createOrgUnit(prisma, { type: 'REGION', name: 'Panhandle', parentId: division.id });
     const other = await createOrgUnit(prisma, { type: 'DIVISION', name: 'Mountain' });
     const client = await createClient('Coastal Resort');
-    const a = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const b = await prisma.location.create({ data: { clientId: client.id, name: 'Elsewhere', timezone: 'America/Denver', orgUnitId: other.id } });
-    await prisma.location.update({ where: { id: a.id }, data: { orgUnitId: east.id } });
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const b = await prisma.site.create({ data: { clientId: client.id, name: 'Elsewhere', timezone: 'America/Denver', orgUnitId: other.id } });
+    await prisma.site.update({ where: { id: a.id }, data: { orgUnitId: east.id } });
     const ana = await createAssociate({ firstName: 'Ana', lastName: 'East' });
     const bo = await createAssociate({ firstName: 'Bo', lastName: 'Mountain' });
     await prisma.associateAssignment.create({ data: { associateId: ana.id, locationId: a.id, startedAt: new Date('2026-05-01') } });

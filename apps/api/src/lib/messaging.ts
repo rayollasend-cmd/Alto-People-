@@ -86,7 +86,7 @@ export function canMessage(from: Messenger, to: Messenger): boolean {
 /** Clients that have a store in the caller's region (region accounts). */
 export async function regionClientIds(regionId: string, prisma: PrismaClient = defaultPrisma): Promise<string[]> {
   // Brief 2-1b step 5: a region's stores are the sites under its unit.
-  const rows = await prisma.location.findMany({
+  const rows = await prisma.site.findMany({
     where: { id: { in: await regionSiteIds(prisma, regionId) }, deletedAt: null },
     select: { clientId: true },
     distinct: ['clientId'],

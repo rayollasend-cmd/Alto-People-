@@ -113,7 +113,7 @@ describe('Auto-fill candidate ranking', () => {
     // The candidate pool filter (ACTIVE_ASSOCIATE_FILTER) only surfaces
     // associates with an ACTIVE linked user AND an open assignment (or an
     // approved application) — bare Associate rows are invisible to auto-fill.
-    const location = await prisma.location.findFirstOrThrow({
+    const location = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
     const makeCandidate = async (firstName: string, lastName: string) => {
@@ -277,7 +277,7 @@ describe('Shift swap marketplace', () => {
       email: aCounter.email,
       associateId: aCounter.id,
     });
-    const loc = await prisma.location.create({
+    const loc = await prisma.site.create({
       data: { clientId: client.id, name: 'Store 1424', timezone: 'America/Chicago' },
     });
     const shift = await prisma.shift.create({

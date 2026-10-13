@@ -72,8 +72,8 @@ describe('GET /scheduling/associates — client/location scope', () => {
 
   it('scopes to a location via an open assignment when locationId is given', async () => {
     const client = await createClient('Acme');
-    const loc1 = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const loc2 = await prisma.location.create({ data: { clientId: client.id, name: 'Annex' } });
+    const loc1 = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc2 = await prisma.site.create({ data: { clientId: client.id, name: 'Annex' } });
 
     // dana: open assignment at loc1. erin: open assignment at loc2.
     const dana = await createAssociate({ firstName: 'Dana', lastName: 'One' });

@@ -43,7 +43,7 @@ seasonPlansRouter.get('/defaults', VIEW, async (req, res, next) => {
     const q = z.object({ clientId: Id.optional(), seasonStart: DateOnly, seasonEnd: DateOnly }).parse(req.query);
     if (q.seasonEnd < q.seasonStart) throw new HttpError(400, 'invalid_dates', 'seasonEnd must be on or after seasonStart');
     const weeks = seasonWeeks(q.seasonStart, q.seasonEnd);
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: { isActive: true, deletedAt: null, ...(q.clientId ? { clientId: q.clientId } : { client: { status: 'ACTIVE', deletedAt: null } }) },
       select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
       orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],

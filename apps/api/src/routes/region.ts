@@ -53,7 +53,7 @@ async function resolveRegion(user: SessionUser, query: { regionId?: unknown }) {
   // Brief 2-1b step 5: the region's stores are every site under its unit in the organizational tree.
   const siteIds = await regionSiteIds(prisma, found.id);
   const locations = siteIds.length
-    ? await prisma.location.findMany({
+    ? await prisma.site.findMany({
         where: { id: { in: siteIds }, deletedAt: null, isActive: true },
         select: { id: true, name: true, timezone: true, clientId: true, client: { select: { name: true } } },
         orderBy: { name: 'asc' },
@@ -191,7 +191,7 @@ regionsAdminRouter.get('/', requireCapability('view:org'), async (_req, res, nex
       },
       take: 200,
     });
-    const unassigned = await prisma.location.findMany({
+    const unassigned = await prisma.site.findMany({
       where: { deletedAt: null, isActive: true, regionId: null },
       select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
       orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
@@ -224,7 +224,7 @@ regionsAdminRouter.post('/', ADMIN, async (req, res, next) => {
     // Brief 2-1b step 5: the region is a REGION unit in the organizational tree; its stores are pinned there.
     const unit = await ensureRegionUnit(prisma, { id: region.id, name: input.name });
     if (input.locationIds?.length) {
-      await prisma.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
+      await prisma.site.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
     }
     res.status(201).json({ id: region.id });
   } catch (err) {
@@ -244,10 +244,10 @@ regionsAdminRouter.patch('/:id', ADMIN, async (req, res, next) => {
         await tx.orgUnit.update({ where: { id: unit.id }, data: { name: input.name } });
       }
       if (input.locationIds) {
-        await tx.location.updateMany({ where: { regionId: region.id }, data: { regionId: null } });
-        await tx.location.updateMany({ where: { orgUnitId: unit.id }, data: { orgUnitId: null } });
+        await tx.site.updateMany({ where: { regionId: region.id }, data: { regionId: null } });
+        await tx.site.updateMany({ where: { orgUnitId: unit.id }, data: { orgUnitId: null } });
         if (input.locationIds.length) {
-          await tx.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
+          await tx.site.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
         }
       }
     });
@@ -276,7 +276,7 @@ regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     const input = RegionInviteInput.parse(req.body);
     const approver = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
-    const storeCount = await prisma.location.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
+    const storeCount = await prisma.site.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
     const r = await invitePortalAccount({
       email: input.email,
       name: input.name ?? null,
@@ -313,11 +313,11 @@ regionsAdminRouter.delete('/:id', ADMIN, async (req, res, next) => {
     const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     await prisma.$transaction([
-      prisma.location.updateMany({ where: { regionId: region.id }, data: { regionId: null } }),
+      prisma.site.updateMany({ where: { regionId: region.id }, data: { regionId: null } }),
       prisma.user.updateMany({ where: { regionId: region.id }, data: { regionId: null, tokenVersion: { increment: 1 } } }),
       prisma.region.update({ where: { id: region.id }, data: { deletedAt: new Date() } }),
       // The mirror unit goes with it; its sites and accounts are unpinned.
-      prisma.location.updateMany({ where: { orgUnit: { is: { legacyRegionId: region.id } } }, data: { orgUnitId: null } }),
+      prisma.site.updateMany({ where: { orgUnit: { is: { legacyRegionId: region.id } } }, data: { orgUnitId: null } }),
       prisma.user.updateMany({ where: { orgUnit: { is: { legacyRegionId: region.id } } }, data: { orgUnitId: null } }),
       prisma.orgUnit.updateMany({ where: { legacyRegionId: region.id, deletedAt: null }, data: { deletedAt: new Date(), isActive: false } }),
     ]);

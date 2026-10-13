@@ -28,7 +28,7 @@ const NOW = new Date('2026-10-10T15:00:00.000Z');
 
 async function world() {
   const client = await createClient('Coastal Resort');
-  const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const mk = async (first: string, last: string, email: string, rate: number) => {
     const a = await createAssociate({ firstName: first, lastName: last, email });
     await prisma.associateAssignment.create({ data: { associateId: a.id, locationId: site.id, startedAt: new Date('2026-05-01') } });

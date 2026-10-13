@@ -49,8 +49,8 @@ type Task = {
 
 async function store() {
   const client = await createClient('Front Beach 218');
-  const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: loc.id }, data: { timezone: NY } });
+  const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: loc.id }, data: { timezone: NY } });
   const lead = await createAssociate({ firstName: 'Tori', lastName: 'Banks' });
   const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: lead.id });
   const { user: manager } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });

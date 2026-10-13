@@ -39,7 +39,7 @@ const inDays = (d: number, h = 0) => new Date(Date.now() + (d * 24 + h) * 3_600_
 
 async function atStore(name: string, clientId: string) {
   const a = await createAssociate({ firstName: name, lastName: 'Worker' });
-  const location = await prisma.location.findFirstOrThrow({ where: { clientId } });
+  const location = await prisma.site.findFirstOrThrow({ where: { clientId } });
   await prisma.associateAssignment.create({
     data: { associateId: a.id, locationId: location.id, startedAt: new Date('2026-01-01') },
   });

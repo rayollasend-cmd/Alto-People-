@@ -42,7 +42,7 @@ async function placed(associateId: string, locationId: string) {
 describe('alerts fire from the dates on the record', () => {
   it('30 days before a J-1 program end, the cohort alerts are exactly what the lead times say', async () => {
     const client = await createClient('Coastal Resort');
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const sponsor = await prisma.sponsor.create({ data: { name: 'Global Exchange', checkInCadenceDays: 30 } });
 
     // Ana: ends in 30 days, started 40 days ago with no check-in yet, I-9 work auth 25 days out.
@@ -99,9 +99,9 @@ describe('alerts fire from the dates on the record', () => {
 
   it('the lead times are configurable, and a supervisor only hears about their own floor', async () => {
     const clientA = await createClient('Coastal Resort');
-    const siteA = await prisma.location.findFirstOrThrow({ where: { clientId: clientA.id } });
+    const siteA = await prisma.site.findFirstOrThrow({ where: { clientId: clientA.id } });
     const clientB = await createClient('Inland Mart');
-    const siteB = await prisma.location.findFirstOrThrow({ where: { clientId: clientB.id } });
+    const siteB = await prisma.site.findFirstOrThrow({ where: { clientId: clientB.id } });
     const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
     await placed(ana.id, siteA.id);
     await prisma.program.create({ data: { associateId: ana.id, type: 'J1_SWT', programStart: dateOnly(daysFromNow(-40)), programEnd: dateOnly(daysFromNow(45)) } });
@@ -135,7 +135,7 @@ describe('alerts fire from the dates on the record', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     await createUser({ role: 'SHIFT_SUPERVISOR' });
     const client = await createClient();
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
     await placed(ana.id, site.id);
     // 2026-07-13 is a Monday; 15:00Z is 11 AM Eastern.
@@ -158,9 +158,9 @@ describe('alerts fire from the dates on the record', () => {
 describe('the H-2B client rule', () => {
   async function h2bWorld() {
     const x = await createClient('Petition Client');
-    const siteX = await prisma.location.findFirstOrThrow({ where: { clientId: x.id } });
+    const siteX = await prisma.site.findFirstOrThrow({ where: { clientId: x.id } });
     const y = await createClient('Other Client');
-    const siteY = await prisma.location.findFirstOrThrow({ where: { clientId: y.id } });
+    const siteY = await prisma.site.findFirstOrThrow({ where: { clientId: y.id } });
     const eli = await createAssociate({ firstName: 'Eli', lastName: 'Garcia' });
     // One open placement per associate (the database says so); the second client comes through an approved application.
     await placed(eli.id, siteX.id);
@@ -257,7 +257,7 @@ describe('the H-2B client rule', () => {
 describe('the record, the sponsor, the calendar, the report', () => {
   it('creates a program with its documents, keeps the J-1 tab in step, and the H-2B rule needs a client', async () => {
     const client = await createClient('Coastal Resort');
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
     await placed(ana.id, site.id);
     const doc = await prisma.documentRecord.create({
@@ -314,9 +314,9 @@ describe('the record, the sponsor, the calendar, the report', () => {
 
   it('the transition calendar counts a store by month and channel, and the sponsor report adds hours and departures', async () => {
     const client = await createClient('Coastal Resort');
-    const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const other = await createClient('Inland Mart');
-    const siteOther = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
+    const siteOther = await prisma.site.findFirstOrThrow({ where: { clientId: other.id } });
     const sponsor = await prisma.sponsor.create({ data: { name: 'Global Exchange' } });
     const mk = async (first: string, locationId: string, type: 'J1_SWT' | 'H2B', start: string, end: string, petitionClientId?: string) => {
       const a = await createAssociate({ firstName: first, lastName: 'Test' });

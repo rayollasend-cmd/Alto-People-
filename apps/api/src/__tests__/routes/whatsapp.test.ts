@@ -44,7 +44,7 @@ const HOUR = 3_600_000;
 
 async function world() {
   const client = await createClient('Coastal Resort');
-  const site = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
   const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
 

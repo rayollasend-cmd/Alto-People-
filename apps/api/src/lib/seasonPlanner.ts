@@ -387,11 +387,11 @@ async function siteInputs(db: Db, input: SeasonPlanInput): Promise<SeasonPlanSit
   const weeks = seasonWeeks(input.seasonStart, input.seasonEnd);
   if (input.sites && input.sites.length > 0) {
     const ids = input.sites.map((s) => s.locationId);
-    const found = await db.location.count({ where: { id: { in: ids }, deletedAt: null } });
+    const found = await db.site.count({ where: { id: { in: ids }, deletedAt: null } });
     if (found !== ids.length) throw new HttpError(400, 'site_not_found', 'One of those sites does not exist.');
     return input.sites;
   }
-  const locations = await db.location.findMany({
+  const locations = await db.site.findMany({
     where: { isActive: true, deletedAt: null, ...(input.clientId ? { clientId: input.clientId } : { client: { status: 'ACTIVE', deletedAt: null } }) },
     select: { id: true },
     orderBy: { name: 'asc' },
@@ -468,7 +468,7 @@ export async function updatePlan(db: Db, id: string, input: SeasonPlanUpdate, no
   if (end < start) throw new HttpError(400, 'invalid_dates', 'seasonEnd must be on or after seasonStart');
   if (input.sites) {
     const ids = input.sites.map((s) => s.locationId);
-    const found = await db.location.count({ where: { id: { in: ids }, deletedAt: null } });
+    const found = await db.site.count({ where: { id: { in: ids }, deletedAt: null } });
     if (found !== ids.length) throw new HttpError(400, 'site_not_found', 'One of those sites does not exist.');
   }
   const row = await db.seasonPlan.update({

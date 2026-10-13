@@ -152,7 +152,7 @@ async function seedFullAssociate(clientId: string, opts: SeedOptions = {}) {
     },
   });
 
-  const location = await prisma.location.findFirstOrThrow({ where: { clientId } });
+  const location = await prisma.site.findFirstOrThrow({ where: { clientId } });
   const device = await prisma.kioskDevice.create({
     data: {
       clientId,
@@ -433,7 +433,7 @@ describe('POST /org/associates/:id/erase', () => {
     const client = await createClient();
     const seeded = await seedFullAssociate(client.id, { separated: false });
     const hr = await seedHrAdmin();
-    const location = await prisma.location.create({
+    const location = await prisma.site.create({
       data: { clientId: client.id, name: 'Site', timezone: 'America/Chicago' },
     });
     const shiftAt = (hoursFromNow: number, status: 'ASSIGNED' | 'DRAFT' | 'COMPLETED') =>

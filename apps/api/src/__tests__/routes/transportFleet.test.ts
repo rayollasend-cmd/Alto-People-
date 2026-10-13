@@ -41,8 +41,8 @@ const FAR = { lat: 30.3, lng: -85.95 };
 
 async function world() {
   const client = await createClient('Coastal');
-  const first = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  const store = await prisma.location.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
+  const first = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  const store = await prisma.site.update({ where: { id: first.id }, data: { latitude: STORE.lat, longitude: STORE.lng } });
   const { user: director } = await createUser({ role: 'TRANSPORTATION_DIRECTOR' });
   const mikeA = await createAssociate({ firstName: 'Mike', lastName: 'Chen' });
   const { user: mike } = await createUser({ role: 'DRIVER', associateId: mikeA.id });

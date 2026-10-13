@@ -37,7 +37,7 @@ const future = (offsetMin: number) => new Date(Date.now() + offsetMin * 60_000);
 /** Client + its default Location (createClient seeds one). */
 async function clientWithLocation(name?: string) {
   const client = await createClient(name);
-  const location = await prisma.location.findFirstOrThrow({
+  const location = await prisma.site.findFirstOrThrow({
     where: { clientId: client.id },
   });
   return { client, location };
@@ -55,7 +55,7 @@ async function placedAssociate(locationId: string) {
 describe('POST /org/associates/:id/transfer', () => {
   it('intra-client transfer still works without confirmCrossClient', async () => {
     const { client, location } = await clientWithLocation('Walmart Front Beach');
-    const second = await prisma.location.create({
+    const second = await prisma.site.create({
       data: { clientId: client.id, name: 'Back of House' },
     });
     const associate = await placedAssociate(location.id);

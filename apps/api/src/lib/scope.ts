@@ -35,7 +35,7 @@ function boundsOf(user: SessionUser): Bounds | null {
 }
 
 /** The sites a site-only or unit-only account stands on: one store, or every store under the unit. */
-function siteFilter(b: Bounds): Prisma.LocationWhereInput {
+function siteFilter(b: Bounds): Prisma.SiteWhereInput {
   if (b.locationId) return { id: b.locationId };
   return { orgUnit: { is: { path: { startsWith: b.orgUnitPath ?? NO_CLIENT }, deletedAt: null } } };
 }
@@ -301,7 +301,7 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   if (isBounded(user)) {
     const b = boundsOf(user);
     if (!b) return { clientId: NO_CLIENT };
-    const atSite = (sites: Prisma.LocationWhereInput): Prisma.TimeEntryWhereInput => ({
+    const atSite = (sites: Prisma.SiteWhereInput): Prisma.TimeEntryWhereInput => ({
       OR: [{ location: { is: sites } }, { shift: { is: { locationRel: { is: sites } } } }],
     });
     if (b.clientId) {

@@ -219,7 +219,7 @@ describe('GET /compliance/everify/:associateId — aggregation', () => {
     // wrong deadline.
     const client = await createClient();
     const ready = await readyAssociate(client.id);
-    const location = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const location = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const first = new Date('2026-06-12T13:00:00.000Z');
     for (const at of [new Date('2026-06-20T13:00:00.000Z'), first]) {
       await prisma.timeEntry.create({

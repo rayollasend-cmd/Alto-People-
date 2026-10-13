@@ -813,7 +813,7 @@ timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-l
       // Phase 131 — Location geofence is the source. Rows without a
       // stamped locationId (pre-Phase-131 history) get no geofence
       // check on the dashboard; it'll show as "?" rather than green/red.
-      prisma.location.findMany({
+      prisma.site.findMany({
         take: 1000,
         where: { id: { in: locationIds } },
         select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true, timezone: true },
@@ -1169,7 +1169,7 @@ timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
         where: { id: { in: clientIds } },
         select: { id: true, name: true },
       }),
-      prisma.location.findMany({
+      prisma.site.findMany({
         where: { id: { in: locationIds } },
         select: { id: true, name: true },
       }),
@@ -2458,7 +2458,7 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
     // Facility label for the header.
     let facility = 'All locations';
     if (parsed.data.locationId) {
-      const loc = await prisma.location.findUnique({
+      const loc = await prisma.site.findUnique({
         where: { id: parsed.data.locationId },
         select: { name: true, client: { select: { name: true } } },
       });

@@ -125,7 +125,7 @@ export async function runPortalDigestSweep(
 
     /* ---- region account: one roll-up, a line per store ------------------- */
     if (!u.clientId && u.regionId) {
-      const stores = await prisma.location.findMany({
+      const stores = await prisma.site.findMany({
         where: { regionId: u.regionId, deletedAt: null, isActive: true },
         select: { id: true, name: true, clientId: true },
         orderBy: { name: 'asc' },

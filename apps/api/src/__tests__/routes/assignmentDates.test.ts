@@ -49,7 +49,7 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 /** Associate with one open assignment starting on `startedAt`. */
 async function placedAssociate(startedAt: Date) {
   const client = await createClient();
-  const location = await prisma.location.findFirstOrThrow({
+  const location = await prisma.site.findFirstOrThrow({
     where: { clientId: client.id },
   });
   const associate = await createAssociate();
@@ -143,7 +143,7 @@ describe('assignment date guards', () => {
     const { associate, client } = await placedAssociate(
       new Date(Date.now() + 14 * 86_400_000),
     );
-    const second = await prisma.location.create({
+    const second = await prisma.site.create({
       data: { clientId: client.id, name: 'Back of House' },
     });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

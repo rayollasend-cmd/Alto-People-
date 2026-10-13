@@ -138,7 +138,7 @@ export async function deleteOrgUnit(db: Db, id: string, now: Date = new Date()):
   if (!unit) throw new HttpError(404, 'org_unit_not_found', 'No such unit.');
   const children = await db.orgUnit.findMany({ where: { parentId: id, deletedAt: null }, select: { id: true } });
   for (const c of children) await updateOrgUnit(db, c.id, { parentId: unit.parentId });
-  await db.location.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
+  await db.site.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
   await db.user.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null, tokenVersion: { increment: 1 } } });
   await db.associate.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
   await db.position.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
@@ -149,15 +149,15 @@ export async function deleteOrgUnit(db: Db, id: string, now: Date = new Date()):
 export async function setOrgUnitSites(db: Db, id: string, locationIds: string[]): Promise<void> {
   const unit = await db.orgUnit.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
   if (!unit) throw new HttpError(404, 'org_unit_not_found', 'No such unit.');
-  await db.location.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
-  if (locationIds.length) await db.location.updateMany({ where: { id: { in: locationIds }, deletedAt: null }, data: { orgUnitId: id } });
+  await db.site.updateMany({ where: { orgUnitId: id }, data: { orgUnitId: null } });
+  if (locationIds.length) await db.site.updateMany({ where: { id: { in: locationIds }, deletedAt: null }, data: { orgUnitId: id } });
 }
 
 /** Every live site under a unit (the unit's own and its descendants'). */
 export async function siteIdsUnder(db: Db, unitId: string): Promise<string[]> {
   const unit = await db.orgUnit.findFirst({ where: { id: unitId, deletedAt: null }, select: { path: true } });
   if (!unit) return [];
-  const rows = await db.location.findMany({ where: { deletedAt: null, orgUnit: { path: underPath(unit.path), deletedAt: null } }, select: { id: true } });
+  const rows = await db.site.findMany({ where: { deletedAt: null, orgUnit: { path: underPath(unit.path), deletedAt: null } }, select: { id: true } });
   return rows.map((r) => r.id);
 }
 

@@ -30,8 +30,8 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 
 async function setup() {
   const client = await createClient('Walmart');
-  const [storeA] = await prisma.location.findMany({ where: { clientId: client.id } });
-  const storeB = await prisma.location.create({ data: { clientId: client.id, name: 'Walmart Destin' } });
+  const [storeA] = await prisma.site.findMany({ where: { clientId: client.id } });
+  const storeB = await prisma.site.create({ data: { clientId: client.id, name: 'Walmart Destin' } });
   const { user: rec } = await createUser({ role: 'INTERNAL_RECRUITER' });
   const { user: market } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
   const { user: storeBUser } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });

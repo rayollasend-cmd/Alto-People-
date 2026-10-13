@@ -112,7 +112,7 @@ async function placeIncident(input: {
   occurredAt: string;
 }): Promise<string | null> {
   if (input.locationId) {
-    const named = await prisma.location.findFirst({
+    const named = await prisma.site.findFirst({
       where: { id: input.locationId, clientId: input.clientId, deletedAt: null },
       select: { id: true },
     });
@@ -139,7 +139,7 @@ async function placeIncident(input: {
     });
     if (placed) return placed.locationId;
   }
-  const only = await prisma.location.findMany({
+  const only = await prisma.site.findMany({
     where: { clientId: input.clientId, deletedAt: null, isActive: true },
     select: { id: true },
     take: 2,

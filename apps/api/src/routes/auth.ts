@@ -315,7 +315,7 @@ async function scopeNamesFor(u: {
   const [clientName, loc, region] = await Promise.all([
     clientNameFor(u.clientId),
     u.locationId
-      ? prisma.location.findUnique({ where: { id: u.locationId }, select: { name: true } })
+      ? prisma.site.findUnique({ where: { id: u.locationId }, select: { name: true } })
       : Promise.resolve(null),
     u.regionId
       ? prisma.region.findUnique({ where: { id: u.regionId }, select: { name: true } })

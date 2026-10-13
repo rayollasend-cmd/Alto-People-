@@ -26,7 +26,7 @@ const DAY = 86_400_000;
 describe('the access report', () => {
   it('flags personal-email portal logins, region scope, duplicates, no employment record, ended employment and 90 days without a sign-in', async () => {
     const client = await createClient('Coastal Resort');
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const region = await prisma.region.create({ data: { name: 'Panhandle' } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
 
@@ -160,7 +160,7 @@ describe('deactivation, reversible for 30 days', () => {
 describe('portal scope', () => {
   it('a client portal invite is store-level unless the whole client is asked for by name', async () => {
     const client = await createClient('Coastal Resort');
-    const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const admin = await loginAs(agent(), hr.email);
     const bare = await admin.post(`/clients/${client.id}/portal-users`).send({ email: 'manager@coastal.example' });

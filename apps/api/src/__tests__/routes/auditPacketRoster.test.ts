@@ -78,7 +78,7 @@ describe('POST /audit-packets/generate — CLIENT_PERIOD roster signals', () => 
 
   it('counts recorded (COMPLETED) punches and past published shifts as engagement', async () => {
     const client = await createClient();
-    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     // Worker A: kiosk punches that never went through timesheet approval.
     const punched = await createAssociate({ firstName: 'Punched', lastName: 'Only' });
     await prisma.timeEntry.create({

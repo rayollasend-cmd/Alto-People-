@@ -41,7 +41,7 @@ async function seedRoute(route: string, opts: { requests: number; ms: number; se
 
 async function seedKiosk() {
   const client = await createClient();
-  const location = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+  const location = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   const device = await prisma.kioskDevice.create({
     data: { clientId: client.id, locationId: location.id, name: 'Front door', tokenHash: 'x' },
   });

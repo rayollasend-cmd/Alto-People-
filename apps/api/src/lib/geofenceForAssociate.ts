@@ -74,7 +74,7 @@ export async function resolveAssociateGeofence(
   // Client's old geofence into a default Location 1:1. If no Location
   // exists (or none has a geofence set), enforcement falls back to
   // "no fence" — same as the old all-NULL Client state.
-  const fallback = await prisma.location.findFirst({
+  const fallback = await prisma.site.findFirst({
     where: { clientId: effectiveFallback, deletedAt: null, isActive: true },
     orderBy: { createdAt: 'asc' },
     select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },

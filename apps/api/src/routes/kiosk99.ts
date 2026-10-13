@@ -155,7 +155,7 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
   let resolvedClientId = input.clientId ?? null;
   let resolvedLocationId: string | null = null;
   if (input.locationId) {
-    const location = await prisma.location.findFirst({
+    const location = await prisma.site.findFirst({
       where: { id: input.locationId, deletedAt: null, isActive: true },
       select: { id: true, clientId: true },
     });
@@ -172,7 +172,7 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     resolvedClientId = location.clientId;
     resolvedLocationId = location.id;
   } else if (resolvedClientId) {
-    const fallback = await prisma.location.findFirst({
+    const fallback = await prisma.site.findFirst({
       where: { clientId: resolvedClientId, deletedAt: null, isActive: true },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
@@ -1831,7 +1831,7 @@ async function fileClockInRequest(opts: {
   void (async () => {
     const locationName = opts.device.locationId
       ? (
-          await prisma.location.findUnique({
+          await prisma.site.findUnique({
             where: { id: opts.device.locationId },
             select: { name: true },
           })

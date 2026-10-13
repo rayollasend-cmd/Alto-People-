@@ -245,8 +245,8 @@ describe('FLOOR_SUPERVISOR — nothing beyond the floor, even by URL', () => {
     const mine = await createClient('Mine LLC');
     const other = await createClient('Other Corp');
     const [mineLoc, otherLoc] = await Promise.all([
-      prisma.location.findFirstOrThrow({ where: { clientId: mine.id } }),
-      prisma.location.findFirstOrThrow({ where: { clientId: other.id } }),
+      prisma.site.findFirstOrThrow({ where: { clientId: mine.id } }),
+      prisma.site.findFirstOrThrow({ where: { clientId: other.id } }),
     ]);
     const hereAssoc = await createAssociate({ firstName: 'Here' });
     const thereAssoc = await createAssociate({ firstName: 'There' });

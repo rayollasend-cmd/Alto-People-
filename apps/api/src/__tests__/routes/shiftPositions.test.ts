@@ -33,7 +33,7 @@ describe('POST /clients auto-seed', () => {
     // Every client is born with one site so invites auto-assign it and the
     // associate's location is recorded from day one. Multi-store clients
     // add more sites, which flips the invite dialogs to an explicit picker.
-    const site = await prisma.location.findFirst({
+    const site = await prisma.site.findFirst({
       where: { clientId: created.body.id },
     });
     expect(site).toBeTruthy();

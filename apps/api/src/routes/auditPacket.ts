@@ -151,7 +151,7 @@ auditPacketRouter.post(
      * Assignment/time/shift context is loaded in every scope (client-
      * filtered only for CLIENT_PERIOD) so the roster's sites and worked-
      * footprint columns stay populated. */
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: { ...(client ? { clientId: client.id } : {}), deletedAt: null },
       select: { id: true, name: true },
     });
@@ -1370,7 +1370,7 @@ auditPacketRouter.post(
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
 
     // Same evidence-based four-signal roster as the CLIENT_PERIOD ZIP.
-    const locations = await prisma.location.findMany({
+    const locations = await prisma.site.findMany({
       where: { clientId: client.id, deletedAt: null },
       select: { id: true, name: true },
     });

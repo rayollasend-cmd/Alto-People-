@@ -26,9 +26,9 @@ const NOW = new Date(Date.now() - 60_000);
 
 async function world() {
   const coastal = await createClient('Coastal Resort');
-  const siteA = await prisma.location.findFirstOrThrow({ where: { clientId: coastal.id } });
+  const siteA = await prisma.site.findFirstOrThrow({ where: { clientId: coastal.id } });
   const inland = await createClient('Inland Mart');
-  const siteB = await prisma.location.findFirstOrThrow({ where: { clientId: inland.id } });
+  const siteB = await prisma.site.findFirstOrThrow({ where: { clientId: inland.id } });
   const place = (associateId: string, locationId: string) => prisma.associateAssignment.create({ data: { associateId, locationId, startedAt: new Date('2026-05-01') } });
   const punch = (associateId: string, daysAgo: number, locationId: string | null, clientId: string, status: 'APPROVED' | 'COMPLETED' | 'REJECTED' = 'APPROVED') =>
     prisma.timeEntry.create({ data: { associateId, clientId, locationId, clockInAt: new Date(NOW.getTime() - daysAgo * DAY), clockOutAt: new Date(NOW.getTime() - daysAgo * DAY + 8 * 3_600_000), status } });

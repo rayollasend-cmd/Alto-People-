@@ -43,11 +43,11 @@ async function seedRegion() {
   const clientA = await createClient('Walmart 218');
   const clientB = await createClient('Walmart 4411');
   const clientC = await createClient('Target 9');
-  const [storeA] = await prisma.location.findMany({ where: { clientId: clientA.id } });
-  const [storeB] = await prisma.location.findMany({ where: { clientId: clientB.id } });
-  const [storeC] = await prisma.location.findMany({ where: { clientId: clientC.id } });
+  const [storeA] = await prisma.site.findMany({ where: { clientId: clientA.id } });
+  const [storeB] = await prisma.site.findMany({ where: { clientId: clientB.id } });
+  const [storeC] = await prisma.site.findMany({ where: { clientId: clientC.id } });
   const region = await prisma.region.create({ data: { name: 'Florida Panhandle' } });
-  await prisma.location.updateMany({ where: { id: { in: [storeA!.id, storeB!.id] } }, data: { regionId: region.id } });
+  await prisma.site.updateMany({ where: { id: { in: [storeA!.id, storeB!.id] } }, data: { regionId: region.id } });
   const now = new Date();
   // Store A: target 3, one live shift with a punch, one open slot.
   await prisma.staffingTarget.create({ data: { locationId: storeA!.id, targetCount: 3, effectiveFrom: new Date('2020-01-01') } });
@@ -212,7 +212,7 @@ describe('the region command center', () => {
 
     // Retiring a region unassigns its stores and unbinds its accounts.
     expect((await admin.delete(`/regions/${created.body.id}`)).status).toBe(204);
-    expect((await prisma.location.findUniqueOrThrow({ where: { id: s.storeC.id } })).regionId).toBeNull();
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: s.storeC.id } })).regionId).toBeNull();
     expect((await prisma.user.findUniqueOrThrow({ where: { id: portal.id } })).regionId).toBeNull();
   });
 });

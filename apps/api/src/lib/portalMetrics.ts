@@ -66,7 +66,7 @@ export async function portalCalendar(scope: {
   location: { timezone: string } | null;
 }): Promise<StoreCalendar> {
   if (scope.location) return storeCalendar(scope.location.timezone);
-  const zones = await prisma.location.findMany({
+  const zones = await prisma.site.findMany({
     where: { clientId: scope.clientId, deletedAt: null, isActive: true },
     select: { timezone: true },
     distinct: ['timezone'],
@@ -147,7 +147,7 @@ export interface TargetLocation {
 /** The scope's stores with their newest effective-dated targets, per
  *  (location, label). */
 export async function loadTargets(scope: PortalScope, asOf: Date): Promise<TargetLocation[]> {
-  const locations = await prisma.location.findMany({
+  const locations = await prisma.site.findMany({
     where: {
       clientId: scope.clientId,
       deletedAt: null,

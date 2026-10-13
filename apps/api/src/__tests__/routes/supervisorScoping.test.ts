@@ -42,7 +42,7 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 }
 
 async function placeAtSite(associateId: string, clientId: string) {
-  const location = await prisma.location.create({
+  const location = await prisma.site.create({
     data: { clientId, name: `Site ${Math.random().toString(36).slice(2, 8)}` },
   });
   await prisma.associateAssignment.create({
@@ -191,7 +191,7 @@ describe('kiosk tenant boundary', () => {
     expect(pins.body.pins).toHaveLength(1);
     expect(pins.body.pins[0].clientId).toBe(mine.id);
 
-    const otherLoc = await prisma.location.findFirstOrThrow({
+    const otherLoc = await prisma.site.findFirstOrThrow({
       where: { clientId: other.id },
     });
     const otherDevice = await prisma.kioskDevice.create({
@@ -217,7 +217,7 @@ describe('kiosk tenant boundary', () => {
 
   it('cross-tenant punch selfies are unreachable', async () => {
     const { other, otherAssoc, sup } = await seedTwoClients();
-    const otherLoc = await prisma.location.findFirstOrThrow({
+    const otherLoc = await prisma.site.findFirstOrThrow({
       where: { clientId: other.id },
     });
     const device = await prisma.kioskDevice.create({
@@ -298,7 +298,7 @@ describe('marketplace claim decisions', () => {
   it('supervisor can decide claims at their client, not across the boundary', async () => {
     const { mine, other, myAssoc, otherAssoc, sup } = await seedTwoClients();
     const mkShiftAndClaim = async (clientId: string, associateId: string) => {
-      const loc = await prisma.location.findFirstOrThrow({ where: { clientId } });
+      const loc = await prisma.site.findFirstOrThrow({ where: { clientId } });
       const shift = await prisma.shift.create({
         data: {
           clientId,
@@ -379,10 +379,10 @@ describe('onboarding tenant boundary', () => {
     // mine has TWO sites here (the createClient fixture's default plus
     // placeAtSite's). Pick one and deactivate the rest so the auto-assign
     // case below sees a single-site client.
-    const mySite = await prisma.location.findFirstOrThrow({
+    const mySite = await prisma.site.findFirstOrThrow({
       where: { clientId: mine.id },
     });
-    await prisma.location.updateMany({
+    await prisma.site.updateMany({
       where: { clientId: mine.id, id: { not: mySite.id } },
       data: { isActive: false },
     });
@@ -440,7 +440,7 @@ describe('onboarding tenant boundary', () => {
     // to the whole batch, so it's one clear 400 up front (not N identical
     // row errors). A location-less invite would leave the associate's site
     // unrecorded forever (approval only opens an assignment when it's set).
-    await prisma.location.updateMany({
+    await prisma.site.updateMany({
       where: { clientId: mine.id },
       data: { isActive: true },
     });
@@ -457,7 +457,7 @@ describe('onboarding tenant boundary', () => {
 
   it('invite-locations serves the picker to supervisors, clamped to their client', async () => {
     const { mine, other, sup } = await seedTwoClients();
-    const mySite = await prisma.location.findFirstOrThrow({
+    const mySite = await prisma.site.findFirstOrThrow({
       where: { clientId: mine.id },
     });
 
@@ -473,7 +473,7 @@ describe('onboarding tenant boundary', () => {
     expect(clamped.status).toBe(200);
     const ids = clamped.body.locations.map((l: { id: string }) => l.id);
     expect(ids).toContain(mySite.id);
-    const otherSite = await prisma.location.findFirstOrThrow({
+    const otherSite = await prisma.site.findFirstOrThrow({
       where: { clientId: other.id },
     });
     expect(ids).not.toContain(otherSite.id);
@@ -673,10 +673,10 @@ describe('supervisor scheduling cascade: locations, positions, teams', () => {
 
   it('creates a shift team end-to-end for the own client, never across the boundary', async () => {
     const { mine, other, sup } = await seedTwoClients();
-    const myLoc = await prisma.location.findFirstOrThrow({
+    const myLoc = await prisma.site.findFirstOrThrow({
       where: { clientId: mine.id },
     });
-    const theirLoc = await prisma.location.findFirstOrThrow({
+    const theirLoc = await prisma.site.findFirstOrThrow({
       where: { clientId: other.id },
     });
 

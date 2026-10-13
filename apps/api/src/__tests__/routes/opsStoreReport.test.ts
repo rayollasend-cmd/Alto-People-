@@ -79,7 +79,7 @@ async function seedShift(opts: {
 }
 
 async function seedStore(clientId: string, name = 'Walmart Santa Rosa Beach') {
-  const store = await prisma.location.create({
+  const store = await prisma.site.create({
     data: { clientId, name, city: 'Santa Rosa Beach', state: 'FL', timezone: 'America/Chicago' },
   });
   await prisma.storeShiftSop.create({

@@ -134,7 +134,7 @@ export async function buildStoreOps(
 
   const stores = scope.locationId
     ? [{ id: scope.locationId, name: scope.location!.name, timezone: scope.location!.timezone }]
-    : await prisma.location.findMany({
+    : await prisma.site.findMany({
         where: { clientId: scope.clientId, deletedAt: null, isActive: true },
         select: { id: true, name: true, timezone: true },
         orderBy: { name: 'asc' },
@@ -678,7 +678,7 @@ function onTime(items: TaskRow[], now: Date): number | null {
 }
 
 async function isSoleStore(clientId: string): Promise<boolean> {
-  const n = await prisma.location.count({ where: { clientId, deletedAt: null, isActive: true } });
+  const n = await prisma.site.count({ where: { clientId, deletedAt: null, isActive: true } });
   return n <= 1;
 }
 

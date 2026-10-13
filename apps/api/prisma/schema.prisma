@@ -465,7 +465,7 @@ model User {
   delegationsGiven    TeamDelegation[] @relation("DelegationFrom")
   delegationsReceived TeamDelegation[] @relation("DelegationTo")
   client              Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  location            Location?        @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
+  location            Site?            @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
   region              Region?          @relation("UserRegionScope", fields: [regionId], references: [id], onDelete: SetNull)
   orgUnit             OrgUnit?         @relation("UserOrgUnitScope", fields: [orgUnitId], references: [id], onDelete: SetNull)
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
@@ -819,7 +819,7 @@ model Client {
   learningPaths           LearningPath[]
   // Phase 131 — physical sites under this client (one Client can have
   // many Locations, e.g. Walmart → Destin / Front Beach / PCB).
-  locations               Location[]
+  locations               Site[]
   shiftTeams              ShiftTeam[]
   seasonPlans             SeasonPlan[]
 
@@ -828,12 +828,12 @@ model Client {
   @@index([tenantId])
 }
 
-// Phase 131 — Location: physical site under a Client. State and
+// Phase 131 — Site (table "Location", Brief 2-1b step 7 renamed the model, not the table): a physical work site, under a Client for a staffing tenant or under the tenant alone. State and
 // geofence move here from Client because they're properties of the
 // work site, not the customer. Client.state stays as the legal/tax
-// employer address; Location.state is the actual work-site code that
+// employer address; Site.state is the actual work-site code that
 // drives OT / meal-break / predictive-scheduling rules.
-model Location {
+model Site {
   id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId             String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
@@ -895,6 +895,7 @@ model Location {
   @@index([clientId, isActive])
   @@index([deletedAt])
   @@index([tenantId])
+  @@map("Location")
 }
 
 // A standing crew at a work site — "Front Beach Morning", "Overnight team".
@@ -917,7 +918,7 @@ model ShiftTeam {
   deletedAt   DateTime? @db.Timestamptz(6)
 
   client   Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  location Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location Site              @relation(fields: [locationId], references: [id], onDelete: Restrict)
   members  ShiftTeamMember[]
 
   @@index([clientId, deletedAt])
@@ -970,8 +971,8 @@ model StaffingTarget {
   createdById   String?  @db.Uuid
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
 
-  location  Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  createdBy User?    @relation("StaffingTargetAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  location  Site  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("StaffingTargetAuthor", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([locationId, effectiveFrom])
   @@index([tenantId])
@@ -1126,7 +1127,7 @@ model ClientRequest {
   locationId      String?             @db.Uuid
 
   client        Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location      Location?  @relation("ClientRequestStore", fields: [locationId], references: [id], onDelete: SetNull)
+  location      Site?      @relation("ClientRequestStore", fields: [locationId], references: [id], onDelete: SetNull)
   associate     Associate? @relation("ClientRequestSubject", fields: [associateId], references: [id], onDelete: SetNull)
   createdByUser User?      @relation("ClientRequestAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   resolvedBy    User?      @relation("ClientRequestResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
@@ -1172,9 +1173,9 @@ model Region {
   deletedAt DateTime? @db.Timestamptz(6)
 
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId  String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  locations Location[]
-  users     User[]     @relation("UserRegionScope")
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locations Site[]
+  users     User[]   @relation("UserRegionScope")
   orgUnit   OrgUnit?
 
   @@index([deletedAt])
@@ -1215,7 +1216,7 @@ model Conversation {
   lastPreview   String?          @db.VarChar(160)
 
   client       Client?                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location     Location?                 @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location     Site?                     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy    User?                     @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull)
   participants ConversationParticipant[]
   messages     Message[]
@@ -1749,7 +1750,7 @@ model AssociateAssignment {
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  location  Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location  Site      @relation(fields: [locationId], references: [id], onDelete: Restrict)
   notedBy   User?     @relation("AssociateAssignmentNoter", fields: [notedById], references: [id], onDelete: SetNull)
 
   @@index([associateId, endedAt])
@@ -2121,7 +2122,7 @@ model Application {
   associate            Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client               Client?              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   employment           Employment?
-  location             Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location             Site?                @relation(fields: [locationId], references: [id], onDelete: SetNull)
   cohort               Cohort?              @relation(fields: [cohortId], references: [id], onDelete: SetNull)
   checklist            OnboardingChecklist?
   esignAgreements      EsignAgreement[]
@@ -2540,7 +2541,7 @@ model OpsShift {
   // the store and named shift window they're working (null on shifts
   // opened by hand from the position picker).
   locationId         String?           @db.Uuid
-  location           Location?         @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location           Site?             @relation(fields: [locationId], references: [id], onDelete: SetNull)
   windowLabel        String?           @db.VarChar(80)
   /// The clock-in that opened it.
   timeEntryId        String?           @db.Uuid
@@ -2588,7 +2589,7 @@ model StoreShiftSop {
 
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location Site           @relation(fields: [locationId], references: [id], onDelete: Cascade)
   template OpsSopTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   // One SOP PER DEPARTMENT on a window, not one SOP per window. Alto
@@ -2979,7 +2980,7 @@ model TimeEntry {
   approvedBy           User?                @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   job                  Job?                 @relation(fields: [jobId], references: [id], onDelete: SetNull)
   project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  location             Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location             Site?                @relation(fields: [locationId], references: [id], onDelete: SetNull)
   breaks               BreakEntry[]
   timeOffLedgerEntries TimeOffLedgerEntry[]
   // Phase 99 — kiosk punches that opened/closed this entry.
@@ -3065,7 +3066,7 @@ model Shift {
   client               Client?                         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   emergency            Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
   worker               Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
-  locationRel          Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  locationRel          Site?                           @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate    Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy            User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
   swapRequests         ShiftSwapRequest[]
@@ -3954,7 +3955,7 @@ model CandidateSubmittal {
 
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location    Site?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   submittedBy User?     @relation("SubmittalSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
   decidedBy   User?     @relation("SubmittalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
 
@@ -5718,7 +5719,7 @@ model OshaIncident {
   updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
 
   client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  store      Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  store      Site?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
   associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   reportedBy User?      @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
 
@@ -6840,7 +6841,7 @@ model KioskDevice {
   updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location  Location     @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location  Site         @relation(fields: [locationId], references: [id], onDelete: Restrict)
   createdBy User?        @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 
@@ -8592,8 +8593,8 @@ model SupervisorShiftWindow {
   label      String
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
 
-  user     User     @relation("SupervisorWindows", fields: [userId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user     User @relation("SupervisorWindows", fields: [userId], references: [id], onDelete: Cascade)
+  location Site @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([userId, locationId, label])
   @@index([locationId, label])
@@ -8845,7 +8846,7 @@ model Ride {
   updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
 
   associate         Associate          @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  location          Location           @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location          Site               @relation(fields: [locationId], references: [id], onDelete: Restrict)
   stop              TransportStop?     @relation(fields: [stopId], references: [id], onDelete: SetNull)
   run               RideRun?           @relation(fields: [runId], references: [id], onDelete: SetNull)
   issues            TransportIssue[]
@@ -9201,7 +9202,7 @@ model ReadyToWorkHandoff {
   tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location  Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location  Site?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   issuedBy  User?     @relation("ReadyToWorkIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
 
   @@index([clientId, locationId, issuedAt(sort: Desc)])
@@ -9415,7 +9416,7 @@ model Emergency {
   tenantId            String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   declaredBy          User?              @relation("EmergencyDeclarer", fields: [declaredById], references: [id], onDelete: SetNull)
   stoodDownBy         User?              @relation("EmergencyStandDown", fields: [stoodDownById], references: [id], onDelete: SetNull)
-  destinationLocation Location?          @relation("EmergencyDestination", fields: [destinationLocationId], references: [id], onDelete: SetNull)
+  destinationLocation Site?              @relation("EmergencyDestination", fields: [destinationLocationId], references: [id], onDelete: SetNull)
   sites               EmergencySite[]
   checkIns            EmergencyCheckIn[]
   shifts              Shift[]
@@ -9433,7 +9434,7 @@ model EmergencySite {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
-  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location  Site      @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([emergencyId, locationId])
   @@index([locationId])
@@ -9655,7 +9656,7 @@ model SeasonPlanSite {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   plan     SeasonPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  location Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location Site       @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([planId, locationId])
   @@index([tenantId])
@@ -9813,9 +9814,9 @@ model WorkerAssignment {
   createdAt  DateTime  @default(now()) @db.Timestamptz(6)
 
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  worker   Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  worker   Worker  @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  location Site    @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@index([workerId, endedAt])
   @@index([locationId, endedAt])
@@ -10100,7 +10101,7 @@ model Employment {
   associate   Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   employer    EmployerOrganization @relation(fields: [employerOrgId], references: [id], onDelete: Restrict)
   application Application?         @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  site        Location?            @relation("EmploymentSite", fields: [siteId], references: [id], onDelete: SetNull)
+  site        Site?                @relation("EmploymentSite", fields: [siteId], references: [id], onDelete: SetNull)
 
   @@index([associateId, endDate])
   @@index([employerOrgId])
@@ -10146,7 +10147,7 @@ model OrgUnit {
   client     Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
   region     Region?     @relation(fields: [legacyRegionId], references: [id], onDelete: SetNull)
   costCenter CostCenter? @relation(fields: [legacyCostCenterId], references: [id], onDelete: SetNull)
-  locations  Location[]  @relation("OrgUnitSites")
+  locations  Site[]      @relation("OrgUnitSites")
   users      User[]      @relation("UserOrgUnitScope")
   associates Associate[] @relation("OrgUnitAssociates")
   positions  Position[]  @relation("OrgUnitPositions")

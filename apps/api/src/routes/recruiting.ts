@@ -521,7 +521,7 @@ recruitingRouter.post('/candidates/:id/submittals', MANAGE, async (req, res, nex
     const client = await prisma.client.findFirst({ where: { id: input.clientId, deletedAt: null }, select: { id: true, name: true } });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     if (input.locationId) {
-      const loc = await prisma.location.findFirst({ where: { id: input.locationId, clientId: client.id, deletedAt: null } });
+      const loc = await prisma.site.findFirst({ where: { id: input.locationId, clientId: client.id, deletedAt: null } });
       if (!loc) throw new HttpError(404, 'location_not_found', 'That store is not one of this client’s.');
     }
     const waiting = await prisma.candidateSubmittal.findFirst({

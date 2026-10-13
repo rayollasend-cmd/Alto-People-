@@ -119,7 +119,7 @@ export async function bookableStores(associateId: string, ownClientId: string | 
     ...new Set([...placed, ...scheduled.map((s) => s.clientId).filter((id): id is string => id !== null), ...(ownClientId ? [ownClientId] : [])]),
   ];
   if (clientIds.length === 0) return [];
-  const rows = await db.location.findMany({
+  const rows = await db.site.findMany({
     where: { clientId: { in: clientIds }, deletedAt: null, isActive: true },
     select: {
       id: true,

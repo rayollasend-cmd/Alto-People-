@@ -259,7 +259,7 @@ export async function listEmergencies(db: Db = defaultPrisma): Promise<Emergency
 
 /** Every active store, for the scope picker. */
 export async function emergencySites(db: Db = defaultPrisma): Promise<EmergencySiteRef[]> {
-  const rows = await db.location.findMany({
+  const rows = await db.site.findMany({
     where: { isActive: true, deletedAt: null, client: { deletedAt: null, status: 'ACTIVE' } },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
     orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
@@ -353,11 +353,11 @@ export async function declareEmergency(
   }
   const locationIds = input.allSites ? [] : [...new Set(input.locationIds)];
   if (locationIds.length > 0) {
-    const found = await db.location.count({ where: { id: { in: locationIds }, deletedAt: null } });
+    const found = await db.site.count({ where: { id: { in: locationIds }, deletedAt: null } });
     if (found !== locationIds.length) throw new HttpError(400, 'site_not_found', 'One of those sites does not exist.');
   }
   if (input.destinationLocationId) {
-    const dest = await db.location.findFirst({ where: { id: input.destinationLocationId, deletedAt: null }, select: { id: true } });
+    const dest = await db.site.findFirst({ where: { id: input.destinationLocationId, deletedAt: null }, select: { id: true } });
     if (!dest) throw new HttpError(400, 'destination_not_found', 'That destination does not exist.');
   }
 
@@ -609,7 +609,7 @@ async function bookEvacuationRide(
   const destinationId = e.destinationLocationId ?? a.siteId;
   if (!destinationId) throw new HttpError(409, 'no_destination', 'There is no site to take you to yet; call dispatch.');
   if (!a.address) throw new HttpError(409, 'no_address', 'We have no address on file for you. Add your home in the Rides tab, then try again.');
-  const dest = await db.location.findUniqueOrThrow({ where: { id: destinationId }, select: { timezone: true } });
+  const dest = await db.site.findUniqueOrThrow({ where: { id: destinationId }, select: { timezone: true } });
   let point = a.addressPoint;
   if (!point) {
     try {

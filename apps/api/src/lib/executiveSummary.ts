@@ -277,7 +277,7 @@ export async function computeExecutiveSummary(
   const locMeta =
     locationIds.length === 0
       ? []
-      : await prisma.location.findMany({
+      : await prisma.site.findMany({
           where: { id: { in: locationIds } },
           select: {
             id: true,

@@ -59,11 +59,11 @@ async function seedTwoStoreClient(opts: { assignAssociateToStore?: boolean } = {
   // createClient makes a default Location named after the client — this is
   // the older row, and the one the geofence fallback picks.
   const client = await createClient('Walmart Neighborhood Market SRB');
-  const originalRecord = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  const store = await prisma.location.create({
+  const originalRecord = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  const store = await prisma.site.create({
     data: { clientId: client.id, name: 'Neighbor Hood Market SRB', timezone: TZ },
   });
-  await prisma.location.update({ where: { id: originalRecord.id }, data: { timezone: TZ } });
+  await prisma.site.update({ where: { id: originalRecord.id }, data: { timezone: TZ } });
 
   await prisma.staffingTarget.create({
     data: {
@@ -146,7 +146,7 @@ describe('the SOP opens at the store the supervisor actually leads', () => {
     // has to keep winning over their usual assignment — the fallback is
     // second, not first.
     const w = await seedTwoStoreClient({ assignAssociateToStore: true });
-    const covering = await prisma.location.create({
+    const covering = await prisma.site.create({
       data: { clientId: w.client.id, name: 'Covering Store', timezone: TZ },
     });
     await prisma.staffingTarget.create({

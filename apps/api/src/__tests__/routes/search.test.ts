@@ -27,7 +27,7 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 
 async function seedDestin() {
   const client = await createClient('Destin Grocery');
-  const store = await prisma.location.create({ data: { clientId: client.id, name: 'Destin Commons', city: 'Destin', state: 'FL' } });
+  const store = await prisma.site.create({ data: { clientId: client.id, name: 'Destin Commons', city: 'Destin', state: 'FL' } });
   const associate = await createAssociate({ firstName: 'Dee', lastName: 'Destinova', email: 'dee@example.com' });
   const application = await prisma.application.create({
     data: { associateId: associate.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'SUBMITTED', position: 'Overnight Stocker' },

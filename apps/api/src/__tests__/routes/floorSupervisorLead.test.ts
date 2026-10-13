@@ -51,8 +51,8 @@ const todayKey = () => dateKeyInZone(new Date(), TZ);
  *  more — with an SOP assigned; Dana leads it, Marcus works it under her. */
 async function seed(opts: { startedMin?: number } = {}) {
   const client = await createClient('Front Beach');
-  const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: store.id }, data: { timezone: TZ } });
+  const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: store.id }, data: { timezone: TZ } });
   await prisma.staffingTarget.create({
     data: {
       locationId: store.id,

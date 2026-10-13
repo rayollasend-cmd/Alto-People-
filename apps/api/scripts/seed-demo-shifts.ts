@@ -24,7 +24,7 @@ async function main() {
   // create one instead of demanding manual setup.
   const location =
     client.locations[0] ??
-    (await prisma.location.create({
+    (await prisma.site.create({
       data: { clientId: client.id, name: 'Demo Store', city: 'Miami', state: 'FL' },
     }));
 

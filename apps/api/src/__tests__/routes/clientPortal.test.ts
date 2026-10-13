@@ -344,12 +344,12 @@ describe('GET /client-portal/overview', () => {
     const client = await createClient('Walmart 218');
     // createClient seeds one default Location named after the client; a
     // second store makes the client a "market".
-    const [storeA] = await prisma.location.findMany({ where: { clientId: client.id } });
-    const storeB = await prisma.location.create({
+    const [storeA] = await prisma.site.findMany({ where: { clientId: client.id } });
+    const storeB = await prisma.site.create({
       data: { clientId: client.id, name: 'Walmart 4411', city: 'Destin', state: 'FL' },
     });
     const other = await createClient('Target 9');
-    const [otherStore] = await prisma.location.findMany({ where: { clientId: other.id } });
+    const [otherStore] = await prisma.site.findMany({ where: { clientId: other.id } });
     const a1 = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
     const a2 = await createAssociate({ firstName: 'Ben', lastName: 'Okafor' });
     const now = new Date();

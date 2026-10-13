@@ -1866,7 +1866,7 @@ orgRouter.post(
     if (!associate || associate.deletedAt) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
-    const target = await prisma.location.findUnique({
+    const target = await prisma.site.findUnique({
       where: { id: input.locationId },
       select: {
         id: true,

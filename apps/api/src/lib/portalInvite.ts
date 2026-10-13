@@ -82,16 +82,16 @@ export async function portalScopeForUser(user: {
   if (user.regionId) {
     const region = await prisma.region.findFirst({ where: { id: user.regionId, deletedAt: null }, select: { id: true, name: true } });
     if (!region) return null;
-    const storeCount = await prisma.location.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
+    const storeCount = await prisma.site.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
     return { kind: 'region', regionId: region.id, regionName: region.name, storeCount };
   }
   if (user.clientId) {
     const client = await prisma.client.findFirst({ where: { id: user.clientId, deletedAt: null }, select: { id: true, name: true } });
     if (!client) return null;
     const location = user.locationId
-      ? await prisma.location.findFirst({ where: { id: user.locationId, deletedAt: null }, select: { id: true, name: true } })
+      ? await prisma.site.findFirst({ where: { id: user.locationId, deletedAt: null }, select: { id: true, name: true } })
       : null;
-    const storeCount = await prisma.location.count({ where: { clientId: client.id, deletedAt: null, isActive: true } });
+    const storeCount = await prisma.site.count({ where: { clientId: client.id, deletedAt: null, isActive: true } });
     return { kind: 'store', clientId: client.id, clientName: client.name, location, storeCount };
   }
   return null;

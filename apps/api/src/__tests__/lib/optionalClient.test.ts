@@ -22,7 +22,7 @@ const unique = (p: Promise<unknown>) =>
 describe('a site, a shift and a kiosk with no client', () => {
   it('exist, and the client-keyed rows next to them are untouched', async () => {
     const client = await createClient('Coastal Resort');
-    const property = await prisma.location.create({ data: { clientId: null, name: 'The Grand Hotel', timezone: 'America/Chicago' } });
+    const property = await prisma.site.create({ data: { clientId: null, name: 'The Grand Hotel', timezone: 'America/Chicago' } });
     expect(property.clientId).toBeNull();
     const team = await createAssociate({ firstName: 'Tess', lastName: 'Member' });
     const shift = await prisma.shift.create({
@@ -31,8 +31,8 @@ describe('a site, a shift and a kiosk with no client', () => {
     expect(shift.clientId).toBeNull();
     const device = await prisma.kioskDevice.create({ data: { clientId: null, locationId: property.id, name: 'Lobby', tokenHash: 'x'.repeat(64), tokenPrefix: 'lobby' } });
     expect(device.clientId).toBeNull();
-    expect(await prisma.location.count({ where: { clientId: client.id } })).toBe(1);
-    expect(await prisma.location.count({ where: { clientId: null } })).toBe(1);
+    expect(await prisma.site.count({ where: { clientId: client.id } })).toBe(1);
+    expect(await prisma.site.count({ where: { clientId: null } })).toBe(1);
   });
 });
 

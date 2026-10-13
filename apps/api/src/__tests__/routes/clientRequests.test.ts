@@ -214,8 +214,8 @@ describe('client requests', () => {
 
   it("belongs to the store it was raised for: that store's managers hear the reply, another store never sees it", async () => {
     const client = await createClient('Walmart 218');
-    const storeA = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const storeB = await prisma.location.create({ data: { clientId: client.id, name: 'Destin 4411' } });
+    const storeA = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const storeB = await prisma.site.create({ data: { clientId: client.id, name: 'Destin 4411' } });
     const { user: askerA } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
     const { user: peerA } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
     const { user: managerB } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });

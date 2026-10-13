@@ -42,7 +42,7 @@ async function seedSelfClockerAtTally(opts: { withGeofence?: boolean } = {}) {
   // created a default Location 1:1 with the Client; we just update
   // its geofence when the test wants one enforced.
   if (opts.withGeofence) {
-    await prisma.location.updateMany({
+    await prisma.site.updateMany({
       where: { clientId: client.id },
       data: {
         latitude: TALLY.lat,

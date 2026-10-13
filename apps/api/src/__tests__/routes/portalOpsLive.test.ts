@@ -68,8 +68,8 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 
 async function store() {
   const client = await createClient('Front Beach 218');
-  const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: loc.id }, data: { timezone: NY } });
+  const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: loc.id }, data: { timezone: NY } });
   const assoc = await createAssociate({ firstName: 'Tori', lastName: 'Banks' });
   const { user: sup } = await createUser({
     role: 'SHIFT_SUPERVISOR',

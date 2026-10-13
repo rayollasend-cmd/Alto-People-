@@ -23,11 +23,11 @@ const HOUR = 3_600_000;
 
 async function seedStores() {
   const client = await createClient('Walmart');
-  const storeA = (await prisma.location.findFirstOrThrow({ where: { clientId: client.id } }))!;
-  await prisma.location.update({ where: { id: storeA.id }, data: { name: 'Front Beach 218' } });
-  const storeB = await prisma.location.create({ data: { clientId: client.id, name: 'Destin 4411' } });
+  const storeA = (await prisma.site.findFirstOrThrow({ where: { clientId: client.id } }))!;
+  await prisma.site.update({ where: { id: storeA.id }, data: { name: 'Front Beach 218' } });
+  const storeB = await prisma.site.create({ data: { clientId: client.id, name: 'Destin 4411' } });
   const region = await prisma.region.create({ data: { name: 'Florida Panhandle' } });
-  await prisma.location.updateMany({ where: { id: { in: [storeA.id, storeB.id] } }, data: { regionId: region.id } });
+  await prisma.site.updateMany({ where: { id: { in: [storeA.id, storeB.id] } }, data: { regionId: region.id } });
   const { user: managerA } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
   await prisma.user.update({ where: { id: managerA.id }, data: { locationId: storeA.id } });
   const { user: managerB } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });

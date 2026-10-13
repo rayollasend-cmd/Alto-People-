@@ -227,7 +227,7 @@ async function assertOwner(db: Db, ownerUserId: string): Promise<void> {
 
 export async function createWorker(db: Db, input: WorkerInput, actorUserId: string, now: Date = new Date()): Promise<WorkerSummary> {
   await assertOwner(db, input.ownerUserId);
-  if (input.locationId && !(await db.location.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } }))) {
+  if (input.locationId && !(await db.site.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } }))) {
     throw new HttpError(400, 'site_not_found', 'No such site.');
   }
   const row = await db.worker.create({
@@ -272,7 +272,7 @@ export async function updateWorker(db: Db, id: string, input: WorkerUpdate, now:
 export async function assignWorkerToSite(db: Db, id: string, input: WorkerAssignmentInput, now: Date = new Date()): Promise<WorkerSummary> {
   const w = await db.worker.findUnique({ where: { id }, select: { type: true, associateId: true } });
   if (!w) throw new HttpError(404, 'worker_not_found', 'No such worker.');
-  const loc = await db.location.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } });
+  const loc = await db.site.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } });
   if (!loc) throw new HttpError(400, 'site_not_found', 'No such site.');
   const startedAt = atUtc(input.startedAt ?? ymd(now));
   if (w.type === 'PERSON' && w.associateId) {

@@ -66,8 +66,8 @@ afterAll(async () => {
 /** Tenant one's world: a client with two sites, rows at each, and rows with NO client at all. */
 async function world() {
   const client = await createClient('Coastal Resort');
-  const siteA = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  const siteB = await prisma.location.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago' } });
+  const siteA = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  const siteB = await prisma.site.create({ data: { clientId: client.id, name: 'Pier Park', timezone: 'America/Chicago' } });
   const ana = await createAssociate({ firstName: 'Ana', lastName: 'Site A' });
   const bo = await createAssociate({ firstName: 'Bo', lastName: 'Site B' });
   await prisma.associateAssignment.create({ data: { associateId: ana.id, locationId: siteA.id, startedAt: new Date('2026-05-01') } });

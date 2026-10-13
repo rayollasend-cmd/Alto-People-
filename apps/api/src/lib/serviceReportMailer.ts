@@ -131,7 +131,7 @@ export async function runServiceReportMailSweep(
     let bodyText: string;
     let linkUrl: string;
     if (!u.clientId && u.regionId) {
-      const stores = await prisma.location.findMany({
+      const stores = await prisma.site.findMany({
         where: { regionId: u.regionId, deletedAt: null, isActive: true },
         select: { id: true, clientId: true },
         orderBy: { name: 'asc' },

@@ -39,10 +39,10 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 describe('GET /scheduling/shifts with locationId', () => {
   it('returns that site AND site-less shifts, but not other sites', async () => {
     const client = await createClient();
-    const locA = await prisma.location.findFirstOrThrow({
+    const locA = await prisma.site.findFirstOrThrow({
       where: { clientId: client.id },
     });
-    const locB = await prisma.location.create({
+    const locB = await prisma.site.create({
       data: { clientId: client.id, name: 'Second site' },
     });
 

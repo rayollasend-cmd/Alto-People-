@@ -184,7 +184,7 @@ programsRouter.get('/calendar', VIEW, async (req, res, next) => {
     if (q.format === 'pdf') {
       let scopeName = 'All sites';
       if (q.locationId) {
-        const loc = await prisma.location.findUnique({ where: { id: q.locationId }, select: { name: true, client: { select: { name: true } } } });
+        const loc = await prisma.site.findUnique({ where: { id: q.locationId }, select: { name: true, client: { select: { name: true } } } });
         if (loc) scopeName = loc.client ? `${loc.client.name} — ${loc.name}` : loc.name;
       } else if (q.clientId) {
         const client = await prisma.client.findUnique({ where: { id: q.clientId }, select: { name: true } });

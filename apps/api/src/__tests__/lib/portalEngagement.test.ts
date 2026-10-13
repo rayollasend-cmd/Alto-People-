@@ -28,7 +28,7 @@ const MONDAY = new Date('2026-09-21T14:00:00.000Z');
 
 async function seed() {
   const client = await createClient('Walmart 218');
-  const store = await prisma.location.create({ data: { clientId: client.id, name: 'Front Beach 218', city: 'PCB', state: 'FL' } });
+  const store = await prisma.site.create({ data: { clientId: client.id, name: 'Front Beach 218', city: 'PCB', state: 'FL' } });
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
   const { user: wfm } = await createUser({ role: 'OPERATIONS_MANAGER' });
   const { user: chair } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });

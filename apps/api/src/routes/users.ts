@@ -374,7 +374,7 @@ usersRouter.patch(
       if (!effectiveClientId) {
         throw new HttpError(400, 'client_required', 'Pick a client before a store.');
       }
-      const location = await prisma.location.findFirst({
+      const location = await prisma.site.findFirst({
         where: { id: input.locationId, clientId: effectiveClientId, deletedAt: null },
         select: { id: true },
       });

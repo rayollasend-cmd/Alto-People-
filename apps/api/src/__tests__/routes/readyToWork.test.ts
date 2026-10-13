@@ -42,7 +42,7 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 }
 
 async function storeWithWindow(clientId: string, name = 'Northgate') {
-  const location = await prisma.location.create({ data: { clientId, name, city: 'Destin', state: 'FL' } });
+  const location = await prisma.site.create({ data: { clientId, name, city: 'Destin', state: 'FL' } });
   await prisma.staffingTarget.create({
     data: {
       locationId: location.id,
@@ -227,8 +227,8 @@ describe('POST /onboarding/applications/:id/approve — the store', () => {
 
   it('asks for a store when the client has several and the application names none, then stamps the chosen one', async () => {
     const client = await createClient('Acme Resort');
-    const a = await prisma.location.create({ data: { clientId: client.id, name: 'Northgate' } });
-    await prisma.location.create({ data: { clientId: client.id, name: 'Southgate' } });
+    const a = await prisma.site.create({ data: { clientId: client.id, name: 'Northgate' } });
+    await prisma.site.create({ data: { clientId: client.id, name: 'Southgate' } });
     const hr = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr@example.com' });
     const { associate, application } = await approvable(client.id);
     const asHr = await loginAs(hr.user.email);
@@ -252,7 +252,7 @@ describe('POST /onboarding/applications/:id/approve — the store', () => {
   it('assigns the only store on its own', async () => {
     const client = await createClient('Acme Resort');
     // createClient seeds one default store; that store IS the only one.
-    const only = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const only = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     const hr = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr@example.com' });
     const { associate, application } = await approvable(client.id);
     const asHr = await loginAs(hr.user.email);

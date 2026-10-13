@@ -74,7 +74,7 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
     kind: 'locations',
     cap: 'view:clients',
     find: async (q, limit, user) => {
-      const rows = await prisma.location.findMany({
+      const rows = await prisma.site.findMany({
         where: { deletedAt: null, name: ci(q), client: { is: scopeClients(user) } },
         select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
         orderBy: { name: 'asc' },

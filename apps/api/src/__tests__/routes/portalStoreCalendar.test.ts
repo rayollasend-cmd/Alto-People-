@@ -36,8 +36,8 @@ const FRI_10PM = new Date('2026-10-10T05:00:00Z');
 
 async function pacificStore() {
   const client = await createClient('Front Beach');
-  const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: store.id }, data: { timezone: PT } });
+  const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: store.id }, data: { timezone: PT } });
   const shift = await prisma.shift.create({
     data: {
       clientId: client.id,

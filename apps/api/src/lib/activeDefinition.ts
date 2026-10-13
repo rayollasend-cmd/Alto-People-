@@ -65,7 +65,7 @@ export async function activeWindowDays(db: Db = defaultPrisma): Promise<number> 
 }
 
 async function clientOfLocation(db: Db, locationId: string): Promise<string | null> {
-  const loc = await db.location.findUnique({ where: { id: locationId }, select: { clientId: true } });
+  const loc = await db.site.findUnique({ where: { id: locationId }, select: { clientId: true } });
   return loc?.clientId ?? null;
 }
 

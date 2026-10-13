@@ -40,8 +40,8 @@ const TZ = 'America/New_York';
 /** A store with Morning 06–14 and Overnight 22–06, and two supervisors. */
 async function seedStore() {
   const client = await createClient('Front Beach');
-  const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-  await prisma.location.update({ where: { id: store.id }, data: { timezone: TZ } });
+  const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+  await prisma.site.update({ where: { id: store.id }, data: { timezone: TZ } });
   const eff = new Date('2026-01-01');
   await prisma.staffingTarget.createMany({
     data: [
@@ -234,7 +234,7 @@ describe('the store manager sees who leads each shift', () => {
     const { client, store, dana, omar } = await seedStore();
     await prisma.supervisorShiftWindow.create({ data: { userId: dana.id, locationId: store.id, label: 'Overnight' } });
     // Omar leads a window at ANOTHER store of the same client.
-    const other = await prisma.location.create({ data: { clientId: client.id, name: 'Pier Park', timezone: TZ } });
+    const other = await prisma.site.create({ data: { clientId: client.id, name: 'Pier Park', timezone: TZ } });
     await prisma.staffingTarget.create({
       data: { locationId: other.id, targetCount: 4, effectiveFrom: new Date('2026-01-01'), label: 'Morning', startMinute: 360, endMinute: 840 },
     });
@@ -260,7 +260,7 @@ describe('the store manager sees who leads each shift', () => {
 describe("the day is the store's day", () => {
   it("a Pacific store's 10 PM overnight crew is on that Pacific day, not the Eastern tomorrow", async () => {
     const { client, store, dana } = await seedStore();
-    await prisma.location.update({ where: { id: store.id }, data: { timezone: 'America/Los_Angeles' } });
+    await prisma.site.update({ where: { id: store.id }, data: { timezone: 'America/Los_Angeles' } });
     // Oct 5, 10 PM Pacific = Oct 6, 1 AM Eastern.
     const tonight = await prisma.shift.create({
       data: {
