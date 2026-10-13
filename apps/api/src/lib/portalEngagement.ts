@@ -411,6 +411,7 @@ export function startPortalEngagementDigestCron(): void {
           console.error('[alto-people/api] portal engagement digest failed:', err);
           return { sent: 0, skipped: 0 } as EngagementDigestResult;
         }),
+        { module: 'clientPortal' },
       )(),
     );
   };

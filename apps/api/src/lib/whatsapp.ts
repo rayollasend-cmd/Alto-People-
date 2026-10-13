@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { getBrandingSync } from './branding.js';
 import type { PrismaClient, WhatsAppMessageKind, WhatsAppMessageStatus } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -105,6 +106,12 @@ export interface SendOptions {
  * when they have no consent (not an error — the other channels still
  * carried the notice).
  */
+/** Brief 2-1b: the brand values a template names after its own parameters. */
+function brandParamsFor(def: { brandParams?: Array<'orgName' | 'assistantName'> }): string[] {
+  const b = getBrandingSync();
+  return (def.brandParams ?? []).map((k) => (k === 'orgName' ? b.orgName : b.assistantName));
+}
+
 export async function sendWhatsApp(db: Db, o: SendOptions, now: Date = new Date()): Promise<{ id: string; status: WhatsAppMessageStatus } | null> {
   const consent = await db.whatsAppConsent.findUnique({ where: { associateId: o.associateId } });
   if (!consent || consent.status !== 'OPTED_IN') return null;
@@ -122,14 +129,14 @@ export async function sendWhatsApp(db: Db, o: SendOptions, now: Date = new Date(
     if (!o.kind) kind = 'TEXT';
   } else if (o.template) {
     const def = templateDef(o.template.key);
-    const params = o.template.params(lang);
+    const params = [...o.template.params(lang), ...brandParamsFor(def)];
     body = renderTemplate(o.template.key, lang, params);
     templateName = def.metaName;
     payload = { to: consent.phone, template: { name: def.metaName, language: metaLanguageCode(lang), params } };
   } else if (o.text) {
     // Outside the window, free text rides the generic template.
     const text = o.text(lang);
-    const params = ['Alto HR', text];
+    const params = [getBrandingSync().orgName, text, ...brandParamsFor(templateDef('alto_notice'))];
     body = renderTemplate('alto_notice', lang, params);
     templateName = 'alto_notice';
     payload = { to: consent.phone, template: { name: 'alto_notice', language: metaLanguageCode(lang), params } };

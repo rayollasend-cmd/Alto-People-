@@ -10016,16 +10016,29 @@ enum TenantStatus {
   SUSPENDED
 }
 
+/// Brief 2-1b: sets a tenant's defaults at creation; otherwise informational.
+enum BusinessModel {
+  DIRECT_EMPLOYER
+  WORKFORCE_PROVIDER
+  MANAGED_PROGRAM
+  HYBRID
+}
+
 model Tenant {
-  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug      String       @unique @db.VarChar(60)
-  name      String       @db.VarChar(160)
-  plan      String       @default("internal") @db.VarChar(40)
-  status    TenantStatus @default(ACTIVE)
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug          String        @unique @db.VarChar(60)
+  name          String        @db.VarChar(160)
+  plan          String        @default("internal") @db.VarChar(40)
+  status        TenantStatus  @default(ACTIVE)
   /// Feature flags per tenant, read by the application.
-  features  Json         @default("{}")
-  createdAt DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(6)
+  features      Json          @default("{}")
+  /// Brief 2-1b: the profile. modules and terminology are validated JSON
+  /// (packages/shared/src/tenantProfile.ts); {} means the model's defaults.
+  businessModel BusinessModel @default(WORKFORCE_PROVIDER)
+  modules       Json          @default("{}")
+  terminology   Json          @default("{}")
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
 }
 
 // ===== Brief 1A-2 — the reconciliation snapshot ==============================

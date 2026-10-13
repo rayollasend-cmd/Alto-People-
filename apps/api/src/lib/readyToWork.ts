@@ -524,7 +524,7 @@ export function startReadyToWorkNudgeCron(): void {
   const seconds = env.READY_TO_WORK_NUDGE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void tenantJob('readyToWork', runReadyToWorkNudgeSweep)().catch((err) => {
+    void tenantJob('readyToWork', runReadyToWorkNudgeSweep, { module: 'clientPortal' })().catch((err) => {
       console.error('[alto-people/api] ready-to-work nudge sweep failed:', err);
     });
   };

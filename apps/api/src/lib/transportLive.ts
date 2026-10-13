@@ -411,7 +411,7 @@ export function startVanTrailRetentionCron(): void {
   const seconds = env.VAN_TRAIL_RETENTION_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const tick = () => {
-    void tenantJob('transportLive', runVanTrailRetention)().catch((err) => console.error('[alto-people/api] van trail retention failed:', err));
+    void tenantJob('transportLive', runVanTrailRetention, { module: 'transportation' })().catch((err) => console.error('[alto-people/api] van trail retention failed:', err));
   };
   tick();
   timer = setInterval(tick, seconds * 1000);

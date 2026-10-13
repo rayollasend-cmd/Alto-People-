@@ -94,9 +94,9 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startProgramDigestCron(): void {
   if (timer) return;
-  void tenantJob('programDigest', runProgramDigestSweep)().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
+  void tenantJob('programDigest', runProgramDigestSweep, { module: 'programs' })().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
   timer = setInterval(() => {
-    void tenantJob('programDigest', runProgramDigestSweep)().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
+    void tenantJob('programDigest', runProgramDigestSweep, { module: 'programs' })().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
   }, SWEEP_SECONDS * 1000);
   timer.unref();
   console.log(`[alto-people/api] program digest cron armed (every ${SWEEP_SECONDS}s, sends Mondays after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`);

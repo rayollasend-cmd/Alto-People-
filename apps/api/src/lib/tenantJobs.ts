@@ -1,5 +1,7 @@
+import type { TenantModule } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { runWithTenant, withPlatformScope } from './tenant.js';
+import { moduleOn } from './tenantProfile.js';
 
 /**
  * Brief 2-1b step 0 (and 2-1 §9.4): timed jobs run per tenant.
@@ -34,13 +36,27 @@ export function resetTenantCache(): void {
 export interface TenantJobRun {
   ran: number;
   failed: number;
+  /** Tenants skipped because the job's module is off for them (Brief 2-1b). */
+  skipped: number;
+}
+
+export interface TenantJobOpts {
+  /** The job runs only for tenants with this module on. */
+  module?: TenantModule;
 }
 
 /** Run `fn` once per active tenant, each inside that tenant's context; log and continue on a failure. */
-export async function runForEachTenant(name: string, fn: (tenantId: string) => Promise<unknown> | unknown): Promise<TenantJobRun> {
+export async function runForEachTenant(name: string, fn: (tenantId: string) => Promise<unknown> | unknown, opts: TenantJobOpts = {}): Promise<TenantJobRun> {
   const ids = await activeTenantIds();
   let failed = 0;
+  let skipped = 0;
+  let ran = 0;
   for (const id of ids) {
+    if (opts.module && !(await moduleOn(opts.module, id))) {
+      skipped += 1;
+      continue;
+    }
+    ran += 1;
     try {
       await runWithTenant(id, 'job', () => fn(id));
     } catch (err) {
@@ -48,12 +64,12 @@ export async function runForEachTenant(name: string, fn: (tenantId: string) => P
       console.error(`[alto-people/api] job ${name} failed for tenant ${id}:`, err);
     }
   }
-  return { ran: ids.length, failed };
+  return { ran, failed, skipped };
 }
 
-/** Wrap a job's body so each timer tick runs it per tenant. */
-export function tenantJob(name: string, fn: () => Promise<unknown> | unknown): () => Promise<TenantJobRun> {
-  return () => runForEachTenant(name, () => fn());
+/** Wrap a job's body so each timer tick runs it per tenant (and only for tenants with `module` on). */
+export function tenantJob(name: string, fn: () => Promise<unknown> | unknown, opts: TenantJobOpts = {}): () => Promise<TenantJobRun> {
+  return () => runForEachTenant(name, () => fn(), opts);
 }
 
 /** Wrap a platform-wide job so each tick runs under the audited platform scope. */

@@ -290,7 +290,7 @@ export function startPortalCoverageAlertCron(): void {
   const seconds = env.PORTAL_COVERAGE_ALERT_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void tenantJob('portalCoverageAlert', runPortalCoverageAlertSweep)().catch((err) => {
+    void tenantJob('portalCoverageAlert', runPortalCoverageAlertSweep, { module: 'clientPortal' })().catch((err) => {
       console.error('[alto-people/api] portal coverage alert sweep failed:', err);
     });
   };

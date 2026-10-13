@@ -219,7 +219,7 @@ export function startPortalDigestCron(): void {
   const seconds = env.PORTAL_DIGEST_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void tenantJob('portalDigest', runPortalDigestSweep)().catch((err) => {
+    void tenantJob('portalDigest', runPortalDigestSweep, { module: 'clientPortal' })().catch((err) => {
       console.error('[alto-people/api] portal digest sweep failed:', err);
     });
   };

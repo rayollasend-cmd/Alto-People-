@@ -1,3 +1,4 @@
+import { getBrandingSync } from './branding.js';
 /**
  * What Alto says on WhatsApp, in the three languages the platform speaks.
  *
@@ -33,6 +34,8 @@ export interface WaTemplateDef {
   metaCategory: 'UTILITY';
   /** What each positional parameter is, in order. */
   params: string[];
+  /** Brief 2-1b: brand values appended after `params` by the sender — the tenant's display name and the assistant's name. */
+  brandParams?: Array<'orgName' | 'assistantName'>;
   description: string;
   body: Record<WaLang, string>;
 }
@@ -40,38 +43,41 @@ export interface WaTemplateDef {
 export const WA_TEMPLATES: readonly WaTemplateDef[] = [
   {
     key: 'alto_notice',
-    metaName: 'alto_notice',
+    metaName: 'alto_notice_v2',
+    brandParams: ['orgName'],
     metaCategory: 'UTILITY',
     params: ['subject', 'message'],
     description: 'Any notice that has no template of its own — the bell text, as is.',
     body: {
-      en: '{{1}}\n\n{{2}}\n\nOpen the Alto app for details. Reply STOP to leave WhatsApp updates.',
-      es: '{{1}}\n\n{{2}}\n\nAbre la app de Alto para ver los detalles. Responde BAJA para dejar de recibir avisos por WhatsApp.',
-      tr: '{{1}}\n\n{{2}}\n\nAyrıntılar için Alto uygulamasını aç. WhatsApp bildirimlerini bırakmak için DUR yaz.',
+      en: '{{1}}\n\n{{2}}\n\nOpen the {{3}} app for details. Reply STOP to leave WhatsApp updates.',
+      es: '{{1}}\n\n{{2}}\n\nAbre la app de {{3}} para ver los detalles. Responde BAJA para dejar de recibir avisos por WhatsApp.',
+      tr: '{{1}}\n\n{{2}}\n\nAyrıntılar için {{3}} uygulamasını aç. WhatsApp bildirimlerini bırakmak için DUR yaz.',
     },
   },
   {
     key: 'alto_shift_assigned',
-    metaName: 'alto_shift_assigned',
+    metaName: 'alto_shift_assigned_v2',
+    brandParams: ['orgName'],
     metaCategory: 'UTILITY',
     params: ['position', 'store', 'when'],
     description: 'A shift was put on their schedule.',
     body: {
-      en: 'New shift: {{1}} at {{2}}, {{3}}. Tap "I\'ll be there" in the Alto app to confirm.',
-      es: 'Nuevo turno: {{1}} en {{2}}, {{3}}. Toca "Ahí estaré" en la app de Alto para confirmar.',
-      tr: 'Yeni vardiya: {{1}}, {{2}}, {{3}}. Onaylamak için Alto uygulamasında "Orada olacağım"a dokun.',
+      en: 'New shift: {{1}} at {{2}}, {{3}}. Tap "I\'ll be there" in the {{4}} app to confirm.',
+      es: 'Nuevo turno: {{1}} en {{2}}, {{3}}. Toca "Ahí estaré" en la app de {{4}} para confirmar.',
+      tr: 'Yeni vardiya: {{1}}, {{2}}, {{3}}. Onaylamak için {{4}} uygulamasında "Orada olacağım"a dokun.',
     },
   },
   {
     key: 'alto_shift_changed',
-    metaName: 'alto_shift_changed',
+    metaName: 'alto_shift_changed_v2',
+    brandParams: ['orgName'],
     metaCategory: 'UTILITY',
     params: ['position', 'store', 'when'],
     description: 'A shift on their schedule changed (time, place, or they were taken off it).',
     body: {
-      en: 'Schedule change: {{1}} at {{2}} is now {{3}}. Check the Alto app.',
-      es: 'Cambio de horario: {{1}} en {{2}} ahora es {{3}}. Revisa la app de Alto.',
-      tr: 'Program değişikliği: {{1}}, {{2}} artık {{3}}. Alto uygulamasına bak.',
+      en: 'Schedule change: {{1}} at {{2}} is now {{3}}. Check the {{4}} app.',
+      es: 'Cambio de horario: {{1}} en {{2}} ahora es {{3}}. Revisa la app de {{4}}.',
+      tr: 'Program değişikliği: {{1}}, {{2}} artık {{3}}. {{4}} uygulamasına bak.',
     },
   },
   {
@@ -124,14 +130,15 @@ export const WA_TEMPLATES: readonly WaTemplateDef[] = [
   },
   {
     key: 'alto_payday',
-    metaName: 'alto_payday',
+    metaName: 'alto_payday_v2',
+    brandParams: ['orgName'],
     metaCategory: 'UTILITY',
     params: ['pay date', 'period'],
     description: 'Pay day notice.',
     body: {
-      en: 'Payday: {{1}}, for {{2}}. Your paystub is in the Alto app under Pay.',
-      es: 'Día de pago: {{1}}, por {{2}}. Tu recibo está en la app de Alto, en Pago.',
-      tr: 'Maaş günü: {{1}}, {{2}} dönemi için. Bordron Alto uygulamasında Maaş altında.',
+      en: 'Payday: {{1}}, for {{2}}. Your paystub is in the {{3}} app under Pay.',
+      es: 'Día de pago: {{1}}, por {{2}}. Tu recibo está en la app de {{3}}, en Pago.',
+      tr: 'Maaş günü: {{1}}, {{2}} dönemi için. Bordron {{3}} uygulamasında Maaş altında.',
     },
   },
   {
@@ -174,13 +181,16 @@ export function toWaLang(v: string | null | undefined): WaLang {
 type Words = Record<WaLang, string>;
 const say = (w: Words, lang: WaLang) => w[lang];
 
+/** The tenant's display name: what "the app" is called in a reply (Brief 2-1b). */
+const app = () => getBrandingSync().orgName;
+
 export const WA_REPLY = {
   optedOut: (lang: WaLang) =>
     say(
       {
-        en: 'You will no longer get Alto updates on WhatsApp. Reply START to turn them back on. Your schedule, pay and rides are always in the Alto app.',
-        es: 'Ya no recibirás avisos de Alto por WhatsApp. Responde ALTA para activarlos de nuevo. Tu horario, pago y viajes siempre están en la app de Alto.',
-        tr: 'Artık Alto bildirimlerini WhatsApp üzerinden almayacaksın. Yeniden açmak için BAŞLA yaz. Programın, maaşın ve servislerin her zaman Alto uygulamasında.',
+        en: `You will no longer get ${app()} updates on WhatsApp. Reply START to turn them back on. Your schedule, pay and rides are always in the ${app()} app.`,
+        es: `Ya no recibirás avisos de ${app()} por WhatsApp. Responde ALTA para activarlos de nuevo. Tu horario, pago y viajes siempre están en la app de ${app()}.`,
+        tr: `Artık ${app()} bildirimlerini WhatsApp üzerinden almayacaksın. Yeniden açmak için BAŞLA yaz. Programın, maaşın ve servislerin her zaman ${app()} uygulamasında.`,
       },
       lang,
     ),
@@ -207,9 +217,9 @@ export const WA_REPLY = {
   optedIn: (lang: WaLang, name: string) =>
     `${WA_REPLY.intro(lang, name)} ${say(
       {
-        en: 'Alto updates on WhatsApp are on. Reply STOP any time to leave.',
-        es: 'Los avisos de Alto por WhatsApp están activados. Responde BAJA cuando quieras para salir.',
-        tr: 'Alto WhatsApp bildirimleri açık. Çıkmak için istediğin zaman DUR yaz.',
+        en: `${app()} updates on WhatsApp are on. Reply STOP any time to leave.`,
+        es: `Los avisos de ${app()} por WhatsApp están activados. Responde BAJA cuando quieras para salir.`,
+        tr: `${app()} WhatsApp bildirimleri açık. Çıkmak için istediğin zaman DUR yaz.`,
       },
       lang,
     )}`,
@@ -218,9 +228,9 @@ export const WA_REPLY = {
   payday: (lang: WaLang, date: string, period: string) =>
     say(
       {
-        en: `Your next payday is ${date}, for ${period}. Paystubs are in the Alto app under Pay.`,
-        es: `Tu próximo día de pago es ${date}, por ${period}. Los recibos están en la app de Alto, en Pago.`,
-        tr: `Bir sonraki maaş günün ${date}, ${period} dönemi için. Bordrolar Alto uygulamasında Maaş altında.`,
+        en: `Your next payday is ${date}, for ${period}. Paystubs are in the ${app()} app under Pay.`,
+        es: `Tu próximo día de pago es ${date}, por ${period}. Los recibos están en la app de ${app()}, en Pago.`,
+        tr: `Bir sonraki maaş günün ${date}, ${period} dönemi için. Bordrolar ${app()} uygulamasında Maaş altında.`,
       },
       lang,
     ),
@@ -245,9 +255,9 @@ export const WA_REPLY = {
   noRide: (lang: WaLang) =>
     say(
       {
-        en: 'You have no ride booked. Book one in the Alto app under Rides.',
-        es: 'No tienes ningún viaje reservado. Resérvalo en la app de Alto, en Viajes.',
-        tr: 'Rezerve edilmiş servisin yok. Alto uygulamasında Servisler altından ayırt.',
+        en: `You have no ride booked. Book one in the ${app()} app under Rides.`,
+        es: `No tienes ningún viaje reservado. Resérvalo en la app de ${app()}, en Viajes.`,
+        tr: `Rezerve edilmiş servisin yok. ${app()} uygulamasında Servisler altından ayırt.`,
       },
       lang,
     ),
@@ -263,27 +273,27 @@ export const WA_REPLY = {
   noShifts: (lang: WaLang) =>
     say(
       {
-        en: 'Nothing is on your schedule yet. Open shifts you can pick up are in the Alto app.',
-        es: 'Todavía no hay nada en tu horario. Los turnos abiertos que puedes tomar están en la app de Alto.',
-        tr: 'Programında henüz bir şey yok. Alabileceğin açık vardiyalar Alto uygulamasında.',
+        en: `Nothing is on your schedule yet. Open shifts you can pick up are in the ${app()} app.`,
+        es: `Todavía no hay nada en tu horario. Los turnos abiertos que puedes tomar están en la app de ${app()}.`,
+        tr: `Programında henüz bir şey yok. Alabileceğin açık vardiyalar ${app()} uygulamasında.`,
       },
       lang,
     ),
   handoff: (lang: WaLang, who: string | null) =>
     say(
       {
-        en: who ? `I have passed this to ${who}, who will answer in the Alto app messages.` : 'I have passed this to your supervisor, who will answer in the Alto app messages.',
-        es: who ? `Se lo pasé a ${who}, que te responderá en los mensajes de la app de Alto.` : 'Se lo pasé a tu supervisor, que te responderá en los mensajes de la app de Alto.',
-        tr: who ? `Bunu ${who} adlı kişiye ilettim; Alto uygulamasındaki mesajlardan yanıt verecek.` : 'Bunu amirine ilettim; Alto uygulamasındaki mesajlardan yanıt verecek.',
+        en: who ? `I have passed this to ${who}, who will answer in the ${app()} app messages.` : 'I have passed this to your supervisor, who will answer in the ${app()} app messages.',
+        es: who ? `Se lo pasé a ${who}, que te responderá en los mensajes de la app de ${app()}.` : 'Se lo pasé a tu supervisor, que te responderá en los mensajes de la app de ${app()}.',
+        tr: who ? `Bunu ${who} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.` : 'Bunu amirine ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.',
       },
       lang,
     ),
   unknownNumber: (lang: WaLang) =>
     say(
       {
-        en: 'This number is not linked to an Alto account. Turn on WhatsApp updates in the Alto app under Settings.',
-        es: 'Este número no está vinculado a una cuenta de Alto. Activa los avisos por WhatsApp en la app de Alto, en Ajustes.',
-        tr: 'Bu numara bir Alto hesabına bağlı değil. Alto uygulamasında Ayarlar altından WhatsApp bildirimlerini aç.',
+        en: `This number is not linked to an ${app()} account. Turn on WhatsApp updates in the ${app()} app under Settings.`,
+        es: `Este número no está vinculado a una cuenta de ${app()}. Activa los avisos por WhatsApp en la app de ${app()}, en Ajustes.`,
+        tr: `Bu numara bir ${app()} hesabına bağlı değil. ${app()} uygulamasında Ayarlar altından WhatsApp bildirimlerini aç.`,
       },
       lang,
     ),

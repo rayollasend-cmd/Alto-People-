@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TenantProfileSchema } from './tenantProfile.js';
 import { httpUrl } from './safeUrl.js';
 
 /* -------------------------------------------------------------------------- *
@@ -565,6 +566,8 @@ export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
 
 export const MeResponseSchema = z.object({
   user: AuthUserSchema.nullable(),
+  /** Brief 2-1b: the signed-in user's tenant profile (modules, terminology); null when anonymous. */
+  tenant: TenantProfileSchema.extend({ id: UuidSchema }).nullable().optional(),
 });
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 

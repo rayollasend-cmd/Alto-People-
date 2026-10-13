@@ -31,7 +31,7 @@ describe('runForEachTenant', () => {
       seen.push(`${id}=${tenantContext()?.tenantId}/${tenantContext()?.source}`);
       if (id === ALTO_TENANT_ID) throw new Error('boom');
     });
-    expect(r).toEqual({ ran: 2, failed: 1 });
+    expect(r).toEqual({ ran: 2, failed: 1, skipped: 0 });
     expect(seen).toEqual([`${ALTO_TENANT_ID}=${ALTO_TENANT_ID}/job`, `${T2}=${T2}/job`]);
   });
 
@@ -40,7 +40,7 @@ describe('runForEachTenant', () => {
     await prisma.user.update({ where: { id: user.id }, data: { deactivatedAt: new Date(Date.now() - 40 * 86_400_000), purgeAfter: new Date(Date.now() - 10 * 86_400_000) } });
     resetTenantObservations();
     const job = tenantJob('accessCleanup', () => sweepDeactivatedUsers());
-    expect(await job()).toEqual({ ran: 1, failed: 0 });
+    expect(await job()).toEqual({ ran: 1, failed: 0, skipped: 0 });
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).deletedAt).not.toBeNull();
     expect(tenantObservations().filter((o) => o.kind === 'no_context' && o.model === 'User')).toEqual([]);
 

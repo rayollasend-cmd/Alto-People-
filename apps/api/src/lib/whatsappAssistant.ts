@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { moduleOn } from './tenantProfile.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { nextPaydayFor } from './associatePayday.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -196,7 +197,9 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
     return text;
   };
 
-  switch (intent) {
+  // Brief 2-1b: a capability that depends on a disabled module is not offered.
+  const effective: Intent = intent === 'RIDE' && !(await moduleOn('transportation')) ? 'HANDOFF' : intent;
+  switch (effective) {
     case 'OPT_OUT': {
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_OUT', optedOutAt: now, source: 'reply' } });
       // Their last word still gets its one confirmation.

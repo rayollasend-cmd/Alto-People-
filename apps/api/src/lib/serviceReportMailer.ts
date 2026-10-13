@@ -234,7 +234,7 @@ export function startServiceReportMailCron(): void {
   const seconds = env.SERVICE_REPORT_MAIL_INTERVAL_SECONDS;
   if (seconds <= 0) return;
   const run = () => {
-    void tenantJob('serviceReportMailer', runServiceReportMailSweep)().catch((err) => {
+    void tenantJob('serviceReportMailer', runServiceReportMailSweep, { module: 'clientPortal' })().catch((err) => {
       console.error('[alto-people/api] service report mail sweep failed:', err);
     });
   };

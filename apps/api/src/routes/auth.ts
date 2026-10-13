@@ -115,6 +115,7 @@ import {
   MfaRegenerateInputSchema,
 } from '@alto-people/shared';
 import { getBrandingSync } from '../lib/branding.js';
+import { tenantForSession } from '../lib/tenantProfile.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 
 // Tolerate one full TOTP period of skew on either side (~30s before/after
@@ -715,7 +716,8 @@ authRouter.get('/me', async (req, res) => {
     });
     return;
   }
-  res.json({ user: req.user ? { ...toAuthUser(req.user), ...(await scopeNamesFor(req.user)) } : null });
+  // Brief 2-1b: the tenant's profile rides with the session (modules, terminology).
+  res.json({ user: req.user ? { ...toAuthUser(req.user), ...(await scopeNamesFor(req.user)) } : null, tenant: await tenantForSession(req.user) });
 });
 
 /* ===== Invitation flow (Phase 16) ====================================== */

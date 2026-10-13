@@ -129,6 +129,7 @@ import { floorTeamRouter } from './routes/floorTeam.js';
 import { transportRouter } from './routes/transport.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { tenancyRouter } from './routes/tenancy.js';
+import { requireModule } from './lib/tenantProfile.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
 import { attachUser, requireAuth, requireCapability } from './middleware/auth.js';
@@ -364,7 +365,7 @@ export function createApp() {
   // so it sits outside the human-RBAC chain. Mounted early so its 401s
   // don't get tangled with cookie-flow routes if a caller forgets the
   // bearer header.
-  app.use('/integrations/v1', integrationsV1Router);
+  app.use('/integrations/v1', requireModule('payrollSync'), integrationsV1Router);
   // Agents call with their own credential, never a session (Brief 1D-2).
   app.use('/agent/v1', agentApiRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
@@ -384,9 +385,9 @@ export function createApp() {
   app.use('/messages', messagesRouter);
   // The region command center (region accounts + admin preview) and the
   // regions admin (manage:org).
-  app.use('/region', regionRouter);
-  app.use('/regions', regionsAdminRouter);
-  app.use('/clients', clientsAccessGate, clientsRouter);
+  app.use('/region', requireModule('clientPortal'), regionRouter);
+  app.use('/regions', requireModule('clientPortal'), regionsAdminRouter);
+  app.use('/clients', requireModule('clientPortal'), clientsAccessGate, clientsRouter);
   app.use(
     '/onboarding',
     requireCapability('view:onboarding'),
@@ -444,10 +445,10 @@ export function createApp() {
   app.use('/whatsapp', whatsappRouter);
   // Program Lifecycle: J-1 / H-2B records, sponsors, alerts, the
   // transition calendar and sponsor reports (view/manage:compliance).
-  app.use('/programs', programsRouter);
+  app.use('/programs', requireModule('programs'), programsRouter);
   // Season Planner: demand → associates, beds, van seats, recruiting
   // targets; scenarios saved and compared (view/manage:org).
-  app.use('/season-plans', seasonPlansRouter);
+  app.use('/season-plans', requireModule('programs'), seasonPlansRouter);
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
   app.use('/workers', workersRouter);
   app.use('/agents', agentsRouter);
@@ -501,7 +502,7 @@ export function createApp() {
   app.use('/me', roleDecisionsRouter);
   // External payroll documentation — pay periods + evidence uploads for the
   // directory drawer's Payments tab. Router self-gates on process:payroll.
-  app.use('/external-payments', externalPaymentsRouter);
+  app.use('/external-payments', requireModule('payrollSync'), externalPaymentsRouter);
   app.use('/ops', opsRouter);
   // Client-audit response packets (Walmart-scope ZIP). Self-gates on
   // view:hr-admin + bulk-PII limiter; every generation is critical-audited.
@@ -612,7 +613,8 @@ export function createApp() {
   app.use('/', floorTeamRouter);
   // Transportation — the Alto vans: rides, dispatch, drivers, the
   // director's command center. Gated per route (routes/transport.ts).
-  app.use('/transport', transportRouter);
+  // Brief 2-1b: an off module answers 404 on its whole mount.
+  app.use('/transport', requireModule('transportation'), transportRouter);
   // Org-wide branding (singleton OrgSetting). Admin paths gate on
   // view:hr-admin; the logo GET is open so any signed-in chrome can
   // render it (and so HTML emails — which are public — can fetch it).
@@ -621,7 +623,7 @@ export function createApp() {
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
-  app.use('/quickbooks', quickbooksRouter);
+  app.use('/quickbooks', requireModule('payrollSync'), quickbooksRouter);
 
   // Production: the same Express service hosts the built React SPA. In dev,
   // Vite serves the SPA on its own port (5173) and proxies /api/* here, so

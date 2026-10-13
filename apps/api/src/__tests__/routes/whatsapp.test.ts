@@ -100,10 +100,10 @@ describe('consent and the schedule change', () => {
     await flushPendingNotifications();
 
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: '18505550101', template: { name: 'alto_shift_assigned', language: 'es' } });
+    expect(sent[0]).toMatchObject({ to: '18505550101', template: { name: 'alto_shift_assigned_v2', language: 'es' } });
     expect(sent[0]!.template!.params[0]).toBe('Server');
     const row = await prisma.whatsAppMessage.findFirstOrThrow({ where: { associateId: w.maria.id, direction: 'OUTBOUND' } });
-    expect(row).toMatchObject({ templateName: 'alto_shift_assigned', language: 'es', status: 'SENT', waMessageId: 'wamid.1', category: 'shift_assigned' });
+    expect(row).toMatchObject({ templateName: 'alto_shift_assigned_v2', language: 'es', status: 'SENT', waMessageId: 'wamid.1', category: 'shift_assigned' });
     expect(row.body).toContain('Nuevo turno: Server en');
     expect(row.body).toContain('Ahí estaré');
     // The communications record carries the delivery too.
@@ -316,7 +316,7 @@ describe('the assistant', () => {
     const overview = await hr.get('/whatsapp/admin/overview');
     expect(overview.status).toBe(200);
     expect(overview.body.consent).toEqual({ optedIn: 1, optedOut: 0 });
-    expect(overview.body.templates.map((t: { metaName: string }) => t.metaName)).toContain('alto_shift_assigned');
+    expect(overview.body.templates.map((t: { metaName: string }) => t.metaName)).toContain('alto_shift_assigned_v2');
     const list = await hr.get(`/whatsapp/admin/messages?associateId=${w.maria.id}`);
     expect(list.body.messages[0].phone).toBe('…0101');
     expect(list.body.messages.map((m: { kind: string }) => m.kind).sort()).toEqual(['ANSWER', 'QUESTION']);
