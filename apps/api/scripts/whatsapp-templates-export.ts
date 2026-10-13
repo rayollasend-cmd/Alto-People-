@@ -54,7 +54,7 @@ if (process.argv.includes('--json')) {
   for (const t of WA_TEMPLATES) {
     const names = [...t.params, ...(t.brandParams ?? [])];
     console.log(`${t.metaName}  [${t.metaCategory}]  params: ${names.map((n, i) => `{{${i + 1}}}=${n}`).join(', ')}`);
-    for (const lang of Object.keys(t.body) as WaLang[]) console.log(`  ${META_LANG[lang].padEnd(5)} ${t.body[lang].replace(/\n/g, ' / ')}`);
+    for (const lang of Object.keys(t.body) as WaLang[]) console.log(`  ${META_LANG[lang].padEnd(5)} ${t.body[lang].replace(/\n+/g, ' / ')}`);
     console.log('');
   }
   console.log(`${WA_TEMPLATES.length} templates, ${payloads.length} language versions. Submit each in WhatsApp Manager under the name shown; approval takes days.`);

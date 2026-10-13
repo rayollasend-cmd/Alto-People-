@@ -1,7 +1,7 @@
 alto_notice_v2  [UTILITY]  params: {{1}}=subject, {{2}}=message, {{3}}=orgName
-  en_US {{1}} /  / {{2}} /  / Open the {{3}} app for details. Reply STOP to leave WhatsApp updates.
-  es    {{1}} /  / {{2}} /  / Abre la app de {{3}} para ver los detalles. Responde BAJA para dejar de recibir avisos por WhatsApp.
-  tr    {{1}} /  / {{2}} /  / Ayrıntılar için {{3}} uygulamasını aç. WhatsApp bildirimlerini bırakmak için DUR yaz.
+  en_US {{1}} / {{2}} / Open the {{3}} app for details. Reply STOP to leave WhatsApp updates.
+  es    {{1}} / {{2}} / Abre la app de {{3}} para ver los detalles. Responde BAJA para dejar de recibir avisos por WhatsApp.
+  tr    {{1}} / {{2}} / Ayrıntılar için {{3}} uygulamasını aç. WhatsApp bildirimlerini bırakmak için DUR yaz.
 
 alto_shift_assigned_v2  [UTILITY]  params: {{1}}=position, {{2}}=store, {{3}}=when, {{4}}=orgName
   en_US New shift: {{1}} at {{2}}, {{3}}. Tap "I'll be there" in the {{4}} app to confirm.
@@ -44,8 +44,8 @@ alto_payday_v2  [UTILITY]  params: {{1}}=pay date, {{2}}=period, {{3}}=orgName
   tr    Maaş günü: {{1}}, {{2}} dönemi için. Bordron {{3}} uygulamasında Maaş altında.
 
 alto_emergency  [UTILITY]  params: {{1}}=title, {{2}}=message
-  en_US EMERGENCY — {{1}} /  / {{2}}
-  es    EMERGENCIA — {{1}} /  / {{2}}
-  tr    ACİL DURUM — {{1}} /  / {{2}}
+  en_US EMERGENCY — {{1}} / {{2}}
+  es    EMERGENCIA — {{1}} / {{2}}
+  tr    ACİL DURUM — {{1}} / {{2}}
 
 10 templates, 30 language versions. Submit each in WhatsApp Manager under the name shown; approval takes days.
