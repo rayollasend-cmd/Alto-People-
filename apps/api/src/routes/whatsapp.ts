@@ -2,6 +2,7 @@ import { Router, raw } from 'express';
 import { z } from 'zod';
 import { WA_TEMPLATES } from '../lib/whatsappContent.js';
 import { prisma } from '../db.js';
+import { trackNotificationWork } from '../lib/notify.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -129,8 +130,13 @@ whatsappWebhookRouter.post('/', raw({ type: '*/*', limit: '512kb' }), async (req
     return;
   }
   // Meta retries on anything but a 200, so answer first and work after;
-  // each inbound message is idempotent on its id.
+  // each inbound message is idempotent on its id. The work is tracked so
+  // tests (and a graceful shutdown) can wait for it.
   res.status(200).json({ ok: true });
+  void trackNotificationWork(processWebhook(payload));
+});
+
+async function processWebhook(payload: WebhookPayload): Promise<void> {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const v = change.value;
@@ -150,7 +156,7 @@ whatsappWebhookRouter.post('/', raw({ type: '*/*', limit: '512kb' }), async (req
       }
     }
   }
-});
+}
 
 whatsappRouter.get('/admin/overview', VIEW, async (_req, res, next) => {
   try {

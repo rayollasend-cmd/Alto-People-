@@ -198,6 +198,9 @@ export async function recordScenarioAnswer(db: Db, workerId: string, scenarioId:
 export async function runScenarios(db: Db, workerId: string, ranById: string, now: Date = new Date()): Promise<{ ran: number; passed: number }> {
   const profile = await db.agentProfile.findUnique({ where: { workerId }, select: { builtInKey: true } });
   if (!profile) throw new HttpError(404, 'agent_not_found', 'No such agent.');
+  if (runBuiltIn(profile.builtInKey as BuiltInAgentKey | null, {}) === null) {
+    throw new HttpError(409, 'agent_answers_itself', 'This agent answers its scenarios through /agent/v1/certification; the API cannot run it.');
+  }
   const scenarios = await db.agentScenario.findMany({ where: { workerId }, select: { id: true, input: true } });
   let passed = 0;
   for (const s of scenarios) {

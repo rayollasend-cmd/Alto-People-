@@ -62,13 +62,16 @@ async function world() {
   return { client, site, hr, sup, maria, mariaUser, bo, boUser };
 }
 
-function webhook(body: object, opts: { badSignature?: boolean } = {}) {
+async function webhook(body: object, opts: { badSignature?: boolean } = {}) {
   const raw = JSON.stringify(body);
-  return agent()
+  const res = await agent()
     .post('/whatsapp/webhook')
     .set('content-type', 'application/json')
     .set('x-hub-signature-256', opts.badSignature ? 'sha256=deadbeef' : signWhatsAppBody(raw, SECRET))
     .send(raw);
+  // The webhook answers 200 first and works after; wait for the work.
+  await flushPendingNotifications();
+  return res;
 }
 
 const inbound = (from: string, text: string, id = `wamid.in.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`) => ({

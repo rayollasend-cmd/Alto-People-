@@ -1,6 +1,7 @@
 import { PrismaClient, type Role } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
 import { flushPendingAudits } from '../src/lib/audit.js';
+import { flushPendingNotifications } from '../src/lib/notify.js';
 
 export const prisma = new PrismaClient();
 
@@ -131,6 +132,9 @@ export async function truncateAll(): Promise<void> {
   // AuditLog` lands on a wiped table and trips an FK violation against the
   // already-deleted user, polluting the next test's logs.
   await flushPendingAudits();
+  // The same for notification chains (shift notices, emails, WhatsApp): a
+  // late insert against a wiped table is an FK error in the next test's log.
+  await flushPendingNotifications();
   // Quote each identifier so PascalCase table names are preserved. CASCADE
   // handles the FK graph; RESTART IDENTITY isn't required (UUIDs everywhere).
   const quoted = TABLES.map((t) => `"alto_test"."${t}"`).join(', ');

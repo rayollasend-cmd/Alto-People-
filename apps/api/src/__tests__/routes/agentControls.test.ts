@@ -90,7 +90,7 @@ describe('the kill switch', () => {
     expect(refusedWith).toBe('credential_revoked');
 
     // The owner heard; an admin who is not the owner cannot resume; the owner can, and gets no credential back.
-    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_kill' } });
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_kill', channel: 'IN_APP' } });
     expect(bell?.linkUrl).toBe(`/agents?agent=${a.id}`);
     const notOwner = await w.admin.post(`/agents/${a.id}/resume`);
     expect(notOwner.status).toBe(403);
@@ -125,7 +125,7 @@ describe('the kill switch', () => {
     expect(list.body.control).toMatchObject({ suspendedBy: { id: w.hr.id }, reason: 'Incident 42.' });
     expect(list.body.control.allSuspendedAt).not.toBeNull();
     // Each owner heard once.
-    expect(await prisma.notification.count({ where: { category: 'agent_kill', recipientUserId: w.owner.id } })).toBe(1);
+    expect(await prisma.notification.count({ where: { category: 'agent_kill', recipientUserId: w.owner.id, channel: 'IN_APP' } })).toBe(1);
 
     expect((await w.admin.post('/agents/resume-all')).status).toBe(200);
     expect((await agent().get('/agent/v1/me').set(bearer(fresh.plaintext))).status).toBe(200);
@@ -190,7 +190,7 @@ describe('certification', () => {
     expect(bumped.status).toBe(200);
     expect(bumped.body).toMatchObject({ status: 'ONBOARDING', activeCredentials: 0, certification: { current: false, modelVersion: '5.2', certifiedModelVersion: '5.1', passing: 0, ready: false } });
     expect((await api().get('/agent/v1/certification')).status).toBe(401);
-    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_kill' } });
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_kill', channel: 'IN_APP' } });
     expect(bell?.subject).toMatch(/recertification/);
     // Pass again under 5.2 and it is back.
     const c2 = await issue(w.admin, a.id);
@@ -222,7 +222,7 @@ describe('certification', () => {
     expect(byName['A wrong expectation'].reason).toMatch(/OPT_OUT/);
     // An external agent is not run by the API.
     const ext = await registerAgent(w.admin, w.owner.id, { status: 'ONBOARDING' });
-    await w.admin.post(`/agents/${ext.id}/scenarios`).send({ name: 'x', input: { a: 1 }, expected: { output: { b: 2 } } });
+    await w.admin.post(`/agents/${ext.id}/scenarios`).send({ name: 'Example', input: { a: 1 }, expected: { output: { b: 2 } } });
     const no = await w.admin.post(`/agents/${ext.id}/scenarios/run`);
     expect(no.status).toBe(409);
     expect(no.body.error.code).toBe('agent_answers_itself');
@@ -264,7 +264,7 @@ describe('the scorecard and the drift alert', () => {
     await w.admin.patch(`/agents/${a.id}/drift`).send({ driftErrorRatePct: 20 });
     expect((await sweepAgentDrift(prisma)).alerted).toEqual([a.id]);
     expect((await sweepAgentDrift(prisma)).alerted).toEqual([]);
-    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_drift' } });
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.owner.id, category: 'agent_drift', channel: 'IN_APP' } });
     expect(bell?.body).toMatch(/error rate 25%/);
     // Cost per task: $1.00 over a $0.50 threshold, a week later.
     await prisma.agentProfile.update({ where: { workerId: a.id }, data: { driftErrorRatePct: null, driftCostPerTaskCents: 50, lastDriftAlertAt: new Date(Date.now() - 8 * 24 * 3_600_000) } });
