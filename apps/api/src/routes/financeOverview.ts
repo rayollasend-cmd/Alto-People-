@@ -211,8 +211,8 @@ financeOverviewRouter.get(
       const [fullFieldglassQueue, cycle, billing, margin] = await Promise.all([
         buildFieldglassQueue(now, { tenantId: T }),
         payCycle(now, { tenantId: T }),
-        billingWeek(now),
-        marginTrend(now),
+        billingWeek(now, { tenantId: T }),
+        marginTrend(now, 8, { tenantId: T }),
       ]);
       const aging = receivablesAging(
         unpaidStatements.map((s) => ({

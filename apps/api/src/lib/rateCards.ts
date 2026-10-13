@@ -162,8 +162,9 @@ export interface WithoutRate {
  * The flag the brief asks for: every placed associate whose role has no
  * rate card at their client today (or who has no role on file at all).
  */
-export async function associatesWithoutRate(db: Db = defaultPrisma, now: Date = new Date()): Promise<WithoutRate[]> {
-  const placed = await placements({}, db);
+export async function associatesWithoutRate(db: Db = defaultPrisma, now: Date = new Date(), opts: { tenantId?: string | null } = {}): Promise<WithoutRate[]> {
+  // Brief 2-1: optional tenant; omitted, every tenant's placements (today's behaviour).
+  const placed = await placements(opts.tenantId ? { tenantId: opts.tenantId } : {}, db);
   if (placed.size === 0) return [];
   const ids = [...placed.keys()];
   const clientIds = [...new Set([...placed.values()].map((p) => p.clientId))];

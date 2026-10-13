@@ -116,13 +116,23 @@ export interface BillingWeek {
 }
 
 /** Last completed Sat→Fri week, as Fieldglass has it. */
-export async function billingWeek(now: Date = new Date()): Promise<BillingWeek> {
+export async function billingWeek(
+  now: Date = new Date(),
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
+): Promise<BillingWeek> {
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const current = saturdayWeek(now, DEFAULT_TIMEZONE);
   const weekStart = addDays(current.weekStart, -7);
-  const week = await buildTimesheetWeek(prisma, { weekStart: new Date(`${weekStart}T12:00:00Z`), showMoney: true });
+  const week = await buildTimesheetWeek(prisma, {
+    weekStart: new Date(`${weekStart}T12:00:00Z`),
+    showMoney: true,
+    ...(opts.tenantId ? { scopeWhere: T, shiftScopeWhere: T } : {}),
+  });
   const clientIds = [...new Set(week.rows.map((r) => r.clientId).filter((x): x is string => !!x))];
   const earlier = await prisma.fieldglassTimesheet.findMany({
     where: {
+      ...T,
       fgStatus: 'REJECTED',
       weekStart: { lt: new Date(`${weekStart}T00:00:00Z`), gte: new Date(`${addDays(weekStart, -84)}T00:00:00Z`) },
     },
@@ -208,12 +218,16 @@ export interface MarginWeek {
 export async function marginTrend(
   now: Date = new Date(),
   weeks = 8,
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
+  opts: { tenantId?: string } = {},
 ): Promise<{ weeks: MarginWeek[]; defaultRate: number; defaultRateAssociates: number }> {
+  const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const current = saturdayWeek(now, DEFAULT_TIMEZONE).weekStart;
   const starts = Array.from({ length: weeks }, (_, i) => addDays(current, -7 * (weeks - 1 - i)));
   const startSet = new Set(starts);
   const entries = await prisma.timeEntry.findMany({
     where: {
+      ...T,
       status: 'APPROVED',
       clockOutAt: { not: null },
       clockInAt: { gte: new Date(new Date(`${starts[0]}T00:00:00Z`).getTime() - DAY_MS), lt: now },

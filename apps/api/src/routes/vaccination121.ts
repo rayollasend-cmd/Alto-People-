@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 121 — Vaccination + medical records.
@@ -126,7 +127,7 @@ vaccination121Router.get(
 
 vaccination121Router.get('/vaccinations/coverage', VIEW, async (_req, res) => {
   // Brief 1A-2: coverage is measured over the active workforce.
-  const total = await activeHeadcount();
+  const total = await activeHeadcount({ tenantId: tenantIdForWrite() });
   const byKind = await prisma.vaccinationRecord.groupBy({
     by: ['kind', 'associateId'],
   });

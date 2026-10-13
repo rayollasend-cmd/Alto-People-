@@ -1573,7 +1573,10 @@ function serializeIncident(r: IncidentRow): ScorecardSafetyIncident {
 /** TRIR/DART denominator: hours actually worked (closed, non-rejected time
  *  entries) since `since`. Summed in SQL — a year of punches is far too many
  *  rows to pull into JS just to subtract timestamps. */
-async function hoursWorkedSince(since: Date, clientId?: string | null): Promise<number> {
+async function hoursWorkedSince(since: Date, clientId?: string | null, tenantId?: string | null): Promise<number> {
+  // Brief 2-1: the tenant's own hours (a raw query is not seen by the tenant
+  // guard). Absent = every tenant, as before.
+  const tenantClause = tenantId ? Prisma.sql`AND "tenantId" = ${tenantId}::uuid` : Prisma.empty;
   const rows = clientId
     ? await prisma.$queryRaw<Array<{ hours: unknown }>>`
         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
@@ -1581,13 +1584,15 @@ async function hoursWorkedSince(since: Date, clientId?: string | null): Promise<
         WHERE "clockOutAt" IS NOT NULL
           AND "status"::text IN ('COMPLETED', 'APPROVED')
           AND "clockInAt" >= ${since}
-          AND "clientId" = ${clientId}::uuid`
+          AND "clientId" = ${clientId}::uuid
+          ${tenantClause}`
     : await prisma.$queryRaw<Array<{ hours: unknown }>>`
         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
         FROM "TimeEntry"
         WHERE "clockOutAt" IS NOT NULL
           AND "status"::text IN ('COMPLETED', 'APPROVED')
-          AND "clockInAt" >= ${since}`;
+          AND "clockInAt" >= ${since}
+          ${tenantClause}`;
   return Number(rows[0]?.hours ?? 0);
 }
 
@@ -1619,7 +1624,7 @@ export async function buildSafetyTile(
       take: 50,
       include: incidentInclude,
     }),
-    hoursWorkedSince(ytdStart, clientId),
+    hoursWorkedSince(ytdStart, clientId, scope.tenantId),
   ]);
 
   const recordableCountYtd = ytdRecordables.length;

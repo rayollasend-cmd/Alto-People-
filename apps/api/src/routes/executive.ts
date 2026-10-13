@@ -184,7 +184,7 @@ executiveRouter.post('/decisions/action', EXEC, async (req: Request, res: Respon
     .parse(req.body?.key);
   const input = DecisionActionSchema.parse(req.body);
 
-  const decisions = await computeExecutiveDecisions(prisma);
+  const decisions = await computeExecutiveDecisions(prisma, new Date(), { tenantId: tenantIdForWrite() });
   const item = decisions.find((d) => d.key === key);
   if (!item) {
     throw new HttpError(404, 'not_found', 'That decision is no longer in the queue.');
@@ -364,11 +364,14 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
   const now = new Date();
   const quarter = currentQuarter(now);
   const target = await prisma.execTarget.findUnique({ where: { quarter: quarter.key } });
+  // Brief 2-1: the quarter's punches, headcount and shifts are this tenant's own.
+  const T = { tenantId: tenantIdForWrite() };
 
   // Quarter-to-date economics from approved/completed punches, per-
   // associate-org-week OT, at standard rates — same math as the summary.
   const entries = await prisma.timeEntry.findMany({
     where: {
+      ...T,
       status: { in: ['APPROVED', 'COMPLETED'] },
       clockInAt: { gte: quarter.start, lt: now },
     },
@@ -409,10 +412,11 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
 
   const [headcount, separationsQtd, published, assigned] = await Promise.all([
     // Brief 1A-2: the one definition of active.
-    activeHeadcount({}, now),
-    prisma.associate.count({ where: { separatedAt: { gte: quarter.start } } }),
+    activeHeadcount(T, now),
+    prisma.associate.count({ where: { ...T, separatedAt: { gte: quarter.start } } }),
     prisma.shift.count({
       where: {
+        ...T,
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
         startsAt: { gte: quarter.start, lt: now },
@@ -420,6 +424,7 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
     }),
     prisma.shift.count({
       where: {
+        ...T,
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
         startsAt: { gte: quarter.start, lt: now },
@@ -562,7 +567,7 @@ executiveRouter.delete('/prospects/:id', PROSPECT_WRITE, async (req: Request, re
 
 
 executiveRouter.get('/board-pack.pdf', EXEC, async (req: Request, res: Response) => {
-  const s = await computeExecutiveSummary(prisma);
+  const s = await computeExecutiveSummary(prisma, new Date(), { tenantId: tenantIdForWrite() });
   const refId = formatRef();
   enqueueAudit(
     {

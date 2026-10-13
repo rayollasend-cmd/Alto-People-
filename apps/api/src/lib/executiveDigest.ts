@@ -10,6 +10,7 @@
 
 import { prisma as defaultPrisma } from '../db.js';
 import { tenantJob } from './tenantJobs.js';
+import { currentTenantId } from './tenant.js';
 import type { PrismaClient } from '@prisma/client';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveDecisions } from './executiveDecisions.js';
@@ -66,7 +67,8 @@ export async function runExecutiveDigestSweep(
   const pending = recipients.filter((r) => !sentSet.has(r.id));
   if (pending.length === 0) return { sent: 0, skipped: 'already_sent' };
 
-  const summary = await computeExecutiveSummary(prisma, now);
+  // Brief 2-1: tenantJob runs this once per tenant; each digest reads its own tenant.
+  const summary = await computeExecutiveSummary(prisma, now, { tenantId: currentTenantId() ?? undefined });
   // The week in sentences first, the figures after — and the board pack
   // rides along as the packet, so the digest is the weekly briefing rather
   // than a pointer to one.
@@ -74,7 +76,7 @@ export async function runExecutiveDigestSweep(
   const packet = await buildBoardPack(summary, formatRef());
   const packetName = `board-pack-${now.toISOString().slice(0, 10)}.pdf`;
   // The follow-through line: the digest never lets the queue die quietly.
-  const decisions = await computeExecutiveDecisions(prisma, now);
+  const decisions = await computeExecutiveDecisions(prisma, now, { tenantId: currentTenantId() ?? undefined });
   const open = decisions.filter((d) => d.status === 'open');
   const delegated = decisions.filter((d) => d.status === 'delegated');
   if (open.length > 0 || delegated.length > 0) {

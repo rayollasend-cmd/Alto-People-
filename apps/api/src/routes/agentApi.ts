@@ -7,6 +7,7 @@ import { recordAgentCalls, requireAgent, requireOnboardingAgent } from '../middl
 import { claimApproval, createApprovalRequest, getApproval, monthSpendCents, postAgentMessage, recordSpend, rotateCredential, scheduleCsv } from '../lib/agents.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
 import { recordScenarioAnswer } from '../lib/agentControls.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * What an agent can call (Brief 1D-2). Bearer alto_agent_… on every route;
@@ -119,7 +120,8 @@ agentApiRouter.get('/reports/executive-summary', requireAgent('view:analytics'),
   try {
     res.locals.agentAction = 'agent.report.read';
     res.locals.agentTarget = { type: 'Report', id: 'executive-summary' };
-    res.json(await computeExecutiveSummary(prisma));
+    // Brief 2-1: the agent's request runs as its tenant; the summary reads that tenant only.
+    res.json(await computeExecutiveSummary(prisma, new Date(), { tenantId: tenantIdForWrite() }));
   } catch (err) {
     next(err);
   }

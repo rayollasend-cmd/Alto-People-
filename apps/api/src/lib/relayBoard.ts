@@ -451,7 +451,7 @@ export async function computeRelayBoard(
   // Fieldglass: the same queue the Fieldglass setup page works, and last
   // week's timesheets as the buyer's deadline sees them — one definition,
   // so the relay and finance never read different numbers.
-  const [fgQueue, billing] = await Promise.all([buildFieldglassQueue(now), billingWeek(now)]);
+  const [fgQueue, billing] = await Promise.all([buildFieldglassQueue(now, opts), billingWeek(now, opts)]);
 
   const [addCandidates, pendingEntries, settleRows, payrollCaseOld, hrCaseOld, incidentOld, payrollCasesOpen, hrCasesOpen, incidentsOpen, settleAggCount] =
     await Promise.all([

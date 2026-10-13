@@ -147,7 +147,7 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       trendHires,
     ] = await Promise.all([
       // Brief 1A-2: the one definition of active, clamped to the caller's client.
-      activeHeadcount(boundedClientId ? { clientId: boundedClientId } : {}, now),
+      activeHeadcount({ tenantId: tenantIdForWrite(), ...(boundedClientId ? { clientId: boundedClientId } : {}) }, now),
       prisma.shift.count({
         where: {
           status: { in: ['OPEN', 'ASSIGNED'] },

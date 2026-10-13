@@ -194,7 +194,7 @@ export async function computeExecutiveSummary(
       take: 50_000,
     }),
     // Brief 1A-2: the one definition of active.
-    activeBreakdown(now, prisma),
+    activeBreakdown(now, prisma, undefined, { tenantId: opts.tenantId }),
     prisma.associate.count({
       where: { ...T, deletedAt: null, deactivatedAt: { not: null } },
     }),

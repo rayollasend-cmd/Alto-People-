@@ -16,6 +16,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { currentTenantId } from './tenant.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
@@ -117,7 +118,7 @@ export async function collectExecutiveAlerts(
   });
   if (target?.marginTarget) {
     const weeklyPace = Number(target.marginTarget) / 13;
-    const summary = await computeExecutiveSummary(prisma, now);
+    const summary = await computeExecutiveSummary(prisma, now, { tenantId: currentTenantId() ?? undefined });
     if (summary.lastWeek.estMargin < weeklyPace * 0.8) {
       alerts.push({
         subject: 'Margin alert',

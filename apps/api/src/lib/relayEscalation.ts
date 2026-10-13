@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { currentTenantId } from './tenant.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { computeRelayBoard, DESK_LABELS, type Desk } from './relayBoard.js';
 import { notifyUser } from './notify.js';
@@ -33,7 +34,8 @@ export async function runRelayEscalationSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
 ): Promise<number> {
-  const board = await computeRelayBoard(prisma, now);
+  // Brief 2-1: tenantJob runs this once per tenant; the board is that tenant's.
+  const board = await computeRelayBoard(prisma, now, { tenantId: currentTenantId() ?? undefined });
   const overdue = board.batons.filter((b) => b.status === 'overdue' && b.count > 0);
 
   const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');

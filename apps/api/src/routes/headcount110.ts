@@ -20,13 +20,12 @@ export const headcount110Router = Router();
 const VIEW = requireCapability('view:org');
 
 async function overview(now: Date, tenantId: string): Promise<HeadcountOverview> {
-  // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite). The
-  // active totals still come from lib/activeDefinition, which is not
-  // tenant-scoped yet; only counts, never another tenant's ids.
+  // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite); the
+  // active totals and the without-rate rows count this tenant's people only.
   const T = { tenantId };
-  const active = await activeBreakdown(now, prisma);
-  const placed = await placements({}, prisma);
-  const withoutRate = await associatesWithoutRate(prisma, now);
+  const active = await activeBreakdown(now, prisma, undefined, { tenantId });
+  const placed = await placements({ tenantId }, prisma);
+  const withoutRate = await associatesWithoutRate(prisma, now, { tenantId });
   const noRateByClient = new Map<string, number>();
   const noRateByLocation = new Map<string, number>();
   for (const w of withoutRate) {
@@ -138,12 +137,9 @@ headcount110Router.get('/headcount/overview', VIEW, async (_req, res) => {
 
 /** Brief 1A-2: every placed associate whose role has no rate card at their client today. */
 headcount110Router.get('/headcount/without-rate', VIEW, async (_req, res) => {
-  const rows = await associatesWithoutRate(prisma);
-  // Brief 2-1: only this tenant's people (cross-tenant suite) until the lib takes a tenant.
-  const mine = rows.length
-    ? new Set((await prisma.associate.findMany({ where: { id: { in: rows.map((r) => r.associateId) }, tenantId: tenantIdForWrite() }, select: { id: true } })).map((a) => a.id))
-    : new Set<string>();
-  res.json({ associates: rows.filter((r) => mine.has(r.associateId)) });
+  // Brief 2-1: only this tenant's people (cross-tenant suite).
+  const rows = await associatesWithoutRate(prisma, new Date(), { tenantId: tenantIdForWrite() });
+  res.json({ associates: rows });
 });
 
 /** The older page's shape, now fed by the one definition. */
@@ -164,16 +160,18 @@ const TurnoverWindowSchema = z.object({
 headcount110Router.get('/headcount/turnover', VIEW, async (req, res) => {
   const { days } = TurnoverWindowSchema.parse(req.query);
   const since = new Date(Date.now() - days * 86_400_000);
+  // Brief 2-1: hires, separations and the active base are this tenant's own.
+  const tenantId = tenantIdForWrite();
   const [hires, separations, active] = await Promise.all([
     prisma.application.findMany({
       take: 500,
-      where: { deletedAt: null, startDate: { gte: since } },
+      where: { tenantId, deletedAt: null, startDate: { gte: since } },
       select: { associateId: true, startDate: true },
       orderBy: { startDate: 'asc' },
     }),
     // Brief 1A-2: a termination is a separation, not a deleted record.
-    prisma.associate.count({ where: { separatedAt: { gte: since } } }),
-    activeBreakdown(new Date(), prisma),
+    prisma.associate.count({ where: { tenantId, separatedAt: { gte: since } } }),
+    activeBreakdown(new Date(), prisma, undefined, { tenantId }),
   ]);
   const hiresDeduped = new Map<string, Date>();
   for (const h of hires) {

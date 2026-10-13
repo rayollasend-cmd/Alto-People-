@@ -119,7 +119,7 @@ async function resolveItemForUser(req: Request, key: string) {
     };
   }
   if (hasCapability(me.role, 'view:executive')) {
-    const exec = await computeExecutiveDecisions(prisma);
+    const exec = await computeExecutiveDecisions(prisma, new Date(), { tenantId: tenantIdForWrite() });
     const item = exec.find((d) => d.key === key);
     if (item) {
       return {
