@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
 import type { AutoFillCandidate, Shift } from '@alto-people/shared';
@@ -122,36 +123,20 @@ export function ShiftHoverCard({
   // one-click "Assign → <name>" button. null = none / not applicable.
   const isOpenUnassigned =
     shift.status === 'OPEN' && shift.assignedAssociateId === null;
-  const [topCandidate, setTopCandidate] = useState<AutoFillCandidate | null>(null);
-  const [topLoading, setTopLoading] = useState(false);
   const canQuickAssign =
     canManage && isOpenUnassigned && !!actions.getTopCandidates && !!actions.onAssignCandidate;
-  useEffect(() => {
-    setTopCandidate(null);
-    if (!canQuickAssign) {
-      setTopLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setTopLoading(true);
-    actions
-      .getTopCandidates!(shift)
-      .then((list) => {
-        if (!cancelled) setTopCandidate(list[0] ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setTopCandidate(null);
-      })
-      .finally(() => {
-        if (!cancelled) setTopLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // `actions` is rebuilt by the parent every render — keying on the shift
-    // id (the real identity of the lookup) keeps this to one fetch per card.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shift.id, canQuickAssign]);
+  // `actions` is rebuilt by the parent every render — keying on the shift
+  // id (the real identity of the lookup) keeps this to one fetch per card.
+  const topQuery = useQuery({
+    queryKey: ['scheduling', 'top-candidate', shift],
+    queryFn: () => actions.getTopCandidates!(shift),
+    enabled: canQuickAssign,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const topLoading = canQuickAssign && topQuery.isPending;
+  const topCandidate: AutoFillCandidate | null =
+    canQuickAssign && topQuery.data ? (topQuery.data[0] ?? null) : null;
 
   // Close on Escape; let the parent handle outside-click (the card stays
   // open when you click into a button inside it).

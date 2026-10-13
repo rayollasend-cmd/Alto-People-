@@ -83,6 +83,35 @@ describe('GET /product-analytics/active-users', () => {
   });
 });
 
+describe('GET /product-analytics/reliability', () => {
+  it('is behind the same gate as the rest of product analytics', async () => {
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE' });
+    const a = await loginAs(assoc.email);
+    expect((await a.get('/product-analytics/reliability')).status).toBe(403);
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const f = await loginAs(fin.email);
+    expect((await f.get('/product-analytics/reliability')).status).toBe(403);
+  });
+
+  it('answers the four measures with a seven-day default and a ninety-day ceiling', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/product-analytics/reliability');
+    expect(res.status).toBe(200);
+    expect(res.body.days).toBe(7);
+    expect(res.body.budget).toBe(10);
+    expect(res.body.sentry.configured).toBe(false);
+    expect(res.body.errors.thisWeek).toBeNull();
+    expect(res.body.errors.weeks).toHaveLength(8);
+    expect(res.body.kiosk.series).toHaveLength(7);
+    expect(res.body.rides).toEqual({ total: 0, completed: 0, noShow: 0, unresolved: 0, rate: null });
+    expect(res.body.routes).toEqual({ busiest: [], slowest: [] });
+    // A health page, not a history page.
+    const wide = await a.get('/product-analytics/reliability?days=1000');
+    expect(wide.body.days).toBe(90);
+  });
+});
+
 describe('GET /product-analytics/traffic and /routes', () => {
   beforeEach(async () => {
     const today = dayOnly(new Date());

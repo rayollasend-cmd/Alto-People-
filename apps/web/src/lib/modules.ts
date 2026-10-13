@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'product-analytics'
+  | 'reliability'
   | 'portal'
   | 'region'
   | 'regions'
@@ -1153,6 +1154,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Product usage',
     description:
       'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
+    requires: 'view:product-analytics',
+    group: 'insights',
+  },
+  {
+    key: 'reliability',
+    path: '/reliability',
+    label: 'Reliability',
+    description:
+      'Errors against the weekly budget, p95 by route, kiosk punch success, ride completion, and API restarts — with a Saturday summary by email.',
     requires: 'view:product-analytics',
     group: 'insights',
   },

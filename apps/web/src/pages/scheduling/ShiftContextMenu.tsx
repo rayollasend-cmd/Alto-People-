@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import {
   Copy as CopyIcon,
@@ -68,28 +69,23 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     active.shift.assignedAssociateId === null &&
     !!actions.getTopCandidates &&
     !!actions.onAssignCandidate;
-  const [topCandidate, setTopCandidate] = useState<
-    AutoFillCandidate | null | undefined
-  >(undefined);
-  useEffect(() => {
-    if (!wantTopCandidate) return;
-    let cancelled = false;
-    setTopCandidate(undefined);
-    actions
-      .getTopCandidates!(active.shift)
-      .then((list) => {
-        if (!cancelled) setTopCandidate(list[0] ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setTopCandidate(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // `actions` is rebuilt by the parent every render; the shift id is the
-    // real identity of this lookup (results are short-TTL cached upstream).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantTopCandidate, active.shift.id]);
+  // `actions` is rebuilt by the parent every render; the shift id is the
+  // real identity of this lookup (results are short-TTL cached upstream).
+  const topQuery = useQuery({
+    queryKey: ['scheduling', 'top-candidate', active.shift],
+    queryFn: () => actions.getTopCandidates!(active.shift),
+    enabled: wantTopCandidate,
+    staleTime: 30_000,
+    retry: false,
+  });
+  // undefined = loading, null = none available.
+  const topCandidate: AutoFillCandidate | null | undefined = !wantTopCandidate
+    ? null
+    : topQuery.isError
+      ? null
+      : topQuery.data === undefined
+        ? undefined
+        : (topQuery.data[0] ?? null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

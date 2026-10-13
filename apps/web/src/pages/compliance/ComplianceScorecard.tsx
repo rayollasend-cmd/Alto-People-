@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -92,50 +93,43 @@ const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 //   2. If a refresh fails *after* a successful first load, we surface a
 //      "stale" badge instead of throwing the user back to an error state.
 //      They keep the last-good numbers and can retry from the header.
+//
+// The key names the tile and its scope (the client filter): a new scope is
+// a different query, so the tile drops back to the skeleton rather than
+// showing the old scope's numbers under the new filter. refreshEpoch is
+// the page-wide refresh tick (header button, 15-minute timer): a bump
+// refetches in place, keeping the data on screen.
 function useTileData<T>(
+  key: readonly unknown[],
   fetcher: () => Promise<T>,
   refreshEpoch: number,
 ): { data: T | null; error: string | null; stale: boolean } {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [stale, setStale] = useState(false);
-
-  // The fetcher identity IS the scope (client filter): callers memo it with
-  // useCallback([clientId]). A new fetcher means a different dataset, so we
-  // drop back to the skeleton rather than showing the old scope's numbers
-  // under the new filter.
-  const lastFetcher = useRef(fetcher);
-
+  const query = useQuery({
+    queryKey: ['compliance', 'scorecard', ...key],
+    queryFn: fetcher,
+    retry: false,
+    staleTime: REFRESH_INTERVAL_MS,
+  });
+  const { refetch } = query;
+  const lastEpoch = useRef(refreshEpoch);
   useEffect(() => {
-    const scopeChanged = lastFetcher.current !== fetcher;
-    lastFetcher.current = fetcher;
-    if (scopeChanged) {
-      setData(null);
-      setStale(false);
-    }
-    const isFirst = scopeChanged || data === null;
-    if (isFirst) setError(null);
-    let cancelled = false;
-    fetcher()
-      .then((d) => {
-        if (cancelled) return;
-        setData(d);
-        setError(null);
-        setStale(false);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        if (isFirst) {
-          setError(e instanceof ApiError ? e.message : 'Failed to load.');
-        } else {
-          setStale(true);
-        }
-      });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshEpoch, fetcher]);
+    if (lastEpoch.current === refreshEpoch) return;
+    lastEpoch.current = refreshEpoch;
+    void refetch();
+  }, [refreshEpoch, refetch]);
 
-  return { data, error, stale };
+  const data = query.data ?? null;
+  const failed = query.isError;
+  return {
+    data,
+    error:
+      failed && data === null
+        ? query.error instanceof ApiError
+          ? query.error.message
+          : 'Failed to load.'
+        : null,
+    stale: failed && data !== null,
+  };
 }
 
 /**
@@ -285,8 +279,8 @@ function HeroStrip({
     () => getScorecardHistory(clientId || undefined),
     [clientId],
   );
-  const { data } = useTileData(fetchActions, refreshEpoch);
-  const { data: history } = useTileData(fetchHistory, refreshEpoch);
+  const { data } = useTileData(['actions', clientId], fetchActions, refreshEpoch);
+  const { data: history } = useTileData(['history', clientId], fetchHistory, refreshEpoch);
   const critical = data?.criticalCount ?? 0;
   const warn = data?.warnCount ?? 0;
   const totalActions = data?.totalActionCount ?? critical + warn;
@@ -460,7 +454,7 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
     () => getScorecardOnboarding(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['onboarding', clientId], fetcher, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardOnboardingSignal | null>(null);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -472,7 +466,7 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
     () => getScorecardHistory(clientId || undefined),
     [clientId],
   );
-  const { data: history } = useTileData(historyFetcher, refreshEpoch);
+  const { data: history } = useTileData(['history', clientId], historyFetcher, refreshEpoch);
   const fullyDelta = useMemo(() => {
     const points = history?.points ?? [];
     if (points.length < 2) return null;
@@ -749,7 +743,7 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
     () => getScorecardExpirations(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['expirations', clientId], fetcher, refreshEpoch);
   const [bucketDrawer, setBucketDrawer] = useState<ExpirationBucket | null>(null);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -1038,7 +1032,7 @@ function ShiftsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
     () => getScorecardShifts(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['shifts', clientId], fetcher, refreshEpoch);
 
   return (
     <TileShell
@@ -1090,7 +1084,7 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     () => getScorecardBilling(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['billing', clientId], fetcher, refreshEpoch);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [drawerSignal, setDrawerSignal] =
@@ -1599,7 +1593,7 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
     () => getScorecardTraining(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch + bump);
+  const { data, error, stale } = useTileData(['training', clientId], fetcher, refreshEpoch + bump);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardTrainingSignal | null>(null);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -1784,7 +1778,7 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
     () => getScorecardSafety(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['safety', clientId], fetcher, refreshEpoch);
 
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -2016,7 +2010,7 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     () => getScorecardActions(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(['actions', clientId], fetcher, refreshEpoch);
   const [filter, setFilter] = useState<ActionFilter>('all');
   const [sourceFilter, setSourceFilter] = useState('');
   const [mineOnly, setMineOnly] = useState(false);

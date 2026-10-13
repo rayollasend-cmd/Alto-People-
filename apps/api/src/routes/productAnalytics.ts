@@ -9,6 +9,7 @@ import {
   WEB_VITAL_METRICS,
   type WebVitalMetric,
 } from '../lib/webVitals.js';
+import { computeReliability } from '../lib/reliability.js';
 
 export const productAnalyticsRouter = Router();
 
@@ -32,17 +33,40 @@ export const productAnalyticsRouter = Router();
  */
 
 const VIEW = requireCapability('view:product-analytics');
+// Same gate; a separate name so the route above reads as what it is.
+const VIEW_RELIABILITY = VIEW;
 
 /** Roughly a year. Past this the rollups want a chart, not a table. */
 const MAX_DAYS = 365;
 const DEFAULT_DAYS = 30;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-function parseDays(raw: unknown): number {
+function parseDaysWithDefault(raw: unknown, fallback: number): number {
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) return DEFAULT_DAYS;
+  if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.min(Math.floor(n), MAX_DAYS);
 }
+
+function parseDays(raw: unknown): number {
+  return parseDaysWithDefault(raw, DEFAULT_DAYS);
+}
+
+/**
+ * GET /product-analytics/reliability?days=7
+ *
+ * Brief 1B-3's dashboard: weekly errors against the ten-a-week budget
+ * (Sentry, when connected), p95 by route from the latency histogram,
+ * kiosk punch success, ride completion, and restarts. Capped at 90 days —
+ * it is a health page, not a history page.
+ */
+productAnalyticsRouter.get('/reliability', VIEW_RELIABILITY, async (req, res, next) => {
+  try {
+    const days = Math.min(parseDaysWithDefault(req.query.days, 7), 90);
+    res.json(await computeReliability(days));
+  } catch (err) {
+    next(err);
+  }
+});
 
 /** UTC midnight `days` ago, inclusive of today. */
 function windowStart(days: number, now = new Date()): Date {

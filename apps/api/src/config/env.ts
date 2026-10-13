@@ -475,6 +475,20 @@ const EnvSchema = z.object({
   // 0 -> off, 1 -> 100% sampling. Defaults to 0.1 (10%) which keeps
   // free-tier quotas reasonable while still capturing the long tail.
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
+  // Reading Sentry back (the reliability dashboard and the weekly
+  // summary): an auth token with project:read + event:read, the org slug,
+  // and the project slugs to count — comma-separated, falling back to
+  // SENTRY_PROJECT, which the web build already uses for sourcemaps. All
+  // optional: unset, the dashboard shows the rollup's own 5xx count and
+  // says Sentry is not connected. The DSN above is write-only and never
+  // enough to read.
+  SENTRY_AUTH_TOKEN: z.string().min(1).optional(),
+  SENTRY_ORG: z.string().min(1).optional(),
+  SENTRY_PROJECT: z.string().min(1).optional(),
+  SENTRY_PROJECTS: z.string().min(1).optional(),
+  // US SaaS by default; EU orgs are at https://de.sentry.io, self-hosted
+  // wherever it is.
+  SENTRY_API_URL: z.string().url().default('https://sentry.io'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -3,7 +3,10 @@ import type { Request } from 'express';
 import {
   dayKey,
   flushUsageForTests,
+  LATENCY_EDGES,
+  latencyBucket,
   noteUserActive,
+  percentileFromLatencyHistogram,
   recordRequest,
   resetUsageForTests,
   routePattern,
@@ -77,6 +80,46 @@ describe('what gets recorded', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.ok).toBe(2);
     expect(Number(rows[0]!.totalMs)).toBe(30);
+  });
+});
+
+describe('p95 from the latency histogram', () => {
+  it('buckets a duration under the first edge at or above it', () => {
+    expect(latencyBucket(0)).toBe(0);
+    expect(latencyBucket(25)).toBe(0);
+    expect(latencyBucket(26)).toBe(1);
+    expect(latencyBucket(1000)).toBe(LATENCY_EDGES.indexOf(1000));
+    // Past the last edge is the overflow bucket, never an index past it.
+    expect(latencyBucket(90_000)).toBe(LATENCY_EDGES.length);
+  });
+
+  it('reports the edge the 95th sample falls under, and null with no samples', () => {
+    const histogram = new Array<number>(LATENCY_EDGES.length + 1).fill(0);
+    expect(percentileFromLatencyHistogram(histogram)).toBeNull();
+    // 95 fast requests and 5 slow ones: p95 is the fast edge, p99 the slow.
+    histogram[latencyBucket(40)] = 95;
+    histogram[latencyBucket(2500)] = 5;
+    expect(percentileFromLatencyHistogram(histogram, 0.95)).toBe(50);
+    expect(percentileFromLatencyHistogram(histogram, 0.99)).toBe(3000);
+    // The overflow bucket answers with its lower edge — "at least this".
+    const slow = new Array<number>(LATENCY_EDGES.length + 1).fill(0);
+    slow[LATENCY_EDGES.length] = 10;
+    expect(percentileFromLatencyHistogram(slow)).toBe(LATENCY_EDGES[LATENCY_EDGES.length - 1]);
+  });
+
+  it('keeps the histogram across flushes, so a day accumulates', async () => {
+    for (let i = 0; i < 19; i++) recordRequest('GET', '/time/me', 200, 80);
+    recordRequest('GET', '/time/me', 200, 4_000);
+    await flushUsageForTests();
+    recordRequest('GET', '/time/me', 200, 90);
+    await flushUsageForTests();
+
+    const row = await prisma.routeUsageDaily.findFirstOrThrow({ where: { route: '/time/me' } });
+    expect(row.histogram.reduce((s, n) => s + n, 0)).toBe(21);
+    // 20 of 21 are under 100 ms; the 95th sample (ceil(21 × .95) = 20) is
+    // still a fast one, so the slow outlier shows only at p99.
+    expect(percentileFromLatencyHistogram(row.histogram, 0.95)).toBe(100);
+    expect(percentileFromLatencyHistogram(row.histogram, 0.99)).toBe(4_000);
   });
 });
 

@@ -31,6 +31,57 @@ const FLUSH_MS = 60_000;
  *  window — a runaway pattern can't grow the buffer without bound. */
 const MAX_ROUTE_KEYS = 2_000;
 
+/**
+ * Response-time histogram edges, milliseconds. A request lands in the
+ * first bucket whose edge is ≥ its duration; anything past the last edge
+ * lands in one overflow bucket, so every histogram has edges.length + 1
+ * buckets. Log-spaced so the interesting end (hundreds of ms to seconds)
+ * has resolution and a 30-second outlier still counts without a bucket
+ * of its own. Same scheme as lib/webVitals.ts.
+ */
+export const LATENCY_EDGES: readonly number[] = [
+  25, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000,
+  15000, 20000, 30000,
+];
+
+export function latencyBucket(ms: number): number {
+  for (let i = 0; i < LATENCY_EDGES.length; i++) if (ms <= LATENCY_EDGES[i]!) return i;
+  return LATENCY_EDGES.length;
+}
+
+export function emptyLatencyHistogram(): number[] {
+  return new Array<number>(LATENCY_EDGES.length + 1).fill(0);
+}
+
+export function addLatencyHistograms(a: readonly number[], b: readonly number[]): number[] {
+  const out = emptyLatencyHistogram();
+  for (let i = 0; i < out.length; i++) out[i] = (a[i] ?? 0) + (b[i] ?? 0);
+  return out;
+}
+
+/**
+ * A percentile from a latency histogram: the upper edge of the bucket the
+ * target sample falls in (the overflow bucket reports its lower edge — an
+ * honest "at least this much"). Null with no samples, which is also what
+ * a row written before the column existed reports.
+ */
+export function percentileFromLatencyHistogram(
+  histogram: readonly number[],
+  percentile = 0.95,
+): number | null {
+  const total = histogram.reduce((s, n) => s + n, 0);
+  if (total === 0) return null;
+  const target = Math.ceil(total * percentile);
+  let seen = 0;
+  for (let i = 0; i < histogram.length; i++) {
+    seen += histogram[i] ?? 0;
+    if (seen >= target) {
+      return i < LATENCY_EDGES.length ? LATENCY_EDGES[i]! : LATENCY_EDGES[LATENCY_EDGES.length - 1]!;
+    }
+  }
+  return LATENCY_EDGES[LATENCY_EDGES.length - 1]!;
+}
+
 type RouteBucket = {
   day: string;
   method: string;
@@ -39,6 +90,7 @@ type RouteBucket = {
   clientError: number;
   serverError: number;
   totalMs: number;
+  histogram: number[];
 };
 
 const routeBuffer = new Map<string, RouteBucket>();
@@ -82,13 +134,24 @@ export function recordRequest(
   let bucket = routeBuffer.get(key);
   if (!bucket) {
     if (routeBuffer.size >= MAX_ROUTE_KEYS) return;
-    bucket = { day, method, route, ok: 0, clientError: 0, serverError: 0, totalMs: 0 };
+    bucket = {
+      day,
+      method,
+      route,
+      ok: 0,
+      clientError: 0,
+      serverError: 0,
+      totalMs: 0,
+      histogram: emptyLatencyHistogram(),
+    };
     routeBuffer.set(key, bucket);
   }
   if (statusCode >= 500) bucket.serverError += 1;
   else if (statusCode >= 400) bucket.clientError += 1;
   else bucket.ok += 1;
-  bucket.totalMs += Math.max(0, Math.round(ms));
+  const rounded = Math.max(0, Math.round(ms));
+  bucket.totalMs += rounded;
+  bucket.histogram[latencyBucket(rounded)]! += 1;
 }
 
 /**
@@ -131,8 +194,14 @@ export async function flushUsage(): Promise<void> {
   for (const b of batch) {
     try {
       const day = new Date(`${b.day}T00:00:00.000Z`);
+      const where = { day_method_route: { day, method: b.method, route: b.route } };
+      // The histogram can't be incremented in place by Prisma, so it is a
+      // read-modify-write like the web-vitals one; the API runs one
+      // replica, and a lost update costs a few samples of a percentile.
+      const existing = await prisma.routeUsageDaily.findUnique({ where, select: { histogram: true } });
+      const histogram = existing ? addLatencyHistograms(existing.histogram, b.histogram) : b.histogram;
       await prisma.routeUsageDaily.upsert({
-        where: { day_method_route: { day, method: b.method, route: b.route } },
+        where,
         create: {
           day,
           method: b.method,
@@ -141,12 +210,14 @@ export async function flushUsage(): Promise<void> {
           clientError: b.clientError,
           serverError: b.serverError,
           totalMs: BigInt(b.totalMs),
+          histogram,
         },
         update: {
           ok: { increment: b.ok },
           clientError: { increment: b.clientError },
           serverError: { increment: b.serverError },
           totalMs: { increment: BigInt(b.totalMs) },
+          histogram,
         },
       });
     } catch (err) {

@@ -47,7 +47,10 @@ const THROTTLE_MS = 3_000;
  * only reproduces for users who were here before the deploy.
  */
 // v3: the People prefetch had persisted ['directory', {}] as a bare array.
-const APP_CACHE_VERSION = 'v3';
+// v4: the sensitive-key list widened (earnings, I-9 section 2, J-1 docs,
+// background checks, kiosk, benefits, HR cases…); caches written before it
+// may hold those answers and are dropped rather than read.
+const APP_CACHE_VERSION = 'v4';
 
 /**
  * Queries that never touch the disk.
@@ -61,7 +64,8 @@ const APP_CACHE_VERSION = 'v3';
  * safe direction. APP_CACHE_VERSION moved to v2 with this rule so caches
  * written before it are dropped on restore rather than read.
  */
-const SENSITIVE_KEY = /everify|casedrawer|i-?9\b|i9(tab|task|docs)|document|garnish|pay|ssn|w-?4|tax|comp-records|compensation|external-payments|bank|payout|direct-?deposit|paystub/i;
+const SENSITIVE_KEY =
+  /everify|casedrawer|i-?9\b|i9(tab|task|docs)|section2|document|garnish|pay|ssn|w-?4|tax|comp-records|compensation|external-payments|bank|payout|direct-?deposit|paystub|earnings|\bj1|background|bulkorder|drugtest|kiosk|financialchange|ratedefaults|application|profileinfo|inpersononboarding|associatechecklist|hrcases|discipline|vaccin|newrecorddrawer|benefits|cobra|qletab|oetab|branchenrollment|reimburs|equity|tuition|mfa|passkey|login-history|charges|timesheet/i;
 export function isSensitiveQueryKey(queryKey: readonly unknown[]): boolean {
   return queryKey.some((part) => typeof part === 'string' && SENSITIVE_KEY.test(part));
 }

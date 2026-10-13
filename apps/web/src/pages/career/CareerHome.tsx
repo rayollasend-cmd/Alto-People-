@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2, TrendingUp, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -19,6 +19,7 @@ import {
   type SkillLevel,
 } from '@/lib/career126Api';
 import { searchSkills } from '@/lib/skills111Api';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { listJobProfiles } from '@/lib/orgApi';
 import type { JobProfile } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
@@ -668,6 +669,8 @@ function AddLevelDrawer({
   );
 }
 
+const EMPTY_SKILLS: { id: string; name: string }[] = [];
+
 function AddSkillDrawer({
   level,
   onClose,
@@ -679,37 +682,36 @@ function AddSkillDrawer({
 }) {
   const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
   const [term, setTerm] = useState('');
-  const [options, setOptions] = useState<{ id: string; name: string }[]>([]);
   const [dropOpen, setDropOpen] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
   const [minLevel, setMinLevel] = useState<SkillLevel>('INTERMEDIATE');
   const [saving, setSaving] = useState(false);
 
   // Debounced typeahead over the skills catalog — replaces the old giant
   // native <select> that loaded every skill up front.
+  const debouncedTerm = useDebouncedValue(term.trim(), 250);
+  const canSearch = !picked && debouncedTerm.length >= 2;
+  const skillSearch = useQuery({
+    queryKey: ['skills', 'search', debouncedTerm],
+    queryFn: () => searchSkills(debouncedTerm),
+    enabled: canSearch,
+    staleTime: 30_000,
+    retry: false,
+    select: (r) => r.skills.slice(0, 8),
+  });
+  const options = canSearch ? (skillSearch.data ?? EMPTY_SKILLS) : EMPTY_SKILLS;
+  const searchError = canSearch && skillSearch.isError ? 'Skill search failed. Try again.' : null;
+  // The list opens itself when an answer lands for the current term; a
+  // pick closes it until the next answer.
+  const lastShownFor = useRef<string | null>(null);
   useEffect(() => {
-    if (picked || term.trim().length < 2) {
-      setOptions([]);
+    if (!canSearch) {
+      lastShownFor.current = null;
       return;
     }
-    let live = true;
-    const t = setTimeout(() => {
-      searchSkills(term.trim())
-        .then((r) => {
-          if (!live) return;
-          setSearchError(null);
-          setOptions(r.skills.slice(0, 8));
-          setDropOpen(true);
-        })
-        .catch(() => {
-          if (live) setSearchError('Skill search failed. Try again.');
-        });
-    }, 250);
-    return () => {
-      live = false;
-      clearTimeout(t);
-    };
-  }, [term, picked]);
+    if (!skillSearch.isSuccess || lastShownFor.current === debouncedTerm) return;
+    lastShownFor.current = debouncedTerm;
+    setDropOpen(true);
+  }, [canSearch, debouncedTerm, skillSearch.isSuccess]);
 
   const submit = async () => {
     if (!picked) {

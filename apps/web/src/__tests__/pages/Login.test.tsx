@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
@@ -21,11 +22,13 @@ function renderLogin(signIn = vi.fn(async () => {})) {
   return {
     signIn,
     ...render(
-      <AuthContext.Provider value={value}>
-        <MemoryRouter>
-          <Login />
-        </MemoryRouter>
-      </AuthContext.Provider>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AuthContext.Provider value={value}>
+          <MemoryRouter>
+            <Login />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
     ),
   };
 }

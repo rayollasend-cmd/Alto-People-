@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { axe } from 'vitest-axe';
 import type { Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
@@ -73,11 +74,13 @@ describe('axe smoke tests', () => {
       can: () => false,
     };
     const { container } = render(
-      <AuthContext.Provider value={value}>
-        <MemoryRouter>
-          <Login />
-        </MemoryRouter>
-      </AuthContext.Provider>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AuthContext.Provider value={value}>
+          <MemoryRouter>
+            <Login />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
     );
     await expectNoViolations(container);
   });

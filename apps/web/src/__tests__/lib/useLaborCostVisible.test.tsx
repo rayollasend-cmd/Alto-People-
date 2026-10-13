@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role, type Shift } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
@@ -60,6 +61,7 @@ describe('useLaborCostVisible — labor cost never reaches a store-bound role', 
     } as unknown as Shift;
     const card = (role: Role) =>
       render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <AuthContext.Provider value={auth(role)}>
           <ShiftHoverCard
             shift={shift}
@@ -70,7 +72,8 @@ describe('useLaborCostVisible — labor cost never reaches a store-bound role', 
             canManage={false}
             actions={{} as never}
           />
-        </AuthContext.Provider>,
+        </AuthContext.Provider>
+        </QueryClientProvider>,
       );
 
     const sup = card('SHIFT_SUPERVISOR');

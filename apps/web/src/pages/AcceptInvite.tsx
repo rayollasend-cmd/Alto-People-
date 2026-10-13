@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Eye, EyeOff, Lock } from 'lucide-react';
@@ -61,9 +62,30 @@ export function AcceptInvite() {
   const { signIn: _signIn } = useAuth();   // not used, but keeps the auth context warm
   void _signIn;
 
-  const [invite, setInvite] = useState<InviteSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The invite behind the link. A 404 is an invalid or expired token; the
+  // page then offers the self-service renewal below.
+  const inviteQuery = useQuery({
+    queryKey: ['auth', 'invite', token ?? ''],
+    queryFn: () => apiFetch<InviteSummary>(`/auth/invite/${encodeURIComponent(token!)}`),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+  });
+  const invite = inviteQuery.data ?? null;
+  const loading = !!token && inviteQuery.isPending;
+  const loadError = !token
+    ? t('ai.missingToken')
+    : inviteQuery.isError
+      ? inviteQuery.error instanceof ApiError && inviteQuery.error.status === 404
+        ? t('ai.invalidOrExpired')
+        : inviteQuery.error instanceof Error
+          ? inviteQuery.error.message
+          : t('ai.loadFailed')
+      : null;
+  // Errors from the accept form itself; the load error shows when there is
+  // no invite to accept.
+  const [submitError, setError] = useState<string | null>(null);
+  const error = submitError ?? loadError;
 
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -76,35 +98,6 @@ export function AcceptInvite() {
   const [renewEmail, setRenewEmail] = useState('');
   const [renewSubmitting, setRenewSubmitting] = useState(false);
   const [renewSent, setRenewSent] = useState(false);
-
-  useEffect(() => {
-    if (!token) {
-      setError(t('ai.missingToken'));
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await apiFetch<InviteSummary>(`/auth/invite/${encodeURIComponent(token)}`);
-        if (cancelled) return;
-        setInvite(res);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setError(t('ai.invalidOrExpired'));
-        } else {
-          setError(err instanceof Error ? err.message : t('ai.loadFailed'));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
 
   // No confirm field: the eye toggle lets them verify what they typed, and
   // a mistyped password still has the self-service reset path — cheaper

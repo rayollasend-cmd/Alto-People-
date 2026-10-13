@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
 import type { MfaEnrollStartResponse } from '@alto-people/shared';
@@ -70,21 +71,15 @@ export function Login() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [enrollCode, setEnrollCode] = useState('');
-  const [sso, setSso] = useState<SsoConfig | null>(null);
-
   // Feature probe alongside initial render. A failed fetch (offline, cold
   // API) just leaves the button hidden — it must never block password login.
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch<SsoConfig>('/auth/oidc/config')
-      .then((cfg) => {
-        if (!cancelled) setSso(cfg);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const ssoQuery = useQuery({
+    queryKey: ['auth', 'oidc-config'],
+    queryFn: () => apiFetch<SsoConfig>('/auth/oidc/config'),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const sso = ssoQuery.data ?? null;
 
   const queryNext = new URLSearchParams(location.search).get('next');
   const from = safeNextPath(

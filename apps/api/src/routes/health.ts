@@ -15,7 +15,7 @@ healthRouter.get('/', (_req, res) => {
 // outside Railway we fall back to process start time, which still changes
 // on every deploy/restart — at worst the kiosk reloads once after a bare
 // restart, which is harmless on the idle screen.
-const BUILD_VERSION =
+export const BUILD_VERSION =
   process.env.RAILWAY_GIT_COMMIT_SHA ?? `boot-${Date.now()}`;
 
 healthRouter.get('/version', (_req, res) => {

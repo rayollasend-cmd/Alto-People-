@@ -8179,9 +8179,53 @@ model RouteUsageDaily {
   serverError Int      @default(0)
   /// Summed response time; divide by the three counters for a mean.
   totalMs     BigInt   @default(0)
+  /// Response-time histogram over the fixed edges lib/usageTracker.ts owns
+  /// (LATENCY_EDGES, milliseconds). p95 is a walk over ~23 integers, so
+  /// the slowest-route question is answered without keeping a sample.
+  /// Empty on rows written before the column existed: those days have a
+  /// mean and no percentile.
+  histogram   Int[]    @default([])
 
   @@unique([day, method, route])
   @@index([day])
+}
+
+/// One row per API process start. A container OOM kill is a SIGKILL with
+/// no exit handler, so restarts were only ever visible in Railway; this
+/// makes "how many times did the API come up this week" a query.
+model ApiBoot {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bootAt      DateTime @default(now()) @db.Timestamptz(6)
+  /// Git SHA on Railway, "boot-<ms>" elsewhere (see routes/health.ts).
+  version     String   @db.VarChar(80)
+  nodeVersion String   @db.VarChar(40)
+
+  @@index([bootAt])
+}
+
+/// The reliability scorecard for one closed org week (Saturday 00:00 to
+/// Friday 24:00, Florida-local), written by the weekly digest so the
+/// error-budget streak survives Sentry's retention and a dashboard reload.
+model ReliabilityWeek {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// UTC instant of the org week's start; one row per week.
+  weekStart     DateTime @unique @db.Timestamptz(6)
+  /// Error events Sentry accepted that week across the configured
+  /// projects. Null when Sentry is not connected.
+  sentryErrors  Int?
+  /// 5xx responses counted by the route rollup.
+  serverErrors  Int      @default(0)
+  requests      Int      @default(0)
+  /// [{ method, route, requests, p95Ms }] for the ten busiest routes.
+  p95TopRoutes  Json     @default("[]")
+  punchTotal    Int      @default(0)
+  punchAccepted Int      @default(0)
+  rideTotal     Int      @default(0)
+  rideCompleted Int      @default(0)
+  restarts      Int      @default(0)
+  /// Weekly errors at or under the budget (10).
+  underBudget   Boolean  @default(false)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
 }
 
 /// Real-user web vitals (LCP, INP, CLS, TTFB), rolled up per SPA route and

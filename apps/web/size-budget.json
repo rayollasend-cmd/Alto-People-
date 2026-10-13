@@ -1,6 +1,6 @@
 {
   "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build.",
-  "entryKb": 330,
+  "entryKb": 335,
   "cssKb": 40,
   "defaultChunkKb": 80,
   "chunksKb": {

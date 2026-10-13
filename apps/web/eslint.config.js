@@ -58,6 +58,31 @@ export default [
       'react-hooks/exhaustive-deps': 'warn',
     },
   },
+  /**
+   * No hand-rolled loaders anywhere (Brief 1B-2, 2026-10-12). The query
+   * layer is the one way data reaches a component: a fetch called from
+   * inside useEffect has no cache, no dedupe, no background refresh, no
+   * retry, no offline persistence, and a blank screen on every Back. This
+   * block reaches every source file — hooks under lib/ and the ui/
+   * primitives included, which the design-system block below leaves out —
+   * and is an error so a regression fails CI. The same selector is
+   * repeated in that block because a later flat-config object replaces
+   * the whole rule for the files it matches.
+   */
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load|reload|refresh|search|apiFetch|fetcher)([A-Z]|$)/]",
+          message:
+            'Fetch with useQuery (@tanstack/react-query) rather than a loader inside useEffect — the query layer gives caching, dedupe, background refresh, retry and offline persistence for free.',
+        },
+      ],
+    },
+  },
   {
     files: ['src/pages/**/*.tsx', 'src/components/**/*.tsx'],
     ignores: ['src/components/ui/**'],
@@ -77,8 +102,10 @@ export default [
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      // Errors since 2026-10-12: the burndown reached zero, so from here a
+      // finding is a regression, not debt.
       'no-restricted-syntax': [
-        'warn',
+        'error',
         {
           selector: "JSXOpeningElement[name.name='select']",
           message:
@@ -114,7 +141,7 @@ export default [
           // load()/refresh() (the commonest shape); the number only goes
           // down from here.
           selector:
-            "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load|reload|refresh)([A-Z]|$)/]",
+            "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load|reload|refresh|search|apiFetch|fetcher)([A-Z]|$)/]",
           message:
             'Fetch with useQuery (@tanstack/react-query) rather than a loader inside useEffect — the query layer gives caching, dedupe, background refresh, retry and offline persistence for free.',
         },

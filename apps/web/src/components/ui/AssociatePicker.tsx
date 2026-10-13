@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { listDirectory } from '@/lib/directoryApi';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
 import { Input } from './Input';
 
@@ -33,46 +35,42 @@ export function AssociatePicker({
   id?: string;
 }) {
   const [term, setTerm] = useState('');
-  const [results, setResults] = useState<PickedAssociate[]>([]);
   const [open, setOpen] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
+  const debouncedTerm = useDebouncedValue(term.trim(), 250);
+  const canSearch = !value && debouncedTerm.length >= 2;
 
+  // PERF: limit 8 — without it the server returned up to 1000 full
+  // directory records per keystroke, 992 of which were discarded.
+  const search = useQuery({
+    queryKey: ['directory', 'picker', debouncedTerm],
+    queryFn: () => listDirectory({ q: debouncedTerm, limit: 8 }),
+    enabled: canSearch,
+    staleTime: 30_000,
+    retry: false,
+    select: (r): PickedAssociate[] =>
+      r.associates.slice(0, 8).map((a) => ({
+        id: a.id,
+        name: `${a.firstName} ${a.lastName}`.trim(),
+      })),
+  });
+  const results = canSearch ? (search.data ?? []) : [];
+  // A failed search must not masquerade as "no matches" — this picker is
+  // embedded on a dozen pages and silently lied on all of them when the
+  // directory call failed.
+  const searchFailed = canSearch && search.isError;
+  // The list opens itself when an answer (or a failure) lands for the
+  // current term; a pick closes it until the next answer.
+  const lastShownFor = useRef<string | null>(null);
   useEffect(() => {
-    if (value || term.trim().length < 2) {
-      setResults([]);
+    if (!canSearch) {
+      lastShownFor.current = null;
       return;
     }
-    let live = true;
-    const t = setTimeout(() => {
-      // PERF: limit 8 — without it the server returned up to 1000 full
-      // directory records per keystroke, 992 of which were discarded.
-      listDirectory({ q: term.trim(), limit: 8 })
-        .then((r) => {
-          if (!live) return;
-          setSearchFailed(false);
-          setResults(
-            r.associates.slice(0, 8).map((a) => ({
-              id: a.id,
-              name: `${a.firstName} ${a.lastName}`.trim(),
-            })),
-          );
-          setOpen(true);
-        })
-        .catch(() => {
-          if (!live) return;
-          // A failed search must not masquerade as "no matches" — this
-          // picker is embedded on a dozen pages and silently lied on all
-          // of them when the directory call failed.
-          setResults([]);
-          setSearchFailed(true);
-          setOpen(true);
-        });
-    }, 250);
-    return () => {
-      live = false;
-      clearTimeout(t);
-    };
-  }, [term, value]);
+    if (search.isPending) return;
+    if (lastShownFor.current === debouncedTerm) return;
+    lastShownFor.current = debouncedTerm;
+    setOpen(true);
+  }, [canSearch, debouncedTerm, search.isPending]);
 
   if (value) {
     return (

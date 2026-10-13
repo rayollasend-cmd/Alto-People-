@@ -7249,6 +7249,110 @@ export interface WebVitalsResponse {
   routes: WebVitalRouteRow[];
 }
 
+/* -------------------------------------------------------------------------- *
+ *  Reliability — is the platform staying up, and where is it slow?
+ *
+ *  The error budget is ten errors a week (Hybrid Workforce Plan, Phase 1
+ *  exit criteria). Errors come from Sentry when a read token is configured;
+ *  the rest is the API's own rollups. Weeks are org weeks: Saturday 00:00
+ *  to Friday 24:00, Florida-local.
+ * -------------------------------------------------------------------------- */
+
+/** Weekly errors at or under this count is "within budget". */
+export const RELIABILITY_ERROR_BUDGET = 10;
+
+export interface ReliabilityRouteRow {
+  method: string;
+  /** Express pattern — never a resolved path. */
+  route: string;
+  requests: number;
+  serverError: number;
+  avgMs: number;
+  /** Null when every row in the window predates the latency histogram. */
+  p95Ms: number | null;
+}
+
+export interface ReliabilityWeekRow {
+  /** ISO instant, org-week start. */
+  weekStart: string;
+  /** ISO instant, exclusive. */
+  weekEnd: string;
+  /** Sentry's accepted error events; null when Sentry is not connected. */
+  sentryErrors: number | null;
+  /** 5xx responses from the route rollup — always available. */
+  serverErrors: number;
+  requests: number;
+  /** Null when Sentry is not connected (the budget is a Sentry number). */
+  underBudget: boolean | null;
+  /** The week in progress — not yet judged against the budget. */
+  current: boolean;
+}
+
+export interface ReliabilityIssueRow {
+  shortId: string;
+  title: string;
+  culprit: string;
+  count: number;
+  userCount: number;
+  lastSeen: string;
+  permalink: string;
+  project: string;
+}
+
+export interface ReliabilityDayPoint {
+  day: string;
+  total: number;
+  accepted: number;
+}
+
+export interface ReliabilityResponse {
+  days: number;
+  budget: number;
+  sentry: {
+    configured: boolean;
+    /** Unresolved issues in the window, most frequent first. Empty when not connected. */
+    issues: ReliabilityIssueRow[];
+  };
+  errors: {
+    /** This org week so far, from Sentry; null when not connected. */
+    thisWeek: number | null;
+    /** This org week so far, 5xx from the rollup. */
+    serverErrorsThisWeek: number;
+    /** Oldest first; the last row is the week in progress. */
+    weeks: ReliabilityWeekRow[];
+    /** Closed weeks in a row at or under budget, most recent backwards. Null when not connected. */
+    consecutiveWeeksUnderBudget: number | null;
+  };
+  routes: {
+    /** The ten busiest routes in the window with their p95. */
+    busiest: ReliabilityRouteRow[];
+    /** The five slowest by p95 among routes with enough traffic. */
+    slowest: ReliabilityRouteRow[];
+  };
+  kiosk: {
+    total: number;
+    accepted: number;
+    rejected: number;
+    /** accepted ÷ total; null with no punches. */
+    rate: number | null;
+    series: ReliabilityDayPoint[];
+  };
+  rides: {
+    /** Rides whose pickup time has passed, cancellations excluded. */
+    total: number;
+    completed: number;
+    noShow: number;
+    /** Past-due seats never marked completed or no-show. */
+    unresolved: number;
+    rate: number | null;
+  };
+  restarts: {
+    count: number;
+    lastBootAt: string | null;
+    version: string | null;
+  };
+}
+
 /**
  * Who a release-note bullet is for. ALL reaches everyone; the rest map
  * from the reader's role on the server (associates, drivers, shift

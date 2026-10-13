@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm, hapticSuccess } from '@/lib/haptics';
@@ -343,6 +344,24 @@ export function KioskPage() {
   // best-effort fix to keep that signal flowing. The latency win holds:
   // config resolves on boot well before anyone walks up to punch.
   const geofenceModeRef = useRef<'unknown' | 'yes' | 'no'>('unknown');
+  // Learn whether this kiosk has a geofence so we can skip GPS entirely
+  // when it doesn't. Best-effort — on failure the ref stays 'unknown', we
+  // keep attempting coarse fixes, and the server treats the fence as
+  // advisory regardless. Fetched once per device token for the life of
+  // the tab (a wall tablet keeps this open for weeks; the fence doesn't
+  // move).
+  const configQuery = useQuery({
+    queryKey: ['kiosk', 'config', token],
+    queryFn: () => kioskConfig(token!),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  useEffect(() => {
+    if (!configQuery.data) return;
+    geofenceModeRef.current = configQuery.data.geofenceRequired ? 'yes' : 'no';
+  }, [configQuery.data]);
   // Session-cached coarse location, shared by preflight + punch.
   const cachedLocationRef = useRef<{ lat: number; lng: number; at: number } | null>(
     null,
@@ -360,17 +379,6 @@ export function KioskPage() {
       if (stored) {
         setToken(stored);
         setStage('idle');
-        // Learn whether this kiosk has a geofence so we can skip GPS
-        // entirely when it doesn't. Best-effort — on failure we keep
-        // attempting coarse fixes, and the server treats the fence as
-        // advisory regardless.
-        void kioskConfig(stored)
-          .then((c) => {
-            geofenceModeRef.current = c.geofenceRequired ? 'yes' : 'no';
-          })
-          .catch(() => {
-            /* keep 'unknown' — location stays best-effort either way */
-          });
       } else {
         setStage('setup');
       }
@@ -412,6 +420,7 @@ export function KioskPage() {
     let cancelled = false;
     const check = async () => {
       try {
+        // eslint-disable-next-line no-restricted-syntax -- build-version poll that reloads the tablet; compared, never rendered or cached
         const r = await apiFetch<{ version: string }>('/health/version', {
           timeoutMs: 8_000,
         });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // The page polls /health/version through apiFetch — keep ApiError real
 // (the error handlers branch on instanceof) but stub the fetch itself.
@@ -42,6 +43,15 @@ import { ApiError } from '@/lib/api';
 import { kioskVerifyPin, kioskPunch, kioskFaceConsent } from '@/lib/kiosk99Api';
 import { enqueuePunch } from '@/lib/kioskQueue';
 import { KioskPage } from '@/pages/kiosk/KioskPage';
+
+// The page reads its device config through the query layer.
+function renderKiosk() {
+  return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <KioskPage />
+    </QueryClientProvider>,
+  );
+}
 
 const VERIFY_OK = {
   ok: true as const,
@@ -85,7 +95,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
@@ -108,7 +118,7 @@ describe('<KioskPage> punch flow', () => {
     );
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     expect(
@@ -132,7 +142,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     expect(await screen.findByText(/wrong pin/i)).toBeInTheDocument();
@@ -153,7 +163,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     expect(await screen.findByText(/quick question/i)).toBeInTheDocument();
@@ -174,7 +184,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     await user.click(
@@ -195,7 +205,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     // Verify failed (non-ApiError) → offline fallback. The kiosk can't ask
@@ -219,7 +229,7 @@ describe('<KioskPage> punch flow', () => {
     vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));
 
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
     await typePin(user);
 
     // Known GRANTED → selfie stage. jsdom has no camera, so the capture
@@ -237,7 +247,7 @@ describe('<KioskPage> punch flow', () => {
 
   it('language toggle switches the kiosk to Spanish and persists', async () => {
     const user = userEvent.setup();
-    render(<KioskPage />);
+    renderKiosk();
 
     await user.click(await screen.findByRole('button', { name: 'Español' }));
     expect(

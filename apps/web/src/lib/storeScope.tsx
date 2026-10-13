@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
@@ -55,6 +56,7 @@ const StoreScopeContext = createContext<StoreScopeValue>({
 });
 
 const storageKey = (userId: string) => `alto:storeScope:${userId}`;
+const EMPTY_CLIENTS: StoreScopeClient[] = [];
 
 export function StoreScopeProvider({ children }: { children: ReactNode }) {
   const { user, can } = useAuth();
@@ -70,7 +72,6 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     user && BOUNDED_ROLES.has(user.role) ? (user.clientId ?? '') : '';
   const canViewClients = can('view:clients');
 
-  const [clients, setClients] = useState<StoreScopeClient[]>([]);
   const [clientId, setClientIdState] = useState('');
 
   // Hydrate the persisted choice when the signed-in user changes. Bounded
@@ -91,34 +92,26 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     }
   }, [userId, enabled, boundedClientId]);
 
-  useEffect(() => {
-    if (!enabled) {
-      setClients([]);
-      return;
-    }
-    let alive = true;
-    // Scheduler-tier roles without view:clients (the WFM) read the
-    // operational directory instead — /clients carries bill rates and
-    // 403s for them, which used to leave the store bar empty.
-    const load = canViewClients
-      ? listClients({ status: 'ACTIVE' }).then((r) =>
-          r.clients.map((c) => ({ id: c.id, name: c.name })),
-        )
-      : apiFetch<{ clients: Array<{ id: string; name: string }> }>(
-          '/scheduling/clients',
-        ).then((r) => r.clients.map((c) => ({ id: c.id, name: c.name })));
-    void load
-      .then((rows) => {
-        if (alive) setClients(rows);
-      })
-      .catch(() => {
-        // Non-fatal: the bar just doesn't render; pages fall back to their
-        // own pickers.
-      });
-    return () => {
-      alive = false;
-    };
-  }, [enabled, canViewClients]);
+  // Scheduler-tier roles without view:clients (the WFM) read the
+  // operational directory instead — /clients carries bill rates and
+  // 403s for them, which used to leave the store bar empty. A failure is
+  // non-fatal: the bar just doesn't render; pages fall back to their own
+  // pickers.
+  const clientsQuery = useQuery({
+    queryKey: ['storeScope', 'clients', canViewClients],
+    queryFn: async (): Promise<StoreScopeClient[]> => {
+      const r = canViewClients
+        ? await listClients({ status: 'ACTIVE' })
+        : await apiFetch<{ clients: Array<{ id: string; name: string }> }>('/scheduling/clients');
+      return r.clients.map((c) => ({ id: c.id, name: c.name }));
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+  const clients = useMemo(
+    () => (enabled ? (clientsQuery.data ?? EMPTY_CLIENTS) : EMPTY_CLIENTS),
+    [enabled, clientsQuery.data],
+  );
 
   // A persisted store that was deleted/renamed away falls back to "all".
   useEffect(() => {

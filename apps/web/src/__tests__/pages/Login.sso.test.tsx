@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Capability } from '@alto-people/shared';
 
 vi.mock('@/lib/api', async (orig) => ({
@@ -26,11 +27,13 @@ function renderLogin(entry: Parameters<typeof MemoryRouter>[0]['initialEntries']
     can: () => false,
   };
   render(
-    <AuthContext.Provider value={value}>
-      <MemoryRouter initialEntries={entry}>
-        <Login />
-      </MemoryRouter>
-    </AuthContext.Provider>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AuthContext.Provider value={value}>
+        <MemoryRouter initialEntries={entry}>
+          <Login />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
   );
 }
 

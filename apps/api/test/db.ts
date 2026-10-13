@@ -22,6 +22,9 @@ const TABLES = [
   // key collides the moment a second test seeds the same route.
   'RouteUsageDaily',
   'WebVitalDaily',
+  // Reliability rollups: no FK reaches either, same as the two above.
+  'ApiBoot',
+  'ReliabilityWeek',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

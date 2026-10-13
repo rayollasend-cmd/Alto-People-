@@ -180,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
+        // eslint-disable-next-line no-restricted-syntax -- the session probe itself: it decides whether the query layer may run and which cache to restore, so it cannot live inside it
         const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
         if (cancelled) return;
         setUser(me.user);
@@ -282,6 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       void (async () => {
         try {
+          // eslint-disable-next-line no-restricted-syntax -- a one-shot re-check after a 401 that decides whether the session is dead; not a read to cache
           const me = await apiFetch<MeResponse>('/auth/me');
           if (me.user) {
             // Session is alive — the 401 was a one-off, OR the account's

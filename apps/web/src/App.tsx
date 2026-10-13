@@ -197,6 +197,7 @@ const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'Billin
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
 const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
+const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHome'), 'ReliabilityHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
@@ -240,6 +241,7 @@ registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHo
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
 registerPrefetch('/product-analytics', () => import('@/pages/analytics/ProductAnalytics'));
+registerPrefetch('/reliability', () => import('@/pages/analytics/ReliabilityHome'));
 registerPrefetch('/audit', () => import('@/pages/audit/AuditHome'));
 registerPrefetch('/me', () => import('@/pages/me/MeHome'));
 registerPrefetch('/settings', () => import('@/pages/Settings'));
@@ -419,6 +421,7 @@ const LAYOUT_ROUTES = [
   { path: 'recruiting', element: <RecruitingHome /> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
+  { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><ReliabilityHome /></RequireCapability> },
   // `settings` is universal — every authenticated user manages their own
   // profile / password / preferences here. RequireAuth above is enough.
   { path: 'settings', element: <Settings /> },

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ArrowLeft, Check, Crosshair, Home, Loader2, MapPin, Search, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -25,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { useMinWidth, useVisibleViewport } from '@/lib/useViewport';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
 
 /**
  * WHERE THE VAN SHOULD MEET THEM.
@@ -85,6 +87,7 @@ function townOf(address: string): string {
 /** Mapbox and Nominatim are both quick; this is about not billing every keystroke. */
 const DEBOUNCE_MS = 300;
 const MIN_QUERY = 4;
+const EMPTY_RESULTS: AddressSuggestion[] = [];
 
 interface Row {
   key: string;
@@ -259,8 +262,6 @@ export function PickupPicker({
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<AddressSuggestion[]>([]);
-  const [searching, setSearching] = useState(false);
   const [locating, setLocating] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [active, setActive] = useState(0);
@@ -272,49 +273,30 @@ export function PickupPicker({
   const [confirming, setConfirming] = useState<Extract<Pickup, { kind: 'address' }> | null>(null);
   // A saved place with no pin, and where its map opens.
   const [placePin, setPlacePin] = useState<{ place: { id: string; label: string; address: string }; center: GeoPoint } | null>(null);
-  // The search provider was down or busy — not "no such address".
-  const [unavailable, setUnavailable] = useState(false);
-  // Where a pin for the typed address would start, when nothing matched.
-  const [searchCenter, setSearchCenter] = useState<GeoPoint | null>(null);
   // The typed address they chose to keep, waiting for its pin.
   const [typedPin, setTypedPin] = useState<{ address: string; center: GeoPoint } | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = 'pickup-suggestions';
 
-  // Out-of-order guard: a slow response for "150" must never overwrite the
-  // results for "1500 nw", which is the classic autocomplete flicker.
-  const seq = useRef(0);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < MIN_QUERY) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    const mine = ++seq.current;
-    setSearching(true);
-    const timer = window.setTimeout(async () => {
-      try {
-        const { results: found, unavailable: down, center } = await searchRideAddresses(q, locationId);
-        if (seq.current === mine) {
-          setResults(found);
-          setUnavailable(!!down);
-          setSearchCenter(center ?? null);
-        }
-      } catch {
-        if (seq.current === mine) {
-          setResults([]);
-          setUnavailable(true);
-          setSearchCenter(null);
-        }
-      } finally {
-        if (seq.current === mine) setSearching(false);
-      }
-    }, DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [query, locationId]);
+  // Debounced address search. The debounced term is part of the query key,
+  // so a slow response for "150" can never overwrite the results for
+  // "1500 nw" — React Query only hands back the answer for the key asked.
+  const debouncedQ = useDebouncedValue(query.trim(), DEBOUNCE_MS);
+  const searchActive = debouncedQ.length >= MIN_QUERY;
+  const addressSearch = useQuery({
+    queryKey: ['rides', 'address-search', locationId ?? null, debouncedQ],
+    queryFn: () => searchRideAddresses(debouncedQ, locationId),
+    enabled: searchActive,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const results: AddressSuggestion[] = searchActive ? (addressSearch.data?.results ?? EMPTY_RESULTS) : EMPTY_RESULTS;
+  const searching = searchActive && (addressSearch.isFetching || query.trim() !== debouncedQ);
+  // The search provider was down or busy — not "no such address".
+  const unavailable = searchActive && (addressSearch.isError || !!addressSearch.data?.unavailable);
+  // Where a pin for the typed address would start, when nothing matched.
+  const searchCenter: GeoPoint | null = searchActive ? (addressSearch.data?.center ?? null) : null;
 
   const q = query.trim().toLowerCase();
   const match = (s: string) => s.toLowerCase().includes(q);
@@ -416,7 +398,6 @@ export function PickupPicker({
     onChange(p);
     setOpen(false);
     setQuery('');
-    setResults([]);
     setNote(null);
   };
 
@@ -564,7 +545,6 @@ export function PickupPicker({
             setConfirming(null);
             onChange({ ...c, lat: p.lat, lng: p.lng, precision: 'exact' });
             setQuery('');
-            setResults([]);
           }}
         />
       );
@@ -583,7 +563,6 @@ export function PickupPicker({
             setTypedPin(null);
             onChange({ kind: 'address', address: tp.address, lat: p.lat, lng: p.lng, precision: 'exact' });
             setQuery('');
-            setResults([]);
             setNote(null);
           }}
         />
@@ -606,7 +585,6 @@ export function PickupPicker({
                 setPlacePin(null);
                 onChange({ kind: 'place', id: pp.place.id, label: pp.place.label, address: pp.place.address });
                 setQuery('');
-                setResults([]);
                 setNote(null);
               } catch {
                 setNote(t('ride.placeNoMap'));
