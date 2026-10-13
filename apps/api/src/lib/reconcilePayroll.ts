@@ -489,11 +489,11 @@ export function reconcileMarkdown(r: ReconcileResult, platform: PlatformSide): s
   }
   out.push('## Definition of active: every computation on the platform today');
   out.push('');
-  out.push('The one shared definition is `src/lib/activeDefinition.ts` (Brief 1A-2, applied early): placed at a site (open assignment), not separated or deactivated, and either a non-rejected clock-in in the trailing window or a future assigned shift. The sites below still compute their own number; Brief 1A-2 moves them onto the shared rule.');
+  out.push('The one shared definition is `src/lib/activeDefinition.ts` (Brief 1A-2): employed, placed at a site, and either a non-rejected clock-in in the trailing window or a future assigned shift. Sites marked ✓ read it; the rest mean something else (on the floor now, scheduled, a pool of people who can be scheduled) and say so.');
   out.push('');
-  out.push('| Surface | Where | Label | Rule |');
-  out.push('|---|---|---|---|');
-  for (const s of ACTIVE_COUNT_SITES) out.push(`| ${s.surface} | \`${s.file}:${s.line}\` | ${s.label} | ${s.rule} |`);
+  out.push('| Surface | Where | Label | Shared | Rule it read before 1A-2 |');
+  out.push('|---|---|---|---|---|');
+  for (const s of ACTIVE_COUNT_SITES) out.push(`| ${s.surface} | \`${s.file}:${s.line}\` | ${s.label} | ${s.shared ? '✓' : ''} | ${s.rule} |`);
   out.push('');
   out.push('Distinct rules in use:');
   out.push('');
