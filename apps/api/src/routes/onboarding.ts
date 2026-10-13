@@ -228,8 +228,9 @@ export interface InviteApplicantInput {
   associateFirstName: string;
   associateLastName: string;
   associateEmail: string;
-  clientId: string;
-  // Phase 131 — optional starting Location. Must belong to clientId.
+  /** Brief 2-1b: optional — a direct employer hires with no client. */
+  clientId?: string;
+  // Phase 131 — optional starting Location. Must belong to clientId (or be a client-less site).
   locationId?: string;
   templateId: string;
   employmentType?: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
@@ -324,14 +325,15 @@ export async function inviteOneApplicant(
       }
     }
 
+    // Brief 2-1b: a direct employer hires with no client; the site places the hire.
     const [client, template] = await Promise.all([
-      tx.client.findFirst({ where: { id: input.clientId, deletedAt: null } }),
+      input.clientId ? tx.client.findFirst({ where: { id: input.clientId, deletedAt: null } }) : Promise.resolve(null),
       tx.onboardingTemplate.findUnique({
         where: { id: input.templateId },
         include: { tasks: { orderBy: { order: 'asc' } } },
       }),
     ]);
-    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    if (input.clientId && !client) throw new HttpError(404, 'client_not_found', 'Client not found');
     if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
 
     // Phase 131 — validate the optional starting Location lives under
@@ -340,7 +342,7 @@ export async function inviteOneApplicant(
     let resolvedLocationId: string | null = input.locationId ?? null;
     if (input.locationId) {
       const location = await tx.location.findFirst({
-        where: { id: input.locationId, clientId: client.id, deletedAt: null },
+        where: { id: input.locationId, clientId: client?.id ?? null, deletedAt: null },
         select: { id: true },
       });
       if (!location) {
@@ -364,7 +366,7 @@ export async function inviteOneApplicant(
       // caller; clients with no sites keep the old behavior.
       const sites = await tx.location.findMany({
         take: 2,
-        where: { clientId: client.id, deletedAt: null, isActive: true },
+        where: { clientId: client?.id ?? null, deletedAt: null, isActive: true },
         select: { id: true },
       });
       if (sites.length === 1) {
@@ -457,7 +459,7 @@ export async function inviteOneApplicant(
     const application = await tx.application.create({
       data: {
         associateId: associate.id,
-        clientId: client.id,
+        clientId: client?.id ?? null,
         locationId: resolvedLocationId,
         onboardingTrack: template.track,
         status: 'DRAFT',
@@ -508,7 +510,7 @@ export async function inviteOneApplicant(
       userId: result.user.id,
       email,
       firstName: result.associate.firstName,
-      clientName: result.client.name,
+      clientName: result.client?.name ?? getBrandingSync().orgName,
       hireDate: result.associate.hireDate,
       rawToken: invite.raw,
       expiresAt,
@@ -523,7 +525,7 @@ export async function inviteOneApplicant(
     actorUserId,
     action: 'onboarding.application_created',
     applicationId: result.application.id,
-    clientId: result.client.id,
+    clientId: result.client?.id ?? null,
     metadata: {
       associateEmail: email,
       templateId: input.templateId,

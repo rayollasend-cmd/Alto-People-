@@ -2667,36 +2667,43 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     // own client — the read scopes don't cover create (clientId comes from the
     // body, not a scoped query).
     const bounded = effectiveClientIdFilter(req.user!, undefined);
-    if (bounded !== undefined && input.clientId !== bounded) {
+    if (bounded !== undefined && input.clientId !== (bounded ?? undefined)) {
       throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
     }
 
-    const client = await prisma.client.findFirst({
-      where: { id: input.clientId, deletedAt: null },
-    });
-    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
-
-    // Phase 131 — every Shift gets a Location. Use the explicit
-    // locationId from the picker when provided; otherwise fall back
-    // to the client's first active Location. The free-text `location`
-    // field below stays for optional sub-zone labels ("Bar", "Patio",
-    // "Floor 2 — Beauty").
+    // Brief 2-1b: with a client, the site is one of the client's; without one
+    // (a direct employer) the shift names its site and carries no client.
+    let client: { id: string; state: string | null } | null = null;
     let location: { id: string };
-    if (input.locationId) {
-      const picked = await prisma.location.findFirst({
-        where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
-        select: { id: true },
-      });
-      if (!picked) {
-        throw new HttpError(
-          400,
-          'location_mismatch',
-          'Location does not belong to the chosen client.',
-        );
+    let noticeState: string | null = null;
+    if (input.clientId) {
+      const found = await prisma.client.findFirst({ where: { id: input.clientId, deletedAt: null }, select: { id: true, state: true } });
+      if (!found) throw new HttpError(404, 'client_not_found', 'Client not found');
+      client = found;
+      noticeState = found.state;
+      if (input.locationId) {
+        const picked = await prisma.location.findFirst({
+          where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
+          select: { id: true },
+        });
+        if (!picked) {
+          throw new HttpError(400, 'location_mismatch', 'Location does not belong to the chosen client.');
+        }
+        location = picked;
+      } else {
+        location = await firstLocationForClient(prisma, client.id);
       }
-      location = picked;
     } else {
-      location = await firstLocationForClient(prisma, client.id);
+      if (!input.locationId) throw new HttpError(400, 'site_required', 'Name the site for this shift.');
+      const site = await prisma.location.findFirst({ where: { id: input.locationId, deletedAt: null, isActive: true }, select: { id: true, clientId: true, state: true } });
+      if (!site) throw new HttpError(404, 'location_not_found', 'Site not found.');
+      if (site.clientId) throw new HttpError(400, 'client_required', 'This site belongs to a client; name the client.');
+      // A site-only account schedules its own site and nowhere else.
+      if (bounded === null && req.user!.locationId && req.user!.locationId !== site.id) {
+        throw new HttpError(403, 'forbidden', 'You can only manage shifts at your own site.');
+      }
+      location = site;
+      noticeState = site.state;
     }
 
     assertSaneShiftDuration(new Date(input.startsAt), new Date(input.endsAt));
@@ -2707,7 +2714,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     let publishedAt: Date | null = null;
     if (isPublishing) {
       const evaluation = evaluateShiftNotice({
-        state: client.state,
+        state: noticeState,
         startsAt: new Date(input.startsAt),
         publishAt: now,
       });
@@ -2724,7 +2731,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
 
     const created = await prisma.shift.create({
       data: {
-        clientId: input.clientId,
+        clientId: client?.id ?? null,
         locationId: location.id,
         position: input.position,
         startsAt: new Date(input.startsAt),

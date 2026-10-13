@@ -596,7 +596,8 @@ export const ApplicationCreateInputSchema = z.object({
   associateEmail: z.string().email(),
   associateFirstName: z.string().min(1).max(80),
   associateLastName: z.string().min(1).max(80),
-  clientId: UuidSchema,
+  /** Brief 2-1b: optional — a direct employer hires with no client; the site (locationId) places them. */
+  clientId: UuidSchema.optional(),
   // Phase 131 — physical site under the chosen client. Optional; when
   // set, becomes the starting Location of the AssociateAssignment row
   // opened at approval time. When omitted, HR will need to use the
@@ -2076,7 +2077,8 @@ export type SwapCandidateListResponse = z.infer<typeof SwapCandidateListResponse
 
 export const ShiftCreateInputSchema = z
   .object({
-    clientId: UuidSchema,
+    /** Brief 2-1b: optional — a direct employer's shift names its site instead. */
+    clientId: UuidSchema.optional(),
     // Phase 131 — physical work site for the shift. Optional in the
     // wire schema; the server falls back to the client's first
     // active Location when omitted (firstLocationForClient).

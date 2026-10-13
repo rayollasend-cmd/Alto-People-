@@ -5,6 +5,8 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { createOrgUnit, deleteOrgUnit, getOrgUnit, listOrgUnits, setOrgUnitSites, siteIdsUnder, updateOrgUnit } from '../lib/orgUnits.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { LocationCreateInputSchema } from '@alto-people/shared';
+import { HttpError } from '../middleware/error.js';
 
 /**
  * Brief 2-1b, step 5 — the organizational tree.
@@ -63,6 +65,43 @@ orgUnitsRouter.put('/admin/org-units/:id/sites', MANAGE, async (req, res) => {
   await setOrgUnitSites(prisma, id, input.locationIds);
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'org_unit.sites_set', entityType: 'OrgUnit', entityId: id, metadata: { sites: input.locationIds.length } }, 'org');
   res.status(204).end();
+});
+
+/**
+ * A direct employer's sites carry no client. POST creates one (optionally
+ * under a unit); GET lists every site with its unit.
+ */
+orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
+  const input = LocationCreateInputSchema.extend({ orgUnitId: z.string().uuid().nullable().optional() }).parse(req.body);
+  if (input.orgUnitId) {
+    const unit = await getOrgUnit(prisma, input.orgUnitId);
+    if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
+  }
+  const created = await prisma.location.create({
+    data: {
+      clientId: null,
+      orgUnitId: input.orgUnitId ?? null,
+      name: input.name,
+      addressLine1: input.addressLine1 ?? null,
+      addressLine2: input.addressLine2 ?? null,
+      city: input.city ?? null,
+      state: input.state ?? null,
+      zip: input.zip ?? null,
+      ...(input.timezone ? { timezone: input.timezone } : {}),
+    },
+    select: { id: true, name: true, timezone: true, orgUnitId: true, state: true },
+  });
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'site.created', entityType: 'Location', entityId: created.id, metadata: { name: created.name, orgUnitId: created.orgUnitId } }, 'org');
+  res.status(201).json({ site: created });
+});
+
+orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {
+  const rows = await prisma.location.findMany({
+    where: { deletedAt: null },
+    select: { id: true, name: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } } },
+    orderBy: [{ clientId: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }],
+  });
+  res.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, timezone: r.timezone, state: r.state, isActive: r.isActive, clientId: r.clientId, clientName: r.client?.name ?? null, orgUnitId: r.orgUnitId, orgUnitName: r.orgUnit?.name ?? null, orgUnitType: r.orgUnit?.type ?? null })) });
 });
 
 orgUnitsRouter.get('/admin/org-units/:id/sites', VIEW, async (req, res) => {
