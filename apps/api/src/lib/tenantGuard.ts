@@ -164,5 +164,15 @@ export function guardTenantQuery(model: string | undefined, operation: string, a
     record('other_tenant_filter', model, operation);
     if (enforce) throw new Error(`[tenancy] ${model}.${operation} filters on another tenant from tenant ${ctx.tenantId}`);
   }
+  // Enforce (step four's wall): every read, update and delete carries the
+  // tenant, so another tenant's row is invisible even to code that forgot
+  // to scope. Top-level where fields are AND-ed by Prisma, and a unique
+  // where accepts extra fields (extended where unique), so the same
+  // injection serves findUnique, update, delete and upsert.
+  if (enforce && !ctx.platform && FILTERED.has(operation)) {
+    const where = (a.where ?? {}) as Args;
+    if (where.tenantId === undefined) a.where = { ...where, tenantId: ctx.tenantId };
+    return a;
+  }
   return args;
 }

@@ -109,6 +109,37 @@ describe('enforce mode (step four, available to the tests)', () => {
     process.env.TENANCY_MODE = 'off';
     expect(await app.associate.count()).toBe(0);
   });
+
+  it('every read, update and delete carries the tenant: another tenant\'s rows are invisible, unreachable by id and untouchable', async () => {
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    const mine = await createUser({ role: 'ASSOCIATE' });
+    const theirs = await createUser({ role: 'ASSOCIATE' });
+    await prisma.user.update({ where: { id: theirs.user.id }, data: { tenantId: T2 } });
+    process.env.TENANCY_MODE = 'enforce';
+    await runWithTenant(ALTO_TENANT_ID, 'job', async () => {
+      expect((await app.user.findMany({ select: { id: true } })).map((u) => u.id)).toEqual([mine.user.id]);
+      expect(await app.user.count()).toBe(1);
+      expect(await app.user.findUnique({ where: { id: theirs.user.id } })).toBeNull();
+      expect(await app.user.findFirst({ where: { email: theirs.user.email } })).toBeNull();
+      await expect(app.user.update({ where: { id: theirs.user.id }, data: { displayName: 'x' } })).rejects.toThrow();
+      expect((await app.user.updateMany({ where: { id: theirs.user.id }, data: { displayName: 'x' } })).count).toBe(0);
+      expect((await app.user.deleteMany({ where: { id: theirs.user.id } })).count).toBe(0);
+      // Our own rows still answer, by id and by filter.
+      expect((await app.user.findUnique({ where: { id: mine.user.id } }))?.id).toBe(mine.user.id);
+      expect((await app.user.updateMany({ where: { id: mine.user.id }, data: { displayName: 'ok' } })).count).toBe(1);
+    });
+    await runWithTenant(T2, 'job', async () => {
+      expect((await app.user.findMany({ select: { id: true } })).map((u) => u.id)).toEqual([theirs.user.id]);
+    });
+    // The platform scope sees both.
+    await runWithTenant(ALTO_TENANT_ID, 'job', async () => {
+      await withPlatformScope(async () => {
+        expect(await app.user.count()).toBe(2);
+      });
+    });
+    process.env.TENANCY_MODE = 'off';
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: theirs.user.id } })).displayName).toBeNull();
+  });
 });
 
 describe('the helpers', () => {
