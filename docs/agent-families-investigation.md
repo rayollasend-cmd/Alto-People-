@@ -170,7 +170,7 @@ Checked against Workday's own pages on 2026-10-13 (sources inline). Workday ship
 - **Hybrid.** The same registry governs people, agents and robots (1D-1 Worker type); Workday's registry covers agents.
 - **Vocabulary and modules per tenant.** A direct employer's agents speak its words and never offer a module it has off (Brief 2-1b).
 
-"Not found" above means not in the pages opened, not proof that Workday lacks the feature. Naming: Workday announced a "Trusted Agent Platform" on 2026-10-13 ([source](https://newsroom.workday.com/2026-10-13-Workdays-Trusted-Agent-Platform-Now-Delivers-Headless-Access-to-HR-and-Finance,-Letting-Customers-Build-and-Run-Lawful-AI-Agents)), the same name docs/product-taxonomy.md gives our platform layer; the owner decides whether ours is renamed.
+"Not found" above means not in the pages opened, not proof that Workday lacks the feature. Naming: Workday announced a "Trusted Agent Platform" on 2026-10-13 ([source](https://newsroom.workday.com/2026-10-13-Workdays-Trusted-Agent-Platform-Now-Delivers-Headless-Access-to-HR-and-Finance,-Letting-Customers-Build-and-Run-Lawful-AI-Agents)), the name docs/product-taxonomy.md once gave our platform layer; ours is now the Hybrid Workforce Platform (owner, 2026-10-13).
 
 ## 6. Owner decisions
 

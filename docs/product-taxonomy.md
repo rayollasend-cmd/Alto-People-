@@ -6,6 +6,10 @@ Effective 2026-10-13. This is the structure the code, the navigation, the docs a
 
 Alto People is an enterprise workforce platform built to stand beside Workday and to surpass it in the domains Workday does not serve: the frontline, seasonal, international and hybrid workforce of people, agents and robots, with a human accountable for every agent and robot. We are not matching Workday feature for feature. We are winning the workforce they don't serve, with governance they don't have, at a speed they can't move.
 
+## Positioning
+
+**The trusted platform for the hybrid workforce — people, AI agents, and Humanoids/Robots managed on one platform. The future of workforce management.** (The owner, 2026-10-13.) "Trusted" is a description, never a product name: Workday announced a "Trusted Agent Platform" on 2026-10-13.
+
 ## Names
 
 - **Alto People** is the product.
@@ -41,7 +45,7 @@ The first families to build after the registry are **Workforce** and **Complianc
 
 | Area | Contents |
 |---|---|
-| Trusted Agent Platform | Hugo, the Agent Registry, approval gates, kill switches, certification |
+| Hybrid Workforce Platform | one Worker registry for people, AI agents and humanoids/robots (1D-1), each with an accountable owner; Hugo; the Agent Registry, approval gates, kill switches, certification |
 | Extend | Agent and App Builder · Agent-Ready Tools and an Alto People MCP server · Developer Platform |
 | Governance and Trust | Responsible AI · Security and Compliance · Robot Safety |
 | Workforce Data Cloud | the one definition of active, the reconciliation report, the data model, tenancy |
