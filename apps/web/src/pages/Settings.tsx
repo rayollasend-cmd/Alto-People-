@@ -6,7 +6,8 @@ import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth, useRoleLabel } from '@/lib/auth';
+import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
+import { termizeText } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
 import {
   changePassword,
@@ -854,6 +855,7 @@ type PushRowStatus =
 
 function NotificationsCard() {
   const queryClient = useQueryClient();
+  const term = useTerm();
   const { user } = useAuth();
   const isPortal = user?.role === 'CLIENT_PORTAL';
   // `${category}:${channel}` — each switch spins on its own, not both.
@@ -1024,7 +1026,7 @@ function NotificationsCard() {
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-silver mt-0.5">{e.description}</div>
+                  <div className="text-xs text-silver mt-0.5">{termizeText(e.description, term)}</div>
                 </div>
                 <span className="flex shrink-0 items-start gap-3">
                   {channelToggle(e, 'inAppEnabled', 'Bell')}

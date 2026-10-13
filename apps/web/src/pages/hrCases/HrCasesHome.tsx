@@ -246,7 +246,7 @@ export function HrCasesHome() {
         c.associateEmail,
         CATEGORY_LABELS[c.category],
         PRIORITY_LABELS[c.priority],
-        STATUS_LABELS[c.status],
+        caseStatusLabel(t, c.status),
         c.assignedToEmail ?? '',
         c.commentCount,
         fmtDate(c.createdAt),
@@ -291,7 +291,7 @@ export function HrCasesHome() {
                 <option value="ALL">All statuses</option>
                 {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
                   <option key={s} value={s}>
-                    {STATUS_LABELS[s]}
+                    {caseStatusLabel(t, s)}
                   </option>
                 ))}
               </Select>
@@ -483,9 +483,9 @@ export function HrCasesHome() {
                   {
                     key: 'status',
                     header: 'Status',
-                    accessor: (c) => STATUS_LABELS[c.status],
+                    accessor: (c) => caseStatusLabel(t, c.status),
                     sortable: true,
-                    cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{STATUS_LABELS[c.status]}</Badge>,
+                    cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{caseStatusLabel(t, c.status)}</Badge>,
                   },
                   { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
                 ]}
@@ -862,6 +862,7 @@ function TriageBlock({
   sendDraftReply: () => Promise<boolean>;
 }) {
   const { user } = useAuth();
+  const { t } = useI18n();
   const [resolution, setResolution] = useState(detail.resolution ?? '');
   const [claiming, setClaiming] = useState(false);
   // Cross-department routing: everyone who can work a desk. Finance can
@@ -995,7 +996,7 @@ function TriageBlock({
         >
           {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
             <option key={s} value={s}>
-              {STATUS_LABELS[s]}
+              {caseStatusLabel(t, s)}
             </option>
           ))}
         </Select>

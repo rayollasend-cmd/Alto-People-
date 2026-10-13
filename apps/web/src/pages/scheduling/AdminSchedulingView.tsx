@@ -1493,14 +1493,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (zones.size === 1) {
       const zone = [...zones][0]!;
       if (zone === viewer) return null; // viewer is at the store — no note
-      return `Times shown in ${tzAbbrev(zone)} (store local time).`;
+      return `Times shown in ${tzAbbrev(zone)} (${term('site').toLowerCase()} local time).`;
     }
     // Mixed locations (full-org schedule across timezones).
     if (zones.size > 1) {
       return 'Times shown in each location’s local time.';
     }
     return null;
-  }, [filteredShifts]);
+  }, [filteredShifts, term]);
 
   // The zone the calendar grid should bucket day-columns and position chips in.
   // Only meaningful when the visible schedule resolves to ONE work-site zone
@@ -3783,7 +3783,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
 /* ===== KPI strip ========================================================== */
 
+/** "an associate", "a team member": the article the tenant's noun takes. */
+function withArticle(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
+}
+
 function KpiStrip({ kpis, period }: { kpis: SchedulingKpis | null; period: string }) {
+  const term = useTerm();
   if (!kpis) {
     return (
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -3822,7 +3828,7 @@ function KpiStrip({ kpis, period }: { kpis: SchedulingKpis | null; period: strin
       <StatTile
         label="Open shifts"
         value={kpis.openShifts}
-        sub={kpis.openShifts > 0 ? 'Need an associate' : noShifts ? '—' : 'Every shift covered'}
+        sub={kpis.openShifts > 0 ? `Need ${withArticle(term('worker').toLowerCase())}` : noShifts ? '—' : 'Every shift covered'}
         className={kpis.openShifts > 0 ? 'border-warning/35' : undefined}
       />
       <StatTile
@@ -4478,11 +4484,12 @@ function AutoFillDialog({
   onPick: (associateId: string) => void;
   pending: boolean;
 }) {
+  const term = useTerm();
   return (
     <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Suggested associates</DialogTitle>
+          <DialogTitle>Suggested {term('workers').toLowerCase()}</DialogTitle>
           <DialogDescription>
             Ranked by availability, conflict-free, and weekly hours headroom.
           </DialogDescription>
@@ -4614,6 +4621,7 @@ function DuplicateToEmployeeDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const term = useTerm();
   const [search, setSearch] = useState('');
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -4673,7 +4681,7 @@ function DuplicateToEmployeeDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Copy shift to an associate</DialogTitle>
+          <DialogTitle>Copy shift to {withArticle(term('worker').toLowerCase())}</DialogTitle>
           <DialogDescription>
             {source.position} ·{' '}
             {fmtDateTime(source.startsAt)} — creates a draft copy on the
@@ -5045,6 +5053,7 @@ function CreateShiftDialog({
   onCreated: () => void;
   onPositionUsed?: (position: string) => void;
 }) {
+  const term = useTerm();
   // The client bill rate is never a store-bound role's to see or set.
   const hideBillRate = useClientBounded();
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
@@ -5809,7 +5818,7 @@ function CreateShiftDialog({
               </div>
               <div className="text-xs2 text-silver/70">
                 {publishImmediately
-                  ? 'Will be visible to assigned associate the moment you save.'
+                  ? `Will be visible to assigned ${term('worker').toLowerCase()} the moment you save.`
                   : 'Saved as draft. Stays private until you click "Publish week".'}
               </div>
             </div>
@@ -6311,6 +6320,7 @@ function FilterBar({
   showAssociateToggle: boolean;
 }) {
   const { moduleOn } = useTenant();
+  const term = useTerm();
   // Client changes here write back to the global Topbar store scope so
   // Time / Labor follow the same store.
   const storeScope = useStoreScope();
@@ -6418,9 +6428,11 @@ function FilterBar({
           >
             <option value="">
               {locationDisabled
-                ? 'Select a client first'
+                ? `Select a ${term('label.client').toLowerCase()} first`
                 : clientLocations.length === 0
-                  ? 'No locations for this client'
+                  ? moduleOn('clientPortal')
+                    ? `No locations for this ${term('label.client').toLowerCase()}`
+                    : 'No locations yet'
                   : 'All locations'}
             </option>
             {clientLocations.map((l) => (
@@ -6443,7 +6455,7 @@ function FilterBar({
                 ? 'Select a location first'
                 : teams.length === 0
                   ? 'No shifts defined here'
-                  : 'All associates'}
+                  : `All ${term('workers').toLowerCase()}`}
             </option>
             {teams.map((t) => (
               <option key={t.id} value={t.id}>

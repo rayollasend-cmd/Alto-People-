@@ -99,7 +99,6 @@ export const STATUS_LABELS: Record<CaseStatus, string> = {
   RESOLVED: 'Resolved',
   CLOSED: 'Closed',
 };
-
 export const fileCase = (input: {
   category: CaseCategory;
   subject: string;

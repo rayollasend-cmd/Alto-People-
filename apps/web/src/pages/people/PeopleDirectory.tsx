@@ -542,7 +542,7 @@ export function PeopleDirectory() {
           <Button asChild>
             <Link to="/onboarding">
               <Plus className="h-4 w-4" />
-              Invite associates
+              Invite {term('workers').toLowerCase()}
             </Link>
           </Button>
         }
@@ -717,13 +717,13 @@ export function PeopleDirectory() {
           icon={Users}
           title={
             hasActiveFilters
-              ? 'No associates match these filters'
-              : 'No associates yet'
+              ? `No ${term('workers').toLowerCase()} match these filters`
+              : `No ${term('workers').toLowerCase()} yet`
           }
           description={
             hasActiveFilters
               ? 'Loosen a filter or clear the search.'
-              : 'Once you invite associates through onboarding they show up here.'
+              : `Once you invite ${term('workers').toLowerCase()} through onboarding they show up here.`
           }
           action={
             hasActiveFilters ? (
@@ -735,7 +735,7 @@ export function PeopleDirectory() {
               <Button asChild size="sm">
                 <Link to="/onboarding">
                   <Plus className="h-3.5 w-3.5" />
-                  Invite associates
+                  Invite {term('workers').toLowerCase()}
                 </Link>
               </Button>
             )
@@ -965,11 +965,13 @@ function DirectoryTable({
   rows: DirectoryEntry[];
   onSelect: (row: DirectoryEntry) => void;
 }) {
+  const term = useTerm();
+  const directoryColumns = useMemo(() => DIRECTORY_COLUMNS.map((c) => (c.key === 'name' ? { ...c, header: term('worker') } : c)), [term]);
   return (
     <Card className="p-3">
       <DataGrid<DirectoryEntry>
         id="people-directory"
-        caption="Associate directory"
+        caption={`${term('worker')} directory`}
         rows={rows}
         rowKey={(r) => r.id}
         search={false}
@@ -979,7 +981,7 @@ function DirectoryTable({
         rowActionLabel={(r) => `Open ${r.firstName} ${r.lastName}`}
         virtualizeAfter={VIRTUALIZE_THRESHOLD}
         rowHeight={ROW_HEIGHT_PX}
-        columns={DIRECTORY_COLUMNS}
+        columns={directoryColumns}
       />
     </Card>
   );

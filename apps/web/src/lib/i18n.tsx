@@ -1498,7 +1498,7 @@ const en = {
   'hrc.closedNotice': 'Case is closed — reopen it to reply.',
   'hrc.status.OPEN': 'Open',
   'hrc.status.IN_PROGRESS': 'In progress',
-  'hrc.status.WAITING_ASSOCIATE': 'Waiting on associate',
+  'hrc.status.WAITING_ASSOCIATE': 'Waiting on {workerLc}',
   'hrc.status.RESOLVED': 'Resolved',
   'hrc.status.CLOSED': 'Closed',
   'hrc.category.BENEFITS': 'Benefits',
