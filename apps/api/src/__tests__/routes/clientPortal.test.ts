@@ -1046,7 +1046,7 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
     expect(ready.body.gaps.some((g: string) => g.includes('Walmart 4411'))).toBe(true);
     // …and the Workforce desk was rung about it (once).
     const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
-    const marketInvite = await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'second@walmart.example' });
+    const marketInvite = await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'second@walmart.example', wholeClient: true });
     expect(marketInvite.status).toBe(201);
     // A client-wide login is a market manager: the command-center note,
     // addressed by the front of the email when no name was given.

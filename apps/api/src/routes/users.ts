@@ -13,6 +13,7 @@ import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { adminForcePasswordResetLimiter } from '../middleware/rateLimit.js';
 import { recordCriticalAudit } from '../lib/audit.js';
+import { accessReportCsv, buildAccessReport, deactivateUsers, reactivateUser, requireRegionApprover } from '../lib/accessCleanup.js';
 import {
   generatePasswordResetToken,
   PASSWORD_RESET_TTL_SECONDS,
@@ -89,6 +90,10 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       regionId: true,
       associateId: true,
       lockedUntil: true,
+      lastSeenAt: true,
+      deactivatedAt: true,
+      deactivationReason: true,
+      purgeAfter: true,
       associate: {
         select: { firstName: true, lastName: true },
       },
@@ -163,6 +168,11 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
           ? { leadUserId: l.id, leadName: personName(l) }
           : { leadUserId: null, leadName: null };
       })(),
+      // Brief 1A-4: last sign-in and the reversible deactivation state.
+      lastSeenAt: u.lastSeenAt ? u.lastSeenAt.toISOString() : null,
+      deactivatedAt: u.deactivatedAt ? u.deactivatedAt.toISOString() : null,
+      deactivationReason: u.deactivationReason,
+      purgeAfter: u.purgeAfter ? u.purgeAfter.toISOString() : null,
       // Account lockout (brute-force lock). Only surfaced while still in
       // the future — an expired lock is just noise to an admin.
       lockedUntil:
@@ -214,6 +224,9 @@ const PatchInputSchema = z
     // Region scope for a CLIENT_PORTAL command-center account. Setting a
     // region clears the client and store; setting a client clears the region.
     regionId: z.string().uuid().nullable().optional(),
+    // Brief 1A-4: putting an account on a region needs a named approver
+    // who holds manage:org (recorded on the account and in the audit).
+    approvedByUserId: z.string().uuid().optional(),
   })
   .refine(
     (v) =>
@@ -379,13 +392,18 @@ usersRouter.patch(
     }
 
     // Region scope: a live region; exclusive with the client scope.
+    // Brief 1A-4: a NEW region binding needs a named approver.
     let effectiveRegionId: string | null | undefined = undefined;
+    let regionApprover: Awaited<ReturnType<typeof requireRegionApprover>> | null = null;
     if (input.regionId) {
       const region = await prisma.region.findFirst({
         where: { id: input.regionId, deletedAt: null },
         select: { id: true },
       });
       if (!region) throw new HttpError(400, 'region_not_found', 'That region does not exist.');
+      if (input.regionId !== target.regionId) {
+        regionApprover = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
+      }
       effectiveRegionId = input.regionId;
     } else if (input.regionId === null) {
       effectiveRegionId = null;
@@ -401,6 +419,8 @@ usersRouter.patch(
       clientId?: string | null;
       locationId?: string | null;
       regionId?: string | null;
+      regionApprovedById?: string | null;
+      regionApprovedAt?: Date | null;
       tokenVersion?: { increment: number };
     } = {};
     if (effectiveRegionId) {
@@ -436,6 +456,8 @@ usersRouter.patch(
     }
     if (effectiveRegionId !== undefined && effectiveRegionId !== target.regionId) {
       data.regionId = effectiveRegionId;
+      data.regionApprovedById = regionApprover?.id ?? null;
+      data.regionApprovedAt = regionApprover ? new Date() : null;
     }
     // A role change, a client-scope change, or a flip into DISABLED kills
     // existing sessions so the new access takes effect immediately.
@@ -509,6 +531,9 @@ usersRouter.patch(
         metadata: {
           ip: req.ip ?? null,
           userAgent: req.headers['user-agent'] ?? null,
+          ...(regionApprover
+            ? { regionApprover: { userId: regionApprover.id, email: regionApprover.email, role: regionApprover.role, selfApproved: regionApprover.selfApproved } }
+            : {}),
           changes: {
             ...(data.role ? { role: { from: target.role, to: data.role } } : {}),
             ...(data.additionalRoles
@@ -550,6 +575,52 @@ usersRouter.patch(
  * still audited, since the admin's intent to unlock is what matters for
  * forensics).
  */
+/* ===== Brief 1A-4: the access report and the reversible deactivation ===== */
+
+/**
+ * GET /admin/users/access-report[?format=csv] — every account with role,
+ * scope, last sign-in, the employment record behind it, personal-email
+ * status and the flags; counts first. Read-only (view:hr-admin).
+ */
+usersRouter.get('/admin/users/access-report', requireCapability('view:hr-admin'), async (req, res) => {
+  const report = await buildAccessReport(prisma);
+  if (req.query.format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="access-report-${report.generatedAt.slice(0, 10)}.csv"`);
+    res.send(accessReportCsv(report));
+    return;
+  }
+  res.json(report);
+});
+
+/**
+ * POST /admin/users/deactivate { userIds, reason } — bulk, audited per
+ * account, sessions killed, reversible for 30 days. manage:org.
+ */
+usersRouter.post('/admin/users/deactivate', requireCapability('manage:org'), async (req, res) => {
+  const input = z
+    .object({ userIds: z.array(z.string().uuid()).min(1).max(500), reason: z.string().trim().min(3).max(300) })
+    .safeParse(req.body);
+  if (!input.success) {
+    throw new HttpError(400, 'invalid_body', 'userIds (1–500) and a reason of at least 3 characters are required.', input.error.flatten());
+  }
+  const result = await deactivateUsers(prisma, {
+    userIds: input.data.userIds,
+    reason: input.data.reason,
+    actorUserId: req.user!.id,
+    ip: req.ip ?? null,
+    userAgent: req.headers['user-agent'] ?? null,
+  });
+  res.json(result);
+});
+
+/** POST /admin/users/:id/reactivate — within the grace period. manage:org. */
+usersRouter.post('/admin/users/:id/reactivate', requireCapability('manage:org'), async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const result = await reactivateUser(prisma, { userId: id, actorUserId: req.user!.id, ip: req.ip ?? null, userAgent: req.headers['user-agent'] ?? null });
+  res.json(result);
+});
+
 usersRouter.post(
   '/admin/users/:id/unlock',
   // manage:org — write; view:hr-admin is read-only (see PATCH above).

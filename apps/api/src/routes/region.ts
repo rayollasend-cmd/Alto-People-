@@ -7,6 +7,8 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { storeSnapshot, type StoreSnapshot } from '../lib/storeSnapshot.js';
 import { invitePortalAccount } from '../lib/portalInvite.js';
+import { recordCriticalAudit } from '../lib/audit.js';
+import { requireRegionApprover } from '../lib/accessCleanup.js';
 
 /**
  * The region command center — the Manager, Business Operations Support's
@@ -253,6 +255,8 @@ const RegionInviteInput = z.object({
   email: z.string().email().max(254),
   /** How the note addresses them — name only; nothing else is known. */
   name: z.string().trim().min(1).max(120).optional(),
+  /** Brief 1A-4: Region scope needs a named approver who holds manage:org. */
+  approvedByUserId: z.string().uuid().optional(),
 });
 
 /**
@@ -265,6 +269,7 @@ regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
     const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true, name: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     const input = RegionInviteInput.parse(req.body);
+    const approver = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
     const storeCount = await prisma.location.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
     const r = await invitePortalAccount({
       email: input.email,
@@ -272,6 +277,18 @@ regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
       scope: { kind: 'region', regionId: region.id, regionName: region.name, storeCount },
       actorUserId: req.user!.id,
     });
+    await prisma.user.update({ where: { id: r.user.id }, data: { regionApprovedById: approver.id, regionApprovedAt: new Date() } });
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: null,
+        action: 'portal.region_scope_approved',
+        entityType: 'User',
+        entityId: r.user.id,
+        metadata: { email: r.user.email, regionId: region.id, regionName: region.name, approverUserId: approver.id, approverEmail: approver.email, approverRole: approver.role, selfApproved: approver.selfApproved },
+      },
+      'region',
+    );
     res.status(201).json({
       id: r.user.id,
       email: r.user.email,

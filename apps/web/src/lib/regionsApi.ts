@@ -95,7 +95,8 @@ export function updateRegion(id: string, body: { name?: string; locationIds?: st
 
 export function inviteRegionUser(
   regionId: string,
-  body: { email: string; name?: string },
+  /** Brief 1A-4: Region scope needs a named approver who holds manage:org. */
+  body: { email: string; name?: string; approvedByUserId: string },
 ): Promise<{ id: string; email: string; status: string; regionId: string; inviteExpiresAt: string; emailFailed: string | null }> {
   return apiFetch(`/regions/${regionId}/portal-users`, { method: 'POST', body });
 }

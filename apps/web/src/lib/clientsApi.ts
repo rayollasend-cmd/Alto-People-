@@ -192,7 +192,8 @@ export function listPortalUsers(clientId: string): Promise<{ users: PortalUserRo
 
 export function invitePortalUser(
   clientId: string,
-  body: { email: string; locationId: string | null; name?: string },
+  /** Brief 1A-4: store-level by default; the whole client must be asked for by name. */
+  body: { email: string; locationId: string | null; name?: string; wholeClient?: boolean },
 ): Promise<PortalUserRow & { emailFailed: string | null }> {
   return apiFetch(`/clients/${clientId}/portal-users`, { method: 'POST', body });
 }

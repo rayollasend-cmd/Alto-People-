@@ -40,6 +40,18 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
+import { ApproverPicker } from '@/components/ApproverPicker';
+import { AccessReport, DeactivateDialog } from './AccessReport';
+import { deactivateUsers, reactivateUser } from '@/lib/usersAdminApi';
 
 const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
 
@@ -110,6 +122,14 @@ export function UsersAdmin() {
   const [status, setStatus] = useState<UserStatus | ''>('');
 
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Brief 1A-4: the accounts list, or the access report (flags, bulk
+  // deactivation reversible for 30 days).
+  const [view, setView] = useState<'accounts' | 'report'>('accounts');
+  // A region binding waits here for its named approver.
+  // A bulk 'Disabled' from the accounts list goes the reversible way: a
+  // reason, one audit row per account, 30 days to undo.
+  const [bulkDeactivate, setBulkDeactivate] = useState<{ ids: string[]; clear: () => void } | null>(null);
+  const [regionApproval, setRegionApproval] = useState<{ user: AdminUser; regionId: string; regionName: string } | null>(null);
 
   // A role change to a client-scoped role for a user with no client is held
   // here until a client is picked, then applied together.
@@ -152,11 +172,17 @@ export function UsersAdmin() {
       setRegions([]);
     }
   }, [regions]);
-  const onAssignRegion = async (u: AdminUser, newRegionId: string) => {
+  const onAssignRegion = async (u: AdminUser, newRegionId: string, approvedByUserId?: string) => {
     if (newRegionId === (u.regionId ?? '')) return;
+    // Brief 1A-4: putting an account on a region needs a named approver.
+    if (newRegionId && !approvedByUserId) {
+      const name = (regions ?? []).find((r) => r.id === newRegionId)?.name ?? u.regionName ?? 'this region';
+      setRegionApproval({ user: u, regionId: newRegionId, regionName: name });
+      return;
+    }
     setPendingId(u.id);
     try {
-      await patchAdminUser(u.id, { regionId: newRegionId || null });
+      await patchAdminUser(u.id, { regionId: newRegionId || null, ...(approvedByUserId ? { approvedByUserId } : {}) });
       toast.success(newRegionId ? 'Region assigned — this is now a command-center account.' : 'Region cleared.');
       await load();
     } catch (err) {
@@ -306,6 +332,11 @@ export function UsersAdmin() {
   const onBulkStatus = async (ids: string[], clear: () => void, newStatus: UserStatus) => {
     const n = ids.length;
     const isDisable = newStatus === 'DISABLED';
+    if (isDisable) {
+      const targets = ids.filter((id) => id !== me?.id);
+      if (targets.length > 0) setBulkDeactivate({ ids: targets, clear });
+      return;
+    }
     if (
       !(await confirm({
         title: `Set ${n} user${n === 1 ? '' : 's'} to ${STATUS_LABELS[newStatus].toLowerCase()}?`,
@@ -452,6 +483,21 @@ export function UsersAdmin() {
     }
   };
 
+  // Brief 1A-4: within the 30-day grace period, everything back.
+  const onReactivate = async (u: AdminUser) => {
+    if (!(await confirm({ title: `Reactivate ${u.email}?`, description: 'The account comes back exactly as it was. The deletion is cancelled.' }))) return;
+    setPendingId(u.id);
+    try {
+      const r = await reactivateUser(u.id);
+      toast.success(r.status === 'INVITED' ? 'Reactivated — they never set a password, so the invite stands.' : 'Reactivated.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const onUnlock = async (u: AdminUser) => {
     setPendingId(u.id);
     try {
@@ -574,6 +620,15 @@ export function UsersAdmin() {
         return (
           <div className="flex items-center gap-2">
             <Badge variant={statusVariant(u.status)}>{STATUS_LABELS[u.status]}</Badge>
+            {u.purgeAfter && u.deactivatedAt && (
+              <Badge
+                variant="pending"
+                withDot={false}
+                title={`Deactivated ${fmtDate(u.deactivatedAt)}${u.deactivationReason ? ` — ${u.deactivationReason}` : ''}. Deleted on ${fmtDate(u.purgeAfter)} unless reactivated.`}
+              >
+                deletes {fmtDate(u.purgeAfter)}
+              </Badge>
+            )}
             {u.lockedUntil && (
               <Badge
                 variant="destructive"
@@ -738,6 +793,17 @@ export function UsersAdmin() {
         const busy = pendingId === u.id;
         return (
           <>
+            {u.purgeAfter && u.deactivatedAt && !isMe && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void onReactivate(u)}
+                disabled={busy}
+                title="Cancel the deletion and bring the account back as it was"
+              >
+                Reactivate
+              </Button>
+            )}
             {u.lockedUntil && (
               <Button
                 variant="ghost"
@@ -777,6 +843,18 @@ export function UsersAdmin() {
       {/* Shifts nobody leads / supervisors with no shift — only when any. */}
       <ShiftLeadsCard hideWhenClear onChanged={() => void load()} />
 
+      <SegmentedControl
+        options={[
+          { value: 'accounts', label: 'Accounts' },
+          { value: 'report', label: 'Access report' },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+
+      {view === 'report' && <AccessReport />}
+
+      {view === 'accounts' && (<>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
           <Field label="Search" className="flex-1 w-full sm:min-w-[200px]">
@@ -956,6 +1034,41 @@ export function UsersAdmin() {
         </CardContent>
       </Card>
 
+      </>)}
+
+      {bulkDeactivate && (
+        <DeactivateDialog
+          count={bulkDeactivate.ids.length}
+          onClose={() => setBulkDeactivate(null)}
+          onConfirm={async (reason) => {
+            const res = await deactivateUsers(bulkDeactivate.ids, reason);
+            const k = res.deactivated.length;
+            if (res.skipped.length === 0) {
+              toast.success(`${k} account${k === 1 ? '' : 's'} deactivated — reversible for 30 days.`);
+            } else {
+              toast.error(`${k} deactivated, ${res.skipped.length} skipped: ${res.skipped.map((x) => x.reason).join(' ')}`);
+            }
+            bulkDeactivate.clear();
+            setBulkDeactivate(null);
+            await load();
+            void queryClient.invalidateQueries({ queryKey: ['UsersAdmin', 'access-report'] });
+          }}
+        />
+      )}
+
+      {regionApproval && (
+        <RegionApprovalDialog
+          regionName={regionApproval.regionName}
+          email={regionApproval.user.email}
+          onClose={() => setRegionApproval(null)}
+          onConfirm={async (approverId) => {
+            const { user, regionId } = regionApproval;
+            setRegionApproval(null);
+            await onAssignRegion(user, regionId, approverId);
+          }}
+        />
+      )}
+
       {secondRoleFor && (
 
         <SecondRoleDialog
@@ -990,5 +1103,57 @@ export function UsersAdmin() {
         Every change here is recorded in the audit log.
       </div>
     </div>
+  );
+}
+
+/**
+ * Brief 1A-4: Region scope is the widest a portal account gets — every
+ * store in the region — so the binding carries a named approver who holds
+ * manage:org, recorded on the account and in the audit log.
+ */
+function RegionApprovalDialog({
+  regionName,
+  email,
+  onClose,
+  onConfirm,
+}: {
+  regionName: string;
+  email: string;
+  onClose: () => void;
+  onConfirm: (approverUserId: string) => Promise<void>;
+}) {
+  const [approver, setApprover] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Put {email} on {regionName}?</DialogTitle>
+          <DialogDescription>
+            A region account is the command center for every store in {regionName}; it replaces the client and store scope. Name who approved it.
+          </DialogDescription>
+        </DialogHeader>
+        <ApproverPicker value={approver} onChange={setApprover} disabled={busy} />
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            loading={busy}
+            disabled={!approver || busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onConfirm(approver);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Assign region
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

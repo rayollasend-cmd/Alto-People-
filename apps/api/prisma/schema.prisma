@@ -450,6 +450,15 @@ model User {
   regionId            String?          @db.Uuid
   // The name an invite addressed (portal accounts carry no associate).
   displayName         String?          @db.VarChar(120)
+  /// Brief 1A-4: a deactivation is reversible for 30 days (purgeAfter =
+  /// the day the sweep soft-deletes the account); Region scope on a
+  /// portal account carries the named approver.
+  deactivatedAt       DateTime?        @db.Timestamptz(6)
+  deactivationReason  String?          @db.VarChar(300)
+  deactivatedById     String?          @db.Uuid
+  purgeAfter          DateTime?        @db.Timestamptz(6)
+  regionApprovedById  String?          @db.Uuid
+  regionApprovedAt    DateTime?        @db.Timestamptz(6)
   associate           Associate?       @relation(fields: [associateId], references: [id], onDelete: SetNull)
   delegationsGiven    TeamDelegation[] @relation("DelegationFrom")
   delegationsReceived TeamDelegation[] @relation("DelegationTo")
@@ -664,6 +673,7 @@ model User {
 
   @@index([role])
   @@index([clientId])
+  @@index([purgeAfter])
   @@index([leadUserId])
   @@index([deletedAt])
   @@index([tenantId])

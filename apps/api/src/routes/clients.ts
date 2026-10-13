@@ -1166,6 +1166,8 @@ const PortalInviteSchema = z.object({
   email: z.string().email().max(254),
   /** null = the whole client (a market manager). */
   locationId: z.string().uuid().nullable().optional(),
+  /** Brief 1A-4: store-level is the default; the whole client must be asked for by name. */
+  wholeClient: z.boolean().optional(),
   /** How the note addresses them — name only; nothing else is known. */
   name: z.string().trim().min(1).max(120).optional(),
 });
@@ -1185,6 +1187,9 @@ clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     const input = PortalInviteSchema.parse(req.body);
     const email = input.email.trim().toLowerCase();
+    if (!input.locationId && !input.wholeClient) {
+      throw new HttpError(400, 'store_required', 'Pick the store this login is for. A whole-client (market manager) login must be asked for by name.');
+    }
     let location: { id: string; name: string } | null = null;
     if (input.locationId) {
       location = await prisma.location.findFirst({

@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { ApproverPicker } from '@/components/ApproverPicker';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -203,12 +204,14 @@ export function RegionsAdmin() {
 function InviteDialog({ region, onClose, onSent }: { region: RegionRow; onClose: () => void; onSent: () => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  // Brief 1A-4: Region scope needs a named approver who holds manage:org.
+  const [approver, setApprover] = useState('');
   const [busy, setBusy] = useState(false);
-  const valid = /^\S+@\S+\.\S+$/.test(email.trim());
+  const valid = /^\S+@\S+\.\S+$/.test(email.trim()) && approver.length > 0;
   const sendInvite = async () => {
     setBusy(true);
     try {
-      const r = await inviteRegionUser(region.id, { email: email.trim(), name: name.trim() || undefined });
+      const r = await inviteRegionUser(region.id, { email: email.trim(), name: name.trim() || undefined, approvedByUserId: approver });
       toast.success(
         r.emailFailed ? 'Login created, but the note failed to send — resend from Users & access.' : `Command-center note sent to ${r.email}.`,
       );
@@ -236,6 +239,7 @@ function InviteDialog({ region, onClose, onSent }: { region: RegionRow; onClose:
           <Field label="Email">
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="manager@market.example" />
           </Field>
+          <ApproverPicker value={approver} onChange={setApprover} disabled={busy} hint="Region scope is every store in the region. Name who approved it; it goes in the audit log." />
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>

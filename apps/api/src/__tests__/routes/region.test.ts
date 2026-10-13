@@ -181,7 +181,7 @@ describe('the region command center', () => {
 
     // Bind an account to a region from Users & access: client and store clear.
     const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: s.clientA.id });
-    expect((await admin.patch(`/admin/users/${portal.id}`).send({ regionId: created.body.id })).status).toBe(204);
+    expect((await admin.patch(`/admin/users/${portal.id}`).send({ regionId: created.body.id, approvedByUserId: hr.id })).status).toBe(204);
     const bound = await prisma.user.findUniqueOrThrow({ where: { id: portal.id } });
     expect(bound.regionId).toBe(created.body.id);
     expect(bound.clientId).toBeNull();
@@ -189,7 +189,7 @@ describe('the region command center', () => {
 
     // The market manager is invited from the region: a name and an email,
     // bound to the region and no client, and the command-center note.
-    const inv = await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: 'Market.Lead@walmart.example', name: 'Sam Ortiz' });
+    const inv = await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: 'Market.Lead@walmart.example', name: 'Sam Ortiz', approvedByUserId: hr.id });
     expect(inv.status).toBe(201);
     expect(inv.body.regionId).toBe(s.region.id);
     const market = await prisma.user.findUniqueOrThrow({ where: { email: 'market.lead@walmart.example' } });
@@ -202,8 +202,8 @@ describe('the region command center', () => {
     expect(note.body).toContain('1 store');
     expect(note.body).not.toContain('store site is ready');
     // An Alto staff email is refused; an unknown region is a 404.
-    expect((await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: hr.email })).status).toBe(409);
-    expect((await admin.post('/regions/00000000-0000-0000-0000-000000000000/portal-users').send({ email: 'x@y.example' })).status).toBe(404);
+    expect((await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: hr.email, approvedByUserId: hr.id })).status).toBe(409);
+    expect((await admin.post('/regions/00000000-0000-0000-0000-000000000000/portal-users').send({ email: 'x@y.example', approvedByUserId: hr.id })).status).toBe(404);
 
     // A store account has no command center; an associate has nothing here.
     const { user: storeMgr } = await createUser({ role: 'CLIENT_PORTAL', clientId: s.clientA.id });

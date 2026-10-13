@@ -61,6 +61,8 @@ export function PortalAccessSection({ clientId }: Props) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [locationId, setLocationId] = useState('');
+  // Brief 1A-4: store-level by default; the whole client is asked for by name.
+  const [wholeClient, setWholeClient] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const accessQuery = useQuery({
@@ -93,7 +95,12 @@ export function PortalAccessSection({ clientId }: Props) {
   const invite = async () => {
     setBusy(true);
     try {
-      const r = await invitePortalUser(clientId, { email: email.trim(), locationId: locationId || null, name: name.trim() || undefined });
+      const r = await invitePortalUser(clientId, {
+        email: email.trim(),
+        locationId: wholeClient ? null : locationId || null,
+        name: name.trim() || undefined,
+        ...(wholeClient ? { wholeClient: true } : {}),
+      });
       toast.success(
         r.emailFailed
           ? 'Login created, but the invite email failed — resend from Users & access.'
@@ -103,6 +110,7 @@ export function PortalAccessSection({ clientId }: Props) {
       setName('');
       setEmail('');
       setLocationId('');
+      setWholeClient(false);
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not send the invite.');
@@ -265,7 +273,7 @@ export function PortalAccessSection({ clientId }: Props) {
           <DialogHeader>
             <DialogTitle>Give a store a portal login</DialogTitle>
             <DialogDescription>
-              The store manager gets a note by email, addressed by name, with one link that opens their store site. Leave the store on the whole client for a market manager over every store here — they get the command-center note instead.
+              The store manager gets a note by email, addressed by name, with one link that opens their store site. A login is for one store unless you ask for the whole client — a market manager over every store here, who gets the command-center note instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -275,22 +283,33 @@ export function PortalAccessSection({ clientId }: Props) {
             <Field label="Email">
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="manager@store.example" />
             </Field>
-            <Field label="Store">
-              <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-                <option value="">Whole client (market manager)</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
+            <Field label="Store" hint={wholeClient ? 'Not needed for a whole-client login.' : 'Required — a store manager sees one store.'}>
+              {(p) => (
+                <Select {...p} value={locationId} onChange={(e) => setLocationId(e.target.value)} disabled={wholeClient}>
+                  <option value="">— pick the store —</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
+            <label className="flex min-h-[44px] items-center gap-2 text-sm text-silver">
+              <input
+                type="checkbox"
+                checked={wholeClient}
+                onChange={(e) => setWholeClient(e.target.checked)}
+                className="h-4 w-4 accent-gold"
+              />
+              Whole client (market manager over every store)
+            </label>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={() => void invite()} loading={busy} disabled={!/^\S+@\S+\.\S+$/.test(email.trim())}>
+            <Button onClick={() => void invite()} loading={busy} disabled={!/^\S+@\S+\.\S+$/.test(email.trim()) || (!wholeClient && !locationId)}>
               Send invite
             </Button>
           </DialogFooter>
