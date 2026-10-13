@@ -4,6 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { assertSafeOutboundUrl } from './safeOutboundUrl.js';
 import { env } from '../config/env.js';
+import { currentTenantId } from './tenant.js';
 
 /**
  * Phase 93 follow-up — the outbound webhook worker the route header
@@ -53,6 +54,8 @@ const RESPONSE_BODY_LIMIT = 1000;
 export interface EmitWebhookOpts {
   /** Scope: client-specific webhooks only hear events for their client. */
   clientId?: string | null;
+  /** Brief 2-1: the tenant whose event this is; defaults to the tenant in context. */
+  tenantId?: string | null;
   prisma?: PrismaClient;
 }
 
@@ -67,11 +70,19 @@ export async function emitWebhookEvent(
   opts: EmitWebhookOpts = {},
 ): Promise<void> {
   const prisma = opts.prisma ?? defaultPrisma;
+  // Brief 2-1: an event reaches only its own tenant's webhooks. With no
+  // tenant known it reaches none (fail closed), never every tenant's.
+  const tenantId = opts.tenantId ?? currentTenantId();
+  if (!tenantId) {
+    console.warn(`[alto-people/api] webhook ${eventType} emitted with no tenant in context; not delivered`);
+    return;
+  }
   try {
     const hooks = await prisma.webhook.findMany({
       where: {
         deletedAt: null,
         isActive: true,
+        tenantId,
         AND: [
           {
             OR: [

@@ -8,6 +8,19 @@ import { deliverOne } from '../lib/webhookDispatch.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { hashPassword } from '../lib/passwords.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+
+/** Brief 2-1: keys and webhooks are the caller's tenant's; another tenant's id is not found. */
+async function ownKey(id: string) {
+  const k = await prisma.apiKey.findFirst({ where: { id, tenantId: tenantIdForWrite() }, select: { id: true } });
+  if (!k) throw new HttpError(404, 'not_found', 'API key not found.');
+  return k;
+}
+async function ownHook(id: string) {
+  const w = await prisma.webhook.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
+  if (!w) throw new HttpError(404, 'not_found', 'Webhook not found.');
+  return w;
+}
 
 /**
  * Phase 93 — Public API keys + outbound webhooks.
@@ -48,7 +61,7 @@ const ApiKeyInputSchema = z.object({
 apiKeysWebhooks93Router.get('/api-keys', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.apiKey.findMany({
-    where: { ...(clientId ? { clientId } : {}) },
+    where: { tenantId: tenantIdForWrite(), ...(clientId ? { clientId } : {}) },
     include: {
       client: { select: { name: true } },
       createdBy: { select: { email: true } },
@@ -96,6 +109,7 @@ apiKeysWebhooks93Router.post('/api-keys', MANAGE, async (req, res) => {
 });
 
 apiKeysWebhooks93Router.post('/api-keys/:id/revoke', MANAGE, async (req, res) => {
+  await ownKey(req.params.id);
   await prisma.apiKey.update({
     where: { id: req.params.id },
     data: { revokedAt: new Date() },
@@ -104,6 +118,7 @@ apiKeysWebhooks93Router.post('/api-keys/:id/revoke', MANAGE, async (req, res) =>
 });
 
 apiKeysWebhooks93Router.delete('/api-keys/:id', MANAGE, async (req, res) => {
+  await ownKey(req.params.id);
   await prisma.apiKey.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });
@@ -122,6 +137,7 @@ apiKeysWebhooks93Router.get('/webhooks', VIEW, async (req, res) => {
   const rows = await prisma.webhook.findMany({
     where: {
       deletedAt: null,
+      tenantId: tenantIdForWrite(),
       ...(clientId ? { clientId } : {}),
     },
     include: {
@@ -173,6 +189,7 @@ apiKeysWebhooks93Router.put('/webhooks/:id', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
   // SSRF guard: https-only, publicly-routable destinations only.
   await assertSafeOutboundUrl(input.url);
+  await ownHook(req.params.id);
   await prisma.webhook.update({
     where: { id: req.params.id },
     data: {
@@ -186,8 +203,7 @@ apiKeysWebhooks93Router.put('/webhooks/:id', MANAGE, async (req, res) => {
 });
 
 apiKeysWebhooks93Router.post('/webhooks/:id/toggle', MANAGE, async (req, res) => {
-  const w = await prisma.webhook.findUnique({ where: { id: req.params.id } });
-  if (!w) throw new HttpError(404, 'not_found', 'Webhook not found.');
+  const w = await ownHook(req.params.id);
   await prisma.webhook.update({
     where: { id: w.id },
     data: { isActive: !w.isActive },
@@ -196,6 +212,7 @@ apiKeysWebhooks93Router.post('/webhooks/:id/toggle', MANAGE, async (req, res) =>
 });
 
 apiKeysWebhooks93Router.delete('/webhooks/:id', MANAGE, async (req, res) => {
+  await ownHook(req.params.id);
   await prisma.webhook.update({
     where: { id: req.params.id },
     data: { deletedAt: new Date(), isActive: false },
@@ -204,6 +221,7 @@ apiKeysWebhooks93Router.delete('/webhooks/:id', MANAGE, async (req, res) => {
 });
 
 apiKeysWebhooks93Router.get('/webhooks/:id/deliveries', VIEW, async (req, res) => {
+  await ownHook(req.params.id);
   const rows = await prisma.webhookDelivery.findMany({
     where: { webhookId: req.params.id },
     orderBy: { createdAt: 'desc' },
@@ -229,8 +247,8 @@ apiKeysWebhooks93Router.get('/webhooks/:id/deliveries', VIEW, async (req, res) =
  * the worker will pick up just like any other.
  */
 apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
-  const w = await prisma.webhook.findUnique({ where: { id: req.params.id } });
-  if (!w || w.deletedAt) throw new HttpError(404, 'not_found', 'Webhook not found.');
+  const w = await ownHook(req.params.id);
+  if (w.deletedAt) throw new HttpError(404, 'not_found', 'Webhook not found.');
 
   const eventType = z.string().default('test.ping').parse(req.body?.eventType);
   const payload = {
