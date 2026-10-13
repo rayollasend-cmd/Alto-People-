@@ -59,6 +59,12 @@ describe('a direct employer with no clients', () => {
     const application = await prisma.application.findUniqueOrThrow({ where: { id: invite.body.id } });
     expect(application.clientId).toBeNull();
     expect(application.locationId).toBe(site.body.site.id);
+    // HR waives the checklist the way the screen does: each open task skipped.
+    const tasks = await prisma.onboardingTask.findMany({ where: { checklist: { applicationId: application.id } }, select: { id: true, status: true } });
+    for (const t of tasks.filter((t) => t.status !== 'DONE' && t.status !== 'SKIPPED')) {
+      const skip = await admin.post(`/onboarding/applications/${application.id}/tasks/${t.id}/skip`).send({});
+      expect([200, 204], JSON.stringify(skip.body)).toContain(skip.status);
+    }
     const hireDate = ymd(new Date());
     const approve = await admin.post(`/onboarding/applications/${application.id}/approve`).send({ hireDate, acknowledgeWarnings: true });
     expect(approve.status, JSON.stringify(approve.body)).toBe(200);

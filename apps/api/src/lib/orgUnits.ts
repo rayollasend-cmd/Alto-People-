@@ -180,10 +180,21 @@ export async function regionUnitPath(db: Db, regionId: string): Promise<string |
   return (await regionUnit(db, regionId))?.path ?? null;
 }
 
-/** The sites a region account can see: every site under the region's unit. */
+/**
+ * The sites a region account can see: every site under the region's unit,
+ * and every site that still names the region directly. Region stays a
+ * mirror until it is retired, and a site tagged with a region (the
+ * backfill, a write that predates the unit, a region made outside its admin
+ * route) must not fall out of its own command center. Never wider than
+ * the region: both halves are the region's own.
+ */
 export async function regionSiteIds(db: Db, regionId: string): Promise<string[]> {
   const u = await regionUnit(db, regionId);
-  return u ? siteIdsUnder(db, u.id) : [];
+  const [underUnit, tagged] = await Promise.all([
+    u ? siteIdsUnder(db, u.id) : Promise.resolve([] as string[]),
+    db.site.findMany({ where: { regionId, deletedAt: null }, select: { id: true } }),
+  ]);
+  return [...new Set([...underUnit, ...tagged.map((s) => s.id)])];
 }
 
 /* ===== The CostCenter mirror ============================================== */
