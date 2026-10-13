@@ -119,6 +119,7 @@ async function overview(now: Date): Promise<HeadcountOverview> {
           grossVariance: snapshot.payrollGross == null ? null : Number(snapshot.platformGross) - Number(snapshot.payrollGross),
           varianceLines: snapshot.varianceLines,
           payrollProvided: snapshot.payrollProvided,
+          notes: snapshot.notes,
         }
       : null,
   };

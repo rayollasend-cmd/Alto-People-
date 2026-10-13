@@ -14,10 +14,16 @@
  *     --start 2026-09-26 --end 2026-10-09 \
  *     [--payroll /path/to/synchros.csv] \
  *     [--map "hours=Reg Hours,overtimeHours=OT Hours,gross=Gross Pay,email=Work Email"] \
- *     [--out ./reconcile-out] [--window 14] [--persist]
+ *     [--out ./reconcile-out] [--window 14] [--persist] [--self-check]
  *
  * --persist keeps the totals (one ReconciliationSnapshot row) so the Headcount
  * screen shows the variance beside today's numbers.
+ *
+ * --self-check (no --payroll) reconciles the engine of today against the
+ * platform's own FINALIZED/DISBURSED runs for the period, so the Headcount
+ * screen can show a variance before the external export exists:
+ *
+ *   railway run --service api -- npx tsx scripts/reconcile-payroll.ts --start 2026-09-26 --end 2026-10-09 --self-check --persist
  *
  * Without --payroll it writes the platform side alone. The CSV column map
  * lives in src/lib/reconcilePayroll.ts (PAYROLL_COLUMNS); complete it when
@@ -37,7 +43,7 @@ async function main() {
   const start = arg('--start');
   const end = arg('--end');
   if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    console.error('Usage: npx tsx scripts/reconcile-payroll.ts --start YYYY-MM-DD --end YYYY-MM-DD [--payroll file.csv] [--map k=Header,...] [--out dir] [--window days]');
+    console.error('Usage: npx tsx scripts/reconcile-payroll.ts --start YYYY-MM-DD --end YYYY-MM-DD [--payroll file.csv] [--map k=Header,...] [--out dir] [--window days] [--persist] [--self-check]');
     process.exit(2);
   }
   const payrollPath = arg('--payroll');
@@ -48,7 +54,9 @@ async function main() {
 
   const prisma = new PrismaClient();
   try {
-    const { result, platform, csv, markdown } = await runReconciliation(prisma, { start, end, payrollCsv, map, windowDays });
+    const selfCheck = process.argv.includes('--self-check');
+    const { result, platform, csv, markdown } = await runReconciliation(prisma, { start, end, payrollCsv, map, windowDays, selfCheck });
+    if (selfCheck && !payrollCsv && !result.payrollProvided) console.warn('Self-check: no FINALIZED or DISBURSED payroll run lies inside this period; the platform side was written alone.');
     if (process.argv.includes('--persist')) console.log(`Snapshot ${await persistReconciliation(prisma, result, platform)} saved for the Headcount screen.`);
     mkdirSync(outDir, { recursive: true });
     const base = join(outDir, `reconcile-${start}-${end}`);

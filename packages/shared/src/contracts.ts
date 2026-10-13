@@ -8695,6 +8695,8 @@ export interface ReconciliationSummary {
   grossVariance: number | null;
   varianceLines: number | null;
   payrollProvided: boolean;
+  /** What was compared, in words (a self-check names itself). */
+  notes: string | null;
 }
 
 export interface HeadcountOverview {

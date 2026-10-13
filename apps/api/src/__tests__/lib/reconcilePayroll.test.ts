@@ -2,8 +2,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ACTIVE_COUNT_SITES } from '../../lib/activeInventory.js';
-import { columnMapFromArg, parseCsv, parsePayrollCsv, platformSide, reconcile, reconcileCsv, reconcileMarkdown, runReconciliation } from '../../lib/reconcilePayroll.js';
-import { createAssociate, createClient, prisma, truncateAll } from '../../../test/db.js';
+import { columnMapFromArg, parseCsv, parsePayrollCsv, persistReconciliation, platformSide, reconcile, reconcileCsv, reconcileMarkdown, runReconciliation } from '../../lib/reconcilePayroll.js';
+import { agent, loginAs } from '../../../test/http.js';
+import { createAssociate, createClient, prisma, truncateAll, createUser } from '../../../test/db.js';
 
 /**
  * Reconciliation report (Brief 1A-1).
@@ -117,6 +118,42 @@ describe('the comparison', () => {
     const r = reconcile(await platformSide(prisma, { start: START, end: END }, NOW), null);
     expect(reconcileCsv(r).split('\n')).toHaveLength(5);
     expect(reconcileMarkdown(r, await platformSide(prisma, { start: START, end: END }, NOW))).toContain('| Paid this period | 2 | — | — |');
+  });
+});
+
+describe('the self-check', () => {
+  it('reconciles the engine of today against the finalized runs for the period: zero variance, and the snapshot says what it compared', async () => {
+    await world();
+    // No finalized run yet: nothing to compare, and it says so.
+    const empty = await runReconciliation(prisma, { start: START, end: END, now: NOW, selfCheck: true });
+    expect(empty.result.payrollProvided).toBe(false);
+    expect(empty.result.payrollSource).toBeNull();
+
+    // The platform's own run for the period, finalized.
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(agent(), hr.email);
+    const run = await a.post('/payroll/runs').send({ periodStart: START, periodEnd: END });
+    expect(run.status).toBe(201);
+    await prisma.payrollRun.update({ where: { id: run.body.id }, data: { status: 'FINALIZED' } });
+
+    const { result } = await runReconciliation(prisma, { start: START, end: END, now: NOW, selfCheck: true });
+    expect(result.payrollProvided).toBe(true);
+    expect(result.payrollSource).toBe('platform-runs');
+    expect(result.variances).toEqual([]);
+    expect(result.totals.hours.variance).toBe(0);
+    expect(result.totals.gross.variance).toBe(0);
+    expect(result.totals.headcount.variance).toBe(0);
+
+    const id = await persistReconciliation(prisma, result, (await runReconciliation(prisma, { start: START, end: END, now: NOW, selfCheck: true })).platform, NOW);
+    const snap = await prisma.reconciliationSnapshot.findUniqueOrThrow({ where: { id } });
+    expect(snap.payrollProvided).toBe(true);
+    expect(snap.varianceLines).toBe(0);
+    expect(Number(snap.payrollHours)).toBe(Number(snap.platformHours));
+    expect(snap.notes).toMatch(/Self-check/);
+    expect(snap.notes).toMatch(/Synchros/);
+    // The Headcount screen reads it.
+    const overview = await a.get('/headcount/overview');
+    expect(overview.body.reconciliation).toMatchObject({ payrollProvided: true, varianceLines: 0 });
   });
 });
 

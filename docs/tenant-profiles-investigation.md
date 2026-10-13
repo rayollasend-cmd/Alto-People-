@@ -307,6 +307,9 @@ Risks:
 
 Decisions for the owner:
 
+**Decided 2026-10-13 — items 1 to 9 approved as recommended**, with the owner's guardrails: the scope rules must fail closed on tenant and site when client is null, never open, and that test is written first (item 2); the W-2/1099 employer comes from the employment record, never from a Client row (item 3). Items 10 to 12 and the seven risks above were sent to the owner together. Two additions to the plan: the WhatsApp templates take the tenant display name and the assistant name as variables, and the Meta re-registration starts early because it takes days; the hotel seed's forbidden-word test is the acceptance line for 2-1b (no "client", "bill rate", "housing", "van", "store", "associate" when the tenant says "team member", or "Alto" in any screen or Hugo message), with the list kept in the test, not in prose.
+
+
 1. **Rename `Location` to `Site` physically, or add `Location.type` and let the terminology table say "site"?** Twenty-two models, 199 web files and every URL (`/clients/:id/locations`) reference Location. Recommendation: add `type` and `@@map` later; the noun is the profile's job.
 2. **A direct employer with no Client rows (nullable FKs, scope rewrite) or a hidden "self" Client per tenant?** The self-client passes the UI acceptance in a week and leaves the data model staffing-shaped, which the brief's "Client is optional" forbids. Recommendation: nullable FKs on the 15 hotel-path models; the other 17 stay required because their modules are off for a direct employer.
 3. **Employer of record as a new `EmployerOrganization` + `Employment` pair (recommended) or as columns on `Application`?** Application dies on cross-client transfer and names a client, not an employer.

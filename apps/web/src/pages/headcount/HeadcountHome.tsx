@@ -206,6 +206,7 @@ function ReconciliationCard({ summary, loaded }: { summary: ReconciliationSummar
                   : `${n(summary.varianceLines)} variance ${summary.varianceLines === 1 ? 'line' : 'lines'}.`
                 : 'Payroll figures were not provided for this run; variances show as —.'}
             </p>
+            {summary.notes ? <p className="text-xs text-silver">{summary.notes}</p> : null}
           </>
         )}
       </CardContent>

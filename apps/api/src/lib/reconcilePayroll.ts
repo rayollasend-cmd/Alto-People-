@@ -325,6 +325,8 @@ export interface ReconcileResult {
   topCauses: { cause: string; lines: number }[];
   payrollProvided: boolean;
   missingColumns: PayrollColumnKey[];
+  /** Where the payroll side came from: the external export, the platform's own finalized runs (self-check), or nothing. */
+  payrollSource?: 'export' | 'platform-runs' | null;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -502,13 +504,54 @@ export function reconcileMarkdown(r: ReconcileResult, platform: PlatformSide): s
   return `${out.join('\n')}\n`;
 }
 
+/**
+ * The platform's own payroll for the period — what the FINALIZED and
+ * DISBURSED runs inside it actually paid, per associate — in the shape of
+ * an export, so the engine of today can be reconciled against the runs of
+ * record without an external file. Null when no run was finalized in the
+ * period. The external (Synchros) match is a different question and still
+ * needs the export.
+ */
+export async function payrollSideFromPlatform(db: Db, period: { start: string; end: string }): Promise<{ rows: PayrollRow[]; missingColumns: PayrollColumnKey[] } | null> {
+  const items = await db.payrollItem.findMany({
+    where: {
+      status: { not: 'VOIDED' },
+      payrollRun: {
+        status: { in: ['FINALIZED', 'DISBURSED'] },
+        periodStart: { gte: new Date(`${period.start}T00:00:00.000Z`) },
+        periodEnd: { lte: new Date(`${period.end}T00:00:00.000Z`) },
+      },
+    },
+    select: { hoursWorked: true, hourlyRate: true, grossPay: true, associate: { select: { email: true, firstName: true, lastName: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (items.length === 0) return null;
+  const byEmail = new Map<string, PayrollRow>();
+  let line = 0;
+  for (const i of items) {
+    const email = i.associate.email.toLowerCase();
+    const row = byEmail.get(email) ?? { email, employeeNumber: null, name: `${i.associate.firstName} ${i.associate.lastName}`, hours: 0, rate: null, gross: 0, status: null, line: ++line };
+    row.hours = round2(row.hours + Number(i.hoursWorked));
+    row.gross = round2((row.gross ?? 0) + Number(i.grossPay));
+    row.rate = Number(i.hourlyRate);
+    byEmail.set(email, row);
+  }
+  return { rows: [...byEmail.values()], missingColumns: [] };
+}
+
 export async function runReconciliation(
   db: Db,
-  opts: { start: string; end: string; payrollCsv?: string | null; map?: PayrollColumnMap; now?: Date; windowDays?: number },
+  opts: { start: string; end: string; payrollCsv?: string | null; map?: PayrollColumnMap; now?: Date; windowDays?: number; selfCheck?: boolean },
 ): Promise<{ result: ReconcileResult; platform: PlatformSide; csv: string; markdown: string }> {
   const platform = await platformSide(db, { start: opts.start, end: opts.end }, opts.now ?? new Date(), opts.windowDays);
-  const payroll = opts.payrollCsv != null ? parsePayrollCsv(opts.payrollCsv, opts.map ?? PAYROLL_COLUMNS) : null;
+  const payroll =
+    opts.payrollCsv != null
+      ? parsePayrollCsv(opts.payrollCsv, opts.map ?? PAYROLL_COLUMNS)
+      : opts.selfCheck
+        ? await payrollSideFromPlatform(db, { start: opts.start, end: opts.end })
+        : null;
   const result = reconcile(platform, payroll, 'email');
+  result.payrollSource = opts.payrollCsv != null ? 'export' : payroll ? 'platform-runs' : null;
   return { result, platform, csv: reconcileCsv(result), markdown: reconcileMarkdown(result, platform) };
 }
 
@@ -529,7 +572,12 @@ export async function persistReconciliation(db: Db, r: ReconcileResult, platform
       payrollGross: r.payrollProvided ? r.totals.gross.payroll : null,
       varianceLines: r.payrollProvided ? r.variances.length : null,
       payrollProvided: r.payrollProvided,
-      notes: r.missingColumns.length ? `Columns not found in the export: ${r.missingColumns.join(', ')}` : null,
+      notes:
+        r.payrollSource === 'platform-runs'
+          ? 'Self-check: the engine today against the finalized runs for the period. The external (Synchros) match still waits on the export.'
+          : r.missingColumns.length
+            ? `Columns not found in the export: ${r.missingColumns.join(', ')}`
+            : null,
     },
     select: { id: true },
   });
