@@ -1,3 +1,10 @@
+// Before any route module loads. express-async-errors wraps a handler as its
+// Layer is CONSTRUCTED (a setter on Layer.prototype.handle), so a router built
+// before the patch keeps raw handlers whose async throws become unhandled
+// rejections and the request never answers. In the server, app.ts imports
+// it first; a test file that imports a route module before test/http.ts did
+// not. One test hung for its whole timeout on a 409 because of this.
+import 'express-async-errors';
 import { config as loadDotenv } from 'dotenv';
 import { resolve } from 'node:path';
 import { beforeAll } from 'vitest';

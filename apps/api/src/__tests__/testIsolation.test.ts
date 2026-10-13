@@ -35,6 +35,7 @@ describe('test isolation', () => {
        ORDER BY 1`,
       [...TRUNCATED_TABLES],
     );
-    expect(rows.map((r) => r.table_name)).toEqual([...PRESERVED_TABLES]);
+    // Sorted on both sides: the catalog orders names by collation, the list by hand.
+    expect(rows.map((r) => r.table_name).sort()).toEqual([...PRESERVED_TABLES].sort());
   });
 });

@@ -217,15 +217,10 @@ describe('the H-2B client rule', () => {
 
   it('hides the other client from the open-shift list and refuses a pickup there', async () => {
     const w = await h2bWorld();
-    // Step markers: this test once hung for the full timeout in CI with nothing logged.
-    console.log('[h2b] world ready');
     const eligible = await listEligibleOpenShifts(w.eli.id);
-    console.log('[h2b] eligible computed', eligible.length);
     expect(eligible.map((s) => s.id)).toEqual([w.atX.id]);
     const eli = await loginAs(agent(), w.eliUser.email);
-    console.log('[h2b] signed in');
     const claim = await eli.post(`/shifts/${w.atY.id}/claim`).send({});
-    console.log('[h2b] claim answered', claim.status);
     expect([403, 409]).toContain(claim.status);
     expect(claim.body.error.code).toBe('program_client_mismatch');
   });

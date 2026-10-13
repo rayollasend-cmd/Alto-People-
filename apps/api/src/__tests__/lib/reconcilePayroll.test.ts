@@ -87,7 +87,8 @@ describe('the comparison', () => {
     ].join('\n');
     const { result, csv: out, markdown } = await runReconciliation(prisma, { start: START, end: END, payrollCsv: csv, now: NOW });
     expect(result.payrollProvided).toBe(true);
-    expect(result.missingColumns).toEqual(['employeeNumber']);
+    // This export has no employee number and no overtime column; both are reported, nothing else.
+    expect(result.missingColumns).toEqual(['employeeNumber', 'overtimeHours']);
     expect(result.lines).toHaveLength(4);
     const by = Object.fromEntries(result.lines.map((l) => [l.key, l]));
     expect(by['ana@example.com'].causes).toEqual([]);
