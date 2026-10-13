@@ -22,8 +22,9 @@ const FORBIDDEN = ['client', 'bill rate', 'housing', 'van', 'store', 'associate'
 /**
  * Exemptions, each with its reason:
  *  - "Alto People": the product name Hugo states in his introduction, by the
- *    owner's direction; whether it is exempt from the hotel's rule is the
- *    owner's pending ruling. Removed from the text before the check.
+ *    owner's direction; exempt from the hotel's rule by the owner's ruling
+ *    of 2026-10-13 (disclosure of the product and that he is an AI stays for
+ *    every tenant). Removed from the text before the check.
  *  - the admin's own address "admin@altohr.com" needs no exemption: "alto"
  *    inside "altohr" is not a whole word and the check is on word
  *    boundaries (the spec verifies this below).
@@ -208,8 +209,8 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       '/payroll',
       // '/admin/organization' is held back: it names the module catalog
       // ("Client portal", "Housing link", "Transportation: rides, vans…") and
-      // the terminology keys; whether the catalog is exempt is the owner's
-      // pending ruling, as in the vitest harness.
+      // the terminology keys; the owner exempted the module catalog page on
+      // 2026-10-13 (it names product modules, seen only by the tenant's admin).
       '/admin/sites',
       '/admin/org-units',
       '/admin/employers',

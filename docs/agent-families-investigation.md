@@ -172,6 +172,8 @@ From Workday's public descriptions (approximate; not re-verified here): Workday 
 
 ## 6. Owner decisions
 
+**Approved 2026-10-13: all seven, as recommended.** The registry step (§7, step 0) starts when Brief 2-1b closes.
+
 1. **Capability as the unit of governance** (scopes, gate, scorecard, scenarios, kill switch per capability; agent = family). Recommendation: yes; it is what the taxonomy and Brief 2-7 already say.
 2. **Two new gated actions, SHIFT_ASSIGN and CASE_OPEN, executable by the agent once approved.** Recommendation: yes; a fill that a supervisor approves in one tap is the whole point. Pay, separation and client messages stay as they are.
 3. **The agent may send notices to associates (reminders, confirmations, document chases) without a gate**, under the one-per-day rule, logged. Recommendation: yes; the shift reminder already does this; gating it would bury the queue.

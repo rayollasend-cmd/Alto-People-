@@ -39,16 +39,17 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
  * boundaries, singular and plural: "van" never matches "advance" or
  * "relevant", "store" never matches "restore".
  *
- * Exempt, by the owner's ruling pending: the product name "Alto People"
- * in Hugo's self-introduction. Nothing else.
+ * Exempt, by the owner's rulings of 2026-10-13: the product name "Alto
+ * People" in Hugo's self-introduction, and the Organization profile page,
+ * which names the module catalog for the tenant's admin. Nothing else.
  *
  * TODO (surfaces not rendered here yet — deep pages that need their own
  * fixtures before the words on them can be chased):
  *   - Organization profile (/admin/organization): it names every module a
  *     tenant can turn on, in the shared catalog's words ("Client portal",
  *     "Bill rates and margin", "Housing link", "Transportation: rides, vans
- *     …"). Those names are the catalog, not the tenant's vocabulary; whether
- *     the module catalog is exempt is the owner's call. Skipped until ruled.
+   *     …"). Those names are the catalog, not the tenant's vocabulary; the
+ *     owner exempted the page on 2026-10-13.
  */
 
 const FORBIDDEN = ['client', 'bill rate', 'housing', 'van', 'store', 'associate', 'alto'] as const;
@@ -279,7 +280,7 @@ const SURFACES: Surface[] = [
   { name: 'Time home', ui: () => <TimeHome />, route: '/time' },
   { name: 'HR cases home', ui: () => <HrCasesHome />, route: '/hr-cases' },
   { name: 'Users & access', ui: () => <UsersAdmin />, route: '/admin/users' },
-  { name: 'Organization profile', ui: () => <TenantProfileHome />, route: '/admin/organization', skip: 'names the module catalog; see the TODO above' },
+  { name: 'Organization profile', ui: () => <TenantProfileHome />, route: '/admin/organization', skip: 'exempt by the owner (2026-10-13): it names the module catalog' },
   { name: 'Employers of record', ui: () => <EmployersAdmin />, route: '/admin/employers' },
   { name: 'Organizational tree', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
   { name: 'Sites', ui: () => <SitesAdmin />, route: '/admin/sites' },

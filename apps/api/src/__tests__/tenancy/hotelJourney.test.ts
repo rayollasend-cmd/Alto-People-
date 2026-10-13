@@ -115,7 +115,7 @@ describe('a direct employer with no clients', () => {
     expect((await admin.get('/clients')).status).toBe(404);
 
     // Hugo speaks the hotel's words. The list lives here, not in prose; the
-    // one exemption is the product name in his introduction (owner's ruling pending).
+    // one exemption is the product name in his introduction (exempt by the owner's ruling, 2026-10-13).
     expect((await admin.patch('/admin/org/settings').send({ orgName: 'The Grand Hotel' })).status).toBe(200);
     await loadTenantProfile(ALTO_TENANT_ID);
     const FORBIDDEN = /\b(clients?|bill rates?|housing|vans?|stores?|associates?|alto)\b/i;

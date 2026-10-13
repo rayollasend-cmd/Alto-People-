@@ -330,6 +330,8 @@ Decisions for the owner:
 11. **MANAGED_PROGRAM and HYBRID semantics.** Nothing in the code would differ from WORKFORCE_PROVIDER unless the business model drives default modules and vocabulary only. Recommendation: `businessModel` sets defaults at tenant creation and is otherwise informational; the code reads `modules` and `terminology`.
 12. **Roles per business model:** `TRANSPORTATION_DIRECTOR`, `DRIVER`, `CLIENT_PORTAL` are meaningless to the hotel; hide by module now, and let Brief 2-3 make roles tenant-defined.
 
+**Rulings of 2026-10-13 (closing 2-1b's open questions), all as recommended:** the Organization profile page is exempt from the forbidden-word rule (it names the module catalog for the tenant's admin); Hugo keeps "Alto People" and the AI disclosure for every tenant, the one exempt phrase; the W-2 employer of Alto HR's associates stays per client as today, to revisit when payroll moves fully onto the platform.
+
 ## 10. Sizing
 
 | Step | Contents | Weight |
