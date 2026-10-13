@@ -64,11 +64,16 @@ const here = (page: Page) => page.evaluate(() => `${location.pathname}${location
  * under CI's two workers).
  */
 async function settleHistory(page: Page) {
+  // Stable for three samples in a row (750 ms), not just one: the handover
+  // can start after the first quiet sample (one worker, 2026-10-13, landed
+  // on /me instead of the kiosk).
   let last = await page.evaluate(() => history.length);
-  for (let i = 0; i < 12; i++) {
+  let stable = 0;
+  for (let i = 0; i < 16; i++) {
     await page.waitForTimeout(250);
     const now = await page.evaluate(() => history.length);
-    if (now === last) return;
+    stable = now === last ? stable + 1 : 0;
+    if (stable >= 3) return;
     last = now;
   }
 }
