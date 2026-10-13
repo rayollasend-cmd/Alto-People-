@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { getBrandingSync } from './branding.js';
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
 import { inviteTemplate } from './emailTemplates.js';
@@ -122,7 +123,8 @@ export async function deliverDueInvite(applicationId: string, now = new Date()):
     userId: user.id,
     email: app.associate.email,
     firstName: app.associate.firstName,
-    clientName: app.client.name,
+    // A direct employer's invite names the organization itself.
+    clientName: app.client?.name ?? getBrandingSync().orgName,
     hireDate: app.associate.hireDate,
     rawToken: invite.raw,
     expiresAt,

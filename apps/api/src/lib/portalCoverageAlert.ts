@@ -84,7 +84,7 @@ export async function runPortalCoverageAlertSweep(
     : [];
   const regionOfLocation = new Map(regionStores.map((l) => [l.id, l.regionId]));
   const clientIds = [
-    ...new Set([...portalUsers.filter((u) => u.clientId).map((u) => u.clientId!), ...regionStores.map((l) => l.clientId)]),
+    ...new Set([...portalUsers.filter((u) => u.clientId).map((u) => u.clientId!), ...regionStores.map((l) => l.clientId).filter((id): id is string => id !== null)]),
   ];
   if (clientIds.length === 0) return { waves: 0, rung: 0 };
 
@@ -138,6 +138,8 @@ export async function runPortalCoverageAlertSweep(
   // Group into shifts per client + store + start + end.
   const waves = new Map<string, ShortWave>();
   for (const s of shifts) {
+    // The query names clients; the type does not know it.
+    if (!s.clientId || !s.client) continue;
     const key = `coverage:${s.clientId}|${s.locationId ?? '-'}|${s.startsAt.toISOString()}|${s.endsAt.toISOString()}`;
     let w = waves.get(key);
     if (!w) {

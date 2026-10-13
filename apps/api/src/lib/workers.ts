@@ -132,6 +132,8 @@ async function personSites(db: Db, associateIds: string[]): Promise<Map<string, 
     orderBy: { startedAt: 'desc' },
   });
   for (const r of rows) {
+    // The site reference names a client (shared contract); a client-less site (a direct employer) is listed once the contract allows it.
+    if (!r.location.clientId || !r.location.client) continue;
     const list = out.get(r.associateId) ?? [];
     list.push({
       locationId: r.location.id,
@@ -167,15 +169,19 @@ async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSu
     notes: r.notes,
     sites: [
       ...(r.associateId ? (sitesByAssociate.get(r.associateId) ?? []) : []),
-      ...r.assignments.map((a) => ({
-        locationId: a.location.id,
-        siteName: a.location.name,
-        clientId: a.location.clientId,
-        clientName: a.location.client.name,
-        startedAt: ymd(a.startedAt),
-        endedAt: a.endedAt ? ymd(a.endedAt) : null,
-        source: 'worker' as const,
-      })),
+      ...r.assignments.flatMap((a) =>
+        a.location.clientId && a.location.client
+          ? [{
+              locationId: a.location.id,
+              siteName: a.location.name,
+              clientId: a.location.clientId,
+              clientName: a.location.client.name,
+              startedAt: ymd(a.startedAt),
+              endedAt: a.endedAt ? ymd(a.endedAt) : null,
+              source: 'worker' as const,
+            }]
+          : [],
+      ),
     ],
     upcomingShifts: upcomingBy.get(r.id) ?? 0,
     createdAt: r.createdAt.toISOString(),

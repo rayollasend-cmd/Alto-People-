@@ -452,8 +452,8 @@ qualificationsRouter.get(
     res.json({
       shifts: eligible.map((s) => ({
         id: s.id,
-        clientId: s.client.id,
-        clientName: s.client.name,
+        clientId: s.client?.id ?? '',
+        clientName: s.client?.name ?? '',
         position: s.position,
         startsAt: s.startsAt.toISOString(),
         endsAt: s.endsAt.toISOString(),
@@ -548,7 +548,7 @@ qualificationsRouter.post(
       subject: 'Shift claim awaiting your approval',
       body: `${claimantName} claimed the open shift ${formatShiftLine({
         position: shift.position,
-        clientName: shift.client.name,
+        clientName: shift.client?.name ?? '',
         startsAt: shift.startsAt,
         endsAt: shift.endsAt,
         timezone: shift.locationRel?.timezone ?? null,
@@ -656,7 +656,7 @@ qualificationsRouter.put(
     if (input.status === 'APPROVED' || input.status === 'REJECTED') {
       const shiftLine = formatShiftLine({
         position: claim.shift.position,
-        clientName: claim.shift.client.name,
+        clientName: claim.shift.client?.name ?? '',
         startsAt: claim.shift.startsAt,
         endsAt: claim.shift.endsAt,
         timezone: claim.shift.locationRel?.timezone ?? null,
@@ -715,7 +715,7 @@ qualificationsRouter.get(
         associateId: c.associateId,
         associateName: `${c.associate.firstName} ${c.associate.lastName}`,
         position: c.shift.position,
-        clientName: c.shift.client.name,
+        clientName: c.shift.client?.name ?? '',
         startsAt: c.shift.startsAt.toISOString(),
         endsAt: c.shift.endsAt.toISOString(),
         createdAt: c.createdAt.toISOString(),

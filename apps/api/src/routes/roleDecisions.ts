@@ -285,7 +285,7 @@ async function computeItemFacts(
     });
     for (const s of shifts) {
       list.push(
-        `${formatTimeInZone(s.startsAt, DEFAULT_TIMEZONE)} ${s.position} — ${s.location ?? s.client.name}`,
+        `${formatTimeInZone(s.startsAt, DEFAULT_TIMEZONE)} ${s.position} — ${s.location ?? s.client?.name ?? ''}`,
       );
     }
   }

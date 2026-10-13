@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { getBrandingSync } from './branding.js';
 import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -317,10 +318,10 @@ export async function runProgressReminderSweep(
         .join('\n');
       const linkPath = `/onboarding/me/${app.id}`;
       void notifyUser(user.id, {
-        subject: `[Reminder] ${open.length} onboarding task${open.length === 1 ? '' : 's'} still open — ${app.client.name}`,
+        subject: `[Reminder] ${open.length} onboarding task${open.length === 1 ? '' : 's'} still open — ${app.client?.name ?? getBrandingSync().orgName}`,
         body:
           `Hi ${app.associate.firstName},\n\n` +
-          `Your onboarding for ${app.client.name} is ${percent}% complete, ` +
+          `Your onboarding for ${app.client?.name ?? getBrandingSync().orgName} is ${percent}% complete, ` +
           `but nothing has moved in ${idleDays} day${idleDays === 1 ? '' : 's'}. ` +
           `Still outstanding:\n\n${taskLines}\n\n` +
           `Pick up where you left off: ${publicBaseUrl()}${linkPath}`,
@@ -341,7 +342,7 @@ export async function runProgressReminderSweep(
         void notifyAllAdmins({
           subject: `Onboarding stalled: ${app.associate.firstName} at ${percent}% (${idleDays}d idle)`,
           body:
-            `${app.associate.firstName}'s onboarding for ${app.client.name} has been idle ` +
+            `${app.associate.firstName}'s onboarding for ${app.client?.name ?? getBrandingSync().orgName} has been idle ` +
             `${idleDays} days at ${percent}% despite ${newCount} reminders. ` +
             `Outstanding: ${open.map((t) => t.title).join(', ')}. ` +
             `Open it: ${publicBaseUrl()}/onboarding/applications/${app.id}`,

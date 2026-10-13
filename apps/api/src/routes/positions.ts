@@ -57,7 +57,8 @@ function shape(
 ): Position {
   return {
     id: row.id,
-    clientId: row.clientId,
+    // A direct employer's position names no client; the contract still says string.
+    clientId: row.clientId ?? '',
     code: row.code,
     title: row.title,
     jobProfileId: row.jobProfileId,

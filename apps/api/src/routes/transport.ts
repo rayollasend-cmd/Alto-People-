@@ -268,7 +268,7 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       id: s.id,
       name: s.name,
       timezone: s.timezone,
-      clientName: s.client.name,
+      clientName: s.client?.name ?? '',
       address: [s.addressLine1, s.city, s.state].filter(Boolean).join(', ') || null,
       /** One of the stores they are placed at. */
       mine: s.mine,
@@ -695,7 +695,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   enqueueAudit(
     {
       actorUserId: req.user!.id,
-      clientId: ride.location.client.id,
+      clientId: ride.location.client?.id ?? null,
       action: 'transport.ride_booked',
       entityType: 'Ride',
       entityId: ride.id,
@@ -1518,6 +1518,8 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
     },
   });
   if (!location) throw new HttpError(404, 'not_found', 'Store not found.');
+  // Drivers are approved per client; a client-less store (a direct employer) has no van service yet: fail closed.
+  if (!location.client) throw new HttpError(403, 'client_required', 'This store has no client to serve.');
   await assertDriverMayServe(req, location.client.id);
   const members: ClusterMember[] = [];
   for (const r of rides) {
@@ -1753,6 +1755,7 @@ transportRouter.post('/driver/requests/:rideId/accept', DRIVE, async (req, res) 
     throw new HttpError(409, 'taken', 'This seat is no longer open — another van has it, or it was cancelled.');
   }
   const seat = await prisma.ride.findUniqueOrThrow({ where: { id: rideId }, select: { location: { select: { clientId: true } } } });
+  if (!seat.location.clientId) throw new HttpError(403, 'client_required', 'This store has no client to serve.');
   await assertDriverMayServe(req, seat.location.clientId);
   const mine = await prisma.rideRun.findMany({
     where: { driverUserId: me, status: { in: ['PLANNED', 'ACTIVE'] }, serviceDate: ride.serviceDate },
@@ -1855,6 +1858,7 @@ transportRouter.post('/driver/requests/:rideId/decline', DRIVE, async (req, res)
   const { reason } = z.object({ reason: z.string().trim().max(200).optional() }).parse(req.body ?? {});
   const ride = await prisma.ride.findUnique({ where: { id: rideId }, select: rideSelect });
   if (!ride || ride.status !== 'REQUESTED') throw new HttpError(409, 'taken', 'This seat is no longer open.');
+  if (!ride.location.client) throw new HttpError(403, 'client_required', 'This store has no client to serve.');
   await assertDriverMayServe(req, ride.location.client.id);
   await prisma.rideRejection.upsert({
     where: { rideId_driverUserId: { rideId, driverUserId: me } },

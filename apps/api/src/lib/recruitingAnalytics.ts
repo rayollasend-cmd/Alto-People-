@@ -208,6 +208,8 @@ export async function computeRecruitingAnalytics(input: {
     if (outcome === 'accepted') accepted += 1;
     else if (outcome === 'declined') declined += 1;
     else expired += 1;
+    // Per-client acceptance is a client thing; a client-less offer (a direct employer) counts in the totals only.
+    if (!o.clientId) continue;
     const agg = offerByClient.get(o.clientId) ?? { accepted: 0, decided: 0 };
     agg.decided += 1;
     if (outcome === 'accepted') agg.accepted += 1;

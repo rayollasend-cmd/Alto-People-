@@ -283,7 +283,8 @@ export async function runOfferLetterSweep(): Promise<{
   // (and therefore which template applies).
   const clientByAssociate = new Map<string, string>();
   for (const a of apps) {
-    if (!clientByAssociate.has(a.associateId)) {
+    // Offer letters are per-client templates; a client-less application (a direct employer) files none here.
+    if (a.clientId && !clientByAssociate.has(a.associateId)) {
       clientByAssociate.set(a.associateId, a.clientId);
     }
   }

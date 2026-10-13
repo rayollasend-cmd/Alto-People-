@@ -37,7 +37,8 @@ export async function placedClientIds(associateId: string, db: Db = prisma): Pro
       select: { location: { select: { clientId: true } } },
     }),
   ]);
-  return [...new Set([...apps.map((a) => a.clientId), ...assignments.map((a) => a.location.clientId)])];
+  // A client-less placement (a direct employer) names no client.
+  return [...new Set([...apps.map((a) => a.clientId), ...assignments.map((a) => a.location.clientId)].filter((id): id is string => id !== null))];
 }
 
 /** "YYYY-MM-DD" of an instant in `tz` — shifts vs day-granular records. */
@@ -150,7 +151,8 @@ export async function assertCanClaimOpenShift(associateId: string, shiftId: stri
     },
   });
   if (!shift) throw new HttpError(404, 'shift_not_available', 'This shift is no longer open');
-  if (!(await placedClientIds(associateId, db)).includes(shift.clientId)) {
+  // A client-less open shift is not claimable until placement by site lands (step 5): fail closed.
+  if (!shift.clientId || !(await placedClientIds(associateId, db)).includes(shift.clientId)) {
     throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
   }
   const claimant = await db.associate.findUnique({ where: { id: associateId }, select: { id: true, firstName: true, lastName: true } });

@@ -206,7 +206,7 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
     const workplaceClientId =
       openAssignment?.location.clientId ?? workplaceApp?.clientId ?? null;
     const workplaceClientName =
-      openAssignment?.location.client.name ??
+      openAssignment?.location.client?.name ??
       workplaceApp?.client?.name ??
       null;
 

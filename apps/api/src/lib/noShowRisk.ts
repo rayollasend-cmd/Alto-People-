@@ -22,7 +22,8 @@ const SWEEP_SECONDS = 60 * 60;
 
 export interface RiskyShift {
   shiftId: string;
-  clientId: string;
+  /** Null for a direct employer's shift (Brief 2-1b). */
+  clientId: string | null;
   clientName: string;
   /** The store — routes the row to the lead of its shift window. */
   locationId: string | null;
@@ -89,7 +90,7 @@ export async function computeNoShowRisk(
       shiftId: s.id,
       clientId: s.clientId,
       locationId: s.locationId,
-      clientName: s.client.name,
+      clientName: s.client?.name ?? '',
       position: s.position,
       startsAt: s.startsAt,
       holderName: `${s.assignedAssociate!.firstName} ${s.assignedAssociate!.lastName}`,
@@ -152,6 +153,8 @@ export async function runNoShowRiskSweep(
 
   const byClient = new Map<string, RiskyShift[]>();
   for (const r of risky) {
+    // The digest is routed per client; a client-less shift (a direct employer) has no desk yet.
+    if (!r.clientId) continue;
     (byClient.get(r.clientId) ?? byClient.set(r.clientId, []).get(r.clientId)!).push(r);
   }
   let sent = 0;

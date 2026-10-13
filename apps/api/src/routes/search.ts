@@ -80,7 +80,8 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
         orderBy: { name: 'asc' },
         take: limit,
       });
-      return rows.map((r) => ({ id: r.id, title: r.name, hint: r.client.name, href: `/clients/${r.clientId}?section=locations` }));
+      // A client-less store (a direct employer) has no client page yet; the Site pages come with step 7.
+      return rows.map((r) => ({ id: r.id, title: r.name, hint: r.client?.name ?? '', href: r.clientId ? `/clients/${r.clientId}?section=locations` : '/headcount' }));
     },
   },
   {
@@ -114,7 +115,7 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
       return rows.map((r) => ({
         id: r.id,
         title: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
-        hint: [r.client.name, r.position, r.status.toLowerCase().replace('_', ' ')].filter(Boolean).join(' · '),
+        hint: [r.client?.name, r.position, r.status.toLowerCase().replace('_', ' ')].filter(Boolean).join(' · '),
         href: `/onboarding/applications/${r.id}`,
       }));
     },
@@ -137,9 +138,9 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
       });
       return rows.map((r) => ({
         id: r.id,
-        title: `${r.position} — ${r.client.name}`,
+        title: r.client ? `${r.position} — ${r.client.name}` : r.position,
         hint: `${ymd(r.startsAt)} · ${r.status.toLowerCase()}`,
-        href: `/scheduling?view=week&week=${ymd(r.startsAt)}&client=${r.clientId}`,
+        href: `/scheduling?view=week&week=${ymd(r.startsAt)}${r.clientId ? `&client=${r.clientId}` : ''}`,
       }));
     },
   },

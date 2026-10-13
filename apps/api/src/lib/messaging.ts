@@ -90,7 +90,8 @@ export async function regionClientIds(regionId: string, prisma: PrismaClient = d
     distinct: ['clientId'],
     take: 500,
   });
-  return rows.map((r) => r.clientId);
+  // Region channels are a client thing; a client-less store (a direct employer) contributes none.
+  return rows.map((r) => r.clientId).filter((id): id is string => id !== null);
 }
 
 /** canMessage, plus the region check a store target needs. */

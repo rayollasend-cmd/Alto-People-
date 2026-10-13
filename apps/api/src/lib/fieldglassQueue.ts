@@ -153,7 +153,7 @@ export async function buildFieldglassQueue(now: Date = new Date()) {
       return (
         r.associate.deletedAt === null &&
         r.associate.separatedAt === null &&
-        cur !== undefined &&
+        cur != null &&
         r.clientId !== null &&
         cur.id !== r.clientId
       );

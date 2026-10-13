@@ -51,6 +51,8 @@ export async function runShiftAutofillSweep(
   let invitesSent = 0;
 
   for (const shift of shifts) {
+    // The bench is "placed at this client"; a client-less shift (a direct employer) gets no autofill until placement by site lands (step 5).
+    if (!shift.clientId) continue;
     const linkUrl = `/marketplace?shift=${shift.id}`;
     // Eligible bench: active-approved associates placed at this client
     // with a portal login, not already working an overlapping shift.
@@ -96,7 +98,7 @@ export async function runShiftAutofillSweep(
       if (invited.has(c.id)) continue;
       if (sentForShift >= MAX_INVITES_PER_SHIFT_PER_SWEEP) break;
       await notifyUser(c.id, {
-        subject: `Open shift: ${shift.position} at ${shift.client.name}`,
+        subject: `Open shift: ${shift.position} at ${shift.client?.name ?? shift.location ?? ''}`,
         body: `${formatTimeInZone(shift.startsAt, DEFAULT_TIMEZONE)}–${formatTimeInZone(shift.endsAt, DEFAULT_TIMEZONE)}${shift.location ? ` · ${shift.location}` : ''}. First come, first served — tap to claim it.`,
         category: CATEGORY,
         linkUrl,

@@ -314,7 +314,7 @@ function fmtTime(d: Date, tz: string): string {
 }
 
 async function watchers(run: LiveRunRow): Promise<string[]> {
-  const clientIds = [...new Set(run.rides.map((r) => r.location.clientId))];
+  const clientIds = [...new Set(run.rides.map((r) => r.location.clientId).filter((id): id is string => id !== null))];
   const rows = await prisma.user.findMany({
     where: {
       status: 'ACTIVE',

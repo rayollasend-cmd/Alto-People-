@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { getBrandingSync } from '../lib/branding.js';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import {
@@ -696,7 +697,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       return {
         id: row.id,
         associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-        clientName: row.client.name,
+        clientName: row.client?.name ?? getBrandingSync().orgName,
         onboardingTrack: row.onboardingTrack,
         status: row.status,
         position: row.position,
@@ -820,7 +821,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
     const inFlightSummaries: ApplicationSummary[] = inFlightRows.map((row) => ({
       id: row.id,
       associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-      clientName: row.client.name,
+      clientName: row.client?.name ?? getBrandingSync().orgName,
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
@@ -906,9 +907,10 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
     const detail: ApplicationDetail = {
       id: row.id,
       associateId: row.associateId,
-      clientId: row.clientId,
+      // A direct employer's application names no client; the contract still says string.
+      clientId: row.clientId ?? '',
       associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-      clientName: row.client.name,
+      clientName: row.client?.name ?? getBrandingSync().orgName,
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
@@ -1239,10 +1241,12 @@ async function approveOneApplication(
     where: { id: app.associateId },
     select: { firstName: true, lastName: true },
   });
-  const approvedClient = await prisma.client.findUnique({
-    where: { id: app.clientId },
-    select: { name: true },
-  });
+  const approvedClient = app.clientId
+    ? await prisma.client.findUnique({
+        where: { id: app.clientId },
+        select: { name: true },
+      })
+    : null;
   const approvedTpl = applicationApprovedTemplate({
     firstName: approvedAssoc?.firstName ?? 'there',
     clientName: approvedClient?.name ?? 'your assigned client',
@@ -1349,10 +1353,12 @@ onboardingRouter.post(
         where: { id: app.associateId },
         select: { firstName: true, lastName: true },
       });
-      const rejClient = await prisma.client.findUnique({
-        where: { id: app.clientId },
-        select: { name: true },
-      });
+      const rejClient = app.clientId
+        ? await prisma.client.findUnique({
+            where: { id: app.clientId },
+            select: { name: true },
+          })
+        : null;
       const rejTpl = applicationRejectedTemplate({
         firstName: rejAssoc?.firstName ?? 'there',
         clientName: rejClient?.name ?? 'your assigned client',
@@ -1579,10 +1585,13 @@ onboardingRouter.delete('/templates/:id', MANAGE, async (req, res, next) => {
 onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
-    const client = await prisma.client.findUniqueOrThrow({
-      where: { id: app.clientId },
-      select: { industry: true },
-    });
+    // A direct employer's application names no client: org-wide policies only.
+    const client = app.clientId
+      ? await prisma.client.findUniqueOrThrow({
+          where: { id: app.clientId },
+          select: { industry: true },
+        })
+      : null;
 
     const required = await prisma.policy.findMany({
       take: 1000,
@@ -1599,7 +1608,7 @@ onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
             { clientId: app.clientId },
             {
               clientId: null,
-              industry: client.industry?.toLowerCase() ?? null,
+              industry: client?.industry?.toLowerCase() ?? null,
             },
             { clientId: null, industry: null },
           ],
@@ -1761,7 +1770,7 @@ onboardingRouter.get(
           invitedAt: full.invitedAt.toISOString(),
           submittedAt: full.submittedAt ? full.submittedAt.toISOString() : null,
         },
-        client: { name: full.client.name },
+        client: { name: full.client?.name ?? getBrandingSync().orgName },
         associate: {
           firstName: full.associate.firstName,
           lastName: full.associate.lastName,
@@ -2534,10 +2543,12 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
       });
 
       // If every required policy for this app is now acked, mark task DONE.
-      const client = await tx.client.findUnique({
-        where: { id: app.clientId },
-        select: { industry: true },
-      });
+      const client = app.clientId
+        ? await tx.client.findUnique({
+            where: { id: app.clientId },
+            select: { industry: true },
+          })
+        : null;
 
       const required = await tx.policy.findMany({
         take: 1000,
@@ -3286,10 +3297,12 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       where: { id: app.associateId },
       select: { firstName: true, lastName: true, hireDate: true },
     });
-    const i9Client = await prisma.client.findUnique({
-      where: { id: app.clientId },
-      select: { name: true },
-    });
+    const i9Client = app.clientId
+      ? await prisma.client.findUnique({
+          where: { id: app.clientId },
+          select: { name: true },
+        })
+      : null;
     const associateName = assoc ? `${assoc.firstName} ${assoc.lastName}` : 'an associate';
     // Hire date is only stamped at APPROVAL — which happens after Section 1
     // — so it was ALWAYS null here and every deadline email said nothing.
@@ -4531,7 +4544,7 @@ onboardingRouter.post(
  */
 export async function deliverNudge(
   actor: { userId: string; req: Request } | null,
-  app: { id: string; clientId: string },
+  app: { id: string; clientId: string | null },
   recipient: { id: string; email: string },
   subject: string,
   body: string,

@@ -19,7 +19,8 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 export interface RateCard {
   id: string;
-  clientId: string;
+  /** Null = an org-wide card (a direct employer's own rates, Brief 2-1b). */
+  clientId: string | null;
   position: string;
   payRate: number;
   billRate: number | null;
@@ -37,20 +38,25 @@ export interface ResolvedRate {
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
-function toCard(r: { id: string; clientId: string; position: string; payRate: Prisma.Decimal; billRate: Prisma.Decimal | null; effectiveFrom: Date; effectiveTo: Date | null }): RateCard {
+function toCard(r: { id: string; clientId: string | null; position: string; payRate: Prisma.Decimal; billRate: Prisma.Decimal | null; effectiveFrom: Date; effectiveTo: Date | null }): RateCard {
   return { id: r.id, clientId: r.clientId, position: r.position, payRate: Number(r.payRate), billRate: r.billRate == null ? null : Number(r.billRate), effectiveFrom: ymd(r.effectiveFrom), effectiveTo: r.effectiveTo ? ymd(r.effectiveTo) : null };
 }
 
 /** Every card of these clients, newest first — the resolver picks by date in memory. */
-export async function loadRateCards(db: Db, clientIds: string[]): Promise<RateCard[]> {
-  const ids = [...new Set(clientIds)];
-  if (ids.length === 0) return [];
-  const rows = await db.shiftRateDefault.findMany({ where: { clientId: { in: ids } }, orderBy: [{ clientId: 'asc' }, { position: 'asc' }, { effectiveFrom: 'desc' }] });
+export async function loadRateCards(db: Db, clientIds: Array<string | null>): Promise<RateCard[]> {
+  const ids = [...new Set(clientIds.filter((id): id is string => id !== null))];
+  // A null client (a direct employer's shift) reads the org-wide cards.
+  const orgWide = clientIds.includes(null);
+  if (ids.length === 0 && !orgWide) return [];
+  const rows = await db.shiftRateDefault.findMany({
+    where: { OR: [...(ids.length ? [{ clientId: { in: ids } }] : []), ...(orgWide ? [{ clientId: null }] : [])] },
+    orderBy: [{ clientId: 'asc' }, { position: 'asc' }, { effectiveFrom: 'desc' }],
+  });
   return rows.map(toCard);
 }
 
 /** The card in force for (client, position) on a date, from a loaded list. */
-export function cardOn(cards: RateCard[], clientId: string, position: string, on: Date): RateCard | null {
+export function cardOn(cards: RateCard[], clientId: string | null, position: string, on: Date): RateCard | null {
   const day = ymd(on);
   for (const c of cards) {
     if (c.clientId !== clientId || c.position !== position) continue;
@@ -167,7 +173,7 @@ export async function associatesWithoutRate(db: Db = defaultPrisma, now: Date = 
       select: { id: true, firstName: true, lastName: true, applications: { where: { status: 'APPROVED', deletedAt: null }, orderBy: { approvedAt: 'desc' }, take: 1, select: { position: true } } },
     }),
     loadRateCards(db, clientIds),
-    db.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, name: true } }),
+    db.client.findMany({ where: { id: { in: clientIds.filter((id): id is string => id !== null) } }, select: { id: true, name: true } }),
   ]);
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const out: WithoutRate[] = [];
@@ -175,7 +181,8 @@ export async function associatesWithoutRate(db: Db = defaultPrisma, now: Date = 
     const placement = placed.get(p.id)!;
     const position = p.applications[0]?.position ?? null;
     if (position && cardOn(cards, placement.clientId, position, now)) continue;
-    out.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), clientId: placement.clientId, clientName: clientName.get(placement.clientId) ?? '', locationId: placement.locationId, position });
+    // A client-less placement (a direct employer): the org-wide card was checked above; the row names no client (the contract still says string).
+    out.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), clientId: placement.clientId ?? '', clientName: (placement.clientId ? clientName.get(placement.clientId) : undefined) ?? '', locationId: placement.locationId, position });
   }
   return out.sort((a, b) => a.clientName.localeCompare(b.clientName) || a.name.localeCompare(b.name));
 }

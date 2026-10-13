@@ -95,7 +95,8 @@ export async function sitesOf(db: Db, associateIds: string[]): Promise<Map<strin
     orderBy: { approvedAt: 'desc' },
   });
   for (const a of apps) {
-    if (!out.has(a.associateId)) {
+    // Programs place at clients; a client-less application (a direct employer) is not a placement here.
+    if (!out.has(a.associateId) && a.client) {
       out.set(a.associateId, { siteId: a.location?.id ?? null, siteName: a.location?.name ?? null, clientId: a.client.id, clientName: a.client.name });
     }
   }
@@ -108,6 +109,7 @@ export async function sitesOf(db: Db, associateIds: string[]): Promise<Map<strin
   for (const a of assignments) {
     if (seen.has(a.associateId)) continue;
     seen.add(a.associateId);
+    if (!a.location.client) continue;
     out.set(a.associateId, { siteId: a.location.id, siteName: a.location.name, clientId: a.location.client.id, clientName: a.location.client.name });
   }
   return out;

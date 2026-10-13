@@ -408,7 +408,8 @@ interface ShiftEventContext {
   actorUserId: string | null;
   action: string; // e.g. 'shift.created'
   shiftId: string;
-  clientId: string;
+  /** Null for a direct employer's shift (Brief 2-1b). */
+  clientId: string | null;
   metadata?: Record<string, unknown>;
   req?: Request;
 }

@@ -231,7 +231,10 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
   const locationIds = p.sites.map((x) => x.locationId);
   const actuals = await actualsFor(db, locationIds, weeks, now);
 
-  const sites: SeasonPlanSiteComputed[] = p.sites.map((site) => {
+  // A season plan is per client site; a client-less site (a direct employer) waits for step 5's org unit.
+  const sites: SeasonPlanSiteComputed[] = p.sites.flatMap((site) => {
+    const client = site.location.clientId && site.location.client ? { id: site.location.clientId, name: site.location.client.name } : null;
+    if (!client) return [];
     const demand = new Map(demandOf(site.demand).map((d) => [d.week, d]));
     const seatsAvailable = site.vanSeatsPerRun * site.runsPerShift;
     const rows: SeasonPlanSiteWeek[] = weeks.map((week) => {
@@ -261,18 +264,18 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
       };
     });
     const peakRow = rows.reduce((best, r) => (r.associatesNeeded > best.associatesNeeded ? r : best), rows[0] ?? { week: weeks[0] ?? s.seasonStart, daily: 0, associatesNeeded: 0, bedsNeeded: 0, vanSeatsNeeded: 0 });
-    return {
+    return [{
       locationId: site.locationId,
       siteName: site.location.name,
-      clientId: site.location.clientId,
-      clientName: site.location.client.name,
+      clientId: client.id,
+      clientName: client.name,
       bedsAvailable: site.bedsAvailable,
       vanSeatsPerRun: site.vanSeatsPerRun,
       runsPerShift: site.runsPerShift,
       routeMinutes: site.routeMinutes,
       weeks: rows,
       peak: { week: peakRow.week, daily: peakRow.daily, associatesNeeded: peakRow.associatesNeeded, bedsNeeded: peakRow.bedsNeeded, vanSeatsNeeded: peakRow.vanSeatsNeeded },
-    };
+    }];
   });
 
   const totals = weeks.map((week, i) => {

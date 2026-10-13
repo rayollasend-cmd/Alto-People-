@@ -302,7 +302,7 @@ export async function computeExecutiveSummary(
         hours * env.LABOR_OVERHEAD_PER_HOUR;
       return {
         clientId,
-        clientName: meta?.client.name ?? 'Unknown client',
+        clientName: meta?.client?.name ?? 'Unknown client',
         locationId,
         locationName: meta?.name ?? 'Unknown store',
         hours: Math.round(hours * 10) / 10,

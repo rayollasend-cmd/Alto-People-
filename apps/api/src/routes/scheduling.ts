@@ -408,12 +408,12 @@ function describeClash(clash: {
   endsAt: Date;
   status: string;
   position: string;
-  client: { name: string };
+  client: { name: string } | null;
   locationRel: { timezone: string | null } | null;
 }): string {
   const tz = clash.locationRel?.timezone ?? DEFAULT_TIMEZONE;
   const overnight = formatDateInZone(clash.startsAt, tz) !== formatDateInZone(clash.endsAt, tz);
-  return `${clash.position} at ${clash.client.name}, ${formatDateInZone(clash.startsAt, tz)} ${formatTimeInZone(clash.startsAt, tz)} – ${formatTimeInZone(clash.endsAt, tz)}${overnight ? ' (overnight — it runs into the next day)' : ''}${clash.status === 'DRAFT' ? ' [unpublished draft]' : ''}`;
+  return `${clash.position}${clash.client ? ` at ${clash.client.name}` : ''}, ${formatDateInZone(clash.startsAt, tz)} ${formatTimeInZone(clash.startsAt, tz)} – ${formatTimeInZone(clash.endsAt, tz)}${overnight ? ' (overnight — it runs into the next day)' : ''}${clash.status === 'DRAFT' ? ' [unpublished draft]' : ''}`;
 }
 
 /** Overlap check excluding SEVERAL shifts — trades hand off two shifts at
@@ -438,7 +438,8 @@ function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
   const explicitPay = row.payRate ? Number(row.payRate) : null;
   return {
     id: row.id,
-    clientId: row.clientId,
+    // A direct employer's shift names no client; the contract still says string.
+    clientId: row.clientId ?? '',
     clientName: row.client?.name ?? null,
     position: row.position,
     startsAt: row.startsAt.toISOString(),
@@ -506,8 +507,8 @@ const SHIFT_STATUS_ENUM = Prisma.raw(`"${DB_SCHEMA}"."ShiftStatus"`);
  * wip/scheduling-pay-rates.
  */
 async function loadRateResolver(
-  clientIds: string[],
-): Promise<(clientId: string, position: string, explicit: number | null) => number | null> {
+  clientIds: Array<string | null>,
+): Promise<(clientId: string | null, position: string, explicit: number | null) => number | null> {
   const unique = [...new Set(clientIds)];
   // Brief 1A-2: the card in force today, per (client, position).
   const cards = await loadRateCards(prisma, unique);
@@ -1038,7 +1039,15 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
       shiftClientIds.length ? loadRateCards(prisma, shiftClientIds).then((cards) => cards.filter((c) => cardOn(cards, c.clientId, c.position, new Date())?.id === c.id)) : Promise.resolve([]),
       shiftClientIds.length
         ? prisma.shiftPosition.findMany({
-            where: { clientId: { in: shiftClientIds }, deletedAt: null, isLead: true },
+            // A client-less shift (a direct employer) reads the org-wide positions.
+            where: {
+              deletedAt: null,
+              isLead: true,
+              OR: [
+                ...(shiftClientIds.some((c) => c !== null) ? [{ clientId: { in: shiftClientIds.filter((c): c is string => c !== null) } }] : []),
+                ...(shiftClientIds.includes(null) ? [{ clientId: null }] : []),
+              ],
+            },
             select: { clientId: true, name: true },
           })
         : Promise.resolve([]),
@@ -1546,8 +1555,8 @@ schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => 
         locations: locations.map((l) => ({
           locationId: l.id,
           locationName: l.name,
-          clientId: l.clientId,
-          clientName: l.client.name,
+          clientId: l.clientId ?? '',
+          clientName: l.client?.name ?? '',
           targetCount: currentByLocation.get(l.id)?.targetCount ?? null,
           effectiveFrom: currentByLocation.get(l.id)?.effectiveFrom ?? null,
           windows: [...(windowsByLocation.get(l.id)?.values() ?? [])].sort(
@@ -1776,7 +1785,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         clientId: s.clientId,
         locationId: s.locationId,
         locationName: metaById.get(s.locationId)?.name ?? 'Unknown store',
-        clientName: metaById.get(s.locationId)?.client.name ?? 'Unknown client',
+        clientName: metaById.get(s.locationId)?.client?.name ?? 'Unknown client',
         weeks: s.weeks,
         avgMarginPerHour: avg,
         hours4w: Math.round(s.weeks.reduce((n, w) => n + w.hours, 0) * 10) / 10,
@@ -2046,8 +2055,8 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
         return {
           locationId: l.id,
           locationName: l.name,
-          clientId: l.clientId,
-          clientName: l.client.name,
+          clientId: l.clientId ?? '',
+          clientName: l.client?.name ?? '',
           clockedIn: clockedByLocation.get(l.id) ?? 0,
           expected: hit ? hit.targetCount : total,
           windowLabel: hit ? hit.label : null,
@@ -2128,7 +2137,7 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
         clients: new Set<string>(),
       };
       cur.min += min;
-      cur.clients.add(s.client.name);
+      if (s.client) cur.clients.add(s.client.name);
       remaining.set(s.assignedAssociateId!, cur);
     }
     const candidates = [...remaining.keys()];
@@ -2295,7 +2304,7 @@ schedulingRouter.delete('/rate-defaults/:id', MANAGE, async (req, res, next) => 
     if (!row) {
       throw new HttpError(404, 'rate_default_not_found', 'Rate default not found.');
     }
-    const clamp = effectiveClientIdFilter(req.user!, row.clientId);
+    const clamp = effectiveClientIdFilter(req.user!, row.clientId ?? undefined);
     if (clamp !== undefined && clamp !== row.clientId) {
       throw new HttpError(404, 'rate_default_not_found', 'Rate default not found.');
     }
@@ -2349,7 +2358,7 @@ schedulingRouter.get('/drafts/summary', SCHED_READ, async (req, res, next) => {
     const clients =
       byClient.length > 0
         ? await prisma.client.findMany({
-            where: { id: { in: byClient.map((g) => g.clientId) } },
+            where: { id: { in: byClient.map((g) => g.clientId).filter((id): id is string => id !== null) } },
             select: { id: true, name: true },
           })
         : [];
@@ -2359,7 +2368,7 @@ schedulingRouter.get('/drafts/summary', SCHED_READ, async (req, res, next) => {
       earliestStartsAt: oldest?.startsAt?.toISOString() ?? null,
       latestStartsAt: newest?.startsAt?.toISOString() ?? null,
       byClient: byClient
-        .map((g) => ({ clientId: g.clientId, clientName: nameOf.get(g.clientId) ?? '—', count: g._count._all }))
+        .map((g) => ({ clientId: g.clientId, clientName: (g.clientId ? nameOf.get(g.clientId) : undefined) ?? '—', count: g._count._all }))
         .sort((a, b) => b.count - a.count),
     });
   } catch (err) {
@@ -3255,7 +3264,8 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       const now = new Date();
       const newStartsAt = i.startsAt ? new Date(i.startsAt) : existing.startsAt;
       const evaluation = evaluateShiftNotice({
-        state: existing.client.state,
+        // The notice law follows the client's state; a client-less shift (a direct employer) gets the employer's state in step 4.
+        state: existing.client?.state ?? null,
         startsAt: newStartsAt,
         publishAt: now,
       });
@@ -3278,7 +3288,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       // change). Pulling it earlier could drag it inside the 14-day notice
       // window — re-evaluate so this path can't bypass fair-workweek.
       const evaluation = evaluateShiftNotice({
-        state: existing.client.state,
+        state: existing.client?.state ?? null,
         startsAt: new Date(i.startsAt),
         publishAt: new Date(),
       });
@@ -3451,7 +3461,8 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     assertEmployed(associate);
     // An H-2B worker may only be scheduled at the client on their petition.
-    await assertClientAllowed(prisma, associate, shift.clientId, { actorUserId: req.user!.id, via: 'assign', shiftId: shift.id });
+    // The H-2B rule names a client; a client-less shift (a direct employer) is the employer itself, step 4 moves the rule to the employer of record.
+    if (shift.clientId) await assertClientAllowed(prisma, associate, shift.clientId, { actorUserId: req.user!.id, via: 'assign', shiftId: shift.id });
 
     // Conflict + unavailability checks + write in one transaction so two
     // managers can't assign the same associate to overlapping shifts at
@@ -3922,7 +3933,7 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
     const leadIds = shift.locationId
       ? [
           ...new Set(
-            (await ledWindows(prisma, { clientId: shift.clientId }))
+            (shift.clientId ? await ledWindows(prisma, { clientId: shift.clientId }) : [])
               .filter((w) => windowCovers(w, { locationId: shift.locationId, startsAt: shift.startsAt }))
               .map((w) => w.userId),
           ),
@@ -3994,7 +4005,8 @@ schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) =>
           ACTIVE_ASSOCIATE_FILTER,
           { id: { not: user.associateId } },
           // Placed at THIS client now (a transfer moves them) — lib/scope.
-          atClient(shift.clientId, { approvedOnly: true }),
+          // A client-less shift (a direct employer) notifies nobody until placement by site lands (step 5): fail closed.
+          shift.clientId ? atClient(shift.clientId, { approvedOnly: true }) : { id: '00000000-0000-0000-0000-000000000000' },
         ],
       },
       select: { id: true, firstName: true, lastName: true },
@@ -4396,7 +4408,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
     });
     if (claimant) assertEmployed(claimant);
     if (claimant) {
-      await assertClientAllowed(prisma, { id: claim.associateId, ...claimant }, claim.shift.clientId, {
+      if (claim.shift.clientId) await assertClientAllowed(prisma, { id: claim.associateId, ...claimant }, claim.shift.clientId, {
         actorUserId: user.id,
         via: 'claim_approve',
         shiftId: claim.shiftId,
@@ -5403,11 +5415,11 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
     // requester's shift; in a trade the requester takes the exchange shift.
     const counterparty = swapParties.find((a) => a.id === swap.counterpartyAssociateId);
     if (counterparty) {
-      await assertClientAllowed(prisma, counterparty, swap.shift.clientId, { actorUserId: req.user!.id, via: 'swap_approve', shiftId: swap.shiftId });
+      if (swap.shift.clientId) await assertClientAllowed(prisma, counterparty, swap.shift.clientId, { actorUserId: req.user!.id, via: 'swap_approve', shiftId: swap.shiftId });
     }
     const requester = swapParties.find((a) => a.id === swap.requesterAssociateId);
     if (requester && swap.counterpartShift) {
-      await assertClientAllowed(prisma, requester, swap.counterpartShift.clientId, {
+      if (swap.counterpartShift.clientId) await assertClientAllowed(prisma, requester, swap.counterpartShift.clientId, {
         actorUserId: req.user!.id,
         via: 'swap_approve',
         shiftId: swap.counterpartShiftId,
@@ -5784,7 +5796,7 @@ const TEAM_INCLUDE = {
 function toShiftTeam(row: RawTeam): ShiftTeamDTO {
   return {
     id: row.id,
-    clientId: row.clientId,
+    clientId: row.clientId ?? '',
     locationId: row.locationId,
     locationName: row.location?.name ?? null,
     name: row.name,
@@ -6542,7 +6554,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       },
     });
     const twinKey = (s: {
-      clientId: string;
+      clientId: string | null;
       locationId: string | null;
       position: string;
       startsAt: Date;
@@ -6972,7 +6984,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
 
     for (const s of drafts) {
       const evaluation = evaluateShiftNotice({
-        state: s.client.state,
+        state: s.client?.state ?? null,
         startsAt: s.startsAt,
         publishAt: now,
       });

@@ -273,7 +273,7 @@ export async function computeExecutiveBriefing(
     0,
   );
   const clientNames = new Map<string, string>();
-  for (const s of windowShifts) clientNames.set(s.clientId, s.client.name);
+  for (const s of windowShifts) if (s.clientId && s.client) clientNames.set(s.clientId, s.client.name);
 
   /* ----- 2. Decisions — the full rule engine with human-state overlay --- */
   const decisions = await computeExecutiveDecisions(prisma, now);
@@ -286,6 +286,8 @@ export async function computeExecutiveBriefing(
   const recent = new Map<string, WindowAgg>();
   const prior = new Map<string, WindowAgg>();
   for (const s of windowShifts) {
+    // Client health is per client; a client-less shift (a direct employer) has none to score.
+    if (!s.clientId) continue;
     const bucket = s.startsAt >= recentStart ? recent : prior;
     const agg = bucket.get(s.clientId) ?? { published: 0, assigned: 0 };
     agg.published += 1;
@@ -450,12 +452,12 @@ export async function computeExecutiveBriefing(
           }
         >();
         for (const s of openToday) {
-          const key = `${s.client.name}|${s.location ?? ''}|${s.position}|${s.startsAt.getTime()}`;
+          const key = `${s.client?.name ?? ''}|${s.location ?? ''}|${s.position}|${s.startsAt.getTime()}`;
           const g = grouped.get(key);
           if (g) g.count += 1;
           else
             grouped.set(key, {
-              clientName: s.client.name,
+              clientName: s.client?.name ?? '',
               locationName: s.location ?? null,
               position: s.position,
               startsAt: s.startsAt.toISOString(),

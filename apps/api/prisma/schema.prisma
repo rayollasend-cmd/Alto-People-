@@ -829,7 +829,7 @@ model Client {
 // drives OT / meal-break / predictive-scheduling rules.
 model Location {
   id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String    @db.Uuid
+  clientId             String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name                 String
@@ -856,7 +856,7 @@ model Location {
   updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt            DateTime? @db.Timestamptz(6)
 
-  client                 Client                  @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   assignments            AssociateAssignment[]
   applications           Application[]
   shifts                 Shift[]
@@ -892,7 +892,7 @@ model Location {
 // dialog when the team is selected.
 model ShiftTeam {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String    @db.Uuid
+  clientId    String?   @db.Uuid
   locationId  String    @db.Uuid
   name        String    @db.VarChar(80)
   /// Wall-clock minutes since local midnight at the site; null = no default.
@@ -904,7 +904,7 @@ model ShiftTeam {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
-  client   Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  client   Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
   location Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
   members  ShiftTeamMember[]
 
@@ -1537,7 +1537,7 @@ model ExecTarget {
 // join at the bottom until placed.
 model SchedulingRosterOrder {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String   @db.Uuid
+  clientId    String?  @db.Uuid
   associateId String   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -1698,7 +1698,7 @@ enum ClockInRequestStatus {
 model ClockInRequest {
   id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String               @db.Uuid
-  clientId    String               @db.Uuid
+  clientId    String?              @db.Uuid
   locationId  String?              @db.Uuid
   // The refused punch instant — what an approval backdates the entry to.
   requestedAt DateTime             @db.Timestamptz(6)
@@ -2058,7 +2058,7 @@ model J1Profile {
 model Application {
   id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId          String               @db.Uuid
-  clientId             String               @db.Uuid
+  clientId             String?              @db.Uuid
   // Phase 131 — initial work-site for the hire. Nullable: legacy apps
   // and apps where HR hasn't picked a site yet have NULL. When set on
   // approval, the AssociateAssignment row created at hire references
@@ -2102,7 +2102,7 @@ model Application {
   // groups under the cohort's banner and counts toward its readiness.
   cohortId             String?              @db.Uuid
   associate            Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  client               Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  client               Client?              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   location             Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   cohort               Cohort?              @relation(fields: [cohortId], references: [id], onDelete: SetNull)
   checklist            OnboardingChecklist?
@@ -2983,7 +2983,7 @@ model TimeEntry {
 
 model Shift {
   id                   String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String                          @db.Uuid
+  clientId             String?                         @db.Uuid
   // Phase 131 — physical work site for this shift. Still nullable
   // until the legacy free-text `location` column below is migrated
   // out; a follow-up PR will make this required after updating the
@@ -3044,7 +3044,7 @@ model Shift {
   // robot. Scheduling reads this from now on; the associate column stays
   // for every screen that already knows it.
   workerId             String?                         @db.Uuid
-  client               Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  client               Client?                         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   emergency            Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
   worker               Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
   locationRel          Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
@@ -4392,7 +4392,7 @@ model QuickbooksConnection {
 
 model Department {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String    @db.Uuid
+  clientId    String?   @db.Uuid
   parentId    String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -4403,7 +4403,7 @@ model Department {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
-  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client       Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   parent       Department?   @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
   children     Department[]  @relation("DepartmentParent")
   associates   Associate[]
@@ -4420,7 +4420,7 @@ model Department {
 
 model CostCenter {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String    @db.Uuid
+  clientId    String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
@@ -4430,7 +4430,7 @@ model CostCenter {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
-  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client     Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates Associate[]
   positions  Position[]
   // Phase 87 — broadcast targeting.
@@ -4454,7 +4454,7 @@ model CostCenter {
 // the shift carries). Resurrected from wip/scheduling-pay-rates.
 model ShiftRateDefault {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId      String    @db.Uuid
+  clientId      String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   position      String
@@ -4469,7 +4469,7 @@ model ShiftRateDefault {
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@unique([clientId, position, effectiveFrom])
   @@index([clientId, position, effectiveTo])
@@ -4479,7 +4479,7 @@ model ShiftRateDefault {
 
 model ShiftPosition {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId  String    @db.Uuid
+  clientId  String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name      String
@@ -4494,7 +4494,7 @@ model ShiftPosition {
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt DateTime? @db.Timestamptz(6)
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId, deletedAt])
   @@index([tenantId])
@@ -4502,7 +4502,7 @@ model ShiftPosition {
 
 model JobProfile {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String    @db.Uuid
+  clientId    String?   @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
@@ -4519,7 +4519,7 @@ model JobProfile {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
-  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client       Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates   Associate[]
   positions    Position[]
   compBands    CompBand[]
@@ -4538,7 +4538,7 @@ model JobProfile {
 // Position, not Associate.
 model Position {
   id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId            String         @db.Uuid
+  clientId            String?        @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId            String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code                String
@@ -4559,7 +4559,7 @@ model Position {
   updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt           DateTime?      @db.Timestamptz(6)
 
-  client         Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client         Client?               @relation(fields: [clientId], references: [id], onDelete: Cascade)
   jobProfile     JobProfile?           @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
   department     Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   costCenter     CostCenter?           @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
@@ -5911,7 +5911,7 @@ model Interview {
 model Offer {
   id                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   candidateId            String      @db.Uuid
-  clientId               String      @db.Uuid
+  clientId               String?     @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId               String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   jobTitle               String
@@ -5947,7 +5947,7 @@ model Offer {
   updatedAt              DateTime    @updatedAt @db.Timestamptz(6)
 
   candidate      Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  client         Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client         Client?         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   templateRender DocumentRender? @relation(fields: [templateRenderId], references: [id], onDelete: SetNull)
   createdBy      User?           @relation("OfferCreator", fields: [createdById], references: [id], onDelete: SetNull)
   approvedBy     User?           @relation("OfferApprover", fields: [approvedById], references: [id], onDelete: SetNull)
@@ -6780,7 +6780,7 @@ enum FaceConsentStatus {
 
 model KioskDevice {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId          String    @db.Uuid
+  clientId          String?   @db.Uuid
   // Phase 131 — the physical Location this device lives at. NOT NULL
   // after PR 3. Per-device geofence columns below stay as an optional
   // override for the rare case where one tablet needs a tighter
@@ -6818,7 +6818,7 @@ model KioskDevice {
   createdAt         DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
 
-  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client    Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   location  Location     @relation(fields: [locationId], references: [id], onDelete: Restrict)
   createdBy User?        @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
@@ -6832,7 +6832,7 @@ model KioskDevice {
 model KioskPin {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String   @db.Uuid
-  clientId     String   @db.Uuid
+  clientId     String?  @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   pinHmac      Bytes
@@ -6845,7 +6845,7 @@ model KioskPin {
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
   associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client    Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy User?        @relation("KioskPinCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 

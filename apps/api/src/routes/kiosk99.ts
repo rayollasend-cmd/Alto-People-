@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { getBrandingSync } from '../lib/branding.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -131,8 +132,8 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   res.json({
     devices: rows.map((d) => ({
       id: d.id,
-      clientId: d.clientId,
-      clientName: d.client.name,
+      clientId: d.clientId ?? '',
+      clientName: d.client?.name ?? '',
       locationId: d.locationId,
       locationName: d.location?.name ?? null,
       name: d.name,
@@ -387,8 +388,8 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
         associateId: p.associateId,
         associateName: `${p.associate.firstName} ${p.associate.lastName}`,
         associateEmail: p.associate.email,
-        clientId: p.clientId,
-        clientName: p.client.name,
+        clientId: p.clientId ?? '',
+        clientName: p.client?.name ?? '',
         locationId: loc?.id ?? null,
         locationName: loc?.name ?? null,
         // Decrypt for HR display. Old rows pre-dating the encryption column,
@@ -685,7 +686,7 @@ kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
 
   const { subject, body } = pinEmailContent(
     pin.associate.firstName,
-    pin.client.name,
+    pin.client?.name ?? getBrandingSync().orgName,
     decryptString(pin.pinEncrypted),
   );
 
@@ -761,7 +762,7 @@ kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
   const oneSend = (p: (typeof emailable)[number]) => {
     const { subject, body } = pinEmailContent(
       p.associate.firstName,
-      p.client.name,
+      p.client?.name ?? getBrandingSync().orgName,
       decryptString(p.pinEncrypted!),
     );
     return send({
@@ -844,7 +845,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
 
   let pin: {
     id: string;
-    clientId: string;
+    clientId: string | null;
     associateId: string;
     pinEncrypted: Uint8Array | null;
   } | null = null;
@@ -938,10 +939,12 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
 
   const [pinClient, associate, openAssignment, openTimeEntry, devicesAtPinClient] =
     await Promise.all([
-      prisma.client.findUnique({
-        where: { id: pin.clientId },
-        select: { id: true, name: true },
-      }),
+      pin.clientId
+        ? prisma.client.findUnique({
+            where: { id: pin.clientId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
       prisma.associate.findUnique({
         where: { id: pin.associateId },
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -986,7 +989,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     diagnosis =
       'PIN exists but the associate has no open AssociateAssignment. Onboarding may be incomplete, or they were offboarded.';
   } else if (!clientsMatch) {
-    diagnosis = `MISMATCH: PIN is under client "${pinClient?.name ?? pin.clientId}" but the associate is currently assigned to client "${openAssignment.location.client.name}" (${assignmentClientId}). /kiosk/punch rejects PINs whose clientId differs from the device's clientId, so any tablet registered to the current-assignment client refuses this PIN. Fix: re-issue the number from the admin (Employee numbers tab → switch to "${openAssignment.location.client.name}" → Issue for this associate) — re-issuing moves their PIN under that client. They get a NEW number; email it to them after.`;
+    diagnosis = `MISMATCH: PIN is under client "${pinClient?.name ?? pin.clientId}" but the associate is currently assigned to client "${openAssignment.location.client?.name ?? 'none'}" (${assignmentClientId}). /kiosk/punch rejects PINs whose clientId differs from the device's clientId, so any tablet registered to the current-assignment client refuses this PIN. Fix: re-issue the number from the admin (Employee numbers tab → switch to "${openAssignment.location.client?.name ?? 'none'}" → Issue for this associate) — re-issuing moves their PIN under that client. They get a NEW number; email it to them after.`;
   } else {
     diagnosis =
       'PIN and current assignment match. If clock-in is still failing, check that the kiosk device is registered to the same client (Devices tab) and that the device token has not expired.';
@@ -1009,8 +1012,8 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     },
     currentAssignment: openAssignment
       ? {
-          clientId: openAssignment.location.clientId,
-          clientName: openAssignment.location.client.name,
+          clientId: openAssignment.location.clientId ?? '',
+          clientName: openAssignment.location.client?.name ?? '',
           locationId: openAssignment.location.id,
           locationName: openAssignment.location.name,
         }
@@ -1783,7 +1786,7 @@ const NOT_ON_SCHEDULE_MSG =
   'need to punch again.';
 
 async function fileClockInRequest(opts: {
-  device: { id: string; clientId: string; locationId: string | null };
+  device: { id: string; clientId: string | null; locationId: string | null };
   pinRowId: string;
   associateId: string;
   associateName: string;
@@ -1842,10 +1845,11 @@ async function fileClockInRequest(opts: {
         where: { status: 'ACTIVE', role: { in: TIME_ADMIN_ROLES } },
         select: { id: true },
       }),
-      supervisorRecipients(prisma, opts.device.clientId, {
+      // A client-less device (a direct employer) has no client supervisors to page until placement by site lands (step 5).
+      opts.device.clientId ? supervisorRecipients(prisma, opts.device.clientId, {
         locationId: opts.device.locationId,
         startsAt: new Date(),
-      }),
+      }) : Promise.resolve([] as Array<{ id: string }>),
     ]);
     const recipients = [
       ...new Map([...admins, ...supervisors].map((u) => [u.id, { id: u.id }])).values(),

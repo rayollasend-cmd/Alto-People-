@@ -65,8 +65,10 @@ async function overview(now: Date): Promise<HeadcountOverview> {
   for (const s of scheduledRows) {
     if (!s.assignedAssociateId) continue;
     scheduledIds.add(s.assignedAssociateId);
-    if (!scheduledByClient.has(s.clientId)) scheduledByClient.set(s.clientId, new Set());
-    scheduledByClient.get(s.clientId)!.add(s.assignedAssociateId);
+    if (s.clientId) {
+      if (!scheduledByClient.has(s.clientId)) scheduledByClient.set(s.clientId, new Set());
+      scheduledByClient.get(s.clientId)!.add(s.assignedAssociateId);
+    }
     if (s.locationId) {
       if (!scheduledByLocation.has(s.locationId)) scheduledByLocation.set(s.locationId, new Set());
       scheduledByLocation.get(s.locationId)!.add(s.assignedAssociateId);
@@ -79,7 +81,7 @@ async function overview(now: Date): Promise<HeadcountOverview> {
     .filter((r) => r.active > 0 || r.scheduledThisWeek > 0 || r.withoutRate > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
   const byStore: HeadcountRow[] = locations
-    .map((l) => ({ id: l.id, name: l.name, clientName: clientName.get(l.clientId) ?? '', active: active.byLocation.get(l.id) ?? 0, scheduledThisWeek: scheduledByLocation.get(l.id)?.size ?? 0, withoutRate: noRateByLocation.get(l.id) ?? 0 }))
+    .map((l) => ({ id: l.id, name: l.name, clientName: (l.clientId ? clientName.get(l.clientId) : undefined) ?? '', active: active.byLocation.get(l.id) ?? 0, scheduledThisWeek: scheduledByLocation.get(l.id)?.size ?? 0, withoutRate: noRateByLocation.get(l.id) ?? 0 }))
     .filter((r) => r.active > 0 || r.scheduledThisWeek > 0 || r.withoutRate > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
 

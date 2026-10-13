@@ -391,7 +391,7 @@ async function generateRaw(
   }
   const supervisorClients = new Set(supervisors.map((s) => s.clientId).filter(Boolean));
   const workClients = new Map<string, string>();
-  for (const a of clientsWithWork) workClients.set(a.location.clientId, a.location.client.name);
+  for (const a of clientsWithWork) if (a.location.clientId && a.location.client) workClients.set(a.location.clientId, a.location.client.name);
   for (const [clientId, name] of workClients) {
     if (!supervisorClients.has(clientId)) {
       out.push({

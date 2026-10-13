@@ -431,7 +431,7 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
   });
   // Remaining scheduled minutes per associate (rest of a running shift +
   // shifts not yet started). No remainder → the week is already decided.
-  const remaining = new Map<string, { min: number; clientId: string }>();
+  const remaining = new Map<string, { min: number; clientId: string | null }>();
   for (const s of weekShifts) {
     const from = Math.max(s.startsAt.getTime(), now.getTime());
     const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);

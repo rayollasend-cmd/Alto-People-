@@ -70,12 +70,12 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
   try {
     const region = await resolveRegion(req.user!, req.query);
     const now = new Date();
+    // The command center reads client stores; a client-less store (a direct employer) has no portal snapshot.
     const stores = await Promise.all(
-      region.locations.map((l) =>
-        storeSnapshot(
-          { id: l.id, name: l.name, timezone: l.timezone, clientId: l.clientId, clientName: l.client.name },
-          now,
-        ),
+      region.locations.flatMap((l) =>
+        l.clientId && l.client
+          ? [storeSnapshot({ id: l.id, name: l.name, timezone: l.timezone, clientId: l.clientId, clientName: l.client.name }, now)]
+          : [],
       ),
     );
     // Short stores first, then by grade, then by name.
@@ -111,7 +111,7 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
     });
     // Open requests across the region, oldest first, with the store named.
     const storeByClient = new Map<string, string>();
-    for (const l of region.locations) storeByClient.set(l.clientId, l.name);
+    for (const l of region.locations) if (l.clientId) storeByClient.set(l.clientId, l.name);
     const storeById = new Map(region.locations.map((l) => [l.id, l.name]));
     const openRequests = await prisma.clientRequest.findMany({
       // The region's own stores' requests, plus client-wide ones.
@@ -202,10 +202,10 @@ regionsAdminRouter.get('/', requireCapability('view:org'), async (_req, res, nex
       regions: rows.map((r) => ({
         id: r.id,
         name: r.name,
-        stores: r.locations.map((l) => ({ id: l.id, name: l.name, clientId: l.clientId, clientName: l.client.name })),
+        stores: r.locations.map((l) => ({ id: l.id, name: l.name, clientId: l.clientId ?? '', clientName: l.client?.name ?? '' })),
         accounts: r.users,
       })),
-      unassigned: unassigned.map((l) => ({ id: l.id, name: l.name, clientId: l.clientId, clientName: l.client.name })),
+      unassigned: unassigned.map((l) => ({ id: l.id, name: l.name, clientId: l.clientId ?? '', clientName: l.client?.name ?? '' })),
     });
   } catch (err) {
     next(err);

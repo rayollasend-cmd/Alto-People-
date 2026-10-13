@@ -61,7 +61,8 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
     where: { deletedAt: null, isActive: true, client: { deletedAt: null, status: 'ACTIVE' } },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
   });
-  const clientIds = [...new Set(stores.map((s) => s.clientId))];
+  // The query above requires a client; the type does not know it.
+  const clientIds = [...new Set(stores.map((s) => s.clientId).filter((id): id is string => id !== null))];
   const [defs, supervisors, floors] = await Promise.all([
     currentStoreWindows(prisma, stores.map((s) => s.id)),
     prisma.user.findMany({
@@ -96,7 +97,7 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
   ]);
   const storeById = new Map(stores.map((s) => [s.id, s]));
   const byClient = new Map<string, { clientId: string; clientName: string }>();
-  for (const s of stores) byClient.set(s.clientId, { clientId: s.clientId, clientName: s.client.name });
+  for (const s of stores) if (s.clientId && s.client) byClient.set(s.clientId, { clientId: s.clientId, clientName: s.client.name });
 
   let total = 0;
   let covered = 0;

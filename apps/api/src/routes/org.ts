@@ -124,7 +124,8 @@ orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
   );
   const departments: Department[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId,
+    // A direct employer's catalog names no client; the contract still says string.
+    clientId: r.clientId ?? '',
     parentId: r.parentId,
     name: r.name,
     code: r.code,
@@ -256,7 +257,7 @@ orgRouter.get('/cost-centers', VIEW, async (req: Request, res: Response) => {
   );
   const costCenters: CostCenter[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId,
+    clientId: r.clientId ?? '',
     code: r.code,
     name: r.name,
     description: r.description,
@@ -372,7 +373,7 @@ orgRouter.get('/job-profiles', VIEW, async (req: Request, res: Response) => {
   );
   const jobProfiles: JobProfile[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId,
+    clientId: r.clientId ?? '',
     code: r.code,
     title: r.title,
     family: r.family,
@@ -509,7 +510,7 @@ orgRouter.get(
   });
   const shiftPositions: ShiftPosition[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId,
+    clientId: r.clientId ?? '',
     name: r.name,
     sortOrder: r.sortOrder,
     isLead: r.isLead,
@@ -1893,7 +1894,7 @@ orgRouter.post(
       throw new HttpError(
         400,
         'cross_client_confirmation_required',
-        `${target.name} belongs to a different client (${target.client.name}). Re-submit with confirmCrossClient to move them anyway.`,
+        `${target.name} belongs to a different client (${target.client?.name ?? 'none'}). Re-submit with confirmCrossClient to move them anyway.`,
       );
     }
     const startedAt = new Date(input.startedAt + 'T00:00:00Z');
@@ -1992,7 +1993,8 @@ orgRouter.post(
       // transfer reaches every Finance seat — bell and email — whatever
       // the Fieldglass registration says. Fire-and-forget, deduped by the
       // transfer.
-      void trackNotificationWork(notifyFinanceOfTransfer({
+      // Finance hears about client-to-client moves; a client-less destination (a direct employer) is not one.
+      if (target.clientId) void trackNotificationWork(notifyFinanceOfTransfer({
         associateId: id,
         fromClientId: currentClientId,
         toClientId: target.clientId,
@@ -2030,7 +2032,7 @@ orgRouter.post(
       kioskPinMoved,
     });
     // Fire-and-forget, after the transaction has committed.
-    const destination = crossClient
+    const destination = crossClient && target.client
       ? `${target.name} (${target.client.name})`
       : target.name;
     void notifyAssociate(id, {
@@ -2065,8 +2067,8 @@ orgRouter.post(
       locationId: created.locationId,
       locationName: target.name,
       startedAt: created.startedAt.toISOString().slice(0, 10),
-      clientId: target.clientId,
-      clientName: target.client.name,
+      clientId: target.clientId ?? '',
+      clientName: target.client?.name ?? '',
       crossClient,
       releasedShifts,
       expiredClaims,

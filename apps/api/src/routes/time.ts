@@ -1160,7 +1160,7 @@ timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
         decidedBy: { select: { email: true } },
       },
     });
-    const clientIds = [...new Set(rows.map((r) => r.clientId))];
+    const clientIds = [...new Set(rows.map((r) => r.clientId).filter((id): id is string => id !== null))];
     const locationIds = [
       ...new Set(rows.map((r) => r.locationId).filter((id): id is string => !!id)),
     ];
@@ -1182,8 +1182,9 @@ timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
           id: r.id,
           associateId: r.associateId,
           associateName: `${r.associate.firstName} ${r.associate.lastName}`,
-          clientId: r.clientId,
-          clientName: clientName.get(r.clientId) ?? null,
+          // A client-less request (a direct employer): the contract still says uuid, so the nil uuid stands in until it is widened.
+          clientId: r.clientId ?? '00000000-0000-0000-0000-000000000000',
+          clientName: r.clientId ? (clientName.get(r.clientId) ?? null) : null,
           locationId: r.locationId,
           locationName: r.locationId ? locationName.get(r.locationId) ?? null : null,
           requestedAt: r.requestedAt.toISOString(),

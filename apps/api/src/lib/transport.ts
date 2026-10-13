@@ -116,7 +116,7 @@ export async function bookableStores(associateId: string, ownClientId: string | 
     ownStoreIds(associateId, db),
   ]);
   const clientIds = [
-    ...new Set([...placed, ...scheduled.map((s) => s.clientId), ...(ownClientId ? [ownClientId] : [])]),
+    ...new Set([...placed, ...scheduled.map((s) => s.clientId).filter((id): id is string => id !== null), ...(ownClientId ? [ownClientId] : [])]),
   ];
   if (clientIds.length === 0) return [];
   const rows = await db.location.findMany({
@@ -244,8 +244,9 @@ export function toRideView(r: RideRow) {
       id: r.location.id,
       name: r.location.name,
       timezone: r.location.timezone,
-      clientId: r.location.client.id,
-      clientName: r.location.client.name,
+      // A ride is booked to a bookable store, which always has a client (above); the empty string is the impossible case.
+      clientId: r.location.client?.id ?? '',
+      clientName: r.location.client?.name ?? '',
     },
     rider: { associateId: r.associate.id, name: `${r.associate.firstName} ${r.associate.lastName}`, phone: r.associate.phone },
     pickupOrder: r.pickupOrder,

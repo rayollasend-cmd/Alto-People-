@@ -532,6 +532,8 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
       { name: string; count: number; days: number[] }
     >();
     for (const a of inWindow) {
+      // The breakdown is per client; a client-less application (a direct employer) is in the totals only.
+      if (!a.clientId || !a.client) continue;
       const entry = byClientMap.get(a.clientId) ?? {
         name: a.client.name,
         count: 0,

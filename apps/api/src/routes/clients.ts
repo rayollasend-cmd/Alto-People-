@@ -403,7 +403,7 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
     });
     const locations: LocationSummary[] = rows.map((r) => ({
       id: r.id,
-      clientId: r.clientId,
+      clientId: r.clientId ?? client.id,
       name: r.name,
       addressLine1: r.addressLine1,
       addressLine2: r.addressLine2,
@@ -540,7 +540,7 @@ function normalizeGeofence(input: {
 
 function shapeLocation(row: {
   id: string;
-  clientId: string;
+  clientId: string | null;
   name: string;
   addressLine1: string | null;
   addressLine2: string | null;
@@ -555,7 +555,7 @@ function shapeLocation(row: {
 }): LocationSummary {
   return {
     id: row.id,
-    clientId: row.clientId,
+    clientId: row.clientId ?? '',
     name: row.name,
     addressLine1: row.addressLine1,
     addressLine2: row.addressLine2,

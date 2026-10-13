@@ -239,7 +239,7 @@ export async function sendKioskFleetNotices(
   const silent: Array<{ id: string; line: string }> = [];
 
   for (const d of devices) {
-    const label = `${d.name} (${d.client.name})`;
+    const label = d.client ? `${d.name} (${d.client.name})` : d.name;
     if (d.tokenExpiresAt) {
       const msLeft = d.tokenExpiresAt.getTime() - now.getTime();
       if (msLeft > 0) {

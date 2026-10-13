@@ -1,4 +1,5 @@
 import type { ApplicationStatus, Prisma } from '@prisma/client';
+import { getBrandingSync } from './branding.js';
 import type { Request } from 'express';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -207,7 +208,7 @@ export async function cancelApplication(input: {
   reason: (typeof CANCEL_REASONS)[number];
   note: string | null;
   req?: Request;
-}): Promise<{ mode: 'removed' | 'cancelled'; associate: { firstName: string; lastName: string; email: string }; clientId: string }> {
+}): Promise<{ mode: 'removed' | 'cancelled'; associate: { firstName: string; lastName: string; email: string }; clientId: string | null }> {
   const now = new Date();
   const app = await prisma.application.findUnique({
     where: { id: input.applicationId },
@@ -318,7 +319,7 @@ export async function reopenApplication(input: { applicationId: string; actorUse
       userId: user.id,
       email: app.associate.email,
       firstName: app.associate.firstName,
-      clientName: app.client.name,
+      clientName: app.client?.name ?? getBrandingSync().orgName,
       hireDate: app.associate.hireDate,
       rawToken: invite.raw,
       expiresAt,

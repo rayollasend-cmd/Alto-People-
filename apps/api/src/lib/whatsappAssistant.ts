@@ -118,7 +118,7 @@ async function answerSchedule(db: Db, associateId: string, lang: WaLang, now: Da
   if (shifts.length === 0) return WA_REPLY.noShifts(lang);
   const lines = shifts.map((s) => {
     const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-    return `• ${formatDateInZone(s.startsAt, tz)} ${formatTimeInZone(s.startsAt, tz)}–${formatTimeInZone(s.endsAt, tz)} · ${s.position} · ${s.locationRel?.name ?? s.client.name}`;
+    return `• ${formatDateInZone(s.startsAt, tz)} ${formatTimeInZone(s.startsAt, tz)}–${formatTimeInZone(s.endsAt, tz)} · ${s.position} · ${s.locationRel?.name ?? s.client?.name ?? ''}`;
   });
   return WA_REPLY.schedule(lang, lines);
 }

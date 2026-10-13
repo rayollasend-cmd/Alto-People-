@@ -165,13 +165,14 @@ async function loadActiveAssociates(clientId?: string | null) {
     where: { id: { in: ids } },
     select: { id: true, firstName: true, lastName: true, dob: true, hireDate: true },
   });
-  const clientIds = [...new Set(ids.map((id) => placed.get(id)!.clientId))];
+  // A client-less placement (a direct employer) is scored under no client.
+  const clientIds = [...new Set(ids.map((id) => placed.get(id)!.clientId).filter((id): id is string => id !== null))];
   const clients = await prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, name: true } });
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const rows: Array<{
     associateId: string;
     associateName: string;
-    clientId: string;
+    clientId: string | null;
     clientName: string;
     dob: Date | null;
     hireDate: Date | null;
@@ -183,7 +184,7 @@ async function loadActiveAssociates(clientId?: string | null) {
       associateId: p.id,
       associateName: `${p.firstName} ${p.lastName}`,
       clientId: rowClientId,
-      clientName: clientName.get(rowClientId) ?? '',
+      clientName: (rowClientId ? clientName.get(rowClientId) : undefined) ?? '',
       dob: p.dob,
       hireDate: p.hireDate,
     });

@@ -103,6 +103,8 @@ async function resolveScope(
           })
         : null;
     if (!loc) throw new HttpError(400, 'store_required', 'Pick a store in your region.');
+    // The portal is a client's; a client-less store (a direct employer) has no portal.
+    if (!loc.clientId) throw new HttpError(400, 'client_required', 'This store has no client.');
     clientId = loc.clientId;
     locationId = loc.id;
   } else if (user.role === 'CLIENT_PORTAL') {

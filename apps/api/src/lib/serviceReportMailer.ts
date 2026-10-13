@@ -138,6 +138,8 @@ export async function runServiceReportMailSweep(
         take: MAX_REGION_ATTACHMENTS,
       });
       for (const s of stores) {
+        // Service reports are per client; a client-less store (a direct employer) has none.
+        if (!s.clientId) continue;
         const r = await reportFor(s.clientId, s.id);
         if (r) attachments.push({ filename: r.filename, content: r.pdf, contentType: 'application/pdf' });
       }

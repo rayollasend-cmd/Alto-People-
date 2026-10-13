@@ -85,7 +85,8 @@ function scopeOf(e: EmergencyRow): Scope {
   return {
     allSites: e.allSites,
     locationIds: e.sites.map((s) => s.locationId),
-    clientIds: [...new Set(e.sites.map((s) => s.location.clientId))],
+    // Client-less sites (a direct employer) reach by locationId alone.
+    clientIds: [...new Set(e.sites.map((s) => s.location.clientId).filter((id): id is string => id !== null))],
   };
 }
 
@@ -204,12 +205,12 @@ function messageFor(e: EmergencyRow, lang: EmailLang): string {
 }
 
 export function summarize(e: EmergencyRow, checkIns: EmergencySummary['checkIns']): EmergencySummary {
-  const sites: EmergencySiteRef[] = e.sites.map((s) => ({
-    id: s.location.id,
-    name: s.location.name,
-    clientId: s.location.clientId,
-    clientName: s.location.client.name,
-  }));
+  // The site reference names a client; a client-less site (a direct employer) is listed once step 5 gives it an org unit.
+  const sites: EmergencySiteRef[] = e.sites.flatMap((s) =>
+    s.location.clientId && s.location.client
+      ? [{ id: s.location.id, name: s.location.name, clientId: s.location.clientId, clientName: s.location.client.name }]
+      : [],
+  );
   return {
     id: e.id,
     title: e.title,
@@ -263,7 +264,8 @@ export async function emergencySites(db: Db = defaultPrisma): Promise<EmergencyS
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
     orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
   });
-  return rows.map((r) => ({ id: r.id, name: r.name, clientId: r.clientId, clientName: r.client.name }));
+  // The where above requires a client; the type does not know it.
+  return rows.flatMap((r) => (r.clientId && r.client ? [{ id: r.id, name: r.name, clientId: r.clientId, clientName: r.client.name }] : []));
 }
 
 /** Tell one associate, in their language, on every channel we have. */

@@ -38,6 +38,7 @@
  * asserting on the Notification table — same pattern as audit.ts.
  */
 import type { PrismaClient } from '@prisma/client';
+import { getBrandingSync } from './branding.js';
 import {
   NOTIFICATION_CATEGORIES,
   bucketForCategory,
@@ -659,7 +660,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
       const tpl = onboardingCompleteTemplate({
         associateName: who,
-        clientName: app.client.name,
+        clientName: app.client?.name ?? getBrandingSync().orgName,
         submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
         applicationUrl: `${publicBaseUrl()}/onboarding/applications/${app.id}`,
       });

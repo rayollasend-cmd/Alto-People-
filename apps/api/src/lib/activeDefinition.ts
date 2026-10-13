@@ -52,7 +52,8 @@ export interface ActiveDefinitionOptions extends ActiveScope {
 
 export interface Placement {
   associateId: string;
-  clientId: string;
+  /** Null for a direct employer's site (Brief 2-1b): the placement is the site alone. */
+  clientId: string | null;
   locationId: string | null;
   source: 'assignment' | 'application';
 }
@@ -181,7 +182,7 @@ export async function activeBreakdown(now: Date = new Date(), db: Db = defaultPr
     const p = placed.get(id);
     if (!p) continue;
     kept.set(id, p);
-    byClient.set(p.clientId, (byClient.get(p.clientId) ?? 0) + 1);
+    if (p.clientId) byClient.set(p.clientId, (byClient.get(p.clientId) ?? 0) + 1);
     if (p.locationId) byLocation.set(p.locationId, (byLocation.get(p.locationId) ?? 0) + 1);
   }
   return { windowDays: days, total: ids.size, ids, placements: kept, byClient, byLocation };

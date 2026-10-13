@@ -131,7 +131,8 @@ export async function runPortalDigestSweep(
         orderBy: { name: 'asc' },
         take: 50,
       });
-      const rows = await Promise.all(stores.map(async (s) => ({ store: s, c: await shiftsFor({ clientId: s.clientId, locationId: s.id }) })));
+      // The portal digest is per client; a client-less store (a direct employer) is skipped.
+      const rows = await Promise.all(stores.flatMap((s) => (s.clientId ? [shiftsFor({ clientId: s.clientId, locationId: s.id }).then((c) => ({ store: s, c }))] : [])));
       const active = rows.filter((r) => r.c.any);
       if (active.length === 0) {
         skipped += 1;

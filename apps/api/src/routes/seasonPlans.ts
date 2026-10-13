@@ -54,7 +54,8 @@ seasonPlansRouter.get('/defaults', VIEW, async (req, res, next) => {
     res.json({
       weeks,
       vans: { count: vans._count._all, maxCapacity: vans._max.capacity ?? 14 },
-      sites: locations.map((l) => ({
+      // A season plan is per client site; a client-less site (a direct employer) waits for step 5's org unit.
+      sites: locations.flatMap((l) => (l.clientId && l.client ? [{
         locationId: l.id,
         siteName: l.name,
         clientId: l.clientId,
@@ -64,7 +65,7 @@ seasonPlansRouter.get('/defaults', VIEW, async (req, res, next) => {
         runsPerShift: 1,
         routeMinutes: 45,
         demand: demand.get(l.id) ?? [],
-      })),
+      }] : [])),
     });
   } catch (err) {
     next(err);

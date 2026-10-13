@@ -43,7 +43,8 @@ export async function primaryClientsForAssociates(
   });
   // Rows arrive newest-approval-first; first occurrence per associate wins.
   for (const a of approved) {
-    if (!out.has(a.associateId)) {
+    // A client-less application (a direct employer) names no client.
+    if (!out.has(a.associateId) && a.client) {
       out.set(a.associateId, { clientId: a.client.id, clientName: a.client.name });
     }
   }
@@ -60,6 +61,8 @@ export async function primaryClientsForAssociates(
   // moves someone's "current client" even though the original application
   // stays approved under the old one.
   for (const a of assignments) {
+    // A site with no client (a direct employer) overrides nothing: skip.
+    if (!a.location.client) continue;
     out.set(a.associateId, {
       clientId: a.location.client.id,
       clientName: a.location.client.name,

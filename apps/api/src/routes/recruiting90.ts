@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { CareersApplyInputSchema, InterviewScorecardSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { getBrandingSync } from '../lib/branding.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { send } from '../lib/notifications.js';
@@ -445,8 +446,8 @@ recruiting90Router.get('/offers', VIEW, async (req, res) => {
       id: o.id,
       candidateId: o.candidateId,
       candidateName: `${o.candidate.firstName} ${o.candidate.lastName}`,
-      clientId: o.clientId,
-      clientName: o.client.name,
+      clientId: o.clientId ?? '',
+      clientName: o.client?.name ?? '',
       jobTitle: o.jobTitle,
       startDate: o.startDate.toISOString().slice(0, 10),
       salary: o.salary?.toString() ?? null,
@@ -585,7 +586,7 @@ recruiting90Router.post('/offers', MANAGE, async (req, res) => {
     candidateId: created.candidateId,
     kind: 'OFFER_CREATED',
     actorUserId: req.user!.id,
-    body: `${created.jobTitle} · ${created.client.name}`,
+    body: `${created.jobTitle} · ${created.client?.name ?? ''}`,
     metadata: { offerId: created.id },
   });
   if (band.outsideNote) {
@@ -598,7 +599,7 @@ recruiting90Router.post('/offers', MANAGE, async (req, res) => {
     });
     void notifyOfferApprovers(
       'An offer needs your approval',
-      `${candidate.firstName} ${candidate.lastName} — ${created.jobTitle} at ${created.client.name}. ${band.outsideNote}`,
+      `${candidate.firstName} ${candidate.lastName} — ${created.jobTitle} at ${created.client?.name ?? getBrandingSync().orgName}. ${band.outsideNote}`,
       req.user!.id,
     ).catch(() => undefined);
   }
@@ -824,7 +825,7 @@ recruiting90Router.get('/offer-letters/:token', offerLetterIpLimiter, async (req
     candidateFirstName: o.candidate.firstName,
     candidateName: `${o.candidate.firstName} ${o.candidate.lastName}`,
     jobTitle: o.jobTitle,
-    clientName: o.client.name,
+    clientName: o.client?.name ?? getBrandingSync().orgName,
     startDate: letterDate(o.startDate),
     pay: offerPay(o),
     letterBody: o.letterBody,
@@ -855,10 +856,10 @@ recruiting90Router.post('/offer-letters/:token/accept', offerLetterIpLimiter, as
   const candidateName = `${o.candidate.firstName} ${o.candidate.lastName}`;
   const letter = [
     o.letterBody?.trim() ||
-      `We are pleased to offer you the position of ${o.jobTitle} at ${o.client.name}.`,
+      `We are pleased to offer you the position of ${o.jobTitle} at ${o.client?.name ?? getBrandingSync().orgName}.`,
     '',
     `Position: ${o.jobTitle}`,
-    `Client: ${o.client.name}`,
+    `Client: ${o.client?.name ?? getBrandingSync().orgName}`,
     `Start date: ${letterDate(o.startDate)}`,
     `Pay: ${offerPay(o)}`,
   ].join('\n');

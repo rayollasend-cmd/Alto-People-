@@ -96,7 +96,7 @@ export async function runAgreementSweep(
       customLabel: a.customLabel,
       issuedAt: a.createdAt,
       signBy: a.expiresOn,
-      employerName: a.associate.applications[0]?.client.name ?? null,
+      employerName: a.associate.applications[0]?.client?.name ?? null,
     });
     void notifyAssociate(a.associateId, {
       subject: email.subject,
