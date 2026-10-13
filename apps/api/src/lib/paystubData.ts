@@ -189,7 +189,7 @@ export async function buildPaystubDataFromItem(
   if (rideCurrent > 0 || rideDeferred > 0) {
     const guardNote =
       rideDeferred > 0 && guard?.minimumWageCents
-        ? ` — ${rideDeferred.toFixed(2)} carried to a later check so pay stays at the ${guard.state && guard.state !== 'FEDERAL' ? guard.state + ' ' : ''}minimum wage of ${(guard.minimumWageCents / 100).toFixed(2)}/h`
+        ? ` — $${rideDeferred.toFixed(2)} carried to a later check so pay stays at the ${guard.state && guard.state !== 'FEDERAL' ? guard.state + ' ' : ''}minimum wage of $${(guard.minimumWageCents / 100).toFixed(2)}/h`
         : '';
     postTaxDeductions.push({ label: `Van rides${guardNote}`, current: rideCurrent, ytd: ytd.rides });
   }

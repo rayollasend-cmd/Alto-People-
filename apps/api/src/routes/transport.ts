@@ -3026,7 +3026,7 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
     { rides: 0, noShows: 0, owedCents: 0, takenCents: 0, waivedCents: 0, unauthorizedCents: 0, deferredCents: 0 },
   );
   if (format === 'csv') {
-    const esc = (v: string | number) => (typeof v === 'number' ? String(v) : `"${v.replace(/"/g, '""')}"`);
+    const esc = (v: string | number) => (typeof v === 'number' || /^-?\d+(?:\.\d+)?$/.test(v) ? String(v) : `"${v.replace(/"/g, '""')}"`);
     const dollars = (c: number) => (c / 100).toFixed(2);
     const lines = [
       ['Associate', 'Rides', 'No-shows', 'Owed', 'Taken', 'Deferred by minimum-wage guard', 'Not authorized (not deducted)', 'Waived', 'Authorization'].map(esc).join(','),

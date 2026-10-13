@@ -65,9 +65,10 @@ async function world() {
   async function rider(firstName: string) {
     const a = await createAssociate({ firstName, lastName: 'Rider' });
     await prisma.application.create({ data: { associateId: a.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' } });
-    await prisma.rideConsent.create({ data: { associateId: a.id, fareCents: 500, noShowFeeCents: 100 } });
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
     const agent = await loginAs(user.email);
+    // Brief 1A-3: the signed written authorization every charge needs.
+    await agent.post('/transport/me/authorization').send({ typedName: `${firstName} Rider` });
     const book = async (windowLabel = 'Morning', direction: 'TO_WORK' | 'FROM_WORK' = 'TO_WORK') => {
       const r = await agent.post('/transport/me/rides').send({ direction, locationId: store.id, stopId: stop.id, windowLabel, date });
       expect(r.status).toBe(201);

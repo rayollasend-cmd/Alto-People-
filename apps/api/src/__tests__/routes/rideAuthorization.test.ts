@@ -66,8 +66,8 @@ async function seed() {
 
 const sign = (agent: TestAgent<Test>, typedName = 'Kim Nguyen') =>
   agent.post('/transport/me/authorization').send({ typedName });
-const book = (agent: TestAgent<Test>, store: { id: string }, stop: { id: string }) =>
-  agent.post('/transport/me/rides').send({ direction: 'TO_WORK', locationId: store.id, stopId: stop.id, targetAt: inHours(20).toISOString() });
+const book = (agent: TestAgent<Test>, store: { id: string }, stop: { id: string }, hoursAhead = 20) =>
+  agent.post('/transport/me/rides').send({ direction: 'TO_WORK', locationId: store.id, stopId: stop.id, targetAt: inHours(hoursAhead).toISOString() });
 
 describe('the signed written authorization', () => {
   it('nothing is booked without it; signing keeps the PDF, its hash, the document and the signature', async () => {
@@ -205,7 +205,8 @@ describe('the configurable rate', () => {
 
     // Signing again names the new rate; the next ride is priced at it.
     expect((await sign(s.kimAgent)).body.authorization).toMatchObject({ current: true, fareCents: 600, noShowFeeCents: 150 });
-    const after = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    // A different time: the first booking is still open.
+    const after = (await book(s.kimAgent, s.store, s.stop, 44)).body.ride;
     expect(after).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
 
     // Only an unchanged rate leaves the history alone.
