@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_TEST_PASSWORD, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { hashPassword } from '../../lib/passwords.js';
@@ -6,6 +6,8 @@ import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { invalidateTenantProfile, loadTenantProfile } from '../../lib/tenantProfile.js';
 import { defaultEmployerOrg } from '../../lib/employment.js';
 import { WA_REPLY, WA_TEMPLATES } from '../../lib/whatsappContent.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
+import { refreshBranding } from '../../lib/branding.js';
 
 /**
  * Brief 2-1b — the hotel's journey through the API, with no client
@@ -17,6 +19,12 @@ import { WA_REPLY, WA_TEMPLATES } from '../../lib/whatsappContent.js';
 beforeEach(async () => {
   await truncateAll();
   invalidateTenantProfile();
+});
+afterEach(async () => {
+  // A failed assertion must not leave the console mocked or the hotel's name in the branding cache.
+  vi.restoreAllMocks();
+  await prisma.orgSetting.deleteMany();
+  await refreshBranding(prisma);
 });
 afterAll(async () => {
   invalidateTenantProfile();
@@ -36,6 +44,19 @@ describe('a direct employer with no clients', () => {
     expect(profile.body.profile.modules).toMatchObject({ clientPortal: false, transportation: false, billRates: false });
     const employer = await defaultEmployerOrg(prisma, ALTO_TENANT_ID);
     await prisma.employerOrganization.update({ where: { id: employer.id }, data: { legalName: 'The Grand Hotel LLC', ein: '12-3456789' } });
+
+    // The journey runs under the hotel's own name: every notice it writes and
+    // every email it sends is checked against the forbidden list at the end.
+    expect((await admin.patch('/admin/org/settings').send({ orgName: 'The Grand Hotel' })).status).toBe(200);
+    // Stubbed sends print to the console (lib/notifications.ts): that is the email as it would leave.
+    const sentEmails: string[] = [];
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      const line = args.map(String).join(' ');
+      // Keep the email (subject and body), not the log's own prefix and hint ("[alto-people/api]", "apps/api/.env").
+      const at = line.indexOf('Subject:');
+      const end = line.indexOf('(Set RESEND_API_KEY');
+      if (line.includes('STUBBED EMAIL') && at !== -1) sentEmails.push(line.slice(at, end === -1 ? undefined : end));
+    });
 
     // A property, under a region of the hotel's own tree.
     const region = await admin.post('/admin/org-units').send({ type: 'REGION', name: 'Gulf Coast' });
@@ -116,7 +137,6 @@ describe('a direct employer with no clients', () => {
 
     // Hugo speaks the hotel's words. The list lives here, not in prose; the
     // one exemption is the product name in his introduction (exempt by the owner's ruling, 2026-10-13).
-    expect((await admin.patch('/admin/org/settings').send({ orgName: 'The Grand Hotel' })).status).toBe(200);
     await loadTenantProfile(ALTO_TENANT_ID);
     const FORBIDDEN = /\b(clients?|bill rates?|housing|vans?|stores?|associates?|alto)\b/i;
     const exempt = (s: string) => s.replace(/Alto People/g, '');
@@ -138,6 +158,26 @@ describe('a direct employer with no clients', () => {
     // The templates the hotel can be sent: every one that needs no module it has off.
     for (const t of WA_TEMPLATES.filter((t) => !t.requiresModule)) for (const body of Object.values(t.body)) expect(body, t.metaName).not.toMatch(FORBIDDEN);
     expect(WA_TEMPLATES.find((t) => t.key === 'alto_shift_reminder')?.fallbackKey).toBe('alto_shift_reminder_plain');
+
+    // Every notice the journey wrote (bell, email record, push) and every
+    // email it sent speaks the hotel's words too.
+    await flushPendingNotifications();
+    consoleLog.mockRestore();
+    const notices = await prisma.notification.findMany({ select: { channel: true, category: true, subject: true, body: true } });
+    expect(notices.length, 'the journey writes notices (invite, approval, the HR desk)').toBeGreaterThan(0);
+    const badNotices = notices.filter((n) => FORBIDDEN.test(exempt(`${n.subject ?? ''}\n${n.body}`)));
+    expect(
+      badNotices.map((n) => `${n.channel} ${n.category ?? ''}: ${n.subject ?? ''} — ${exempt(`${n.subject ?? ''}\n${n.body}`).match(FORBIDDEN)?.[0]}`),
+      'notices carrying a forbidden word',
+    ).toEqual([]);
+    expect(sentEmails.length, 'the invite at least was emailed').toBeGreaterThan(0);
+    const badEmails = sentEmails.filter((e) => FORBIDDEN.test(exempt(e)));
+    expect(
+      badEmails.map((e) => `${e.split('\n').find((l) => l.includes('Subject:'))?.trim()} — ${exempt(e).match(FORBIDDEN)?.[0]}`),
+      'emails carrying a forbidden word',
+    ).toEqual([]);
+    expect(sentEmails.some((e) => e.includes('Complete your onboarding with The Grand Hotel')), 'the invite names the hotel').toBe(true);
+
     await admin.patch('/admin/org/settings').send({ orgName: 'Alto HR' });
   });
 });

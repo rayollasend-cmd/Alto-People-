@@ -39,6 +39,7 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import { getBrandingSync } from './branding.js';
+import { loadTenantProfile } from './tenantProfile.js';
 import {
   NOTIFICATION_CATEGORIES,
   bucketForCategory,
@@ -240,7 +241,7 @@ function sendEmailNotification(
         ? { html: opts.html, text: opts.text ?? opts.body }
         : (() => {
             const tpl = genericNotificationTemplate({
-              subject: opts.subject ?? 'Notification from Alto HR',
+              subject: opts.subject ?? `Notification from ${getBrandingSync().orgName}`,
               body: opts.body,
               linkUrl: opts.linkUrl ?? null,
             });
@@ -558,7 +559,7 @@ export function notifyAssociate(
       const tpl = opts.html
         ? { html: opts.html, text: opts.text ?? opts.body }
         : genericNotificationTemplate({
-            subject: opts.subject ?? 'Notification from Alto HR',
+            subject: opts.subject ?? `Notification from ${getBrandingSync().orgName}`,
             body: opts.body,
             linkUrl: opts.linkUrl ?? null,
           });
@@ -567,7 +568,7 @@ export function notifyAssociate(
         // This caller writes its own Notification row for the attempt.
         audit: false,
         recipient: { userId: null, phone: null, email: associate.email },
-        subject: opts.subject ?? 'Notification from Alto HR',
+        subject: opts.subject ?? `Notification from ${getBrandingSync().orgName}`,
         body: tpl.text,
         html: tpl.html,
       });
@@ -658,9 +659,11 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       });
 
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
+      // The email names the worker in the tenant's word; warm the profile for the template.
+      await loadTenantProfile();
       const tpl = onboardingCompleteTemplate({
         associateName: who,
-        clientName: app.client?.name ?? getBrandingSync().orgName,
+        clientName: app.client?.name ?? null,
         submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
         applicationUrl: `${publicBaseUrl()}/onboarding/applications/${app.id}`,
       });

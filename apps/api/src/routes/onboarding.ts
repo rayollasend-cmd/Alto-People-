@@ -1256,7 +1256,7 @@ async function approveOneApplication(
     : null;
   const approvedTpl = applicationApprovedTemplate({
     firstName: approvedAssoc?.firstName ?? 'there',
-    clientName: approvedClient?.name ?? 'your assigned client',
+    clientName: approvedClient?.name ?? getBrandingSync().orgName,
     hireDate,
     appUrl: publicBaseUrl(),
   });
@@ -1368,7 +1368,7 @@ onboardingRouter.post(
         : null;
       const rejTpl = applicationRejectedTemplate({
         firstName: rejAssoc?.firstName ?? 'there',
-        clientName: rejClient?.name ?? 'your assigned client',
+        clientName: rejClient?.name ?? getBrandingSync().orgName,
         rejectionReason: reason,
         decisionDate: new Date().toISOString().slice(0, 10),
       });
@@ -4450,7 +4450,7 @@ onboardingRouter.post(
 
           const rejTpl = applicationRejectedTemplate({
             firstName: app.associate?.firstName ?? 'there',
-            clientName: app.client?.name ?? 'your assigned client',
+            clientName: app.client?.name ?? getBrandingSync().orgName,
             rejectionReason: reason,
             decisionDate: new Date().toISOString().slice(0, 10),
           });

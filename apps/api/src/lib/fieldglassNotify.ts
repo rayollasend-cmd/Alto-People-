@@ -275,6 +275,9 @@ export async function maybeNotifyFinanceNewWorker(
     // The client they work at NOW — after a transfer, their first shift and
     // their application both sit at the client they left.
     const current = await currentClientOf(associateId);
+    // Fieldglass is a client's system: a worker with no client anywhere (a
+    // direct employer's hire, Brief 2-1b) has nothing to register.
+    if (!current && !firstShift.client && !application.client) return;
     const clientName = current?.name ?? firstShift.client?.name ?? application.client?.name ?? '—';
     const onboarded = application.approvedAt ?? associate.hireDate;
     const contact = [associate.email, associate.phone].filter(Boolean).join(' · ');

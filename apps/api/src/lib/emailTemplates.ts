@@ -26,6 +26,8 @@
 import { env } from '../config/env.js';
 import { getBrandingSync } from './branding.js';
 import { appLink } from './emailLayout.js';
+import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
+import { tenantProfileSync } from './tenantProfile.js';
 
 /* ============================================================== */
 /* Types                                                          */
@@ -118,9 +120,16 @@ export const COMPANY_INFO = {
 // The anti-phishing line every associate-facing email carries. Scammers
 // imitate HR mail to harvest credentials and bank details; this states,
 // in every legitimate message, exactly what we will never ask for.
-const ANTI_PHISHING_NOTE =
-  `${DEFAULT_COMPANY_NAME} will never ask you for your password, verification codes, full Social Security number, or bank credentials by email or text. ` +
+// Brief 2-1b: it names the organization the email comes from (the branding
+// org name), so a direct employer's people never read another company's name.
+const antiPhishingNote = (name: string): string =>
+  `${name} will never ask you for your password, verification codes, full Social Security number, or bank credentials by email or text. ` +
   `If a message requesting any of these claims to be from us, do not respond — forward it to ${COMPANY_CONTACT_EMAIL}.`;
+
+/** Brief 2-1b: the tenant's nouns for an email (English; the legacy templates are English-only). */
+function terms(): Record<TermKey, string> {
+  return termsIn(tenantProfileSync() ?? defaultTenantProfile('WORKFORCE_PROVIDER'), 'en');
+}
 
 interface Brand {
   color: string;
@@ -187,7 +196,7 @@ function signatureText(sig: Signatory, refId: string): string {
     'privileged information. If you received this in error, please delete it',
     'and notify the sender immediately.',
     '',
-    ANTI_PHISHING_NOTE,
+    antiPhishingNote(b.name),
     '',
     b.replyToNote,
     '',
@@ -230,7 +239,7 @@ function signatureHtml(sig: Signatory, refId: string): string {
       privileged information. If you received this in error, please delete it and
       notify the sender immediately.
       <br><br>
-      <strong style="color:${TEXT_COLOR}">SECURITY</strong> — ${escapeHtml(ANTI_PHISHING_NOTE)}
+      <strong style="color:${TEXT_COLOR}">SECURITY</strong> — ${escapeHtml(antiPhishingNote(b.name))}
       <br><br>
       ${b.replyToNote}
       <br><br>
@@ -520,20 +529,19 @@ export function applicationRejectedTemplate(opts: ApplicationRejectedOpts): Emai
 
 export interface OnboardingCompleteOpts {
   associateName: string;
-  clientName: string;
+  /** Null for a direct employer's hire: no client row, and the subject names the organization. */
+  clientName: string | null;
   position?: string | null;
   submittedAt: string;
   applicationUrl: string;
 }
 export function onboardingCompleteTemplate(opts: OnboardingCompleteOpts): EmailTemplate {
   const refId = formatRef();
-  const subject = `[For Your Review] Onboarding ready — ${opts.associateName} (${opts.clientName})`;
+  const subject = `[For Your Review] Onboarding ready — ${opts.associateName} (${opts.clientName ?? brand().name})`;
   const heading = `Onboarding complete — ready for review`;
   const intro = `The following application has completed all onboarding requirements and is ready for final review.`;
-  const dataBlock: DataRow[] = [
-    { label: 'Associate', value: opts.associateName },
-    { label: 'Client', value: opts.clientName },
-  ];
+  const dataBlock: DataRow[] = [{ label: terms().worker, value: opts.associateName }];
+  if (opts.clientName) dataBlock.push({ label: 'Client', value: opts.clientName });
   if (opts.position) dataBlock.push({ label: 'Position', value: opts.position });
   dataBlock.push({ label: 'Submitted', value: opts.submittedAt });
   const tail = `This notification is sent once per application. Subsequent task updates will not generate additional notices.`;
@@ -572,10 +580,8 @@ export function i9Section2Template(opts: I9Section2Opts): EmailTemplate {
   const heading = `I-9 Section 2 verification required`;
   const intro = `${opts.associateName} has signed I-9 Section 1.`;
   const compliance = `USCIS regulations require Section 2 to be completed within three (3) business days of the associate's first day of work for pay. Late completion is a recordable compliance violation.`;
-  const dataBlock: DataRow[] = [
-    { label: 'Associate', value: opts.associateName },
-    { label: 'Client', value: opts.clientName },
-  ];
+  const dataBlock: DataRow[] = [{ label: terms().worker, value: opts.associateName }];
+  if (opts.clientName) dataBlock.push({ label: 'Client', value: opts.clientName });
   if (opts.hireDate) dataBlock.push({ label: 'Start date', value: opts.hireDate });
   if (opts.section2DueDate) dataBlock.push({ label: 'Section 2 due', value: opts.section2DueDate });
   return {
@@ -1403,7 +1409,7 @@ export function genericNotificationTemplate(
   // appLink: the public address, never a raw deployment host — a link to
   // another domain has no session cookie and lands on the login page.
   const url = opts.linkUrl ? appLink(opts.linkUrl) : null;
-  const cta = url ? { label: opts.linkLabel ?? 'Open in Alto HR', url } : undefined;
+  const cta = url ? { label: opts.linkLabel ?? `Open in ${brand().name}`, url } : undefined;
   return {
     subject: opts.subject,
     text: composeText({
