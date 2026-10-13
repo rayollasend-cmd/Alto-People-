@@ -17,6 +17,7 @@ import type {
   ShiftPosition,
   ShiftPositionInput,
   ShiftPositionListResponse,
+  SiteType,
 } from '@alto-people/shared';
 import { apiFetch, ApiError, NetworkError } from './api';
 
@@ -458,3 +459,156 @@ export function getAssociateAsOf(
   const q = when ? `?when=${encodeURIComponent(when)}` : '';
   return apiFetch(`/org/associates/${associateId}/as-of${q}`);
 }
+
+/**
+ * Brief 2-1b steps 4–7 — the organization behind the people: employers of
+ * record, the organizational tree, and the sites.
+ */
+
+/* ----- Employers of record --------------------------------------------- */
+
+export type EmployerKind = 'TENANT' | 'CLIENT' | 'THIRD_PARTY';
+
+export interface EmployerRow {
+  id: string;
+  kind: EmployerKind;
+  legalName: string;
+  ein: string | null;
+  address: { line1: string | null; line2: string | null; city: string | null; state: string | null; zip: string | null };
+  sutaRateOverride: number | null;
+  sutaWageBaseOverride: number | null;
+  clientId: string | null;
+  clientName: string | null;
+  isDefault: boolean;
+  /** Open employment spells on this employer. */
+  employments: number;
+}
+
+export interface EmployerFactsInput {
+  legalName?: string;
+  ein?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  sutaRateOverride?: number | null;
+  sutaWageBaseOverride?: number | null;
+}
+
+export const listEmployers = () => apiFetch<{ employers: EmployerRow[] }>('/admin/employers');
+export const createEmployer = (body: EmployerFactsInput & { legalName: string }) =>
+  apiFetch<{ employer: EmployerRow }>('/admin/employers', { method: 'POST', body });
+export const updateEmployer = (id: string, body: EmployerFactsInput) =>
+  apiFetch<{ employer: EmployerRow }>(`/admin/employers/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+
+export interface EmploymentSpell {
+  id: string;
+  employer: { id: string; kind: EmployerKind; legalName: string; ein: string | null; clientId: string | null };
+  employmentType: string;
+  hireDate: string;
+  endDate: string | null;
+  applicationId: string | null;
+  site: { id: string; name: string } | null;
+}
+
+export const getEmploymentHistory = (associateId: string) =>
+  apiFetch<{ employment: EmploymentSpell[] }>(`/org/associates/${encodeURIComponent(associateId)}/employment`);
+
+/* ----- The organizational tree ----------------------------------------- */
+
+export type OrgUnitType = 'DIVISION' | 'REGION' | 'BUSINESS_UNIT' | 'COST_CENTER';
+
+export const ORG_UNIT_TYPES: OrgUnitType[] = ['DIVISION', 'REGION', 'BUSINESS_UNIT', 'COST_CENTER'];
+export const ORG_UNIT_TYPE_LABEL: Record<OrgUnitType, string> = {
+  DIVISION: 'Division',
+  REGION: 'Region',
+  BUSINESS_UNIT: 'Business unit',
+  COST_CENTER: 'Cost center',
+};
+
+export interface OrgUnitRow {
+  id: string;
+  type: OrgUnitType;
+  parentId: string | null;
+  name: string;
+  code: string | null;
+  glCode: string | null;
+  /** "/<root id>/…/<this id>": depth = ids − 1. */
+  path: string;
+  clientId: string | null;
+  isActive: boolean;
+  sites: number;
+  legacyRegionId: string | null;
+  legacyCostCenterId: string | null;
+}
+
+export interface OrgUnitInput {
+  type: OrgUnitType;
+  name: string;
+  parentId?: string | null;
+  code?: string | null;
+  glCode?: string | null;
+  clientId?: string | null;
+}
+
+export const listOrgUnits = () => apiFetch<{ units: OrgUnitRow[] }>('/admin/org-units');
+export const createOrgUnit = (body: OrgUnitInput) => apiFetch<{ unit: OrgUnitRow }>('/admin/org-units', { method: 'POST', body });
+export const updateOrgUnit = (id: string, body: Partial<Omit<OrgUnitInput, 'type'>> & { isActive?: boolean }) =>
+  apiFetch<{ unit: OrgUnitRow }>(`/admin/org-units/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+export const deleteOrgUnit = (id: string) => apiFetch<void>(`/admin/org-units/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const setOrgUnitSites = (id: string, locationIds: string[]) =>
+  apiFetch<void>(`/admin/org-units/${encodeURIComponent(id)}/sites`, { method: 'PUT', body: { locationIds } });
+
+export interface UnitSite {
+  id: string;
+  name: string;
+  clientId: string | null;
+  clientName: string | null;
+  orgUnitId: string | null;
+}
+export const listOrgUnitSites = (id: string) => apiFetch<{ sites: UnitSite[] }>(`/admin/org-units/${encodeURIComponent(id)}/sites`);
+
+/** Depth from the path: a root is 0. */
+export function unitDepth(path: string): number {
+  return Math.max(0, path.split('/').filter(Boolean).length - 1);
+}
+
+/* ----- Sites ------------------------------------------------------------- */
+
+export interface SiteRow {
+  id: string;
+  name: string;
+  type: SiteType;
+  timezone: string;
+  state: string | null;
+  isActive: boolean;
+  clientId: string | null;
+  clientName: string | null;
+  orgUnitId: string | null;
+  orgUnitName: string | null;
+  orgUnitType: OrgUnitType | null;
+}
+
+export interface SiteCreateInput {
+  name: string;
+  type?: SiteType;
+  timezone?: string;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  orgUnitId?: string | null;
+}
+
+export const SITE_TYPE_LABEL: Record<SiteType, string> = {
+  STORE: 'Store',
+  PROPERTY: 'Property',
+  OFFICE: 'Office',
+  WAREHOUSE: 'Warehouse',
+  OTHER: 'Other',
+};
+
+export const listSites = () => apiFetch<{ sites: SiteRow[] }>('/admin/sites');
+export const createSite = (body: SiteCreateInput) => apiFetch<{ site: SiteRow }>('/admin/sites', { method: 'POST', body });

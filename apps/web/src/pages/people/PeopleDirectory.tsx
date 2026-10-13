@@ -107,6 +107,7 @@ import {
   getAssociateSsn,
   deactivateAssociate,
   getAssociateW4,
+  getEmploymentHistory,
   listDepartments,
   patchAssociateProfile,
   reactivateAssociate,
@@ -1153,9 +1154,10 @@ function DirectoryDrawer({
   const [drawerParams] = useSearchParams();
   const requestedDrawerTab = drawerParams.get('tab');
   const [tab, setTab] = useState<
-    'profile' | 'compensation' | 'payments' | 'documents' | 'thread'
+    'profile' | 'employment' | 'compensation' | 'payments' | 'documents' | 'thread'
   >(
     requestedDrawerTab === 'compensation' ||
+      requestedDrawerTab === 'employment' ||
       requestedDrawerTab === 'documents' ||
       requestedDrawerTab === 'payments' ||
       requestedDrawerTab === 'thread'
@@ -1198,6 +1200,7 @@ function DirectoryDrawer({
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList>
             <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="employment">Employment</TabsTrigger>
             <TabsTrigger value="compensation">Compensation</TabsTrigger>
             {canSeePayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
             <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -1210,6 +1213,9 @@ function DirectoryDrawer({
               onAssociateChange={onAssociateChange}
               onClose={onClose}
             />
+          </TabsContent>
+          <TabsContent value="employment">
+            <EmploymentTab associateId={a.id} />
           </TabsContent>
           <TabsContent value="compensation">
             <CompensationTab associate={a} />
@@ -2294,6 +2300,63 @@ const REASON_LABEL: Record<CompChangeReason, string> = {
   CORRECTION: 'Correction',
   OTHER: 'Other',
 };
+
+/**
+ * Brief 2-1b step 4: who legally employs this person and since when —
+ * the employment record the W-2/1099 and the pay statement read. Read
+ * only: a spell opens at approval and closes at separation.
+ */
+function EmploymentTab({ associateId }: { associateId: string }) {
+  const term = useTerm();
+  const { data, error, isPending } = useQuery({
+    queryKey: ['employment-history', associateId],
+    queryFn: () => getEmploymentHistory(associateId),
+  });
+  const spells = data?.employment ?? [];
+  const kindLabel = (kind: 'TENANT' | 'CLIENT' | 'THIRD_PARTY') =>
+    kind === 'TENANT' ? 'This organization' : kind === 'CLIENT' ? term('label.client') : 'Third party';
+  if (error) {
+    return <p className="text-sm text-alert">{error instanceof ApiError ? error.message : 'Failed to load.'}</p>;
+  }
+  if (isPending) return <SkeletonRows count={3} />;
+  if (spells.length === 0) {
+    return (
+      <EmptyState
+        icon={Briefcase}
+        title="No employment record yet"
+        description="A record opens when the hire is approved and closes at separation."
+      />
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {spells.map((sp) => (
+        <Card key={sp.id}>
+          <CardContent className="py-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-white">{sp.employer.legalName}</div>
+                <div className="text-xs2 text-silver mt-0.5">
+                  {kindLabel(sp.employer.kind)} · {EMPLOYMENT_LABEL[sp.employmentType] ?? sp.employmentType}
+                  {sp.site ? ` · ${sp.site.name}` : ''}
+                </div>
+              </div>
+              <div className="text-right text-xs2 text-silver tabular-nums">
+                <div>{fmtDate(sp.hireDate)} → {sp.endDate ? fmtDate(sp.endDate) : 'present'}</div>
+                {!sp.endDate && (
+                  <Badge variant="success" size="sm" withDot={false}>
+                    current
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+      <p className="text-xs2 text-silver">The tax forms and the pay statement read the employer from this record.</p>
+    </div>
+  );
+}
 
 function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
   const queryClient = useQueryClient();

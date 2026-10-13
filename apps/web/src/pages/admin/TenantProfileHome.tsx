@@ -16,7 +16,7 @@ import {
   type Terminology,
   type UpdateTenantProfileInput,
 } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { getTenantProfile, saveTenantProfile } from '@/lib/tenantProfileApi';
 import { Button } from '@/components/ui/Button';
@@ -107,6 +107,7 @@ function termLabel(key: TermKey): string {
 
 export function TenantProfileHome() {
   const { can, refreshUser } = useAuth();
+  const term = useTerm();
   const canManage = can('manage:org');
   const confirm = useConfirm();
   const queryClient = useQueryClient();
@@ -178,6 +179,20 @@ export function TenantProfileHome() {
         subtitle="What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and Hugo."
         breadcrumbs={[{ label: 'Admin' }, { label: 'Organization profile' }]}
       />
+
+      {can('view:org') ? (
+        <nav aria-label="Organization" className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/admin/employers">Employers of record</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/admin/org-units">Organizational tree</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/admin/sites">{term('sites')}</Link>
+          </Button>
+        </nav>
+      ) : null}
 
       {query.isError ? <QueryError what="the organization profile" query={query} /> : null}
       {query.isPending ? <Skeleton className="h-64" /> : null}

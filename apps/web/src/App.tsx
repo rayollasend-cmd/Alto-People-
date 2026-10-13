@@ -199,6 +199,9 @@ const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPa
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
+const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
+const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
+const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
@@ -258,6 +261,9 @@ registerPrefetch('/settings', () => import('@/pages/Settings'));
 registerPrefetch('/admin/users', () => import('@/pages/admin/UsersAdmin'));
 registerPrefetch('/admin/branding', () => import('@/pages/admin/BrandingHome'));
 registerPrefetch('/admin/organization', () => import('@/pages/admin/TenantProfileHome'));
+registerPrefetch('/admin/employers', () => import('@/pages/admin/EmployersAdmin'));
+registerPrefetch('/admin/org-units', () => import('@/pages/admin/OrgUnitsAdmin'));
+registerPrefetch('/admin/sites', () => import('@/pages/admin/SitesAdmin'));
 registerPrefetch('/admin/billing', () => import('@/pages/admin/BillingHome'));
 registerPrefetch('/reports', () => import('@/pages/reports/ReportsHome'));
 // Public, no-auth routes. Prefetched from any link that points at them
@@ -447,6 +453,9 @@ const LAYOUT_ROUTES = [
   { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
+  { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
+  { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
+  { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
   // No dedicated view:benefits capability exists — benefits elections are

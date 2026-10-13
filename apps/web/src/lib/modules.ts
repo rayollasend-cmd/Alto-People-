@@ -5,6 +5,9 @@ import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/sh
 
 export type ModuleKey =
   | 'tenant-profile'
+  | 'employers'
+  | 'org-units'
+  | 'sites'
   | 'product-analytics'
   | 'reliability'
   | 'emergency'
@@ -445,6 +448,7 @@ export const NAV_TERM: Partial<Record<ModuleKey, TermKey>> = {
 const NAV_LABEL: Partial<Record<ModuleKey, (term: (key: TermKey) => string) => string>> = {
   ops: (term) => `${term('site')} Ops`,
   'portal-ops': (term) => `${term('site')} operations`,
+  sites: (term) => term('sites'),
 };
 
 /** The staffing nouns in a description, replaced by the tenant's words with the original casing. */
@@ -1286,6 +1290,30 @@ export const MODULES: ModuleNav[] = [
     label: 'Organization profile',
     description: 'Business model, the modules this organization runs, and what it calls things.',
     requires: 'view:hr-admin',
+    group: 'platform',
+  },
+  {
+    key: 'employers',
+    path: '/admin/employers',
+    label: 'Employers of record',
+    description: 'Who legally employs each person: the legal name, EIN and address the W-2, 1099 and pay statement print.',
+    requires: 'view:org',
+    group: 'platform',
+  },
+  {
+    key: 'org-units',
+    path: '/admin/org-units',
+    label: 'Organizational tree',
+    description: 'Divisions, regions, business units and cost centers with their ledger codes; sites and accounts pinned at any level.',
+    requires: 'view:org',
+    group: 'platform',
+  },
+  {
+    key: 'sites',
+    path: '/admin/sites',
+    label: 'Sites',
+    description: 'Every place work happens: time zone, state, and the unit of the tree it belongs to.',
+    requires: 'view:org',
     group: 'platform',
   },
   {

@@ -99,6 +99,9 @@ import { TimeHome } from '@/pages/time/TimeHome';
 import { HrCasesHome } from '@/pages/hrCases/HrCasesHome';
 import { UsersAdmin } from '@/pages/admin/UsersAdmin';
 import { TenantProfileHome } from '@/pages/admin/TenantProfileHome';
+import { EmployersAdmin } from '@/pages/admin/EmployersAdmin';
+import { OrgUnitsAdmin } from '@/pages/admin/OrgUnitsAdmin';
+import { SitesAdmin } from '@/pages/admin/SitesAdmin';
 import { Settings } from '@/pages/Settings';
 
 /* ------------------------------------------------------------------ *
@@ -244,6 +247,9 @@ const SURFACES: Surface[] = [
   { name: 'HR cases home', ui: () => <HrCasesHome />, route: '/hr-cases' },
   { name: 'Users & access', ui: () => <UsersAdmin />, route: '/admin/users' },
   { name: 'Organization profile', ui: () => <TenantProfileHome />, route: '/admin/organization', skip: 'names the module catalog; see the TODO above' },
+  { name: 'Employers of record', ui: () => <EmployersAdmin />, route: '/admin/employers' },
+  { name: 'Organizational tree', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
+  { name: 'Sites', ui: () => <SitesAdmin />, route: '/admin/sites' },
   { name: 'Settings', ui: () => <Settings />, route: '/settings' },
 ];
 
