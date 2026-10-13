@@ -55,6 +55,7 @@ import { useStoreScope } from '@/lib/storeScope';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth } from '@/lib/auth';
 import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
+import { leaveFromOverlay } from '@/lib/useOverlayBackButton';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
 import {
@@ -1792,12 +1793,12 @@ function PinsTab({
             {returnTo && (
               <Button
                 variant="ghost"
-                // Navigate with the reveal still open and replace, not
-                // push: the reveal's Back sentinel is the current entry,
-                // so the profile takes its place and one Back from there
-                // is this page again. Closing first would race the
-                // sentinel's own pop with the navigation.
-                onClick={() => navigate(returnTo, { replace: true })}
+                // Navigate with the reveal still open, replacing its Back
+                // sentinel, so one Back from the profile is this page
+                // again. Closing first would race the sentinel's own pop
+                // with the navigation; leaveFromOverlay also waits out the
+                // form's pop and pushes instead if the sentinel never parked.
+                onClick={() => leaveFromOverlay(({ replace }) => navigate(returnTo, { replace }))}
               >
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back to {returnPathLabel(returnTo)}
               </Button>

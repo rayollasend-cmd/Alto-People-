@@ -129,6 +129,30 @@ export function __resetOverlayBackForTests(): void {
   waitingToPark.length = 0;
 }
 
+/**
+ * Leaving the page from inside an open overlay ("Back to People" on the
+ * kiosk's reveal). The rule is to navigate with the overlay still open and
+ * REPLACE its sentinel, so one Back from the destination is this page. But
+ * a sentinel is parked only once our own pop has landed: clicked inside
+ * that window, a replace would overwrite the PAGE's entry instead and Back
+ * would skip this page (2026-10-13, one run in eight in Playwright). So:
+ * wait until no pop of ours is in flight and no overlay is waiting to park,
+ * then replace when the top overlay's sentinel is the current entry, push
+ * when it is not.
+ */
+export function leaveFromOverlay(go: (opts: { replace: boolean }) => void): void {
+  const settle = (tries: number) => {
+    const busy = selfPops.length > 0 || waitingToPark.length > 0;
+    if (busy && tries > 0) {
+      window.setTimeout(() => settle(tries - 1), 25);
+      return;
+    }
+    const top = stack[stack.length - 1];
+    go({ replace: !!top?.parked });
+  };
+  settle(40);
+}
+
 export function useOverlayBackButton(open: boolean, onBack: () => boolean | void) {
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
