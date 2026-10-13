@@ -31,6 +31,8 @@ export interface SessionUser {
   lastName: string | null;
   photoUrl: string | null;
   timezone: string | null;
+  /** Brief 2-1b: the account's tenant, part of every client-bounded scope. */
+  tenantId?: string | null;
   /** Email language preference (en/es/tr); null or absent means English. */
   language?: string | null;
   mfaEnabled: boolean;
