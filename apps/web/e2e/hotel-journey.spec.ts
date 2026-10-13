@@ -64,15 +64,24 @@ async function visibleText(page: Page): Promise<string> {
   });
 }
 
+/**
+ * The app polls (notifications, unread messages), so "network idle" never
+ * comes on a signed-in page; the screen is settled when main is visible and
+ * no loading state remains, with a bounded wait either way.
+ */
 async function settle(page: Page, route: string): Promise<void> {
-  await page.goto(route);
-  await page.waitForLoadState('networkidle');
-  await expect(page.getByRole('main').first()).toBeVisible();
-  await page.waitForTimeout(500);
+  await page.goto(route, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await expect(page.getByRole('main').first()).toBeVisible({ timeout: 20_000 });
+  await page
+    .locator('[aria-busy="true"], [role="progressbar"], [data-loading="true"]')
+    .first()
+    .waitFor({ state: 'hidden', timeout: 10_000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(1_500);
 }
 
 async function call<T = unknown>(api: APIRequestContext, method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, data?: unknown): Promise<T> {
-  const res = await api.fetch(`/api${path}`, { method, data });
+  const res = await api.fetch(`/api${path}`, { method, data, timeout: 30_000 });
   if (!res.ok()) throw new Error(`${method} ${path} → ${res.status()} ${await res.text()}`);
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
@@ -172,8 +181,8 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     expect(seen.get('/admin/sites'), 'the property is listed as a property').toMatch(/The Grand Hotel[\s\S]*Property/i);
   } finally {
     // Alto HR gets its profile and its name back for the specs that follow.
-    await api.fetch('/api/admin/tenant/profile', { method: 'PUT', data: { businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true } });
-    await api.fetch('/api/admin/org/settings', { method: 'PATCH', data: { orgName: 'Alto HR' } });
+    await api.fetch('/api/admin/tenant/profile', { method: 'PUT', data: { businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }, timeout: 30_000 });
+    await api.fetch('/api/admin/org/settings', { method: 'PATCH', data: { orgName: 'Alto HR' }, timeout: 30_000 });
   }
 
   expect(hits, `forbidden words on the hotel's screens:\n${hits.join('\n')}`).toEqual([]);
