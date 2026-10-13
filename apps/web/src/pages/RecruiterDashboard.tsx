@@ -19,8 +19,7 @@ import {
 } from 'lucide-react';
 import type { RecruiterHome } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
-import { ROLE_LABELS } from '@/lib/roles';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 import { fmtDate, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -629,6 +628,7 @@ function Activity({ home }: { home: RecruiterHome }) {
 }
 
 export function RecruiterDashboard() {
+  const roleLabel = useRoleLabel();
   const { user, role, can } = useAuth();
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
@@ -656,7 +656,7 @@ export function RecruiterDashboard() {
             </div>
             {role && (
               <Badge variant="accent" className="uppercase tracking-widest">
-                {ROLE_LABELS[role]}
+                {roleLabel(role)}
               </Badge>
             )}
           </div>

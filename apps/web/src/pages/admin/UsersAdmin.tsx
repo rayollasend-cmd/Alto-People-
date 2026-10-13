@@ -11,9 +11,9 @@ import {
   Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
+import { ROLES, type Role } from '@/lib/roles';
 import { SecondRoleDialog } from './SecondRoleDialog';
-import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { roleOfferedFor } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
@@ -102,6 +102,7 @@ function statusVariant(status: UserStatus) {
  * — HR uses /settings to change their own password.
  */
 export function UsersAdmin() {
+  const roleLabel = useRoleLabel();
   const { user: me, can } = useAuth();
   const tenant = useTenant();
   const termOf = useTerm();
@@ -324,7 +325,7 @@ export function UsersAdmin() {
     const n = ids.length;
     if (
       !(await confirm({
-        title: `Set role to ${ROLE_LABELS[newRole]} for ${n} user${n === 1 ? '' : 's'}?`,
+        title: `Set role to ${roleLabel(newRole)} for ${n} user${n === 1 ? '' : 's'}?`,
         description: 'Active sessions for these users will be revoked.',
       }))
     ) {
@@ -384,13 +385,13 @@ export function UsersAdmin() {
     // client-scoped) and apply role + client together via onAssignClient.
     if (CLIENT_REQUIRED_ROLES.has(newRole) && !u.clientId) {
       setDraftRole((d) => ({ ...d, [u.id]: newRole }));
-      toast.message(`Pick a client to finish assigning ${ROLE_LABELS[newRole]}.`);
+      toast.message(`Pick a client to finish assigning ${roleLabel(newRole)}.`);
       return;
     }
     if (
       !(await confirm({
         title: `Change ${u.email}'s role?`,
-        description: `From ${ROLE_LABELS[u.role]} to ${ROLE_LABELS[newRole]}. Active sessions for this user will be revoked.`,
+        description: `From ${roleLabel(u.role)} to ${roleLabel(newRole)}. Active sessions for this user will be revoked.`,
       }))
     ) {
       return;
@@ -421,7 +422,7 @@ export function UsersAdmin() {
     const pendingRole = draftRole[u.id];
     const effRole = pendingRole ?? u.role;
     if (!newClientId && CLIENT_REQUIRED_ROLES.has(effRole)) {
-      toast.error(`${ROLE_LABELS[effRole]} must have a client.`);
+      toast.error(`${roleLabel(effRole)} must have a client.`);
       return;
     }
     if (newClientId === (u.clientId ?? '') && !pendingRole) return;
@@ -565,7 +566,7 @@ export function UsersAdmin() {
     {
       key: 'role',
       header: 'Role',
-      accessor: (u) => ROLE_LABELS[u.role],
+      accessor: (u) => roleLabel(u.role),
       sortable: true,
       cardMeta: true,
       cell: (u) => {
@@ -582,7 +583,7 @@ export function UsersAdmin() {
             >
               {ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                 <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
+                  {roleLabel(r)}
                 </option>
               ))}
             </Select>
@@ -599,7 +600,7 @@ export function UsersAdmin() {
                 <Repeat className="h-3 w-3 shrink-0 text-gold" aria-hidden="true" />
                 {u.additionalRoles && u.additionalRoles.length > 0 ? (
                   <span className="truncate">
-                    also {u.additionalRoles.map((r) => ROLE_LABELS[r]).join(', ')}
+                    also {u.additionalRoles.map((r) => roleLabel(r)).join(', ')}
                   </span>
                 ) : (
                   <span className="truncate text-silver/50">also works as…</span>
@@ -607,7 +608,7 @@ export function UsersAdmin() {
               </button>
             )}
             {u.activeRole && u.activeRole !== u.role && (
-              <div className="mt-1 text-xs2 text-gold">working as {ROLE_LABELS[u.activeRole]} now</div>
+              <div className="mt-1 text-xs2 text-gold">working as {roleLabel(u.activeRole)} now</div>
             )}
           </>
         );
@@ -884,7 +885,7 @@ export function UsersAdmin() {
                 <option value="">All roles</option>
                 {ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                   <option key={r} value={r}>
-                    {ROLE_LABELS[r]}
+                    {roleLabel(r)}
                   </option>
                 ))}
               </Select>
@@ -1002,7 +1003,7 @@ export function UsersAdmin() {
                     <option value="">Set role…</option>
                     {BULK_ROLE_OPTIONS.filter((r) => roleOfferedFor(r, tenant.modules)).map((r) => (
                       <option key={r} value={r}>
-                        {ROLE_LABELS[r]}
+                        {roleLabel(r)}
                       </option>
                     ))}
                   </Select>

@@ -441,11 +441,42 @@ export const NAV_TERM: Partial<Record<ModuleKey, TermKey>> = {
   headcount: 'nav.headcount',
 };
 
-/** The same entries with the tenant's words on them. */
+/** Labels built from a noun rather than read from one key. */
+const NAV_LABEL: Partial<Record<ModuleKey, (term: (key: TermKey) => string) => string>> = {
+  ops: (term) => `${term('site')} Ops`,
+  'portal-ops': (term) => `${term('site')} operations`,
+};
+
+/** The staffing nouns in a description, replaced by the tenant's words with the original casing. */
+export function termizeText(text: string, term: (key: TermKey) => string): string {
+  const swap: Array<[RegExp, TermKey]> = [
+    [/\bassociates\b/gi, 'workers'],
+    [/\bassociate\b/gi, 'worker'],
+    [/\bstores\b/gi, 'sites'],
+    [/\bstore\b/gi, 'site'],
+    [/\bsupervisors\b/gi, 'managers'],
+    [/\bsupervisor\b/gi, 'manager'],
+    [/\bclients\b/gi, 'label.clients'],
+    [/\bclient\b/gi, 'label.client'],
+  ];
+  let out = text;
+  for (const [re, key] of swap) {
+    out = out.replace(re, (m) => {
+      const word = term(key);
+      return m.charAt(0) === m.charAt(0).toUpperCase() ? word : word.charAt(0).toLowerCase() + word.slice(1);
+    });
+  }
+  return out;
+}
+
+/** The same entries with the tenant's words on them: labels by key, descriptions by noun. */
 export function applyTerms(modules: ModuleNav[], term: (key: TermKey) => string): ModuleNav[] {
   return modules.map((m) => {
     const key = NAV_TERM[m.key];
-    return key ? { ...m, label: term(key) } : m;
+    const build = NAV_LABEL[m.key];
+    const label = key ? term(key) : build ? build(term) : m.label;
+    const description = termizeText(m.description, term);
+    return label === m.label && description === m.description ? m : { ...m, label, description };
   });
 }
 
@@ -672,7 +703,7 @@ export const MODULES: ModuleNav[] = [
     path: '/agents',
     label: 'AI agents',
     description:
-      'Every AI agent Alto runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person.',
+      'Every AI agent the company runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person.',
     requires: 'view:org',
     group: 'platform',
   },
@@ -1017,7 +1048,7 @@ export const MODULES: ModuleNav[] = [
     path: '/emergency',
     label: 'Emergency mode',
     description:
-      'One switch for a storm: suspend shifts without penalty, tell every associate in their language, see who checked in safe, book evacuation vans, and stand down.',
+      'One switch for a storm: suspend shifts without penalty, tell every associate in their language, see who checked in safe, book evacuation rides, and stand down.',
     requires: 'view:emergency',
     group: 'workforce-management',
   },

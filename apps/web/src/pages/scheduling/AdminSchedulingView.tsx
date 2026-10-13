@@ -81,7 +81,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
@@ -526,6 +526,7 @@ function parseView(raw: string | null): ViewMode {
 }
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
+  const term = useTerm();
   const confirm = useConfirm();
   const { user, can } = useAuth();
   // Client-scoped ROLES (SHIFT_SUPERVISOR) can't list clients — /clients
@@ -2418,7 +2419,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         title="Scheduling"
         subtitle={
           canManage
-            ? 'Plan shifts, assign associates, and track fill status.'
+            ? `Plan shifts, assign ${term('workers').toLowerCase()}, and track fill status.`
             : 'Read-only view of scheduled shifts.'
         }
         secondaryActions={
@@ -3222,7 +3223,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <ErrorBanner severity="warning" className="mb-3 no-print">
           Showing only the first 3,000 shifts — more match this range than fit,
           so days may look emptier than they are and totals are incomplete.
-          Narrow the range or filter by client/location before trusting counts
+          Narrow the range or filter by location before trusting counts
           or publishing.
         </ErrorBanner>
       )}
@@ -6309,6 +6310,7 @@ function FilterBar({
   setShowAllAssociates: (v: boolean) => void;
   showAssociateToggle: boolean;
 }) {
+  const { moduleOn } = useTenant();
   // Client changes here write back to the global Topbar store scope so
   // Time / Labor follow the same store.
   const storeScope = useStoreScope();
@@ -6323,7 +6325,9 @@ function FilterBar({
   const teamName = teams.find((t) => t.id === teamFilter)?.name;
   // Location only makes sense once a client is chosen (a Location belongs to
   // one client). With "All clients" selected this stays disabled.
-  const locationDisabled = !clientFilter;
+  // Without clients (the client portal module off) every location is on the list from the start.
+  const clientsOn = moduleOn('clientPortal');
+  const locationDisabled = clientsOn && !clientFilter;
   return (
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
       {/* Scope line — tells the admin exactly what they're looking at. */}
@@ -6349,7 +6353,7 @@ function FilterBar({
         ) : !clientFilter ? (
           <span>
             <span className="font-medium text-white">Full schedule</span>
-            <span className="text-silver/60"> · every client &amp; location in the organization</span>
+            <span className="text-silver/60">{clientsOn ? ' · every client & location in the organization' : ' · every location in the organization'}</span>
           </span>
         ) : (
           <span className="inline-flex flex-wrap items-center gap-1">
@@ -6376,7 +6380,7 @@ function FilterBar({
           <Filter className="h-3 w-3" />
           Filter
         </div>
-        {boundedClient ? (
+        {!clientsOn ? null : boundedClient ? (
           // Client-bound role — the client is pinned; no "All clients".
           <div
             className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-xs text-white"

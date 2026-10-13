@@ -197,7 +197,7 @@ describe('the role switcher on a phone', () => {
     const hats = within(sheet).getAllByRole('radio');
     expect(hats).toHaveLength(2);
     // Named and described, and the one being worn says so.
-    expect(within(sheet).getByRole('radio', { name: /Shift Supervisor/ })).toHaveAttribute('aria-checked', 'true');
+    expect(within(sheet).getByRole('radio', { name: /Shift supervisor/i })).toHaveAttribute('aria-checked', 'true');
     const driver = within(sheet).getByRole('radio', { name: /Drives an Alto van/i });
     expect(driver).toHaveAttribute('aria-checked', 'false');
 

@@ -32,7 +32,7 @@ import {
 import { EnterInFieldglass, FieldglassStatusCell, FieldglassStrip } from './FieldglassDesk';
 import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { boundedClientOf } from '@/lib/roles';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -121,6 +121,8 @@ function shiftChipClass(name: string): string {
 const NO_ROWS: TimesheetWeekResponse['rows'] = [];
 
 export function TimesheetsView() {
+  const term = useTerm();
+  const { moduleOn } = useTenant();
   const { can, user } = useAuth();
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -445,7 +447,7 @@ export function TimesheetsView() {
         >
           Last completed week
         </Button>
-        {boundedClient ? (
+        {!moduleOn('clientPortal') ? null : boundedClient ? (
           <div
             className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
             title="Your account is scoped to this client"
@@ -471,11 +473,11 @@ export function TimesheetsView() {
         <div className="relative w-56">
           <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
           <Input
-            placeholder="Search associate or site…"
+            placeholder={`Search ${term('worker').toLowerCase()} or ${term('site').toLowerCase()}…`}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 h-8 text-sm"
-            aria-label="Search associates"
+            aria-label={`Search ${term('workers').toLowerCase()}`}
           />
         </div>
 

@@ -6,7 +6,7 @@ import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import {
   changePassword,
@@ -39,7 +39,6 @@ import {
   type PasskeySummary,
 } from '@/lib/webauthn';
 import {
-  ROLE_LABELS,
   EMAIL_LANGUAGES,
   EMAIL_LANGUAGE_LABELS,
   SUPPORTED_TIMEZONES,
@@ -74,6 +73,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
  * the cookie swap is invisible to the user.
  */
 export function Settings() {
+  const roleLabel = useRoleLabel();
   const { user } = useAuth();
 
   return (
@@ -82,7 +82,7 @@ export function Settings() {
         title="Account settings"
         subtitle={
           user
-            ? `Signed in as ${user.email} · ${ROLE_LABELS[user.role]}`
+            ? `Signed in as ${user.email} · ${roleLabel(user.role)}`
             : 'Sign in to manage your account.'
         }
         breadcrumbs={[
@@ -1161,8 +1161,8 @@ function LanguageCard() {
     setSubmitting(true);
     try {
       await updateLanguage(language === '' ? null : language);
-      // The UI follows when it has the language; Turkish is email-only.
-      if (language === 'es' || language === 'en') setLang(language);
+      // The UI follows the choice (Brief 2-1b: Turkish is a UI language too, English where a string is not yet translated).
+      if (language === 'es' || language === 'en' || language === 'tr') setLang(language);
       if (language === '') setLang('en');
       toast.success(language === '' ? 'Language preference cleared.' : 'Language updated.');
       await refreshUser();
@@ -1181,7 +1181,7 @@ function LanguageCard() {
           Language
         </CardTitle>
         <CardDescription>
-          The language Alto writes to you in — emails, reminders and the app
+          The language we write to you in — emails, reminders and the app
           where it is translated. Leave blank for English.
         </CardDescription>
       </CardHeader>

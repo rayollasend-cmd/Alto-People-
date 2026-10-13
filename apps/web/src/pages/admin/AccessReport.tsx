@@ -3,10 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RefreshCw, ShieldAlert, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate } from '@/lib/format';
-import { ROLE_LABELS } from '@/lib/roles';
 import {
   ACCESS_FLAGS,
   ACCESS_FLAG_LABEL,
@@ -51,6 +50,7 @@ function daysLeft(purgeAfter: string): number {
  * and reversible for 30 days.
  */
 export function AccessReport() {
+  const roleLabel = useRoleLabel();
   const { user: me, can } = useAuth();
   const canManage = can('manage:org');
   const confirm = useConfirm();
@@ -114,7 +114,7 @@ export function AccessReport() {
         </>
       ),
     },
-    { key: 'role', header: 'Role', accessor: (r) => ROLE_LABELS[r.role], sortable: true, cardMeta: true, className: 'text-xs' },
+    { key: 'role', header: 'Role', accessor: (r) => roleLabel(r.role), sortable: true, cardMeta: true, className: 'text-xs' },
     {
       key: 'status',
       header: 'Status',

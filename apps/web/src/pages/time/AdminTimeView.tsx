@@ -61,7 +61,7 @@ import { useClients } from '@/lib/useClients';
 import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -551,9 +551,11 @@ function ClientSiteSelects({
   onLocationChange: (id: string) => void;
   locationOptions: Array<{ id: string; name: string }>;
 }) {
+  const { moduleOn } = useTenant();
+  // Without clients (the client portal module off) there is nothing to pick.
   return (
     <>
-      {boundedClient ? (
+      {!moduleOn('clientPortal') ? null : boundedClient ? (
         <div
           className="inline-flex h-9 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
           title="Your account is scoped to this client"
@@ -595,6 +597,8 @@ function ClientSiteSelects({
 }
 
 export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTimeViewProps) {
+  const term = useTerm();
+  const { moduleOn: moduleOnTime } = useTenant();
   const navigate = useNavigate();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
   // retraces the live↔queue switch instead of leaving the page.
@@ -1860,7 +1864,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         title="Time & attendance"
         subtitle={
           canManage
-            ? 'Review, approve, or reject time entries from associates.'
+            ? `Review, approve, or reject time entries from ${term('workers').toLowerCase()}.`
             : liveOnly
               ? "Live floor view — who's clocked in at your site right now."
               : 'Read-only view of time entries.'
@@ -2020,8 +2024,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
                 <Input
-                  placeholder="Search associate, client, job…"
-                  aria-label="Search the live board by associate, client, or job"
+                  placeholder={moduleOnTime('clientPortal') ? `Search ${term('worker').toLowerCase()}, client, job…` : `Search ${term('worker').toLowerCase()}, job…`}
+                  aria-label={moduleOnTime('clientPortal') ? `Search the live board by ${term('worker').toLowerCase()}, client, or job` : `Search the live board by ${term('worker').toLowerCase()} or job`}
                   value={liveSearch}
                   onChange={(e) => setLiveSearch(e.target.value)}
                   className="pl-8 h-9 text-sm"
@@ -3234,6 +3238,7 @@ function AssociateSearchField({
   value: { id: string; name: string } | null;
   onChange: (v: { id: string; name: string } | null) => void;
 }) {
+  const term = useTerm();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const associatesQuery = useQuery({
@@ -3288,7 +3293,7 @@ function AssociateSearchField({
           }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder="Search associate by name or email"
+          placeholder={`Search ${term('worker').toLowerCase()} by name or email`}
           className="pl-9"
         />
         {open && results.length > 0 && (

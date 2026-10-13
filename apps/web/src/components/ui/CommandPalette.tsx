@@ -363,7 +363,7 @@ export function CommandPalette({
       <DialogContent className="max-w-xl p-0 overflow-hidden gap-0 rounded-xl elev-3 ring-1 ring-white/[0.06]">
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
-          Search to navigate, find people and clients, run quick actions, or
+          Search to navigate, find people{tenant.moduleOn('clientPortal') ? ` and ${term('label.clients').toLowerCase()}` : ''}, run quick actions, or
           access account controls.
         </DialogDescription>
         <Command
@@ -377,7 +377,7 @@ export function CommandPalette({
               autoFocus
               value={search}
               onValueChange={setSearch}
-              placeholder="Search pages, people, clients, shifts, documents…"
+              placeholder={tenant.moduleOn('clientPortal') ? `Search pages, people, ${term('label.clients').toLowerCase()}, shifts, documents…` : 'Search pages, people, shifts, documents…'}
               className={cn(
                 'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/70',
                 'outline-none border-0 focus:ring-0'

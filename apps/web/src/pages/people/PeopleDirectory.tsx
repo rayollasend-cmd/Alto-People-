@@ -93,7 +93,7 @@ import type {
   ExternalPaymentInput,
   ExternalPaymentMethod,
 } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
@@ -218,6 +218,7 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
     (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
 
 export function PeopleDirectory() {
+  const term = useTerm();
   const queryClient = useQueryClient();
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
@@ -534,7 +535,7 @@ export function PeopleDirectory() {
     <div className="space-y-5">
       <PageHeader
         title="People directory"
-        subtitle="Every associate Alto HR knows about — active, pending onboarding, and inactive — with workplace, pay, and contact in one row."
+        subtitle={`Every ${term('worker').toLowerCase()} on record — active, pending onboarding, and inactive — with workplace, pay, and contact in one row.`}
         breadcrumbs={[{ label: 'Workforce' }, { label: 'People' }]}
         primaryAction={
           <Button asChild>
@@ -760,7 +761,7 @@ export function PeopleDirectory() {
             loading={isFetchingNextPage}
             disabled={isFetchingNextPage}
           >
-            Load more associates
+            Load more {term('workers').toLowerCase()}
           </Button>
         </div>
       )}

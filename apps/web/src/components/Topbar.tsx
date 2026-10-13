@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
-import { ROLE_LABELS } from '@/lib/roles';
 import { useHeroHidden, usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
 import { offlineSessionSavedAt } from '@/lib/offlineSession';
 import { displayZoneAbbrev, displayZoneDiffersFromDevice, fmtRelativeDate } from '@/lib/format';
@@ -99,6 +98,7 @@ function StoreScopeBar() {
 }
 
 export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
+  const roleLabel = useRoleLabel();
   const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
@@ -182,7 +182,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
           <span className="text-sm max-w-[7rem] truncate">{backLabel}</span>
         </button>
       ) : (
-        <Logo size="xs" className="md:hidden" alt="Alto HR" />
+        <Logo size="xs" className="md:hidden" alt="Company logo" />
       )}
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
@@ -370,7 +370,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[14rem]">
-              <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
+              <DropdownMenuLabel>{roleLabel(user.role)}</DropdownMenuLabel>
               <div className="px-2 pb-2 leading-tight">
                 {(user.firstName || user.lastName) && (
                   <div className="text-sm text-white truncate">

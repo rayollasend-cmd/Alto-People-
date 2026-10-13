@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Loader2, Repeat } from 'lucide-react';
 import { toast } from 'sonner';
-import { ROLE_DESCRIPTIONS, ROLE_LABELS, type Role } from '@alto-people/shared';
+import { ROLE_DESCRIPTIONS, type Role } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import {
   DropdownMenuItem,
@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 
 /**
  * Switch hats.
@@ -51,6 +51,7 @@ import { useAuth } from '@/lib/auth';
 const INTRO = 'This account does more than one job. Pick the one you are doing now.';
 
 function useRoleSwitch(onSwitched?: () => void) {
+  const roleLabel = useRoleLabel();
   const { role, primaryRole, availableRoles, switchRole } = useAuth();
   const navigate = useNavigate();
   const [pending, setPending] = useState<Role | null>(null);
@@ -65,7 +66,7 @@ function useRoleSwitch(onSwitched?: () => void) {
     setPending(next);
     try {
       await switchRole(next);
-      toast.success(`You are now working as ${ROLE_LABELS[next]}.`);
+      toast.success(`You are now working as ${roleLabel(next)}.`);
       onSwitched?.();
       // The page they were on belonged to the old role. Home is the one
       // route every role can open.
@@ -97,6 +98,7 @@ function RoleRow({
   pending: boolean;
   isMain: boolean;
 }) {
+  const roleLabel = useRoleLabel();
   return (
     <>
       {pending ? (
@@ -108,7 +110,7 @@ function RoleRow({
       )}
       <span className="min-w-0">
         <span className="block truncate text-sm">
-          {ROLE_LABELS[r]}
+          {roleLabel(r)}
           {isMain && <span className="ml-1.5 text-2xs text-silver/50">main</span>}
         </span>
         <span className="mt-0.5 block whitespace-normal text-2xs leading-snug text-silver/60">
@@ -122,6 +124,7 @@ function RoleRow({
 
 /** Desktop: a submenu of the sidebar's account menu. */
 export function RoleSwitcher({ onSwitched }: { onSwitched?: () => void }) {
+  const roleLabel = useRoleLabel();
   const { role, primaryRole, roles, pending, pick, canSwitch } = useRoleSwitch(onSwitched);
   if (!canSwitch || !role) return null;
 
@@ -133,7 +136,7 @@ export function RoleSwitcher({ onSwitched }: { onSwitched?: () => void }) {
           <Repeat className="h-4 w-4" />
           Switch role
           <span className="ml-auto max-w-[8rem] truncate text-xs text-silver">
-            {ROLE_LABELS[role]}
+            {roleLabel(role)}
           </span>
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent
@@ -172,6 +175,7 @@ export function RoleSwitcher({ onSwitched }: { onSwitched?: () => void }) {
  * sheet inside the menu's content would unmount with it.
  */
 export function RoleSwitchItem({ onOpen }: { onOpen: () => void }) {
+  const roleLabel = useRoleLabel();
   const { role, canSwitch } = useRoleSwitch();
   if (!canSwitch || !role) return null;
   return (
@@ -181,7 +185,7 @@ export function RoleSwitchItem({ onOpen }: { onOpen: () => void }) {
         <Repeat className="h-4 w-4" />
         Switch role
         <span className="ml-auto flex min-w-0 items-center gap-1 text-xs text-silver">
-          <span className="truncate">{ROLE_LABELS[role]}</span>
+          <span className="truncate">{roleLabel(role)}</span>
           <ChevronRight className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
         </span>
       </DropdownMenuItem>

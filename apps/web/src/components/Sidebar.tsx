@@ -28,7 +28,7 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
-import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useFieldglassSetupCount } from '@/lib/useFieldglassSetupCount';
 import { useQuery } from '@tanstack/react-query';
@@ -36,7 +36,6 @@ import { unreadMessages } from '@/lib/messagesApi';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
-import { ROLE_LABELS } from '@/lib/roles';
 import { prefetchRoute } from '@/lib/prefetch';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
@@ -351,7 +350,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
     >
       {!railCollapsed && (
         <>
-          <Logo size="sm" alt="Alto HR" />
+          <Logo size="sm" alt="Company logo" />
           <span className="text-lg text-white leading-none tracking-tight truncate">
             Alto <span className="text-gold">People</span>
           </span>
@@ -574,6 +573,7 @@ interface SidebarAccountProps {
 }
 
 function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
+  const roleLabel = useRoleLabel();
   const { user, signOut } = useAuth();
   const { preference, theme, setTheme } = useTheme();
   const { density, setDensity } = useDensity();
@@ -638,7 +638,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
         {avatar}
         <div className="min-w-0 flex-1 text-left leading-tight">
           <div className="text-2xs uppercase tracking-widest text-silver truncate">
-            {ROLE_LABELS[user.role]}
+            {roleLabel(user.role)}
           </div>
           <div className="text-sm text-white truncate">{displayName}</div>
         </div>
@@ -652,7 +652,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
       <DropdownMenu>
         {trigger}
         <DropdownMenuContent side="top" align="start" className="min-w-[15rem]">
-          <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
+          <DropdownMenuLabel>{roleLabel(user.role)}</DropdownMenuLabel>
           <div className="px-2 pb-2 leading-tight">
             {fullName && <div className="text-sm text-white truncate">{fullName}</div>}
             <div className="text-xs text-silver truncate">{user.email}</div>

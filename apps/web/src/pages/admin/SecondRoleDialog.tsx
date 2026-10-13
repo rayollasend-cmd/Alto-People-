@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useTenant } from '@/lib/auth';
+import { useTenant, useRoleLabel } from '@/lib/auth';
 import { roleOfferedFor } from '@/lib/modules';
 import { toast } from 'sonner';
 import {
   MAX_ADDITIONAL_ROLES,
   ROLE_DESCRIPTIONS,
-  ROLE_LABELS,
   additionalRoleRefusal,
   type Role,
 } from '@alto-people/shared';
@@ -66,6 +65,7 @@ export function SecondRoleDialog({
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
+  const roleLabel = useRoleLabel();
   const who = user.associateName ?? user.email;
   const [picked, setPicked] = useState<Set<Role>>(
     () => new Set(user.additionalRoles ?? []),
@@ -111,9 +111,9 @@ export function SecondRoleDialog({
       await patchAdminUser(user.id, { additionalRoles: [...picked] });
       toast.success(
         picked.size === 0
-          ? `${who} now works as ${ROLE_LABELS[user.role]} only.`
+          ? `${who} now works as ${roleLabel(user.role)} only.`
           : `${who} can now switch between ${[user.role, ...picked]
-              .map((r) => ROLE_LABELS[r])
+              .map((r) => roleLabel(r))
               .join(' and ')}.`,
       );
       onSaved();
@@ -155,7 +155,7 @@ export function SecondRoleDialog({
         <DialogHeader>
           <DialogTitle>The other jobs {who} does</DialogTitle>
           <DialogDescription>
-            Their main role stays <strong className="text-white">{ROLE_LABELS[user.role]}</strong>.
+            Their main role stays <strong className="text-white">{roleLabel(user.role)}</strong>.
             Anything picked here is a second hat they can put on from their own account menu —
             one at a time, never both at once. Use it for the supervisor who also drives, rather
             than a second login.
@@ -185,7 +185,7 @@ export function SecondRoleDialog({
                     onChange={() => toggle(role)}
                   />
                   <span className="min-w-0">
-                    <span className="block text-sm text-white">{ROLE_LABELS[role]}</span>
+                    <span className="block text-sm text-white">{roleLabel(role)}</span>
                     <span className="mt-0.5 block text-xs leading-snug text-silver/70">
                       {ROLE_DESCRIPTIONS[role]}
                     </span>
@@ -204,8 +204,8 @@ export function SecondRoleDialog({
         <DialogFooter>
           {revokingActive && (
             <span className="mr-auto self-center text-xs text-warning">
-              They are working as {ROLE_LABELS[user.activeRole!]} right now — this puts them
-              back on {ROLE_LABELS[user.role]} and signs them out.
+              They are working as {roleLabel(user.activeRole!)} right now — this puts them
+              back on {roleLabel(user.role)} and signs them out.
             </span>
           )}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

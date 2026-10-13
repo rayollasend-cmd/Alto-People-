@@ -29,7 +29,7 @@ export function LanguageSync() {
     appliedFor.current = user.id;
     lastSynced.current = user.language ?? null;
     const stored = user.language;
-    if ((stored === 'en' || stored === 'es') && stored !== lang) setLang(stored as Lang);
+    if ((stored === 'en' || stored === 'es' || stored === 'tr') && stored !== lang) setLang(stored as Lang);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the account changes, not on every toggle
   }, [user?.id]);
 
@@ -37,8 +37,6 @@ export function LanguageSync() {
   useEffect(() => {
     if (!user || appliedFor.current !== user.id) return;
     if (lastSynced.current === lang) return;
-    // A Turkish email preference is kept when the UI is merely in English.
-    if (lastSynced.current === 'tr' && lang === 'en') return;
     lastSynced.current = lang;
     void updateLanguage(lang).catch(() => {
       /* best effort — the local choice still applies */

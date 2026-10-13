@@ -21,7 +21,9 @@ import {
  * translated slice — admin surfaces stay English for now.
  */
 
-export type Lang = 'en' | 'es';
+export type Lang = 'en' | 'es' | 'tr';
+
+import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
 
 const STORAGE_KEY = 'alto.lang';
 
@@ -79,20 +81,20 @@ const en = {
   'opsRun.alreadyClosed': 'That shift is already closed — its record is final.',
   'opsRun.loadShiftFailed': 'Could not load the shift.',
   'opsRun.resumeFailed': 'Could not resume that shift.',
-  'opsRun.submittedClockOutKiosk': 'SOP submitted — clock out at the store tablet when you’re done.',
+  'opsRun.submittedClockOutKiosk': 'SOP submitted — clock out at the {siteLc} tablet when you’re done.',
   'opsRun.submittedFinal': 'SOP submitted — the record is final.',
   'opsRun.clockOutNow': 'Clock out now',
   'opsRun.shiftClosedFinal': 'Shift closed — the record is final.',
   'opsRun.yourShiftSop': 'Your shift\'s SOP',
   'opsRun.helpOnChecklist': 'Help on the checklist',
   'opsRun.noSopTitle': 'No SOP running on your shift',
-  'opsRun.noSopDesc': 'Your shift supervisor\'s clock-in opens it, and you help on it here. On a day they hand you the shift — or if no shift supervisor is on the clock 30 minutes in — it opens for you, and it\'s yours to submit.',
+  'opsRun.noSopDesc': 'Your shift {managerLc}\'s clock-in opens it, and you help on it here. On a day they hand you the shift — or if no shift {managerLc} is on the clock 30 minutes in — it opens for you, and it\'s yours to submit.',
   'opsRun.backToFloor': 'Back to My floor',
   'opsRun.loadTodayFailed': 'Could not load today.',
-  'opsRun.pickClient': 'Pick a client…',
+  'opsRun.pickClient': 'Pick a {clientLc}…',
   'opsRun.whoseFloor': 'Whose floor are you running?',
-  'opsRun.noClients': 'No active clients yet.',
-  'opsRun.pickClientHint': 'Pick the client above — its shifts and SOP checklists load for today.',
+  'opsRun.noClients': 'No active {clientsLc} yet.',
+  'opsRun.pickClientHint': 'Pick the {clientLc} above — its shifts and SOP checklists load for today.',
   'opsRun.openYourShiftFailed': 'Could not open your shift.',
   'opsRun.openShiftFailed': 'Could not open the shift.',
   'opsRun.resumeTitle': 'Pick up where you left off',
@@ -100,17 +102,17 @@ const en = {
   'opsRun.startYourShift': 'Start your shift',
   'opsRun.submittedIncomplete': 'Submitted incomplete — operations has your reason.',
   'opsRun.allRequiredDone': 'Every required item done, handover written.',
-  'opsRun.sopOpensItself': 'Your shift\'s SOP opens by itself when you clock in — here or at the store\'s kiosk — and it\'s due when the shift ends.',
-  'opsRun.openShiftLoads': 'Open a shift and its SOP checklist loads itself — store, headcounts, and standards fill in automatically.',
+  'opsRun.sopOpensItself': 'Your shift\'s SOP opens by itself when you clock in — here or at the {siteLc}\'s kiosk — and it\'s due when the shift ends.',
+  'opsRun.openShiftLoads': 'Open a shift and its SOP checklist loads itself — {siteLc}, headcounts, and standards fill in automatically.',
   'opsRun.openAnotherByHand': 'Open another checklist by hand',
   'opsRun.openByHand': 'Open a checklist by hand',
   'opsRun.nothingScheduledTitle': 'Nothing scheduled today',
-  'opsRun.nothingScheduledDesc': 'No shifts are on today\'s schedule for your store, and no SOP is assigned to a shift running there now. Ask operations to assign one on Store shifts.',
+  'opsRun.nothingScheduledDesc': 'No shifts are on today\'s schedule for your {siteLc}, and no SOP is assigned to a shift running there now. Ask operations to assign one on {site} shifts.',
   'opsRun.noDepartment': 'No SOP department yet',
   'opsRun.pickDepartment': 'Pick department…',
   'opsRun.openWithDept': 'Open with this department',
   'opsRun.openShift': 'Open shift',
-  'opsRun.supervisorRunning': 'The supervisor running it',
+  'opsRun.supervisorRunning': 'The {managerLc} running it',
   'opsRun.you': 'You',
   'opsRun.readySubmit': 'Ready — submit SOP',
   'opsRun.submitSop': 'Submit SOP',
@@ -599,7 +601,7 @@ const en = {
   'wf.wire': 'Live wire',
   'wf.wireQuiet': 'Quiet — nothing on the wire today.',
   'wf.needsYou': '{count} need you',
-  'wf.allGreenBoard': 'All stores green',
+  'wf.allGreenBoard': 'All {sitesLc} green',
   'wf.unschedPunch': 'Unscheduled punch',
   'wf.incidentWord': 'Incident',
   'wf.tileUnconf': '{count} unconfirmed tomorrow',
@@ -608,7 +610,7 @@ const en = {
   'wf.tileIncidents': '{count} incidents',
   'wf.tileQuiet': 'Quiet',
   'wf.instrFloor': 'on the floor',
-  'wf.instrNeeds': 'stores need you',
+  'wf.instrNeeds': '{sitesLc} need you',
   'wf.instrUnsched': 'unscheduled punches',
   'wf.instrFill': 'fill this week',
   'wf.instrIncidents': 'incidents today',
@@ -621,9 +623,9 @@ const en = {
   'wf.closePending': '{count} timesheets awaiting approval',
   'wf.closeClear': 'All timesheets approved',
   'wf.closePayday': 'Payday {date}',
-  'wf.sups': 'The supervisor corps',
-  'wf.supsCount': '{count} supervisors',
-  'wf.supsNone': 'No supervisor accounts yet.',
+  'wf.sups': 'The {managerLc} corps',
+  'wf.supsCount': '{count} {managersLc}',
+  'wf.supsNone': 'No {managerLc} accounts yet.',
   'wf.roleShift': 'Shift',
   'wf.roleFloor': 'Floor',
   'wf.dispatchTitle': 'Dispatch — open next 48h',
@@ -631,7 +633,7 @@ const en = {
   'wf.goScheduling': 'Scheduling board',
   'wf.goApprovals': 'Approvals',
   'wf.goLive': 'Live floor',
-  'wf.goOps': 'Store Ops',
+  'wf.goOps': '{site} Ops',
   'wf.goMarketplace': 'Open shifts',
   'wf.goIncidents': 'Incidents & safety',
   // Finance cockpit
@@ -668,7 +670,7 @@ const en = {
   'portal.reqDialogHint': 'Your request lands on the right Alto desk the moment you send it, and you can watch its status right here.',
   'portal.reqKindLabel': 'Request type',
   'portal.reqKindStaffing': 'Staffing — we need more coverage',
-  'portal.reqKindFeedback': 'Feedback about an associate',
+  'portal.reqKindFeedback': 'Feedback about {workerLc}',
   'portal.reqKindIssue': 'An issue to resolve',
   'portal.reqSubject': 'Subject',
   'portal.reqBody': 'Tell us what you need…',
@@ -709,7 +711,7 @@ const en = {
   'fin.fgPhone': 'Phone',
   'fin.fgStart': 'Start date',
   'fin.fgFullRecord': 'Full record',
-  'fin.fgClient': 'Client',
+  'fin.fgClient': '{client}',
   'fin.fgWaiting': '{count} waiting',
   'fin.fgTransfer': 'Transfer',
   'fin.fgTransferLine': 'Close in {from} — open under {to}',
@@ -818,7 +820,7 @@ const en = {
   'fin.ar31': '31–60 days',
   'fin.ar61': '61–90 days',
   'fin.ar91': 'Over 90 days',
-  'portal.title': 'My store',
+  'portal.title': 'My {siteLc}',
   'portal.subtitle': 'Your Alto People workforce, live.',
   'portal.live': 'Live · updates every minute',
   'portal.onFloorNow': 'On the floor now',
@@ -862,43 +864,43 @@ const en = {
   'portal.loadFailed': "Couldn't load your store view.",
   'region.title': 'Command center',
   'region.pick': 'Open a region from the Regions page to preview its command center.',
-  'region.subtitle': '{count} stores · the same numbers each store manager sees',
+  'region.subtitle': '{count} {sitesLc} · the same numbers each {siteLc} manager sees',
   'region.kpiFloor': 'On the floor now · region',
-  'region.kpiFloorShort': '{count} stores short right now',
-  'region.kpiFloorOk': 'Every store at or above its contract',
+  'region.kpiFloorShort': '{count} {sitesLc} short right now',
+  'region.kpiFloorOk': 'Every {siteLc} at or above its contract',
   'region.kpiGrade': 'Reliability · 4 weeks',
-  'region.kpiGradeF': '{count} stores at F',
-  'region.kpiGradeA': '{count} stores at A',
+  'region.kpiGradeF': '{count} {sitesLc} at F',
+  'region.kpiGradeA': '{count} {sitesLc} at A',
   'region.kpiGradeSub': 'A {a} · B {b} · F {f}',
   'region.kpiOpen': 'Unfilled today',
   'region.kpiOpenUnit': 'slots',
   'region.kpiOpenSub': 'Tomorrow: {open} open · {unconfirmed} unconfirmed',
   'region.kpiRequests': 'Open requests',
   'region.kpiRequestsOverdue': '{count} past due',
-  'region.kpiRequestsSub': 'across every store in the region',
-  'region.filterAll': 'All stores',
+  'region.kpiRequestsSub': 'across every {siteLc} in the region',
+  'region.filterAll': 'All {sitesLc}',
   'region.filterShort': 'Short now',
   'region.filterOpen': 'Unfilled slots',
   'region.filterRequests': 'Open requests',
-  'region.findStore': 'Find a store…',
-  'region.noStores': 'No stores match',
-  'region.noStoresHint': 'No stores are assigned to this region yet — ask your Alto contact.',
-  'region.heroEyebrow': 'On the floor now · every store',
-  'region.heroNoTargets': 'No store in this region has a contracted headcount yet — ask Alto to set the floor targets.',
-  'region.heroShort': '{missing} short of contract across {stores} stores right now.',
-  'region.heroMet': 'Every store staffed to its contract right now.',
+  'region.findStore': 'Find a {siteLc}…',
+  'region.noStores': 'No {sitesLc} match',
+  'region.noStoresHint': 'No {sitesLc} are assigned to this region yet — ask your account contact.',
+  'region.heroEyebrow': 'On the floor now · every {siteLc}',
+  'region.heroNoTargets': 'No {siteLc} in this region has a contracted headcount yet — ask your account contact to set the floor targets.',
+  'region.heroShort': '{missing} short of contract across {stores} {sitesLc} right now.',
+  'region.heroMet': 'Every {siteLc} staffed to its contract right now.',
   'region.curveTitle': 'Coverage across today · region',
   'region.curveMeta': '{open} unfilled slots today',
-  'region.kpiShort': 'Stores short right now',
+  'region.kpiShort': '{sites} short right now',
   'region.kpiShortUnit': 'of {total}',
   'region.kpiShortAlerts': '{count} past the grace period',
   'region.attnOverdue': '{count} requests past their reply-by',
   'region.attnOpenToday': '{count} unfilled slots today',
   'region.attnOpenTomorrow': '{count} open slots tomorrow',
   'region.attnUnconfirmed': '{count} unconfirmed for tomorrow',
-  'region.storesChart': 'Stores side by side · delivered vs contracted',
+  'region.storesChart': '{sites} side by side · delivered vs contracted',
   'region.storesChartSub': 'Last 4 weeks',
-  'region.colStore': 'Store',
+  'region.colStore': '{site}',
   'region.colGrade': 'Grade',
   'region.colFloor': 'On floor now',
   'region.colToday': 'Today',
@@ -910,14 +912,14 @@ const en = {
   'region.openRequests': 'Open with Alto',
   'region.openRequestsNone': 'No open requests across the region.',
   'region.kpiAlerts': 'Past grace',
-  'region.storesRail': 'Your stores',
-  'region.storesRailHint': 'Tap a store to open its site',
+  'region.storesRail': 'Your {sitesLc}',
+  'region.storesRailHint': 'Tap a {siteLc} to open its site',
   'region.tileShort': '{count} short on the floor now',
   'region.tileNoTarget': 'No floor target set yet',
   'region.tileNothingToday': 'Nothing scheduled today',
   'region.tileCovered': 'Covered',
   'region.tileToday': 'Today {present} of {expected} in',
-  'region.tableDetails': 'Every number, every store',
+  'region.tableDetails': 'Every number, every {siteLc}',
   'region.onFloorNow': 'on the floor',
   'region.cardToday': 'Today',
   'region.cardTomorrow': 'Tomorrow',
@@ -925,7 +927,7 @@ const en = {
   'region.cardUnconfirmed': '{count} unconfirmed',
   'region.cardOverdue': '{count} past due',
   'region.cardLeads': 'Alto leads on site: {on} of {total}',
-  'region.cardNoLead': 'No Alto lead bound to this store',
+  'region.cardNoLead': 'No lead bound to this {siteLc}',
   'msg.title': 'Messages',
   'msg.subtitle': 'Text the people who run your floor. Every thread is kept as a record.',
   'msg.unreadLine': '{count} unread',
@@ -940,12 +942,12 @@ const en = {
   'msg.search': 'Search messages',
   'msg.searchNone': 'Nothing found.',
   'msg.none': 'No conversations yet',
-  'msg.noneHint': 'Your store channel appears here once Alto assigns a supervisor. Start a message to reach someone directly.',
+  'msg.noneHint': 'Your {siteLc} channel appears here once a {managerLc} is assigned. Start a message to reach someone directly.',
   'msg.noMessagesYet': 'No messages yet',
   'msg.pick': 'Pick a conversation',
-  'msg.pickHint': 'Your store channel and direct threads are on the left.',
+  'msg.pickHint': 'Your {siteLc} channel and direct threads are on the left.',
   'msg.back': 'Back to messages',
-  'msg.channelMembers': '{count} people in this store channel',
+  'msg.channelMembers': '{count} people in this {siteLc} channel',
   'msg.transcript': 'Download transcript',
   'msg.threadEmpty': 'Say hello — the thread starts here.',
   'msg.seen': 'Seen',
@@ -2921,20 +2923,20 @@ const es: Record<MessageKey, string> = {
   'opsRun.alreadyClosed': 'Ese turno ya está cerrado — su registro es definitivo.',
   'opsRun.loadShiftFailed': 'No se pudo cargar el turno.',
   'opsRun.resumeFailed': 'No se pudo retomar ese turno.',
-  'opsRun.submittedClockOutKiosk': 'SOP enviado — marca tu salida en la tableta de la tienda cuando termines.',
+  'opsRun.submittedClockOutKiosk': 'SOP enviado — marca tu salida en la tableta de la {siteLc} cuando termines.',
   'opsRun.submittedFinal': 'SOP enviado — el registro es definitivo.',
   'opsRun.clockOutNow': 'Marcar salida ahora',
   'opsRun.shiftClosedFinal': 'Turno cerrado — el registro es definitivo.',
   'opsRun.yourShiftSop': 'El SOP de tu turno',
   'opsRun.helpOnChecklist': 'Ayudar con la lista',
   'opsRun.noSopTitle': 'No hay un SOP en marcha en tu turno',
-  'opsRun.noSopDesc': 'La marcación de entrada de tu supervisor de turno lo abre, y aquí lo ayudas. El día que te entreguen el turno — o si ningún supervisor de turno ha marcado entrada a los 30 minutos — se abre para ti, y te toca enviarlo.',
+  'opsRun.noSopDesc': 'La marcación de entrada de tu {managerLc} de turno lo abre, y aquí lo ayudas. El día que te entreguen el turno — o si ningún {managerLc} de turno ha marcado entrada a los 30 minutos — se abre para ti, y te toca enviarlo.',
   'opsRun.backToFloor': 'Volver a Mi piso',
   'opsRun.loadTodayFailed': 'No se pudo cargar el día de hoy.',
-  'opsRun.pickClient': 'Elige un cliente…',
+  'opsRun.pickClient': 'Elige un {clientLc}…',
   'opsRun.whoseFloor': '¿Qué piso estás dirigiendo?',
-  'opsRun.noClients': 'Aún no hay clientes activos.',
-  'opsRun.pickClientHint': 'Elige el cliente arriba — sus turnos y listas SOP se cargan para hoy.',
+  'opsRun.noClients': 'Aún no hay {clientsLc} activos.',
+  'opsRun.pickClientHint': 'Elige el {clientLc} arriba — sus turnos y listas SOP se cargan para hoy.',
   'opsRun.openYourShiftFailed': 'No se pudo abrir tu turno.',
   'opsRun.openShiftFailed': 'No se pudo abrir el turno.',
   'opsRun.resumeTitle': 'Continúa donde lo dejaste',
@@ -2942,17 +2944,17 @@ const es: Record<MessageKey, string> = {
   'opsRun.startYourShift': 'Empieza tu turno',
   'opsRun.submittedIncomplete': 'Enviado incompleto — operaciones tiene tu motivo.',
   'opsRun.allRequiredDone': 'Todo lo obligatorio hecho, entrega escrita.',
-  'opsRun.sopOpensItself': 'El SOP de tu turno se abre solo cuando marcas entrada — aquí o en el kiosco de la tienda — y vence cuando termina el turno.',
-  'opsRun.openShiftLoads': 'Abre un turno y su lista SOP se carga sola — tienda, personal y estándares se completan automáticamente.',
+  'opsRun.sopOpensItself': 'El SOP de tu turno se abre solo cuando marcas entrada — aquí o en el kiosco de la {siteLc} — y vence cuando termina el turno.',
+  'opsRun.openShiftLoads': 'Abre un turno y su lista SOP se carga sola — {siteLc}, personal y estándares se completan automáticamente.',
   'opsRun.openAnotherByHand': 'Abrir otra lista a mano',
   'opsRun.openByHand': 'Abrir una lista a mano',
   'opsRun.nothingScheduledTitle': 'Nada programado hoy',
-  'opsRun.nothingScheduledDesc': 'No hay turnos en el horario de hoy para tu tienda, y ningún SOP está asignado a un turno en marcha allí ahora. Pide a operaciones que asigne uno en Turnos de tienda.',
+  'opsRun.nothingScheduledDesc': 'No hay turnos en el horario de hoy para tu {siteLc}, y ningún SOP está asignado a un turno en marcha allí ahora. Pide a operaciones que asigne uno en Turnos de {siteLc}.',
   'opsRun.noDepartment': 'Aún sin departamento SOP',
   'opsRun.pickDepartment': 'Elige departamento…',
   'opsRun.openWithDept': 'Abrir con este departamento',
   'opsRun.openShift': 'Abrir turno',
-  'opsRun.supervisorRunning': 'El supervisor a cargo',
+  'opsRun.supervisorRunning': 'El {managerLc} a cargo',
   'opsRun.you': 'Tú',
   'opsRun.readySubmit': 'Listo — enviar SOP',
   'opsRun.submitSop': 'Enviar SOP',
@@ -3430,7 +3432,7 @@ const es: Record<MessageKey, string> = {
   'wf.wire': 'Línea en vivo',
   'wf.wireQuiet': 'Silencio — nada en la línea hoy.',
   'wf.needsYou': '{count} te necesitan',
-  'wf.allGreenBoard': 'Todas las tiendas en verde',
+  'wf.allGreenBoard': 'Todas las {sitesLc} en verde',
   'wf.unschedPunch': 'Registro sin turno',
   'wf.incidentWord': 'Incidente',
   'wf.tileUnconf': '{count} sin confirmar mañana',
@@ -3439,7 +3441,7 @@ const es: Record<MessageKey, string> = {
   'wf.tileIncidents': '{count} incidentes',
   'wf.tileQuiet': 'Tranquila',
   'wf.instrFloor': 'en el piso',
-  'wf.instrNeeds': 'tiendas te necesitan',
+  'wf.instrNeeds': '{sitesLc} te necesitan',
   'wf.instrUnsched': 'registros sin turno',
   'wf.instrFill': 'cobertura semanal',
   'wf.instrIncidents': 'incidentes hoy',
@@ -3452,9 +3454,9 @@ const es: Record<MessageKey, string> = {
   'wf.closePending': '{count} hojas de horas esperan aprobación',
   'wf.closeClear': 'Todas las hojas de horas aprobadas',
   'wf.closePayday': 'Día de pago {date}',
-  'wf.sups': 'El cuerpo de supervisores',
-  'wf.supsCount': '{count} supervisores',
-  'wf.supsNone': 'Aún no hay cuentas de supervisor.',
+  'wf.sups': 'El cuerpo de {managersLc}',
+  'wf.supsCount': '{count} {managersLc}',
+  'wf.supsNone': 'Aún no hay cuentas de {managerLc}.',
   'wf.roleShift': 'Turno',
   'wf.roleFloor': 'Piso',
   'wf.dispatchTitle': 'Despacho — abiertos próximas 48h',
@@ -3462,7 +3464,7 @@ const es: Record<MessageKey, string> = {
   'wf.goScheduling': 'Tablero de horarios',
   'wf.goApprovals': 'Aprobaciones',
   'wf.goLive': 'Piso en vivo',
-  'wf.goOps': 'Operaciones de tienda',
+  'wf.goOps': 'Operaciones de {siteLc}',
   'wf.goMarketplace': 'Turnos abiertos',
   'wf.goIncidents': 'Incidentes y seguridad',
   'fin.morning': 'Buenos días',
@@ -3498,7 +3500,7 @@ const es: Record<MessageKey, string> = {
   'portal.reqDialogHint': 'Su solicitud llega al escritorio correcto de Alto en cuanto la envía, y puede seguir su estado aquí mismo.',
   'portal.reqKindLabel': 'Tipo de solicitud',
   'portal.reqKindStaffing': 'Personal — necesitamos más cobertura',
-  'portal.reqKindFeedback': 'Comentario sobre un asociado',
+  'portal.reqKindFeedback': 'Comentario sobre un {workerLc}',
   'portal.reqKindIssue': 'Un problema por resolver',
   'portal.reqSubject': 'Asunto',
   'portal.reqBody': 'Cuéntenos qué necesita…',
@@ -3539,7 +3541,7 @@ const es: Record<MessageKey, string> = {
   'fin.fgPhone': 'Teléfono',
   'fin.fgStart': 'Fecha de inicio',
   'fin.fgFullRecord': 'Expediente completo',
-  'fin.fgClient': 'Cliente',
+  'fin.fgClient': '{client}',
   'fin.fgWaiting': '{count} en espera',
   'fin.fgTransfer': 'Transferencia',
   'fin.fgTransferLine': 'Cerrar en {from} — abrir bajo {to}',
@@ -3648,7 +3650,7 @@ const es: Record<MessageKey, string> = {
   'fin.ar31': '31–60 días',
   'fin.ar61': '61–90 días',
   'fin.ar91': 'Más de 90 días',
-  'portal.title': 'Mi tienda',
+  'portal.title': 'Mi {siteLc}',
   'portal.subtitle': 'Tu fuerza laboral de Alto People, en vivo.',
   'portal.live': 'En vivo · se actualiza cada minuto',
   'portal.onFloorNow': 'En el piso ahora',
@@ -3692,43 +3694,43 @@ const es: Record<MessageKey, string> = {
   'portal.loadFailed': 'No se pudo cargar la vista de tu tienda.',
   'region.title': 'Centro de mando',
   'region.pick': 'Abra una región desde la página Regiones para ver su centro de mando.',
-  'region.subtitle': '{count} tiendas · los mismos números que ve cada gerente de tienda',
+  'region.subtitle': '{count} {sitesLc} · los mismos números que ve cada gerente de {siteLc}',
   'region.kpiFloor': 'En piso ahora · región',
-  'region.kpiFloorShort': '{count} tiendas cortas en este momento',
-  'region.kpiFloorOk': 'Todas las tiendas en o sobre su contrato',
+  'region.kpiFloorShort': '{count} {sitesLc} cortas en este momento',
+  'region.kpiFloorOk': 'Todas las {sitesLc} en o sobre su contrato',
   'region.kpiGrade': 'Confiabilidad · 4 semanas',
-  'region.kpiGradeF': '{count} tiendas en F',
-  'region.kpiGradeA': '{count} tiendas en A',
+  'region.kpiGradeF': '{count} {sitesLc} en F',
+  'region.kpiGradeA': '{count} {sitesLc} en A',
   'region.kpiGradeSub': 'A {a} · B {b} · F {f}',
   'region.kpiOpen': 'Sin cubrir hoy',
   'region.kpiOpenUnit': 'turnos',
   'region.kpiOpenSub': 'Mañana: {open} abiertos · {unconfirmed} sin confirmar',
   'region.kpiRequests': 'Solicitudes abiertas',
   'region.kpiRequestsOverdue': '{count} vencidas',
-  'region.kpiRequestsSub': 'en todas las tiendas de la región',
-  'region.filterAll': 'Todas las tiendas',
+  'region.kpiRequestsSub': 'en todas las {sitesLc} de la región',
+  'region.filterAll': 'Todas las {sitesLc}',
   'region.filterShort': 'Cortas ahora',
   'region.filterOpen': 'Turnos sin cubrir',
   'region.filterRequests': 'Solicitudes abiertas',
-  'region.findStore': 'Buscar una tienda…',
-  'region.noStores': 'Ninguna tienda coincide',
-  'region.noStoresHint': 'Aún no hay tiendas asignadas a esta región — consulte a su contacto de Alto.',
-  'region.heroEyebrow': 'En piso ahora · todas las tiendas',
-  'region.heroNoTargets': 'Ninguna tienda de esta región tiene aún una dotación contratada — pida a Alto que fije las metas de piso.',
-  'region.heroShort': 'Faltan {missing} respecto al contrato en {stores} tiendas en este momento.',
-  'region.heroMet': 'Todas las tiendas con dotación completa en este momento.',
+  'region.findStore': 'Buscar una {siteLc}…',
+  'region.noStores': 'Ninguna {siteLc} coincide',
+  'region.noStoresHint': 'Aún no hay {sitesLc} asignadas a esta región — consulte a su contacto de cuenta.',
+  'region.heroEyebrow': 'En piso ahora · todas las {sitesLc}',
+  'region.heroNoTargets': 'Ninguna {siteLc} de esta región tiene aún una dotación contratada — pida a su contacto de cuenta que fije las metas de piso.',
+  'region.heroShort': 'Faltan {missing} respecto al contrato en {stores} {sitesLc} en este momento.',
+  'region.heroMet': 'Todas las {sitesLc} con dotación completa en este momento.',
   'region.curveTitle': 'Cobertura a lo largo del día · región',
   'region.curveMeta': '{open} turnos sin cubrir hoy',
-  'region.kpiShort': 'Tiendas cortas ahora',
+  'region.kpiShort': '{sites} cortas ahora',
   'region.kpiShortUnit': 'de {total}',
   'region.kpiShortAlerts': '{count} pasado el período de gracia',
   'region.attnOverdue': '{count} solicitudes vencidas',
   'region.attnOpenToday': '{count} turnos sin cubrir hoy',
   'region.attnOpenTomorrow': '{count} turnos abiertos mañana',
   'region.attnUnconfirmed': '{count} sin confirmar para mañana',
-  'region.storesChart': 'Tiendas comparadas · entregado vs contratado',
+  'region.storesChart': '{sites} comparadas · entregado vs contratado',
   'region.storesChartSub': 'Últimas 4 semanas',
-  'region.colStore': 'Tienda',
+  'region.colStore': '{site}',
   'region.colGrade': 'Calificación',
   'region.colFloor': 'En piso ahora',
   'region.colToday': 'Hoy',
@@ -3740,14 +3742,14 @@ const es: Record<MessageKey, string> = {
   'region.openRequests': 'Abierto con Alto',
   'region.openRequestsNone': 'Sin solicitudes abiertas en la región.',
   'region.kpiAlerts': 'Fuera de gracia',
-  'region.storesRail': 'Sus tiendas',
-  'region.storesRailHint': 'Toque una tienda para abrir su sitio',
+  'region.storesRail': 'Sus {sitesLc}',
+  'region.storesRailHint': 'Toque una {siteLc} para abrir su sitio',
   'region.tileShort': 'Faltan {count} en piso ahora',
   'region.tileNoTarget': 'Sin meta de piso definida',
   'region.tileNothingToday': 'Nada programado hoy',
   'region.tileCovered': 'Cubierta',
   'region.tileToday': 'Hoy {present} de {expected} presentes',
-  'region.tableDetails': 'Todos los números, todas las tiendas',
+  'region.tableDetails': 'Todos los números, todas las {sitesLc}',
   'region.onFloorNow': 'en piso',
   'region.cardToday': 'Hoy',
   'region.cardTomorrow': 'Mañana',
@@ -3755,7 +3757,7 @@ const es: Record<MessageKey, string> = {
   'region.cardUnconfirmed': '{count} sin confirmar',
   'region.cardOverdue': '{count} vencidas',
   'region.cardLeads': 'Líderes de Alto en sitio: {on} de {total}',
-  'region.cardNoLead': 'Sin líder de Alto vinculado a esta tienda',
+  'region.cardNoLead': 'Sin líder vinculado a esta {siteLc}',
   'msg.title': 'Mensajes',
   'msg.subtitle': 'Escriba a quienes dirigen su piso. Cada conversación queda como registro.',
   'msg.unreadLine': '{count} sin leer',
@@ -3770,12 +3772,12 @@ const es: Record<MessageKey, string> = {
   'msg.search': 'Buscar mensajes',
   'msg.searchNone': 'Nada encontrado.',
   'msg.none': 'Aún no hay conversaciones',
-  'msg.noneHint': 'El canal de su tienda aparece aquí cuando Alto asigna un supervisor. Inicie un mensaje para contactar a alguien directamente.',
+  'msg.noneHint': 'El canal de su {siteLc} aparece aquí cuando se asigna un {managerLc}. Inicie un mensaje para contactar a alguien directamente.',
   'msg.noMessagesYet': 'Aún no hay mensajes',
   'msg.pick': 'Elija una conversación',
-  'msg.pickHint': 'El canal de su tienda y los hilos directos están a la izquierda.',
+  'msg.pickHint': 'El canal de su {siteLc} y los hilos directos están a la izquierda.',
   'msg.back': 'Volver a mensajes',
-  'msg.channelMembers': '{count} personas en este canal de tienda',
+  'msg.channelMembers': '{count} personas en este canal de {siteLc}',
   'msg.transcript': 'Descargar transcripción',
   'msg.threadEmpty': 'Salude — la conversación empieza aquí.',
   'msg.seen': 'Visto',
@@ -5692,22 +5694,100 @@ const es: Record<MessageKey, string> = {
   'settings.whatsapp.optedInDone': 'Los avisos por WhatsApp están activados.',
 };
 
-const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, es };
+/**
+ * Brief 2-1b step 2 — Turkish for the labels the tenant's terminology
+ * names (the three nouns, the navigation, the roles, the store and client
+ * words on the portal, region, workforce, ops-run and message surfaces).
+ * Every other key falls back to English; the dictionary is not translated
+ * whole here.
+ */
+const tr: Partial<Record<MessageKey, string>> = {
+  'opsRun.submittedClockOutKiosk': 'SOP gönderildi — bitirdiğinde {siteLc} tabletinde çıkış yap.',
+  'opsRun.noSopDesc': 'Vardiya {managerLc}nın giriş kaydı onu açar ve sen burada yardım edersin. Vardiyayı sana devrettikleri gün — ya da 30 dakika içinde hiçbir vardiya {managerLc} giriş yapmadıysa — senin için açılır ve göndermek sana düşer.',
+  'opsRun.pickClient': 'Bir {clientLc} seç…',
+  'opsRun.noClients': 'Henüz etkin {clientLc} yok.',
+  'opsRun.pickClientHint': 'Yukarıdan {clientLc} seç — vardiyaları ve SOP listeleri bugün için yüklenir.',
+  'opsRun.sopOpensItself': 'Vardiyanın SOP\'u giriş yaptığında kendiliğinden açılır — burada ya da {siteLc} kioskunda — ve vardiya bitince teslim edilir.',
+  'opsRun.openShiftLoads': 'Bir vardiya aç, SOP listesi kendiliğinden yüklenir — {siteLc}, kadro ve standartlar otomatik dolar.',
+  'opsRun.nothingScheduledDesc': 'Bugünkü programda {siteLc} için vardiya yok ve şu an orada süren bir vardiyaya SOP atanmamış. Operasyondan {site} vardiyalarında bir tane atamasını iste.',
+  'opsRun.supervisorRunning': 'Yürüten {managerLc}',
+  'wf.allGreenBoard': 'Tüm {sitesLc} yeşil',
+  'wf.instrNeeds': '{sitesLc} sana ihtiyaç duyuyor',
+  'wf.sups': '{manager} kadrosu',
+  'wf.supsCount': '{count} {managerLc}',
+  'wf.supsNone': 'Henüz {managerLc} hesabı yok.',
+  'wf.goOps': '{site} operasyonları',
+  'portal.reqKindFeedback': 'Bir {workerLc} hakkında geri bildirim',
+  'fin.fgClient': '{client}',
+  'portal.title': '{site}m',
+  'region.subtitle': '{count} {sitesLc} · her {siteLc} yöneticisinin gördüğü aynı sayılar',
+  'region.kpiFloorShort': 'Şu an {count} {siteLc} eksik',
+  'region.kpiFloorOk': 'Her {siteLc} sözleşmesinde veya üzerinde',
+  'region.kpiGradeF': '{count} {siteLc} F notunda',
+  'region.kpiGradeA': '{count} {siteLc} A notunda',
+  'region.kpiRequestsSub': 'bölgedeki her {siteLc} genelinde',
+  'region.filterAll': 'Tüm {sitesLc}',
+  'region.findStore': 'Bir {siteLc} bul…',
+  'region.noStores': 'Eşleşen {siteLc} yok',
+  'region.noStoresHint': 'Bu bölgeye henüz {siteLc} atanmamış — hesap yetkilinize sorun.',
+  'region.heroEyebrow': 'Şu an sahada · her {siteLc}',
+  'region.heroNoTargets': 'Bu bölgede henüz sözleşmeli kadrosu olan {siteLc} yok — saha hedeflerini belirlemesi için hesap yetkilinize sorun.',
+  'region.heroShort': 'Şu an {stores} {siteLc} genelinde sözleşmeye göre {missing} eksik.',
+  'region.heroMet': 'Şu an her {siteLc} sözleşmesine göre dolu.',
+  'region.kpiShort': 'Şu an eksik {sitesLc}',
+  'region.storesChart': '{sites} yan yana · teslim edilen ve sözleşmeli',
+  'region.colStore': '{site}',
+  'region.storesRail': '{sites}iniz',
+  'region.storesRailHint': 'Sayfasını açmak için bir {siteLc} dokun',
+  'region.tableDetails': 'Her sayı, her {siteLc}',
+  'region.cardNoLead': 'Bu {siteLc} için bağlı lider yok',
+  'msg.noneHint': 'Bir {managerLc} atanınca {siteLc} kanalınız burada görünür. Birine doğrudan ulaşmak için mesaj başlatın.',
+  'msg.pickHint': '{site} kanalınız ve doğrudan yazışmalar solda.',
+  'msg.channelMembers': 'Bu {siteLc} kanalında {count} kişi',
+};
+
+const MESSAGES: Record<Lang, Partial<Record<MessageKey, string>>> = { en, es, tr };
+
+/**
+ * The tenant's words, available to every string as {worker} {workers}
+ * {site} {sites} {manager} {managers} {client} {clients} and their
+ * lower-case forms ({workerLc} …). The AuthProvider sets them from the
+ * tenant profile in the current language; the defaults are Alto HR's.
+ */
+export type TermVars = Record<string, string>;
+export const DEFAULT_TERM_VARS: TermVars = termVarsFrom(termsIn(defaultTenantProfile('WORKFORCE_PROVIDER'), 'en'));
+
+export function termVarsFrom(terms: Record<TermKey, string>): TermVars {
+  const lc = (v: string) => v.charAt(0).toLowerCase() + v.slice(1);
+  const vars: TermVars = {
+    worker: terms.worker,
+    workers: terms.workers,
+    site: terms.site,
+    sites: terms.sites,
+    manager: terms.manager,
+    managers: terms.managers,
+    client: terms['label.client'],
+    clients: terms['label.clients'],
+  };
+  for (const [k, v] of Object.entries({ ...vars })) vars[`${k}Lc`] = lc(v);
+  return vars;
+}
 
 function detectLang(): Lang {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === 'en' || stored === 'es') return stored;
-    return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+    if (stored === 'en' || stored === 'es' || stored === 'tr') return stored;
+    const nav = navigator.language?.toLowerCase() ?? '';
+    return nav.startsWith('es') ? 'es' : nav.startsWith('tr') ? 'tr' : 'en';
   } catch {
     return 'en';
   }
 }
 
-function format(template: string, vars?: Record<string, string | number>): string {
-  if (!vars) return template;
+function format(template: string, vars: Record<string, string | number> | undefined, terms: TermVars): string {
+  if (!vars && !template.includes('{')) return template;
   return template.replace(/\{(\w+)\}/g, (_, k: string) =>
-    k in vars ? String(vars[k]) : `{${k}}`,
+    vars && k in vars ? String(vars[k]) : k in terms ? terms[k]! : `{${k}}`,
   );
 }
 
@@ -5720,12 +5800,18 @@ interface I18nContextValue {
   lang: Lang;
   setLang: (lang: Lang) => void;
   t: Translate;
+  /** The tenant's words in the current language (Brief 2-1b); the AuthProvider keeps them current. */
+  setTermVars: (vars: TermVars) => void;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
+  const [termVars, setTermVarsState] = useState<TermVars>(DEFAULT_TERM_VARS);
+  const setTermVars = useCallback((vars: TermVars) => {
+    setTermVarsState((prev) => (shallowEqual(prev, vars) ? prev : vars));
+  }, []);
 
   useEffect(() => {
     // Keep <html lang> honest for screen readers and hyphenation.
@@ -5742,18 +5828,24 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback<Translate>(
-    (key, vars) => format(MESSAGES[lang][key] ?? en[key] ?? key, vars),
-    [lang],
+    (key, vars) => format(MESSAGES[lang][key] ?? en[key] ?? key, vars, termVars),
+    [lang, termVars],
   );
 
-  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  const value = useMemo(() => ({ lang, setLang, t, setTermVars }), [lang, setLang, t, setTermVars]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+function shallowEqual(a: TermVars, b: TermVars): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
 }
 
 const FALLBACK: I18nContextValue = {
   lang: 'en',
   setLang: () => {},
-  t: (key, vars) => format(en[key] ?? key, vars),
+  t: (key, vars) => format(en[key] ?? key, vars, DEFAULT_TERM_VARS),
+  setTermVars: () => {},
 };
 
 /** Works without a provider (English) so isolated component tests and

@@ -26,10 +26,9 @@ import type {
   DashboardKPIs,
   KpiTrend,
 } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
 import {
   hasCapability,
-  ROLE_LABELS,
   type Capability,
   type Role,
 } from '@/lib/roles';
@@ -140,6 +139,7 @@ const humanizeAction = (action: string): string => {
 };
 
 export function AdminDashboard() {
+  const roleLabel = useRoleLabel();
   const pullQueryClient = useQueryClient();
   const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user, role, can } = useAuth();
@@ -225,7 +225,7 @@ export function AdminDashboard() {
           </div>
           {role && (
             <Badge variant="accent" className="uppercase tracking-widest">
-              {ROLE_LABELS[role]}
+              {roleLabel(role)}
             </Badge>
           )}
         </div>

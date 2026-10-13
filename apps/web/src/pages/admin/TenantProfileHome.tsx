@@ -63,9 +63,46 @@ const LANGS: Array<{ code: TermLang; label: string }> = [
   { code: 'tr', label: 'Türkçe' },
 ];
 
+/** What each row is, in neutral words: the key, never one tenant's word for it. */
+const TERM_DESCRIPTION: Record<TermKey, string> = {
+  worker: 'Worker (one)',
+  workers: 'Workers (many)',
+  site: 'Site (one)',
+  sites: 'Sites (many)',
+  manager: 'Manager (one)',
+  managers: 'Managers (many)',
+  'nav.people': 'Navigation: people',
+  'nav.scheduling': 'Navigation: scheduling',
+  'nav.time': 'Navigation: time',
+  'nav.kiosk': 'Navigation: kiosk',
+  'nav.hrCases': 'Navigation: HR cases',
+  'nav.compliance': 'Navigation: compliance',
+  'nav.documents': 'Navigation: documents',
+  'nav.payroll': 'Navigation: payroll',
+  'nav.transport': 'Navigation: transportation',
+  'nav.clients': 'Navigation: customer organizations',
+  'nav.programs': 'Navigation: programs',
+  'nav.headcount': 'Navigation: headcount',
+  'role.associate': 'Role: the worker',
+  'role.shiftSupervisor': 'Role: shift lead',
+  'role.floorSupervisor': 'Role: floor lead',
+  'role.manager': 'Role: manager',
+  'role.clientPortal': 'Role: customer portal account',
+  'role.transportationDirector': 'Role: transportation director',
+  'role.driver': 'Role: driver',
+  'label.client': 'Label: customer organization (one)',
+  'label.clients': 'Label: customer organizations (many)',
+  'label.shift': 'Label: shift',
+  'label.timesheet': 'Label: timesheet',
+  'label.paystub': 'Label: pay statement',
+  'label.supervisor': 'Label: the manager (one)',
+  'label.supervisors': 'Label: the managers (many)',
+  'label.store': 'Label: the site (one)',
+  'label.stores': 'Label: the sites (many)',
+};
+
 function termLabel(key: TermKey): string {
-  const [, rest] = key.includes('.') ? key.split('.') : ['', key];
-  return rest!.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+  return TERM_DESCRIPTION[key] ?? key;
 }
 
 export function TenantProfileHome() {

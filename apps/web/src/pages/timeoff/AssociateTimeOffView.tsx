@@ -485,7 +485,7 @@ function CreateRequestDialog({
   onCreated,
 }: CreateProps) {
   const { t, lang } = useI18n();
-  const L = RANGE_MODE_LABELS[lang] ?? RANGE_MODE_LABELS.en;
+  const L = (RANGE_MODE_LABELS as unknown as Partial<Record<string, typeof RANGE_MODE_LABELS.en>>)[lang] ?? RANGE_MODE_LABELS.en;
   const [category, setCategory] = useState<Category>('VACATION');
   const [startDate, setStartDate] = useState(ymdLocal());
   const [endDate, setEndDate] = useState(ymdLocal());

@@ -21,8 +21,8 @@ import {
   ROLE_CAPABILITIES,
   hasCapability,
 } from '@alto-people/shared';
-import { defaultTenantProfile, termsIn, type TenantModule, type TenantProfile, type TermKey } from '@alto-people/shared';
-import { useI18n } from './i18n';
+import { ROLE_LABELS, defaultTenantProfile, termsIn, type TenantModule, type TenantProfile, type TermKey } from '@alto-people/shared';
+import { termVarsFrom, useI18n } from './i18n';
 import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
 import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
 import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
@@ -161,6 +161,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
   const [tenant, setTenant] = useState<TenantSession>(DEFAULT_TENANT);
+  // Brief 2-1b: every dictionary string can name the tenant's words ({site}, {worker} …).
+  const { lang: uiLang, setTermVars } = useI18n();
+  useEffect(() => {
+    setTermVars(termVarsFrom(termsIn({ terminology: tenant.terminology }, uiLang)));
+  }, [tenant, uiLang, setTermVars]);
 
   // Refs, not state, inside the listeners: the subscriptions are
   // mounted once and must always see the CURRENT user without
@@ -511,6 +516,28 @@ export function useTerm(): (key: TermKey) => string {
     const terms = termsIn({ terminology }, lang);
     return (key: TermKey) => terms[key];
   }, [terminology, lang]);
+}
+
+/** The role's name in the tenant's words where the terminology names it, else the shared label. */
+const ROLE_TERM: Partial<Record<Role, TermKey>> = {
+  ASSOCIATE: 'role.associate',
+  SHIFT_SUPERVISOR: 'role.shiftSupervisor',
+  FLOOR_SUPERVISOR: 'role.floorSupervisor',
+  MANAGER: 'role.manager',
+  CLIENT_PORTAL: 'role.clientPortal',
+  TRANSPORTATION_DIRECTOR: 'role.transportationDirector',
+  DRIVER: 'role.driver',
+};
+
+export function useRoleLabel(): (role: Role) => string {
+  const term = useTerm();
+  return useMemo(
+    () => (role: Role) => {
+      const key = ROLE_TERM[role];
+      return key ? term(key) : (ROLE_LABELS[role] ?? role);
+    },
+    [term],
+  );
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {

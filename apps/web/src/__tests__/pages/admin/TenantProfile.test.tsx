@@ -66,7 +66,7 @@ describe('Organization profile', () => {
     expect(screen.getByDisplayValue('Workforce provider')).toBeInTheDocument();
 
     await user.click(transport);
-    const workerEn = screen.getByLabelText('Worker in English');
+    const workerEn = screen.getByLabelText('Worker (one) in English');
     await user.clear(workerEn);
     await user.type(workerEn, 'Team member');
     await user.click(screen.getByRole('button', { name: 'Save' }));

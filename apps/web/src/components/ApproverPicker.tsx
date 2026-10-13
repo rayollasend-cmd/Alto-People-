@@ -1,3 +1,4 @@
+import { useRoleLabel } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES } from '@alto-people/shared';
 import { ROLE_LABELS } from '@/lib/roles';
@@ -10,10 +11,13 @@ import { Select } from '@/components/ui/Select';
  * an active account that holds manage:org. The name goes on the account
  * and into the audit log with the decision.
  */
-export function approverCandidates(users: Array<{ id: string; email: string; role: keyof typeof ROLE_CAPABILITIES; status: string; associateName?: string | null }>) {
+export function approverCandidates(
+  users: Array<{ id: string; email: string; role: keyof typeof ROLE_CAPABILITIES; status: string; associateName?: string | null }>,
+  roleLabel: (role: keyof typeof ROLE_CAPABILITIES) => string = (role) => ROLE_LABELS[role],
+) {
   return users
     .filter((u) => u.status === 'ACTIVE' && ROLE_CAPABILITIES[u.role]?.has('manage:org'))
-    .map((u) => ({ id: u.id, label: `${u.associateName ?? u.email} · ${ROLE_LABELS[u.role]}` }))
+    .map((u) => ({ id: u.id, label: `${u.associateName ?? u.email} · ${roleLabel(u.role)}` }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
@@ -32,7 +36,8 @@ export function ApproverPicker({
     queryKey: ['ApproverPicker', 'manage-org-users'],
     queryFn: () => listAdminUsers({ status: 'ACTIVE' }),
   });
-  const options = query.data ? approverCandidates(query.data.users) : [];
+  const roleLabel = useRoleLabel();
+  const options = query.data ? approverCandidates(query.data.users, roleLabel) : [];
   return (
     <Field label="Approved by" hint={query.isError ? 'Could not load the approver list — try again.' : hint}>
       {(p) => (

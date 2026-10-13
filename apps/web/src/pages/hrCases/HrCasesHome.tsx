@@ -25,7 +25,7 @@ import {
   type MyCaseRow,
   type QueueCaseRow,
 } from '@/lib/hrCases123Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
@@ -106,6 +106,7 @@ const casePriorityLabel = (
 ): string => t(('hrc.priority.' + p) as MessageKey);
 
 export function HrCasesHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const { t } = useI18n();
   // The case desk: manage:onboarding works every case; process:payroll
@@ -273,9 +274,9 @@ export function HrCasesHome() {
           {canManage && tab === 'queue' && (
             <>
               <SearchInput
-                aria-label="Search subject or associate"
+                aria-label={`Search subject or ${term('worker').toLowerCase()}`}
                 className="h-8 w-52 text-xs"
-                placeholder="Search subject/associate"
+                placeholder={`Search subject/${term('worker').toLowerCase()}`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
