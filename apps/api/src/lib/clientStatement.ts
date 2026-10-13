@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { currentRateCards } from './rateCards.js';
 import { env } from '../config/env.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
@@ -88,10 +89,8 @@ export async function computeStatementSnapshot(
       orderBy: { clockInAt: 'asc' },
       take: 50_000,
     }),
-    db.shiftRateDefault.findMany({
-      where: { clientId },
-      select: { position: true, billRate: true },
-    }),
+    // Brief 1A-2: the cards in force on the period's last day.
+    currentRateCards(db, clientId, new Date(periodEndExclusive.getTime() - 1)),
     db.shiftPosition.findMany({
       where: { clientId, deletedAt: null },
       select: { name: true, isLead: true },

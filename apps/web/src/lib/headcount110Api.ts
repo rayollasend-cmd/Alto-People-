@@ -1,11 +1,7 @@
+import type { HeadcountOverview } from '@alto-people/shared';
 import { apiFetch } from './api';
 
-export interface HeadcountSnapshot {
-  total: number;
-  byDepartment: { departmentId: string | null; departmentName: string; count: number }[];
-  byClient: { clientId: string; clientName: string; count: number }[];
-  byEmploymentType: { employmentType: string; count: number }[];
-}
+export type { HeadcountOverview, HeadcountRow, ReconciliationSummary } from '@alto-people/shared';
 
 export interface TurnoverSummary {
   days: number;
@@ -16,8 +12,9 @@ export interface TurnoverSummary {
   currentActive: number;
 }
 
-export const getHeadcountSnapshot = () =>
-  apiFetch<HeadcountSnapshot>('/headcount/snapshot');
+/** Brief 1A-2: every number on the Headcount screen comes from this one read. */
+export const getHeadcountOverview = () =>
+  apiFetch<HeadcountOverview>('/headcount/overview');
 
 export const getTurnover = (days: number) =>
   apiFetch<TurnoverSummary>(`/headcount/turnover?days=${days}`);

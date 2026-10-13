@@ -14,7 +14,10 @@
  *     --start 2026-09-26 --end 2026-10-09 \
  *     [--payroll /path/to/synchros.csv] \
  *     [--map "hours=Reg Hours,overtimeHours=OT Hours,gross=Gross Pay,email=Work Email"] \
- *     [--out ./reconcile-out] [--window 14]
+ *     [--out ./reconcile-out] [--window 14] [--persist]
+ *
+ * --persist keeps the totals (one ReconciliationSnapshot row) so the Headcount
+ * screen shows the variance beside today's numbers.
  *
  * Without --payroll it writes the platform side alone. The CSV column map
  * lives in src/lib/reconcilePayroll.ts (PAYROLL_COLUMNS); complete it when
@@ -23,7 +26,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import { columnMapFromArg, runReconciliation } from '../src/lib/reconcilePayroll.js';
+import { columnMapFromArg, persistReconciliation, runReconciliation } from '../src/lib/reconcilePayroll.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -45,7 +48,8 @@ async function main() {
 
   const prisma = new PrismaClient();
   try {
-    const { result, csv, markdown } = await runReconciliation(prisma, { start, end, payrollCsv, map, windowDays });
+    const { result, platform, csv, markdown } = await runReconciliation(prisma, { start, end, payrollCsv, map, windowDays });
+    if (process.argv.includes('--persist')) console.log(`Snapshot ${await persistReconciliation(prisma, result, platform)} saved for the Headcount screen.`);
     mkdirSync(outDir, { recursive: true });
     const base = join(outDir, `reconcile-${start}-${end}`);
     writeFileSync(`${base}.csv`, csv);

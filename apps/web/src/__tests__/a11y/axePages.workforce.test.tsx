@@ -192,11 +192,19 @@ vi.mock('@/lib/celebrations107Api', () => ({
 }));
 
 vi.mock('@/lib/headcount110Api', () => ({
-  getHeadcountSnapshot: vi.fn().mockResolvedValue({
-    total: 0,
-    byDepartment: [],
+  getHeadcountOverview: vi.fn().mockResolvedValue({
+    asOf: '2026-10-13T00:00:00.000Z',
+    windowDays: 14,
+    active: 0,
+    scheduledThisWeek: 0,
+    onPayrollLastPeriod: null,
+    inHousing: null,
+    notActive: { employedNotPlaced: 0, placedNoRecentWork: 0, separated: 0, deactivated: 0, onboarding: 0 },
     byClient: [],
+    byStore: [],
+    byDepartment: [],
     byEmploymentType: [],
+    reconciliation: null,
   }),
   getTurnover: vi.fn().mockResolvedValue({
     hires: 0,
@@ -349,7 +357,7 @@ describe('axe — workforce/HR long-tail pages', () => {
 
   it('<HeadcountHome> has no axe violations', async () => {
     const { container } = renderPage(<HeadcountHome />);
-    await screen.findByText('Active headcount');
+    await screen.findByText('Active associates');
     await screen.findByText('0%'); // turnover KPI settled
     await expectNoViolations(container);
   });

@@ -512,4 +512,28 @@ export async function runReconciliation(
   return { result, platform, csv: reconcileCsv(result), markdown: reconcileMarkdown(result, platform) };
 }
 
+/** Keep the totals so the Headcount screen shows the variance beside today's numbers. */
+export async function persistReconciliation(db: Db, r: ReconcileResult, platform: PlatformSide, now: Date = new Date()): Promise<string> {
+  const row = await db.reconciliationSnapshot.create({
+    data: {
+      periodStart: new Date(`${r.period.start}T00:00:00.000Z`),
+      periodEnd: new Date(`${r.period.end}T00:00:00.000Z`),
+      ranAt: now,
+      windowDays: platform.headcount.windowDays,
+      platformActive: platform.headcount.activeByDefinition,
+      platformPaid: platform.headcount.paidByPlatform,
+      payrollPaid: r.payrollProvided ? r.totals.headcount.payrollPaid : null,
+      platformHours: platform.totals.hours,
+      payrollHours: r.payrollProvided ? r.totals.hours.payroll : null,
+      platformGross: platform.totals.gross,
+      payrollGross: r.payrollProvided ? r.totals.gross.payroll : null,
+      varianceLines: r.payrollProvided ? r.variances.length : null,
+      payrollProvided: r.payrollProvided,
+      notes: r.missingColumns.length ? `Columns not found in the export: ${r.missingColumns.join(', ')}` : null,
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 export { defaultPrisma as reconcileDb };

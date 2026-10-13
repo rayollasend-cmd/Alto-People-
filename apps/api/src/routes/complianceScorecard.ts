@@ -36,6 +36,7 @@ import {
   type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { cardOn, loadRateCards } from '../lib/rateCards.js';
 import { activeAssociateIds, activeBreakdown } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -1096,9 +1097,13 @@ export async function buildBillingTile(
     },
     orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
   });
+  // Brief 1A-2: the clients' rate cards, for the expected bill rate.
+  const rateCards = await loadRateCards(prisma, jobs.map((j) => j.client.id));
 
   const rateChecks: ScorecardBillingResponse['rateChecks'] = jobs.map((j) => {
-    const expected = WALMART_BILL_RATES.find((r) => r.pattern.test(j.name));
+    // Brief 1A-2: the client's rate card for this role, else the org standard by name.
+    const card = cardOn(rateCards, j.client.id, j.name, new Date());
+    const expected = card?.billRate != null ? { rate: card.billRate } : WALMART_BILL_RATES.find((r) => r.pattern.test(j.name));
     const billRate = Number(j.billRate);
     return {
       clientId: j.client.id,

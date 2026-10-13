@@ -71,6 +71,7 @@ import {
   type ShiftTemplate as ShiftTemplateDTO,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { cardOn, currentRateCards, endRateCard, loadRateCards, setRateCard } from '../lib/rateCards.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
@@ -508,16 +509,15 @@ async function loadRateResolver(
   clientIds: string[],
 ): Promise<(clientId: string, position: string, explicit: number | null) => number | null> {
   const unique = [...new Set(clientIds)];
-  const rows =
-    unique.length > 0
-      ? await prisma.shiftRateDefault.findMany({
-          where: { clientId: { in: unique } },
-          select: { clientId: true, position: true, payRate: true },
-        })
-      : [];
+  // Brief 1A-2: the card in force today, per (client, position).
+  const cards = await loadRateCards(prisma, unique);
+  const today = new Date();
   const map = new Map<string, number>();
-  for (const r of rows) {
-    map.set(`${r.clientId}${RATE_KEY_SEP}${r.position}`, Number(r.payRate));
+  for (const r of cards) {
+    const key = `${r.clientId}${RATE_KEY_SEP}${r.position}`;
+    if (map.has(key)) continue;
+    const hit = cardOn(cards, r.clientId, r.position, today);
+    if (hit) map.set(key, hit.payRate);
   }
   return (clientId, position, explicit) =>
     explicit ?? map.get(`${clientId}${RATE_KEY_SEP}${position}`) ?? null;
@@ -528,11 +528,9 @@ async function loadRateResolver(
 async function withEffectiveRate(row: RawShift): Promise<Shift> {
   const explicit = row.payRate ? Number(row.payRate) : null;
   if (explicit !== null) return toShift(row, explicit);
-  const def = await prisma.shiftRateDefault.findUnique({
-    where: { clientId_position: { clientId: row.clientId, position: row.position } },
-    select: { payRate: true },
-  });
-  return toShift(row, def ? Number(def.payRate) : null);
+  // Brief 1A-2: the card in force on the shift's date.
+  const card = cardOn(await loadRateCards(prisma, [row.clientId]), row.clientId, row.position, row.startsAt);
+  return toShift(row, card ? card.payRate : null);
 }
 
 /** "YYYY-MM-DD" of an instant as seen in `tz` — for comparing a shift's
@@ -904,6 +902,7 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
         FROM ${SHIFT_TBL} s
         LEFT JOIN ${RATE_DEFAULT_TBL} d
           ON d."clientId" = s."clientId" AND d."position" = s."position"
+          AND d."effectiveFrom" <= (s."startsAt")::date AND (d."effectiveTo" IS NULL OR d."effectiveTo" >= (s."startsAt")::date)
         LEFT JOIN ${SHIFT_POSITION_TBL} p
           ON p."clientId" = s."clientId" AND p."name" = s."position" AND p."deletedAt" IS NULL
         WHERE ${Prisma.join(conds, ' AND ')}
@@ -1035,12 +1034,8 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
       ...new Set(shifts.map((s) => s.locationId).filter((l): l is string => !!l)),
     ];
     const [rateDefaults, leadPositions, targetRows] = await Promise.all([
-      shiftClientIds.length
-        ? prisma.shiftRateDefault.findMany({
-            where: { clientId: { in: shiftClientIds } },
-            select: { clientId: true, position: true, payRate: true, billRate: true },
-          })
-        : Promise.resolve([]),
+      // Brief 1A-2: the cards in force today.
+      shiftClientIds.length ? loadRateCards(prisma, shiftClientIds).then((cards) => cards.filter((c) => cardOn(cards, c.clientId, c.position, new Date())?.id === c.id)) : Promise.resolve([]),
       shiftClientIds.length
         ? prisma.shiftPosition.findMany({
             where: { clientId: { in: shiftClientIds }, deletedAt: null, isLead: true },
@@ -2229,11 +2224,10 @@ schedulingRouter.get('/rate-defaults', MANAGE, async (req, res, next) => {
     }
     const clamped = effectiveClientIdFilter(req.user!, requested);
     const clientId = clamped === null ? NO_MATCH_ID : (clamped ?? requested);
+    const history = req.query.history === '1';
     const [defaults, positions] = await Promise.all([
-      prisma.shiftRateDefault.findMany({
-        where: { clientId },
-        orderBy: { position: 'asc' },
-      }),
+      // Brief 1A-2: the cards in force today; ?history=1 lists every card.
+      history ? loadRateCards(prisma, [clientId]) : currentRateCards(prisma, clientId),
       prisma.shiftPosition.findMany({
         where: { clientId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
@@ -2246,8 +2240,10 @@ schedulingRouter.get('/rate-defaults', MANAGE, async (req, res, next) => {
           id: d.id,
           clientId: d.clientId,
           position: d.position,
-          payRate: Number(d.payRate),
-          billRate: d.billRate && !billRateHidden(req.user!.role) ? Number(d.billRate) : null,
+          payRate: d.payRate,
+          billRate: d.billRate != null && !billRateHidden(req.user!.role) ? d.billRate : null,
+          effectiveFrom: d.effectiveFrom,
+          effectiveTo: d.effectiveTo,
         })),
         positions: positions.map((p) => p.name),
       }),
@@ -2280,41 +2276,10 @@ schedulingRouter.put('/rate-defaults', MANAGE, async (req, res, next) => {
     // A store-bound caller sets the pay rate only; the bill rate on file
     // stays whatever the office set (never cleared by an edit they can't see).
     const hideBill = billRateHidden(req.user!.role);
-    const saved = await prisma.shiftRateDefault.upsert({
-      where: { clientId_position: { clientId: input.clientId, position } },
-      create: {
-        clientId: input.clientId,
-        position,
-        payRate: input.payRate,
-        billRate: hideBill ? null : (input.billRate ?? null),
-      },
-      update: {
-        payRate: input.payRate,
-        ...(hideBill ? {} : { billRate: input.billRate ?? null }),
-      },
-    });
-    enqueueAudit(
-      {
-        actorUserId: req.user!.id,
-        action: 'scheduling.rate_default_upserted',
-        entityType: 'ShiftRateDefault',
-        entityId: saved.id,
-        metadata: {
-          clientId: saved.clientId,
-          position: saved.position,
-          payRate: Number(saved.payRate),
-          billRate: saved.billRate ? Number(saved.billRate) : null,
-        },
-      },
-      'scheduling.rate_default_upserted',
-    );
-    res.json({
-      id: saved.id,
-      clientId: saved.clientId,
-      position: saved.position,
-      payRate: Number(saved.payRate),
-      billRate: saved.billRate && !hideBill ? Number(saved.billRate) : null,
-    });
+    // Brief 1A-2: a new effective-dated card; the one before it closes the day before. A bounded role keeps the bill rate it cannot see.
+    const previous = hideBill ? cardOn(await loadRateCards(prisma, [input.clientId]), input.clientId, position, new Date()) : null;
+    const saved = await setRateCard(prisma, { clientId: input.clientId, position, payRate: input.payRate, billRate: hideBill ? (previous?.billRate ?? null) : (input.billRate ?? null), effectiveFrom: input.effectiveFrom }, req.user!.id);
+    res.json({ ...saved, billRate: saved.billRate != null && !hideBill ? saved.billRate : null });
   } catch (err) {
     next(err);
   }
@@ -2334,14 +2299,15 @@ schedulingRouter.delete('/rate-defaults/:id', MANAGE, async (req, res, next) => 
     if (clamp !== undefined && clamp !== row.clientId) {
       throw new HttpError(404, 'rate_default_not_found', 'Rate default not found.');
     }
-    await prisma.shiftRateDefault.delete({ where: { id: row.id } });
+    // Brief 1A-2: ending a card keeps the history; the shifts priced by it stay priced.
+    await endRateCard(prisma, row.id);
     enqueueAudit(
       {
         actorUserId: req.user!.id,
         action: 'scheduling.rate_default_deleted',
         entityType: 'ShiftRateDefault',
         entityId: row.id,
-        metadata: { clientId: row.clientId, position: row.position },
+        metadata: { clientId: row.clientId, position: row.position, ended: true },
       },
       'scheduling.rate_default_deleted',
     );

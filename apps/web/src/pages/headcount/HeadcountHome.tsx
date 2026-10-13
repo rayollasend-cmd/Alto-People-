@@ -1,478 +1,442 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp, Download } from 'lucide-react';
-import {
-  getHeadcountSnapshot,
-  getTurnover,
-  type HeadcountSnapshot,
-  type TurnoverSummary,
-} from '@/lib/headcount110Api';
-import { listOrgAssociates } from '@/lib/orgApi';
-import type { AssociateOrgSummary } from '@alto-people/shared';
+import { ArrowDown, ArrowUp, Scale, TrendingDown, TrendingUp } from 'lucide-react';
+import { toast } from 'sonner';
+import type { HeadcountOverview, HeadcountRow, ReconciliationSummary } from '@alto-people/shared';
+import { getHeadcountOverview, getTurnover } from '@/lib/headcount110Api';
+import { patchOrgBranding } from '@/lib/brandingApi';
 import { ApiError } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
-import { ymdLocal } from '@/lib/format';
+import { useAuth } from '@/lib/auth';
+import { fmtDate, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
-import {
-  Button,
-  Card,
-  CardContent,
-  Drawer,
-  DrawerBody,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-  EmptyState,
-  ErrorBanner,
-  PageHeader,
-  SearchInput,
-  SegmentedControl,
-  SkeletonRows,
-} from '@/components/ui';
-import { DataGrid } from '@/components/ui/DataGrid';
-
-// By-employment-type drills route to the People directory (which
-// filters server-side via ?employmentType=) because the org-associates
-// payload used by the drawer has no employment type to filter on.
-interface Drill {
-  departmentId: string | null;
-  label: string;
-}
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent } from '@/components/ui/Card';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { QueryError } from '@/components/ui/QueryError';
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Input } from '@/components/ui/Input';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 
 /**
- * Phase 110 — Headcount & turnover dashboard.
+ * Headcount (Brief 1A-2) — one definition of active, on one screen.
  *
- * KPI cards on top (total, hires, terminations, turnover %), then
- * three breakdown panels: by department, by client, by employment
- * type. By-client rows link straight to /clients/:id; by-employment-type
- * rows deep-link into the pre-filtered People directory; by-department
- * opens a drawer that lists matching associates.
+ * The hero is the company-wide active count from lib/activeDefinition
+ * on the server; every other number here is that same definition cut
+ * by store, client, department and employment type, beside what payroll
+ * last said (the reconciliation snapshot). The old department drill
+ * drawer is gone: it listed every employed associate in a department,
+ * which is not the active set, so it contradicted the number above it.
  */
+
+type TurnoverDays = 30 | 90 | 365;
+type Cut = 'store' | 'client';
+
+const WINDOW_MIN = 1;
+const WINDOW_MAX = 90;
+
+function definitionSentence(windowDays: number | undefined): string {
+  const days = windowDays === undefined ? 'N' : String(windowDays);
+  return `Active = placed at a site and either clocked in within the last ${days} days or scheduled ahead. Separated and deactivated people never count.`;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError && err.message ? err.message : fallback;
+}
+
+const n = (v: number) => v.toLocaleString('en-US');
+
 export function HeadcountHome() {
-  const [snap, setSnap] = useState<HeadcountSnapshot | null>(null);
-  const [snapError, setSnapError] = useState<string | null>(null);
-  const [days, setDays] = useState<30 | 90 | 365>(90);
-  const [turnRetry, setTurnRetry] = useState(0);
-  const [drill, setDrill] = useState<Drill | null>(null);
+  const { can } = useAuth();
+  const canManage = can('manage:org');
+  const [days, setDays] = useState<TurnoverDays>(90);
+  const [cut, setCut] = useState<Cut>('store');
 
-  const loadSnap = () => {
-    setSnap(null);
-    setSnapError(null);
-    getHeadcountSnapshot()
-      .then(setSnap)
-      .catch((err) =>
-        setSnapError(
-          err instanceof ApiError ? err.message : 'Could not load headcount.',
-        ),
-      );
-  };
-  useEffect(loadSnap, []);
+  const overview = useQuery({ queryKey: ['headcount', 'overview'], queryFn: getHeadcountOverview });
+  const turnover = useQuery({ queryKey: ['headcount', 'turnover', days], queryFn: () => getTurnover(days) });
 
-  const turnQuery = useQuery({
-    queryKey: ['HeadcountHome', 'turn', days, turnRetry],
-    queryFn: () => getTurnover(days),
-  });
-  const turn: TurnoverSummary | null = turnQuery.data ?? null;
-  const turnError = turnQuery.error ? turnQuery.error instanceof ApiError ? turnQuery.error.message : 'Could not load turnover.' : null;
+  const o = overview.data;
+  const t = turnover.data;
+  const loading = overview.isLoading;
+
+  const payrollHint = o
+    ? o.onPayrollLastPeriod
+      ? `${fmtDate(o.onPayrollLastPeriod.periodStart)} – ${fmtDate(o.onPayrollLastPeriod.periodEnd)}`
+      : 'No closed pay run'
+    : undefined;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Headcount & turnover"
-        subtitle="Active associates, hires and separations across the company."
-        breadcrumbs={[{ label: 'Headcount' }]}
-      />
+    <div className="space-y-6">
+      <PageHeader title="Headcount" subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: 'Headcount' }]} />
 
-      {snapError && (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>{snapError}</span>
-            <Button variant="outline" size="sm" onClick={loadSnap}>
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
-      )}
-      {turnError && (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>{turnError}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTurnRetry((n) => n + 1)}
-            >
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
-      )}
+      {overview.isError && <QueryError what="the headcount" query={overview} />}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <KpiCard
-          label="Active headcount"
-          value={snap?.total ?? null}
-          icon={Users}
-          accent="text-gold"
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard
+          label="Active associates"
+          value={loading || !o ? '—' : n(o.active)}
+          hint={o ? `Worked in the last ${o.windowDays} days or scheduled ahead` : undefined}
         />
-        <KpiCard
-          label="Hires"
-          sub={`Last ${days} days`}
-          value={turn?.hires ?? null}
-          icon={ArrowUp}
-          accent="text-success"
-        />
-        <KpiCard
-          label="Separations"
-          sub={`Last ${days} days`}
-          value={turn?.terminations ?? null}
-          icon={ArrowDown}
-          accent="text-alert"
-        />
-        <KpiCard
-          label="Annualized turnover"
-          sub={`Last ${days} days`}
-          value={turn ? `${turn.annualizedTurnoverRate}%` : null}
-          icon={turn && turn.annualizedTurnoverRate >= 25 ? TrendingUp : TrendingDown}
-          accent={turn && turn.annualizedTurnoverRate >= 25 ? 'text-alert' : 'text-success'}
-        />
+        <MetricCard label="Scheduled this week" value={loading || !o ? '—' : n(o.scheduledThisWeek)} hint="On an assigned shift in the current workweek" />
+        <MetricCard label="On payroll last period" value={loading || !o ? '—' : o.onPayrollLastPeriod ? n(o.onPayrollLastPeriod.count) : '—'} hint={payrollHint} />
+        <MetricCard label="In housing" value={loading || !o ? '—' : o.inHousing === null ? '—' : n(o.inHousing)} hint={o && o.inHousing === null ? 'No housing link yet' : undefined} />
       </div>
 
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-silver">Window:</span>
-        <SegmentedControl
-          ariaLabel="Turnover window"
-          options={([30, 90, 365] as const).map((d) => ({ value: d, label: `${d}d` }))}
-          value={days}
-          onChange={(d) => setDays(d)}
-        />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ReconciliationCard summary={o?.reconciliation} loaded={Boolean(o)} />
+        <NotActiveCard notActive={o?.notActive} windowDays={o?.windowDays} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BreakdownCard
+      <ActivityWindowCard windowDays={o?.windowDays} canManage={canManage} />
+
+      <CutGrid overview={o} cut={cut} onCut={setCut} loading={loading} error={overview.error} onRetry={() => overview.refetch()} />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CompactList
           title="By department"
-          loading={!snap && !snapError}
-          csvName={`headcount-by-department-${ymdLocal()}.csv`}
-          rows={snap?.byDepartment.map((r) => ({
-            label: r.departmentName,
-            count: r.count,
-            onClick: () =>
-              setDrill({
-                departmentId: r.departmentId,
-                label: r.departmentName,
-              }),
-          })) ?? null}
+          rows={o?.byDepartment.map((d) => ({ key: d.id ?? 'unassigned', label: d.name, count: d.active }))}
         />
-        <BreakdownCard
-          title="By client"
-          loading={!snap && !snapError}
-          csvName={`headcount-by-client-${ymdLocal()}.csv`}
-          rows={snap?.byClient.map((r) => ({
-            label: r.clientName,
-            count: r.count,
-            href: `/clients/${r.clientId}`,
-          })) ?? null}
-        />
-        <BreakdownCard
+        <CompactList
           title="By employment type"
-          loading={!snap && !snapError}
-          csvName={`headcount-by-employment-type-${ymdLocal()}.csv`}
-          rows={snap?.byEmploymentType.map((r) => ({
-            label: EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-            count: r.count,
-            href: `/people?employmentType=${encodeURIComponent(r.employmentType)}`,
-          })) ?? null}
+          rows={o?.byEmploymentType.map((e) => ({
+            key: e.employmentType,
+            label: EMPLOYMENT_LABEL[e.employmentType] ?? e.employmentType,
+            count: e.active,
+            href: `/people?employmentType=${encodeURIComponent(e.employmentType)}`,
+          }))}
         />
       </div>
 
-      {drill && (
-        <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
-      )}
+      <section className="space-y-3" aria-labelledby="headcount-turnover">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionTitle as="h2" title={<span id="headcount-turnover">Turnover</span>} description="Hires and separations over the active base." />
+          <SegmentedControl
+            ariaLabel="Turnover window"
+            options={([30, 90, 365] as const).map((d) => ({ value: d, label: `${d}d` }))}
+            value={days}
+            onChange={(d) => setDays(d)}
+          />
+        </div>
+        {turnover.isError && <QueryError what="turnover" query={turnover} />}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <MetricCard label="Hires" value={t ? n(t.hires) : '—'} hint={<span className="inline-flex items-center gap-1"><ArrowUp className="h-3 w-3" aria-hidden="true" />Last {days} days</span>} />
+          <MetricCard label="Separations" value={t ? n(t.terminations) : '—'} accent={Boolean(t && t.terminations > 0)} hint={<span className="inline-flex items-center gap-1"><ArrowDown className="h-3 w-3" aria-hidden="true" />Last {days} days</span>} />
+          <MetricCard
+            label="Annualized turnover"
+            value={t ? `${t.annualizedTurnoverRate}%` : '—'}
+            accent={Boolean(t && t.annualizedTurnoverRate >= 25)}
+            hint={
+              <span className="inline-flex items-center gap-1">
+                {t && t.annualizedTurnoverRate >= 25 ? <TrendingUp className="h-3 w-3" aria-hidden="true" /> : <TrendingDown className="h-3 w-3" aria-hidden="true" />}
+                Last {days} days
+              </span>
+            }
+          />
+        </div>
+      </section>
     </div>
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  sub,
-  icon: Icon,
-  accent,
-}: {
-  label: string;
-  value: string | number | null;
-  sub?: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accent: string;
-}) {
+/* ------------------------------------------------------ reconciliation */
+
+function Variance({ value, format }: { value: number | null; format: (v: number) => string }) {
+  if (value === null) return <span className="font-sans text-2xl font-semibold tracking-tight tabular-nums text-silver/60">—</span>;
+  const nonzero = value !== 0;
+  const sign = value > 0 ? '+' : '';
   return (
-    <Card>
-      <CardContent>
-        <div className="flex items-center justify-between">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
-          <Icon className={`h-4 w-4 ${accent}`} />
-        </div>
-        <div className={`text-3xl font-display mt-2 tabular-nums ${accent}`}>
-          {value === null ? '—' : value}
-        </div>
-        {sub && <div className="text-xs text-silver mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
+    <span className={`font-sans text-2xl font-semibold tracking-tight tabular-nums ${nonzero ? 'text-warning' : 'text-white'}`}>
+      {sign}
+      {format(value)}
+    </span>
   );
 }
 
-interface BreakdownRow {
-  label: string;
-  count: number;
-  href?: string;
-  onClick?: () => void;
-}
-
-const BREAKDOWN_VISIBLE_ROWS = 12;
-
-function BreakdownCard({
-  title,
-  rows,
-  loading,
-  csvName,
-}: {
-  title: string;
-  rows: BreakdownRow[] | null;
-  loading: boolean;
-  csvName: string;
-}) {
-  const [showAll, setShowAll] = useState(false);
-  const visible =
-    rows === null ? null : showAll ? rows : rows.slice(0, BREAKDOWN_VISIBLE_ROWS);
+function ReconciliationCard({ summary, loaded }: { summary: ReconciliationSummary | null | undefined; loaded: boolean }) {
   return (
     <Card>
-      <CardContent>
-        <div className="text-sm uppercase tracking-wider text-silver mb-3 flex items-center gap-2">
-          <Activity className="h-4 w-4" />
-          <span className="flex-1">{title}</span>
-          {rows && rows.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                downloadCsv(csvName, [
-                  ['Segment', 'Count'],
-                  ...rows.map((r) => [r.label, r.count]),
-                ])
-              }
-              title="Export this breakdown as CSV"
-            >
-              <Download className="h-3.5 w-3.5" />
-              CSV
-            </Button>
-          )}
-        </div>
-        {rows === null ? (
-          loading ? (
-            <SkeletonRows count={3} />
-          ) : (
-            // Load failed (the page-level banner says so) — a quiet dash
-            // beats "Not loaded.", which read as developer language.
-            <div className="text-sm text-silver">—</div>
-          )
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="Nothing in this window"
-            description="Widen the date range or pick a different client."
-          />
+      <CardContent className="space-y-4 pt-5">
+        <SectionTitle as="h2" title="Reconciliation" icon={Scale} description="Platform against the payroll export, last run." />
+        {!loaded ? (
+          <p className="text-sm text-silver">—</p>
+        ) : !summary ? (
+          <p className="text-sm text-silver">
+            No reconciliation run yet. Run <code className="rounded bg-navy-secondary/60 px-1 py-0.5 text-xs text-white">scripts/reconcile-payroll.ts --persist</code> against production after the payroll export arrives.
+          </p>
         ) : (
-          <div className="space-y-2">
-            {visible!.map((r) => {
-              const max = Math.max(1, ...rows.map((x) => x.count));
-              const interactive = r.href || r.onClick;
-              const inner = (
-                <div
-                  className={`flex items-center gap-3 text-sm rounded px-1 py-0.5 ${
-                    interactive
-                      ? 'cursor-pointer hover:bg-navy-secondary/30 transition'
-                      : ''
-                  }`}
-                >
-                  <div className="w-44 truncate text-silver">{r.label}</div>
-                  <div className="flex-1 h-3 rounded bg-navy-secondary/40 overflow-hidden">
-                    <div
-                      className="h-full bg-gold"
-                      style={{ width: `${(r.count / max) * 100}%` }}
-                    />
-                  </div>
-                  <div className="w-10 text-right tabular-nums text-white">{r.count}</div>
+          <>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <dt className="text-silver">Period</dt>
+              <dd className="text-white">
+                {fmtDate(summary.periodStart)} – {fmtDate(summary.periodEnd)}
+              </dd>
+              <dt className="text-silver">Ran</dt>
+              <dd className="text-white">{fmtDateTime(summary.ranAt)}</dd>
+              <dt className="text-silver">Platform paid</dt>
+              <dd className="tabular-nums text-white">{n(summary.platformPaid)}</dd>
+              <dt className="text-silver">Payroll paid</dt>
+              <dd className="tabular-nums text-white">{summary.payrollPaid === null ? '—' : n(summary.payrollPaid)}</dd>
+            </dl>
+            <div className="grid grid-cols-3 gap-3 border-t border-navy-secondary pt-4">
+              <div>
+                <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">Headcount</div>
+                <div className="mt-1" data-testid="variance-headcount">
+                  <Variance value={summary.headcountVariance} format={n} />
                 </div>
-              );
-              if (r.href) {
-                return (
-                  <Link key={r.label} to={r.href}>
-                    {inner}
-                  </Link>
-                );
-              }
-              if (r.onClick) {
-                return (
-                  <button
-                    key={r.label}
-                    onClick={r.onClick}
-                    className="block w-full text-left"
-                  >
-                    {inner}
-                  </button>
-                );
-              }
-              return <div key={r.label}>{inner}</div>;
-            })}
-            {rows.length > BREAKDOWN_VISIBLE_ROWS && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAll((s) => !s)}
-              >
-                {showAll ? 'Show fewer' : `Show all ${rows.length}`}
-              </Button>
-            )}
-          </div>
+              </div>
+              <div>
+                <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">Hours</div>
+                <div className="mt-1" data-testid="variance-hours">
+                  <Variance value={summary.hoursVariance} format={fmtHours} />
+                </div>
+              </div>
+              <div>
+                <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">Gross</div>
+                <div className="mt-1" data-testid="variance-gross">
+                  <Variance value={summary.grossVariance} format={(v) => fmtMoney(v)} />
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-silver">
+              {summary.payrollProvided
+                ? summary.varianceLines === null
+                  ? 'Variance lines not counted.'
+                  : `${n(summary.varianceLines)} variance ${summary.varianceLines === 1 ? 'line' : 'lines'}.`
+                : 'Payroll figures were not provided for this run; variances show as —.'}
+            </p>
+          </>
         )}
       </CardContent>
     </Card>
   );
 }
 
-function DrillDrawer({
-  drill,
-  onClose,
-}: {
-  drill: Drill;
-  onClose: () => void;
-}) {
-  const [retry, setRetry] = useState(0);
-  const [search, setSearch] = useState('');
+/* --------------------------------------------------------- not active */
 
-  const rowsQuery = useQuery({
-    queryKey: ['DrillDrawer', 'rows', drill, retry],
-    queryFn: () => listOrgAssociates(),
-  });
-  const rows: AssociateOrgSummary[] | null = rowsQuery.data ? rowsQuery.data.associates.filter((a) => a.departmentId === drill.departmentId) : null;
-  const error = rowsQuery.error ? rowsQuery.error instanceof ApiError ? rowsQuery.error.message : 'Could not load associates.' : null;
+function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview['notActive'] | undefined; windowDays: number | undefined }) {
+  const rows = notActive
+    ? [
+        { label: 'Onboarding', hint: 'Application open, not placed yet', value: notActive.onboarding },
+        { label: 'Placed, no recent work', hint: `No clock-in in ${windowDays ?? 'N'} days and nothing scheduled`, value: notActive.placedNoRecentWork },
+        { label: 'Employed, not placed', hint: 'No open assignment or approved application', value: notActive.employedNotPlaced },
+        { label: 'Separated', hint: 'Left the company', value: notActive.separated },
+        { label: 'Deactivated', hint: 'Account switched off', value: notActive.deactivated },
+      ]
+    : null;
+  const total = rows ? rows.reduce((s, r) => s + r.value, 0) : 0;
+  return (
+    <Card>
+      <CardContent className="space-y-3 pt-5">
+        <SectionTitle as="h2" title="Not active" description={rows ? `${n(total)} on file who do not count.` : 'On file but not counted, by reason.'} />
+        {!rows ? (
+          <p className="text-sm text-silver">—</p>
+        ) : (
+          <table className="w-full text-sm">
+            <caption className="sr-only">People on file who are not active, by reason</caption>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.label} className="border-t border-navy-secondary/60 first:border-t-0">
+                  <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+                    <span className="text-white">{r.label}</span>
+                    <span className="block text-xs2 text-silver/70">{r.hint}</span>
+                  </th>
+                  <td className="py-1.5 text-right font-sans font-semibold tabular-nums text-white">{n(r.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-  const filtered = useMemo(() => {
-    if (!rows) return null;
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (a) =>
-        `${a.firstName} ${a.lastName}`.toLowerCase().includes(q) ||
-        a.email.toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+/* ---------------------------------------------------- activity window */
 
-  const exportCsv = () => {
-    if (!filtered || filtered.length === 0) return;
-    downloadCsv(
-      `headcount-${drill.label.replace(/[^a-z0-9]+/gi, '-')}-${ymdLocal()}.csv`.toLowerCase(),
-      [
-        ['Name', 'Email', 'Job profile', 'Manager'],
-        ...filtered.map((a) => [
-          `${a.firstName} ${a.lastName}`,
-          a.email,
-          a.jobProfileTitle ?? '',
-          a.managerName ?? '',
-        ]),
-      ],
-    );
+function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | undefined; canManage: boolean }) {
+  const qc = useQueryClient();
+  // null = untouched: the input shows the server value, and a refetch
+  // never overwrites what the admin has typed.
+  const [typed, setTyped] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const draft = typed ?? (windowDays === undefined ? '' : String(windowDays));
+
+  const parsed = Number(draft);
+  const valid = draft !== '' && Number.isInteger(parsed) && parsed >= WINDOW_MIN && parsed <= WINDOW_MAX;
+  const dirty = windowDays !== undefined && valid && parsed !== windowDays;
+
+  const save = async () => {
+    if (!valid || !canManage) return;
+    setSaving(true);
+    try {
+      await patchOrgBranding({ activeWindowDays: parsed });
+      toast.success(`Activity window set to ${parsed} ${parsed === 1 ? 'day' : 'days'}.`);
+      setTyped(null);
+      await Promise.all([qc.invalidateQueries({ queryKey: ['headcount'] }), qc.invalidateQueries({ queryKey: ['BrandingHome', 'branding'] })]);
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not save the activity window.'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-3xl">
-      <DrawerHeader>
-        <DrawerTitle>{drill.label}</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody>
-        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-          <div className="flex-1 min-w-[200px] max-w-sm">
-            <SearchInput
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name or email"
-              className="h-8 text-sm"
-              aria-label="Search associates in this segment"
-            />
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={exportCsv}
-            disabled={!filtered || filtered.length === 0}
+    <Card>
+      <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-5">
+        <div className="min-w-0">
+          <h2 className="text-base font-medium text-white">Activity window (days)</h2>
+          <p className="text-sm text-silver">How many trailing days of work keep a placed associate active. Changing it changes every headcount on the platform.</p>
+        </div>
+        {canManage ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
           >
-            <Download className="h-3.5 w-3.5" />
-            Export CSV
-          </Button>
-        </div>
-        {error && (
-          <ErrorBanner>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>{error}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRetry((n) => n + 1)}
-              >
-                Retry
-              </Button>
-            </div>
-          </ErrorBanner>
+            <label htmlFor="headcount-window-days" className="sr-only">
+              Activity window (days)
+            </label>
+            <Input
+              id="headcount-window-days"
+              type="number"
+              inputMode="numeric"
+              min={WINDOW_MIN}
+              max={WINDOW_MAX}
+              step={1}
+              size="sm"
+              className="w-24 text-right"
+              value={draft}
+              onChange={(e) => setTyped(e.target.value)}
+              invalid={draft !== '' && !valid}
+              aria-describedby="headcount-window-range"
+              disabled={windowDays === undefined || saving}
+            />
+            <span id="headcount-window-range" className="text-xs text-silver">
+              {WINDOW_MIN}–{WINDOW_MAX}
+            </span>
+            <Button type="submit" size="sm" disabled={!dirty || saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </form>
+        ) : (
+          <p className="font-sans text-2xl font-semibold tracking-tight tabular-nums text-white" data-testid="window-readonly">
+            {windowDays === undefined ? '—' : `${windowDays} ${windowDays === 1 ? 'day' : 'days'}`}
+          </p>
         )}
-        {!error && rows === null && <SkeletonRows count={4} />}
-        {!error && filtered && filtered.length === 0 && (
-          <div className="text-sm text-silver italic">
-            {search.trim()
-              ? 'No associates match the search.'
-              : 'No associates in this segment.'}
-          </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------- store / client */
+
+function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: HeadcountOverview | undefined; cut: Cut; onCut: (c: Cut) => void; loading: boolean; error: unknown; onRetry: () => void }) {
+  const rows = cut === 'store' ? overview?.byStore : overview?.byClient;
+  const hasRate = (rows ?? []).some((r) => r.withoutRate !== null);
+
+  const columns = useMemo<GridColumn<HeadcountRow>[]>(() => {
+    const cols: GridColumn<HeadcountRow>[] = [
+      {
+        key: 'name',
+        header: cut === 'store' ? 'Store' : 'Client',
+        accessor: (r) => r.name,
+        primary: true,
+        sortable: true,
+        searchable: true,
+        cell: (r) =>
+          cut === 'client' ? (
+            <Link to={`/clients/${r.id}`} className="font-medium text-white hover:text-gold">
+              {r.name}
+            </Link>
+          ) : (
+            <span className="font-medium text-white">{r.name}</span>
+          ),
+      },
+    ];
+    if (cut === 'store') {
+      cols.push({ key: 'client', header: 'Client', accessor: (r) => r.clientName ?? '', sortable: true, searchable: true, cardMeta: true });
+    }
+    cols.push(
+      { key: 'active', header: 'Active', accessor: (r) => r.active, sortable: true, align: 'right', className: 'tabular-nums font-semibold' },
+      { key: 'scheduled', header: 'Scheduled this week', accessor: (r) => r.scheduledThisWeek, sortable: true, align: 'right', className: 'tabular-nums' },
+    );
+    if (hasRate) {
+      cols.push({
+        key: 'withoutRate',
+        header: 'Without rate',
+        accessor: (r) => r.withoutRate,
+        sortable: true,
+        align: 'right',
+        className: 'tabular-nums',
+        cell: (r) => (r.withoutRate === null ? <span className="text-silver/60">—</span> : r.withoutRate),
+      });
+    }
+    return cols;
+  }, [cut, hasRate]);
+
+  return (
+    <DataGrid
+      id={`headcount-${cut}`}
+      caption={cut === 'store' ? 'Active by store' : 'Active by client'}
+      rows={rows ?? []}
+      rowKey={(r) => r.id}
+      loading={loading}
+      error={error ? errorMessage(error, 'Could not load the headcount.') : null}
+      onRetry={onRetry}
+      search={{ placeholder: cut === 'store' ? 'Search stores or clients…' : 'Search clients…' }}
+      urlState={false}
+      exportCsv={{ filename: cut === 'store' ? 'headcount-by-store' : 'headcount-by-client' }}
+      columns={columns}
+      defaultSort={{ key: 'active', direction: 'desc' }}
+      filters={<SegmentedControl ariaLabel="Cut" options={[{ value: 'store', label: 'By store' }, { value: 'client', label: 'By client' }]} value={cut} onChange={onCut} />}
+      empty={{ title: 'Nobody active', description: 'No one is placed with recent work or an upcoming shift.' }}
+    />
+  );
+}
+
+/* ------------------------------------------------------ compact lists */
+
+function CompactList({ title, rows }: { title: string; rows: { key: string; label: string; count: number; href?: string }[] | undefined }) {
+  const max = rows ? Math.max(1, ...rows.map((r) => r.count)) : 1;
+  return (
+    <Card>
+      <CardContent className="space-y-3 pt-5">
+        <SectionTitle as="h2" title={title} />
+        {!rows ? (
+          <p className="text-sm text-silver">—</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-silver">Nobody active.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {rows.map((r) => {
+              const inner = (
+                <span className="flex items-center gap-3 text-sm">
+                  <span className="w-40 truncate text-silver">{r.label}</span>
+                  <span className="h-2 flex-1 overflow-hidden rounded bg-navy-secondary/40">
+                    <span className="block h-full bg-gold" style={{ width: `${(r.count / max) * 100}%` }} />
+                  </span>
+                  <span className="w-12 text-right font-sans font-semibold tabular-nums text-white">{n(r.count)}</span>
+                </span>
+              );
+              return (
+                <li key={r.key}>
+                  {r.href ? (
+                    <Link to={r.href} className="block rounded px-1 py-0.5 transition hover:bg-navy-secondary/30">
+                      {inner}
+                    </Link>
+                  ) : (
+                    <div className="px-1 py-0.5">{inner}</div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
-        {!error && filtered && filtered.length > 0 && (
-          <DataGrid<NonNullable<typeof filtered>[number]>
-            id="headcount-segment"
-            caption="Associates in this segment"
-            rows={filtered}
-            rowKey={(a) => a.id}
-            search={false}
-            urlState={false}
-            exportCsv={{ filename: 'headcount-segment' }}
-            columns={[
-              {
-                key: 'name',
-                header: 'Name',
-                accessor: (a) => `${a.firstName} ${a.lastName}`,
-                sortable: true,
-                primary: true,
-                className: 'font-medium text-white',
-                cell: (a) => (
-                  <Link to={`/people?associateId=${a.id}`} className="truncate block hover:text-gold">
-                    {a.firstName} {a.lastName}
-                  </Link>
-                ),
-              },
-              { key: 'email', header: 'Email', accessor: (a) => a.email, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
-              { key: 'job', header: 'Job profile', accessor: (a) => a.jobProfileTitle, sortable: true, className: 'text-sm', cell: (a) => a.jobProfileTitle ?? <span className="text-silver">—</span> },
-              { key: 'manager', header: 'Manager', accessor: (a) => a.managerName, sortable: true, cardMeta: true, className: 'text-sm', cell: (a) => a.managerName ?? <span className="text-silver">—</span> },
-            ]}
-          />
-        )}
-        <div className="text-xs text-silver mt-3 tabular-nums">
-          {rows && filtered
-            ? search.trim()
-              ? `${filtered.length} of ${rows.length} associates`
-              : `${rows.length} associates`
-            : ''}
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button onClick={onClose}>Close</Button>
-      </DrawerFooter>
-    </Drawer>
+      </CardContent>
+    </Card>
   );
 }

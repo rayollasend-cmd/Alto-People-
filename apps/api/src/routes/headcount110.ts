@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { activeBreakdown, EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { endOfWeekUTC, startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { associatesWithoutRate } from '../lib/rateCards.js';
 
 /**
  * Headcount (Brief 1A-2).
@@ -20,6 +21,13 @@ const VIEW = requireCapability('view:org');
 async function overview(now: Date): Promise<HeadcountOverview> {
   const active = await activeBreakdown(now, prisma);
   const placed = await placements({}, prisma);
+  const withoutRate = await associatesWithoutRate(prisma, now);
+  const noRateByClient = new Map<string, number>();
+  const noRateByLocation = new Map<string, number>();
+  for (const w of withoutRate) {
+    noRateByClient.set(w.clientId, (noRateByClient.get(w.clientId) ?? 0) + 1);
+    if (w.locationId) noRateByLocation.set(w.locationId, (noRateByLocation.get(w.locationId) ?? 0) + 1);
+  }
   const weekStart = startOfWeekUTC(now);
   const weekEnd = endOfWeekUTC(now);
 
@@ -67,11 +75,11 @@ async function overview(now: Date): Promise<HeadcountOverview> {
 
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
   const byClient: HeadcountRow[] = clients
-    .map((c) => ({ id: c.id, name: c.name, active: active.byClient.get(c.id) ?? 0, scheduledThisWeek: scheduledByClient.get(c.id)?.size ?? 0, withoutRate: null }))
+    .map((c) => ({ id: c.id, name: c.name, active: active.byClient.get(c.id) ?? 0, scheduledThisWeek: scheduledByClient.get(c.id)?.size ?? 0, withoutRate: noRateByClient.get(c.id) ?? 0 }))
     .filter((r) => r.active > 0 || r.scheduledThisWeek > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
   const byStore: HeadcountRow[] = locations
-    .map((l) => ({ id: l.id, name: l.name, clientName: clientName.get(l.clientId) ?? '', active: active.byLocation.get(l.id) ?? 0, scheduledThisWeek: scheduledByLocation.get(l.id)?.size ?? 0, withoutRate: null }))
+    .map((l) => ({ id: l.id, name: l.name, clientName: clientName.get(l.clientId) ?? '', active: active.byLocation.get(l.id) ?? 0, scheduledThisWeek: scheduledByLocation.get(l.id)?.size ?? 0, withoutRate: noRateByLocation.get(l.id) ?? 0 }))
     .filter((r) => r.active > 0 || r.scheduledThisWeek > 0)
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
 
@@ -118,6 +126,11 @@ async function overview(now: Date): Promise<HeadcountOverview> {
 
 headcount110Router.get('/headcount/overview', VIEW, async (_req, res) => {
   res.json(await overview(new Date()));
+});
+
+/** Brief 1A-2: every placed associate whose role has no rate card at their client today. */
+headcount110Router.get('/headcount/without-rate', VIEW, async (_req, res) => {
+  res.json({ associates: await associatesWithoutRate(prisma) });
 });
 
 /** The older page's shape, now fed by the one definition. */

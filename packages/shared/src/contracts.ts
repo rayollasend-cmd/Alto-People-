@@ -2180,6 +2180,9 @@ export const ShiftRateDefaultSchema = z.object({
   position: z.string(),
   payRate: z.number(),
   billRate: z.number().nullable(),
+  /** Brief 1A-2: in force from this date to effectiveTo (inclusive); null = open-ended. */
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
 });
 export type ShiftRateDefault = z.infer<typeof ShiftRateDefaultSchema>;
 
@@ -2200,6 +2203,8 @@ export const ShiftRateDefaultInputSchema = z.object({
   position: z.string().min(1).max(120),
   payRate: z.number().nonnegative().max(100000),
   billRate: z.number().nonnegative().max(100000).nullable().optional(),
+  /** Brief 1A-2: the date the new rate takes effect (today when absent). History is never rewritten. */
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type ShiftRateDefaultInput = z.infer<typeof ShiftRateDefaultInputSchema>;
 

@@ -4437,21 +4437,26 @@ model CostCenter {
 // here so the numbers aren't $0. Position match is exact (the same string
 // the shift carries). Resurrected from wip/scheduling-pay-rates.
 model ShiftRateDefault {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId  String   @db.Uuid
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId      String    @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  position  String
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  position      String
   // Cost side — what the associate is paid per hour. Drives labor cost.
-  payRate   Decimal  @db.Decimal(8, 2)
+  payRate       Decimal   @db.Decimal(8, 2)
   // Optional bill/revenue rate per hour.
-  billRate  Decimal? @db.Decimal(8, 2)
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  billRate      Decimal?  @db.Decimal(8, 2)
+  /// Brief 1A-2: the card is in force from this date to effectiveTo (inclusive); null = open-ended.
+  effectiveFrom DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  effectiveTo   DateTime? @db.Date
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  @@unique([clientId, position])
+  @@unique([clientId, position, effectiveFrom])
+  @@index([clientId, position, effectiveTo])
   @@index([clientId])
   @@index([tenantId])
 }
