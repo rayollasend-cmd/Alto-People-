@@ -385,6 +385,8 @@ model User {
   passwordHash        String?          @db.VarChar(255)
   /// The account's PRIMARY role — the one it falls back to and the one an
   /// administrator manages it as.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   role                Role
   /// The other roles this one account may act as. A shift supervisor who
   /// also drives an Alto van holds DRIVER here rather than keeping a
@@ -664,10 +666,13 @@ model User {
   @@index([clientId])
   @@index([leadUserId])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 model Client {
   id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name                 String
   industry             String?
   status               ClientStatus @default(ACTIVE)
@@ -804,6 +809,7 @@ model Client {
 
   @@index([status])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 // Phase 131 — Location: physical site under a Client. State and
@@ -814,6 +820,8 @@ model Client {
 model Location {
   id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId             String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name                 String
   addressLine1         String?   @db.VarChar(255)
   addressLine2         String?   @db.VarChar(255)
@@ -864,6 +872,7 @@ model Location {
 
   @@index([clientId, isActive])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 // A standing crew at a work site — "Front Beach Morning", "Overnight team".
@@ -877,6 +886,8 @@ model ShiftTeam {
   locationId  String    @db.Uuid
   name        String    @db.VarChar(80)
   /// Wall-clock minutes since local midnight at the site; null = no default.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   startMinute Int?
   endMinute   Int?
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
@@ -889,6 +900,7 @@ model ShiftTeam {
 
   @@index([clientId, deletedAt])
   @@index([locationId, deletedAt])
+  @@index([tenantId])
 }
 
 model ShiftTeamMember {
@@ -897,11 +909,14 @@ model ShiftTeamMember {
   associateId String   @db.Uuid
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   team      ShiftTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, associateId])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // Phase 131 — effective-dated record of which Location an associate is
@@ -917,6 +932,8 @@ model ShiftTeamMember {
 model StaffingTarget {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   locationId    String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   targetCount   Int
   effectiveFrom DateTime @db.Date
   // NULL label/window = the store's TOTAL floor target. A labeled row with
@@ -935,6 +952,7 @@ model StaffingTarget {
   createdBy User?    @relation("StaffingTargetAuthor", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([locationId, effectiveFrom])
+  @@index([tenantId])
 }
 
 enum AttendanceKind {
@@ -952,6 +970,8 @@ model AttendanceEvent {
   associateId String         @db.Uuid
   shiftId     String?        @db.Uuid
   clientId    String?        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind        AttendanceKind
   points      Decimal        @db.Decimal(4, 1)
   occurredOn  DateTime       @db.Date
@@ -970,6 +990,7 @@ model AttendanceEvent {
   @@unique([shiftId, kind])
   @@index([associateId, occurredOn])
   @@index([clientId, occurredOn])
+  @@index([tenantId])
 }
 
 // Finance worklist state: the associate has been registered in
@@ -987,9 +1008,13 @@ model FieldglassRegistration {
   /// what ties Alto's hours to the worker's Fieldglass account.
   workerId    String?  @db.VarChar(40)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   addedBy   User?     @relation("FieldglassRegistrar", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
 }
 
 /// One worker's Fieldglass timesheet for one Sat→Fri week at one client:
@@ -1010,6 +1035,8 @@ model FieldglassTimesheet {
   /// DRAFT | SUBMITTED | APPROVED | REJECTED | INVOICED (from the import).
   fgStatus      String?   @db.VarChar(20)
   fgTimesheetId String?   @db.VarChar(40)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   fgRevision    Int?
   fgHours       Decimal?  @db.Decimal(8, 2)
   fgSyncedAt    DateTime? @db.Timestamptz(6)
@@ -1028,6 +1055,7 @@ model FieldglassTimesheet {
   @@unique([weekStart, associateId, clientId])
   @@index([weekStart, clientId])
   @@index([associateId, weekStart])
+  @@index([tenantId])
 }
 
 // The client in the loop: a portal user's structured ask — staffing,
@@ -1052,6 +1080,8 @@ enum ClientRequestStatus {
 model ClientRequest {
   id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId        String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind            ClientRequestKind
   subject         String
   body            String
@@ -1083,6 +1113,7 @@ model ClientRequest {
   @@index([clientId, createdAt(sort: Desc)])
   @@index([status])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 // One row per (account, alert key): a short-staffed wave rings each
@@ -1090,12 +1121,15 @@ model ClientRequest {
 model PortalAlertLog {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   alertKey  String
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   user      User     @relation("PortalAlertLogUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, alertKey])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // The client's "reviewed" mark on a statement or a weekly service report
@@ -1115,10 +1149,13 @@ model Region {
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt DateTime? @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   locations Location[]
   users     User[]     @relation("UserRegionScope")
 
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 // The in-app messenger: a store manager texts the supervisor on the
@@ -1141,6 +1178,8 @@ enum MessageKind {
 
 model Conversation {
   id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind          ConversationKind
   // Tenant scope: set for STORE_CHANNEL (and for any thread that
   // includes a client account), null for purely internal threads.
@@ -1160,6 +1199,7 @@ model Conversation {
 
   @@index([clientId, kind])
   @@index([lastMessageAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model ConversationParticipant {
@@ -1168,11 +1208,14 @@ model ConversationParticipant {
   joinedAt       DateTime  @default(now()) @db.Timestamptz(6)
   lastReadAt     DateTime? @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([conversationId, userId])
   @@index([userId])
+  @@index([tenantId])
 }
 
 model Message {
@@ -1181,6 +1224,8 @@ model Message {
   senderId       String?     @db.Uuid
   kind           MessageKind @default(TEXT)
   body           String      @db.VarChar(4000)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   attachmentKey  String?
   attachmentType String?     @db.VarChar(100)
   attachmentName String?     @db.VarChar(255)
@@ -1190,11 +1235,14 @@ model Message {
   sender       User?        @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
 
   @@index([conversationId, createdAt])
+  @@index([tenantId])
 }
 
 model ClientAcknowledgement {
   id         String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId   String                    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?                   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind       ClientAcknowledgementKind
   // STATEMENT → the statement id; SERVICE_REPORT → the org week start (YYYY-MM-DD).
   subjectKey String                    @db.VarChar(64)
@@ -1205,6 +1253,7 @@ model ClientAcknowledgement {
   user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([clientId, kind, subjectKey])
+  @@index([tenantId])
 }
 
 // A seasonal wave: N heads for a client by a date. Lanes on the relay
@@ -1212,6 +1261,8 @@ model ClientAcknowledgement {
 // so three buildings staff the wave against the same clock.
 model Cohort {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name            String
   clientId        String?   @db.Uuid
   targetHeadcount Int
@@ -1225,6 +1276,7 @@ model Cohort {
   applications Application[]
 
   @@index([archivedAt])
+  @@index([tenantId])
 }
 
 // The thread on the work itself — staff notes attached to an object
@@ -1235,6 +1287,8 @@ model Cohort {
 // can later hang off a timesheet week or a baton without a migration.
 model WorkNote {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   subjectType  String
   subjectKey   String
   body         String
@@ -1257,6 +1311,7 @@ model WorkNote {
 
   @@index([subjectType, subjectKey, createdAt(sort: Desc)])
   @@index([decisionStatus, decisionDesk])
+  @@index([tenantId])
 }
 
 /// The workstation's four desks — the board's three, plus Recruiting.
@@ -1286,6 +1341,8 @@ enum RelayRequestStatus {
 /// will look for it.
 model RelayRequest {
   id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind             RelayRequestKind
   status           RelayRequestStatus @default(OPEN)
   fromUserId       String             @db.Uuid
@@ -1316,12 +1373,15 @@ model RelayRequest {
   @@index([toUserId, status])
   @@index([fromUserId])
   @@index([updatedAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model RelayMessage {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   requestId    String   @db.Uuid
   authorUserId String?  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   body         String
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
 
@@ -1330,6 +1390,7 @@ model RelayMessage {
   files   RelayFile[]
 
   @@index([requestId, createdAt])
+  @@index([tenantId])
 }
 
 /// The working shelf: the forms, spreadsheets, photos and PDFs the desks
@@ -1339,6 +1400,8 @@ model RelayFile {
   id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String     @db.VarChar(200)
   /// Blob key (the same store the document vault writes to).
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   key              String
   mime             String     @db.VarChar(160)
   size             Int
@@ -1361,6 +1424,7 @@ model RelayFile {
   @@index([uploadedById])
   @@index([requestId])
   @@index([createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 /// Who holds a piece of the relay — a first-paycheck lane (subjectKey =
@@ -1377,11 +1441,14 @@ model RelayClaim {
   claimedById String?  @db.Uuid
   claimedAt   DateTime @default(now()) @db.Timestamptz(6)
 
-  user      User  @relation("RelayClaimHolder", fields: [userId], references: [id], onDelete: Cascade)
-  claimedBy User? @relation("RelayClaimAssigner", fields: [claimedById], references: [id], onDelete: SetNull)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  user      User    @relation("RelayClaimHolder", fields: [userId], references: [id], onDelete: Cascade)
+  claimedBy User?   @relation("RelayClaimAssigner", fields: [claimedById], references: [id], onDelete: SetNull)
 
   @@unique([subjectType, subjectKey])
   @@index([userId])
+  @@index([tenantId])
 }
 
 // One row per (associate, week) so the OT radar's morning digest alerts a
@@ -1391,9 +1458,12 @@ model OtAlertStamp {
   weekStart   DateTime @db.Date
   notifiedAt  DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@id([associateId, weekStart])
+  @@index([tenantId])
 }
 
 // Monthly client billing/SLA statement. DRAFT recomputes freely as late
@@ -1406,6 +1476,8 @@ model ClientStatement {
   periodStart   DateTime  @db.Date
   periodEnd     DateTime  @db.Date
   // Assigned org-wide sequentially at finalize; null while DRAFT.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   number        Int?
   status        String    @default("DRAFT") // DRAFT | FINAL
   snapshot      Json
@@ -1426,6 +1498,7 @@ model ClientStatement {
 
   @@unique([clientId, periodStart, periodEnd])
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 // Quarterly executive targets — what "on plan" means. One row per
@@ -1436,11 +1509,15 @@ model ExecTarget {
   quarter           String   @unique @db.VarChar(8)
   revenueTarget     Decimal? @db.Decimal(12, 2)
   marginTarget      Decimal? @db.Decimal(12, 2)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   headcountTarget   Int?
   turnoverPctTarget Decimal? @db.Decimal(5, 2)
   fillRatePctTarget Decimal? @db.Decimal(5, 2)
   updatedAt         DateTime @updatedAt @db.Timestamptz(6)
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // Per-client custom order for the scheduling grid's associate rows —
@@ -1452,11 +1529,14 @@ model SchedulingRosterOrder {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String   @db.Uuid
   associateId String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   position    Int
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
   @@unique([clientId, associateId])
   @@index([clientId, position])
+  @@index([tenantId])
 }
 
 // State overlay for the chairman's decision queue. Decisions themselves
@@ -1474,8 +1554,12 @@ model ExecDecisionState {
   stakesAtAction Decimal?  @db.Decimal(12, 2)
   actedById      String?   @db.Uuid
   actedAt        DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   note           String?
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // Collaboration overlay for the role decision queues: who has TAKEN an
@@ -1487,6 +1571,8 @@ model DecisionClaim {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key            String    @unique @db.VarChar(160)
   claimedById    String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   claimedBy      User      @relation("DecisionClaimer", fields: [claimedById], references: [id], onDelete: Cascade)
   claimedAt      DateTime  @default(now()) @db.Timestamptz(6)
   // Set when the item was ASSIGNED to claimedBy by someone else (vs
@@ -1498,6 +1584,8 @@ model DecisionClaim {
   escalatedAt    DateTime? @db.Timestamptz(6)
   escalatedById  String?   @db.Uuid
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // The flight-director rule: a room is never just chat — it carries ONE
@@ -1507,6 +1595,8 @@ model DecisionClaim {
 model DecisionNextStep {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key       String    @unique @db.VarChar(160)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   text      String
   ownerId   String?   @db.Uuid
   owner     User?     @relation("NextStepOwner", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -1514,6 +1604,8 @@ model DecisionNextStep {
   setById   String    @db.Uuid
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // The item's conversation — comments live ON the decision key, visible
@@ -1524,11 +1616,14 @@ model DecisionComment {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key       String   @db.VarChar(160)
   userId    String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user      User     @relation("DecisionCommenter", fields: [userId], references: [id], onDelete: Cascade)
   body      String
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([key, createdAt])
+  @@index([tenantId])
 }
 
 // Personal day/week planner — each user's own list, mixing queue items
@@ -1536,6 +1631,8 @@ model DecisionComment {
 model WorkPlanItem {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId      String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user        User      @relation("WorkPlanOwner", fields: [userId], references: [id], onDelete: Cascade)
   day         DateTime  @db.Date
   title       String
@@ -1546,6 +1643,7 @@ model WorkPlanItem {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   @@index([userId, day])
+  @@index([tenantId])
 }
 
 enum ProspectStage {
@@ -1562,6 +1660,8 @@ enum ProspectStage {
 // Client only on WON, by the normal client-creation flow.
 model ClientProspect {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name           String
   stage          ProspectStage @default(LEAD)
   estWeeklyHours Int?
@@ -1572,6 +1672,7 @@ model ClientProspect {
   deletedAt      DateTime?     @db.Timestamptz(6)
 
   @@index([stage])
+  @@index([tenantId])
 }
 
 enum ClockInRequestStatus {
@@ -1594,6 +1695,8 @@ model ClockInRequest {
   status      ClockInRequestStatus @default(PENDING)
   decidedById String?              @db.Uuid
   decidedAt   DateTime?            @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   denyReason  String?
   // The entry an approval created, for the audit trail.
   timeEntryId String?              @db.Uuid
@@ -1606,6 +1709,7 @@ model ClockInRequest {
   @@index([status, requestedAt])
   @@index([associateId, status])
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 model AssociateAssignment {
@@ -1614,6 +1718,8 @@ model AssociateAssignment {
   locationId  String    @db.Uuid
   startedAt   DateTime  @db.Date
   endedAt     DateTime? @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   reason      String?
   notedById   String?   @db.Uuid
   notes       String?
@@ -1626,10 +1732,13 @@ model AssociateAssignment {
   @@index([associateId, endedAt])
   @@index([locationId, startedAt])
   @@index([locationId, endedAt])
+  @@index([tenantId])
 }
 
 model Associate {
   id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   firstName           String
   lastName            String
   // E-Verify / Form I-9 Section 1 identity fields. Both are optional on the
@@ -1914,6 +2023,7 @@ model Associate {
   @@index([departmentId])
   @@index([costCenterId])
   @@index([jobProfileId])
+  @@index([tenantId])
 }
 
 model J1Profile {
@@ -1921,6 +2031,8 @@ model J1Profile {
   associateId      String    @unique @db.Uuid
   programStartDate DateTime  @db.Date
   programEndDate   DateTime  @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   ds2019Number     String
   sponsorAgency    String
   visaNumber       String?
@@ -1929,6 +2041,8 @@ model J1Profile {
   associate        Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   createdAt        DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 model Application {
@@ -1940,6 +2054,8 @@ model Application {
   // approval, the AssociateAssignment row created at hire references
   // this location.
   locationId           String?              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   onboardingTrack      OnboardingTrack
   status               ApplicationStatus    @default(DRAFT)
   position             String?
@@ -2000,20 +2116,27 @@ model Application {
   @@index([clientId, status, invitedAt(sort: Desc)])
   @@index([deletedAt])
   @@index([cohortId])
+  @@index([tenantId])
 }
 
 model OnboardingChecklist {
   id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   applicationId String           @unique @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   application   Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   tasks         OnboardingTask[]
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 model OnboardingTask {
   id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   checklistId     String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind            TaskKind
   status          TaskStatus          @default(PENDING)
   title           String
@@ -2032,11 +2155,14 @@ model OnboardingTask {
 
   @@index([checklistId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model OnboardingTemplate {
   id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId  String?                  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   track     OnboardingTrack
   name      String
   client    Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -2046,11 +2172,14 @@ model OnboardingTemplate {
 
   @@unique([clientId, track])
   @@index([track])
+  @@index([tenantId])
 }
 
 model OnboardingTemplateTask {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   templateId    String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind          TaskKind
   title         String
   description   String?
@@ -2062,11 +2191,14 @@ model OnboardingTemplateTask {
   template      OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([templateId])
+  @@index([tenantId])
 }
 
 model Policy {
   id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId              String?                @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId              String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   industry              String?
   title                 String
   version               String
@@ -2087,6 +2219,7 @@ model Policy {
 
   @@index([clientId])
   @@index([industry])
+  @@index([tenantId])
 }
 
 model PolicyAcknowledgment {
@@ -2096,6 +2229,8 @@ model PolicyAcknowledgment {
   clientId       String?    @db.Uuid
   signatureId    String?    @db.Uuid
   acknowledgedAt DateTime   @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   policy         Policy     @relation(fields: [policyId], references: [id], onDelete: Restrict)
   associate      Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
   signature      Signature? @relation(fields: [signatureId], references: [id], onDelete: SetNull)
@@ -2104,12 +2239,15 @@ model PolicyAcknowledgment {
   @@index([associateId])
   @@index([policyId])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model DocumentRecord {
   id                  String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId         String                        @db.Uuid
   clientId            String?                       @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?                       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind                DocumentKind
   s3Key               String?
   filename            String
@@ -2149,6 +2287,7 @@ model DocumentRecord {
   @@index([clientId])
   @@index([deletedAt])
   @@index([externalPaymentId])
+  @@index([tenantId])
 }
 
 // 2026-08 — audit documentation for externally-run payroll. Payroll is
@@ -2173,6 +2312,8 @@ model ExternalPayment {
   reference   String?               @db.VarChar(120)
   note        String?               @db.VarChar(500)
   createdById String?               @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate   Associate             @relation(fields: [associateId], references: [id], onDelete: Restrict)
   createdBy   User?                 @relation("ExternalPaymentCreator", fields: [createdById], references: [id], onDelete: SetNull)
   evidence    DocumentRecord[]      @relation("ExternalPaymentEvidence")
@@ -2182,6 +2323,7 @@ model ExternalPayment {
 
   @@index([associateId, periodEnd(sort: Desc)])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 enum ExternalPaymentMethod {
@@ -2270,6 +2412,8 @@ enum OpsHandoverStatus {
 // so history never changes when the library does.
 model OpsSopTemplate {
   id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   department  String               @db.VarChar(80)
   period      OpsPeriod
@@ -2284,11 +2428,14 @@ model OpsSopTemplate {
   updatedAt   DateTime             @updatedAt @db.Timestamptz(6)
 
   @@index([department, period, active])
+  @@index([tenantId])
 }
 
 model OpsSopTemplateTask {
   id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   templateId           String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   template             OpsSopTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
   section              String          @db.VarChar(80)
   order                Int
@@ -2313,6 +2460,7 @@ model OpsSopTemplateTask {
   dueTime              String?         @db.VarChar(5)
 
   @@index([templateId, order])
+  @@index([tenantId])
 }
 
 // One supervisor-run operational shift: "Frozen & Dairy · Store 101 ·
@@ -2321,6 +2469,8 @@ model OpsSopTemplateTask {
 model OpsShift {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId           String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   client             Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
   // The primary department — what the shift is filed and displayed under.
   department         String            @db.VarChar(80)
@@ -2392,6 +2542,7 @@ model OpsShift {
   @@index([openedById, status])
   @@index([locationId, status])
   @@index([locationId, windowLabel, dueAt])
+  @@index([tenantId])
 }
 
 // The SOP a store runs on one of its named shift windows ("Front Beach 218 ·
@@ -2407,6 +2558,8 @@ model StoreShiftSop {
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
   template OpsSopTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
@@ -2418,11 +2571,14 @@ model StoreShiftSop {
   @@unique([locationId, label, templateId])
   @@index([locationId, label])
   @@index([templateId])
+  @@index([tenantId])
 }
 
 model OpsTask {
   id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   opsShiftId           String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   opsShift             OpsShift          @relation(fields: [opsShiftId], references: [id], onDelete: Cascade)
   source               OpsTaskSource     @default(SOP)
   templateTaskId       String?           @db.Uuid
@@ -2472,11 +2628,14 @@ model OpsTask {
 
   @@index([opsShiftId, order])
   @@index([tempOutOfRange])
+  @@index([tenantId])
 }
 
 model OpsTaskPhoto {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   taskId       String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   task         OpsTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
   s3Key        String
   filename     String   @db.VarChar(255)
@@ -2487,6 +2646,7 @@ model OpsTaskPhoto {
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([taskId])
+  @@index([tenantId])
 }
 
 // What one shift tells the next. PENDING items surface as the FIRST
@@ -2495,6 +2655,8 @@ model OpsTaskPhoto {
 model OpsHandoverItem {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   fromShiftId      String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   fromShift        OpsShift          @relation("HandoverFrom", fields: [fromShiftId], references: [id], onDelete: Cascade)
   kind             OpsHandoverKind   @default(NOTE)
   body             String            @db.VarChar(1000)
@@ -2510,6 +2672,7 @@ model OpsHandoverItem {
   createdAt        DateTime          @default(now()) @db.Timestamptz(6)
 
   @@index([fromShiftId, status])
+  @@index([tenantId])
 }
 
 model Signature {
@@ -2518,6 +2681,8 @@ model Signature {
   signerUserId   String?                @db.Uuid
   associateId    String?                @db.Uuid
   signedAt       DateTime               @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   ipAddress      String?
   userAgent      String?
   signatureS3Key String
@@ -2539,6 +2704,7 @@ model Signature {
   @@index([signerUserId])
   @@index([associateId])
   @@index([agreementId])
+  @@index([tenantId])
 }
 
 // Phase 19 — server-side typed-name e-signature.
@@ -2556,6 +2722,8 @@ model EsignAgreement {
   // Optional link to the onboarding checklist task — when set, signing
   // this agreement marks that task DONE.
   taskId        String?         @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title         String
   // Plain-text agreement body (markdown-light: \n linebreaks). Renderer
   // wraps it into the PDF as paragraphs; no HTML/script execution.
@@ -2574,12 +2742,15 @@ model EsignAgreement {
   @@index([applicationId])
   @@index([taskId])
   @@index([signedAt])
+  @@index([tenantId])
 }
 
 model BackgroundCheck {
   id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String        @db.Uuid
   clientId    String?       @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   provider    String
   externalId  String?
   status      BgCheckStatus @default(INITIATED)
@@ -2590,6 +2761,7 @@ model BackgroundCheck {
   @@index([associateId])
   @@index([status])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 // Drug-screen ledger — mirrors BackgroundCheck. The key difference lives
@@ -2601,6 +2773,8 @@ model DrugTest {
   id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String         @db.Uuid
   clientId    String?        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   provider    String
   externalId  String?
   status      DrugTestStatus @default(INITIATED)
@@ -2611,6 +2785,7 @@ model DrugTest {
   @@index([associateId])
   @@index([status])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model I9Verification {
@@ -2623,6 +2798,8 @@ model I9Verification {
   // only to ALIEN_AUTHORIZED_TO_WORK (or LAWFUL_PERMANENT_RESIDENT with an
   // expiring USCIS number). section1TypedName + IP + userAgent capture the
   // typed-name e-signature exactly per Phase 19's pattern.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                   String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   citizenshipStatus          I9CitizenshipStatus?
   alienRegistrationNumberEnc Bytes?
   workAuthExpiresAt          DateTime?            @db.Date
@@ -2656,11 +2833,15 @@ model I9Verification {
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
   createdAt                  DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt                  DateTime             @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 model W4Submission {
   id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String         @unique @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   filingStatus     W4FilingStatus
   multipleJobs     Boolean        @default(false)
   dependentsAmount Decimal        @default(0) @db.Decimal(12, 2)
@@ -2673,11 +2854,15 @@ model W4Submission {
   associate        Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
   createdAt        DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime       @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 model PayoutMethod {
   id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId        String     @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   type               PayoutType
   // Despite the name, routingNumberEnc holds PLAIN UTF-8 bytes — routing
   // numbers are public (printed on every cheque) so they're stored
@@ -2714,6 +2899,7 @@ model PayoutMethod {
   @@index([associateId])
   @@index([associateId, isPrimary, retiredAt])
   @@index([accountFingerprint])
+  @@index([tenantId])
 }
 
 model TimeEntry {
@@ -2742,6 +2928,8 @@ model TimeEntry {
   // Snapshotted pay rate at clock-in time for payroll repeatability.
   payRate         Decimal?        @db.Decimal(8, 2)
   status          TimeEntryStatus @default(ACTIVE)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   notes           String?
   // Tags surfaced in the HR queue: NO_BREAK, OVERTIME_UNAPPROVED,
   // GEOFENCE_VIOLATION, FORGOT_CLOCKOUT, MEAL_BREAK_TOO_SHORT, etc.
@@ -2780,6 +2968,7 @@ model TimeEntry {
   @@index([jobId])
   @@index([projectId])
   @@index([shiftId])
+  @@index([tenantId])
 }
 
 model Shift {
@@ -2790,6 +2979,8 @@ model Shift {
   // out; a follow-up PR will make this required after updating the
   // 17 writers/readers in one pass.
   locationId           String?                         @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?                         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   position             String
   startsAt             DateTime                        @db.Timestamptz(6)
   endsAt               DateTime                        @db.Timestamptz(6)
@@ -2865,6 +3056,7 @@ model Shift {
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
   @@index([workerId, startsAt])
+  @@index([tenantId])
 }
 
 // Phase 51 — reusable shift template ("Friday closer", "weekend
@@ -2876,6 +3068,8 @@ model ShiftTemplate {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // null clientId = global template usable across every client.
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   position    String
   dayOfWeek   Int // 0 = Sunday … 6 = Saturday (matches JS Date.getDay).
@@ -2892,11 +3086,14 @@ model ShiftTemplate {
 
   @@index([clientId, dayOfWeek])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 model Job {
   id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String      @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   // Default rates if a Shift doesn't override. Bill = revenue, pay = cost.
   billRate    Decimal?    @db.Decimal(8, 2)
@@ -2910,17 +3107,21 @@ model Job {
 
   @@unique([clientId, name])
   @@index([clientId, isActive])
+  @@index([tenantId])
 }
 
 model BreakEntry {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   timeEntryId String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   type        BreakType
   startedAt   DateTime  @db.Timestamptz(6)
   endedAt     DateTime? @db.Timestamptz(6)
   timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
+  @@index([tenantId])
 }
 
 // Phase 26 — time-off categories. Sick is the only one accruing
@@ -2963,6 +3164,8 @@ enum TimeOffLedgerReason {
 model TimeOffEntitlement {
   id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId         String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category            TimeOffCategory
   annualMinutes       Int
   carryoverMaxMinutes Int             @default(0)
@@ -2976,11 +3179,14 @@ model TimeOffEntitlement {
 
   @@unique([associateId, category])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 model TimeOffBalance {
   id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category       TimeOffCategory
   // Stored in MINUTES so we don't lose precision on fractional accrual
   // (CA: 1hr per 30hrs = 2 min per worked hour). Convert to hours at the
@@ -2991,11 +3197,14 @@ model TimeOffBalance {
 
   @@unique([associateId, category])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 model TimeOffLedgerEntry {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId       String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category          TimeOffCategory
   reason            TimeOffLedgerReason
   // Signed: +N for accrual/credit, -N for use/payout.
@@ -3017,6 +3226,7 @@ model TimeOffLedgerEntry {
   // category). If the approve handler runs twice we no-op.
   @@unique([sourceTimeEntryId, category, reason], name: "uniq_accrual_per_entry")
   @@index([associateId, createdAt])
+  @@index([tenantId])
 }
 
 // Phase 30 — associate-submitted time-off request and its approval state.
@@ -3034,6 +3244,8 @@ enum TimeOffRequestStatus {
 model TimeOffRequest {
   id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String               @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category         TimeOffCategory
   // Inclusive day range. We store dates (not timestamps) because requests
   // are scheduled at day granularity; the UI picks days, not minutes.
@@ -3058,12 +3270,15 @@ model TimeOffRequest {
 
   @@index([associateId, status])
   @@index([status, createdAt])
+  @@index([tenantId])
 }
 
 model AssociateAvailability {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String    @db.Uuid
   // 0 = Sunday … 6 = Saturday
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dayOfWeek   Int
   // Minutes since midnight: 480 = 08:00, 1080 = 18:00.
   startMinute Int
@@ -3073,6 +3288,7 @@ model AssociateAvailability {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   @@index([associateId, dayOfWeek])
+  @@index([tenantId])
 }
 
 // Web-push subscription — one row per (user, browser/device). The endpoint
@@ -3087,9 +3303,12 @@ model PushSubscription {
   auth      String   @db.VarChar(100)
   userAgent String?  @db.VarChar(300)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([tenantId])
 }
 
 // One-off "can't work this day" exception, layered over the weekly
@@ -3100,12 +3319,15 @@ model AvailabilityException {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String    @db.Uuid
   date        DateTime  @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   note        String?
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@unique([associateId, date])
   @@index([date])
+  @@index([tenantId])
 }
 
 model ShiftSwapRequest {
@@ -3116,6 +3338,8 @@ model ShiftSwapRequest {
   // accept before HR/Ops sees it for final approval.
   counterpartyAssociateId String          @db.Uuid
   status                  ShiftSwapStatus @default(PENDING_PEER)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   note                    String?
   // True trade: a shift of the COUNTERPARTY the requester takes in
   // exchange. Null = plain give-away (the original swap shape). SetNull
@@ -3135,6 +3359,7 @@ model ShiftSwapRequest {
   @@index([status, createdAt(sort: Desc)])
   @@index([counterpartyAssociateId, status])
   @@index([requesterAssociateId, status])
+  @@index([tenantId])
 }
 
 model PayrollRun {
@@ -3155,6 +3380,8 @@ model PayrollRun {
   // Phase 18 — employer-side total (FICA match + Medicare match + FUTA + SUTA)
   // is the company's true cost on top of totalGross. Used in finance reports.
   totalEmployerTax         Decimal                   @default(0) @db.Decimal(12, 2)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                 String?                   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   notes                    String?
   createdById              String?                   @db.Uuid
   finalizedAt              DateTime?                 @db.Timestamptz(6)
@@ -3210,6 +3437,7 @@ model PayrollRun {
   @@index([status, disbursedAt])
   @@index([kind])
   @@index([amendsRunId])
+  @@index([tenantId])
 }
 
 model PayrollItem {
@@ -3263,6 +3491,8 @@ model PayrollItem {
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
   // CA-rate was applied to someone who later moved to TX.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   taxState            String?
   // Tier-2 — city/county withholding (W-2 Box 19). Zero unless the
   // associate carries a LocalTaxRule.
@@ -3334,6 +3564,7 @@ model PayrollItem {
   @@index([associateId])
   @@index([status])
   @@index([amendsItemId])
+  @@index([tenantId])
 }
 
 // Tier-2 — manual earning lines on a DRAFT run. The aggregator folds
@@ -3347,6 +3578,8 @@ model PayrollRunAddOn {
   id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   payrollRunId String             @db.Uuid
   associateId  String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind         PayrollEarningKind
   amount       Decimal            @db.Decimal(12, 2)
   hours        Decimal?           @db.Decimal(8, 2)
@@ -3360,6 +3593,7 @@ model PayrollRunAddOn {
 
   @@index([payrollRunId])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // Tier-1 — the paper-check register. checkNumber is a global SERIAL so
@@ -3370,6 +3604,8 @@ model PayCheck {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   checkNumber   Int         @unique @default(autoincrement())
   payrollItemId String      @unique @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   payeeName     String
   amount        Decimal     @db.Decimal(12, 2)
   memo          String?
@@ -3378,6 +3614,7 @@ model PayCheck {
   payrollItem   PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
 
   @@index([issuedAt])
+  @@index([tenantId])
 }
 
 // Wave 1.2 — One row per earning line on a paystub. The sum of all
@@ -3389,6 +3626,8 @@ model PayCheck {
 model PayrollItemEarning {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   payrollItemId String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind          PayrollEarningKind
   hours         Decimal?           @db.Decimal(8, 2)
   rate          Decimal?           @db.Decimal(8, 2)
@@ -3401,6 +3640,7 @@ model PayrollItemEarning {
   createdAt     DateTime           @default(now()) @db.Timestamptz(6)
 
   @@index([payrollItemId])
+  @@index([tenantId])
 }
 
 // Gap 3 — Overpayment clawback queue. When an AMENDMENT run finalizes with
@@ -3423,6 +3663,8 @@ model PendingPayrollDeduction {
   amount                Decimal      @db.Decimal(12, 2)
   // Wizard-supplied explanation; surfaces verbatim on the deduction line
   // ("Correction for missed-clock punch on 2026-04-29").
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId              String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   note                  String
   // Set when this row is consumed by a regular run. Until then, the
   // partial index `(associateId) WHERE appliedRunId IS NULL` keeps the
@@ -3441,6 +3683,7 @@ model PendingPayrollDeduction {
   // index `WHERE appliedRunId IS NULL` instead, which Prisma can't yet
   // express in schema. The full B-tree would be redundant.
   @@index([sourceAmendmentItemId])
+  @@index([tenantId])
 }
 
 // Phase 22 — disbursement attempt log. One row per provider call, regardless
@@ -3450,6 +3693,8 @@ model PendingPayrollDeduction {
 model PayrollDisbursementAttempt {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   payrollItemId String      @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   provider      String
   status        String // SUCCESS | PENDING | FAILED (mirrors DisbursementResult.status)
   externalRef   String?
@@ -3461,6 +3706,7 @@ model PayrollDisbursementAttempt {
 
   @@index([payrollItemId, attemptedAt])
   @@index([status])
+  @@index([tenantId])
 }
 
 // Wave 1.1 — Pay schedules. A named cadence + anchor date that drives the
@@ -3483,6 +3729,8 @@ model PayrollDisbursementAttempt {
 model PayrollSchedule {
   id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId          String?          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name              String
   frequency         PayrollFrequency
   anchorDate        DateTime         @db.Date
@@ -3500,10 +3748,13 @@ model PayrollSchedule {
 
   @@index([clientId, isActive])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 model Candidate {
   id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   firstName        String
   lastName         String
   email            String         @unique
@@ -3548,6 +3799,7 @@ model Candidate {
   @@index([jobPostingId])
   @@index([createdAt])
   @@index([stage, stageChangedAt])
+  @@index([tenantId])
 }
 
 /// What happened to a candidate, and when, and who did it — the
@@ -3609,6 +3861,8 @@ model SavedView {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId   String   @db.Uuid
   /// Which list it filters, e.g. "recruiting.candidates".
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   scope     String
   name      String
   /// The list's own filter params, as it puts them in its URL.
@@ -3621,6 +3875,7 @@ model SavedView {
 
   @@index([scope, ownerId])
   @@index([scope, shared])
+  @@index([tenantId])
 }
 
 /// What a recruiting source cost in a month — job-board fees, sponsored
@@ -3628,6 +3883,8 @@ model SavedView {
 model RecruitingSourceSpend {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// The Candidate.source key it pays for ("indeed", "referral", …).
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   source      String
   /// The first of the month it was spent in.
   month       DateTime @db.Date
@@ -3640,6 +3897,7 @@ model RecruitingSourceSpend {
   updatedBy User? @relation("SourceSpendEditor", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@unique([source, month])
+  @@index([tenantId])
 }
 
 model CandidateSubmittal {
@@ -3649,6 +3907,8 @@ model CandidateSubmittal {
   /// The store they're put forward for; null = anywhere at the client.
   locationId    String?                  @db.Uuid
   /// What the recruiter tells the client about them.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   pitch         String?
   status        CandidateSubmittalStatus @default(PENDING)
   feedback      String?
@@ -3666,11 +3926,14 @@ model CandidateSubmittal {
 
   @@index([clientId, status])
   @@index([candidateId])
+  @@index([tenantId])
 }
 
 model CandidateEvent {
   id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   candidateId String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind        CandidateEventKind
   fromStage   CandidateStage?
   toStage     CandidateStage?
@@ -3685,6 +3948,7 @@ model CandidateEvent {
 
   @@index([candidateId, createdAt])
   @@index([kind, createdAt])
+  @@index([tenantId])
 }
 
 model InviteToken {
@@ -3707,6 +3971,8 @@ model InviteToken {
   // minted tokens must not keep restarting it.
   mintedBySweep  Boolean   @default(false)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, consumedAt])
@@ -3714,6 +3980,7 @@ model InviteToken {
   // Sweep query filters by (consumedAt IS NULL, reminderSentAt IS NULL,
   // expiresAt > now, createdAt < threshold). Composite index covers it.
   @@index([consumedAt, reminderSentAt, createdAt])
+  @@index([tenantId])
 }
 
 // Mirror of InviteToken for self-serve password reset. Reset links carry a
@@ -3732,10 +3999,13 @@ model PasswordResetToken {
   // a reset they didn't initiate.
   requestedIp String?   @db.VarChar(64)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 // Single-use TOTP recovery codes. The plaintext is shown to the user once
@@ -3748,9 +4018,12 @@ model MfaRecoveryCode {
   codeHash  String    @unique
   usedAt    DateTime? @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, usedAt])
+  @@index([tenantId])
 }
 
 // A registered passkey (WebAuthn credential). Face ID / Touch ID /
@@ -3771,9 +4044,12 @@ model WebAuthnCredential {
   deviceName   String?   @db.VarChar(80)
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   lastUsedAt   DateTime? @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([tenantId])
 }
 
 // Short-lived WebAuthn ceremony challenges. A row is minted when options
@@ -3788,7 +4064,11 @@ model WebAuthnChallenge {
   expiresAt DateTime @db.Timestamptz(6)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 // Per-user opt-out for transactional EMAIL by category bucket. Default
@@ -3808,9 +4088,12 @@ model NotificationPreference {
   // Notification row is created; mandatory categories ignore both flags.
   inAppEnabled Boolean  @default(true)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, category])
+  @@index([tenantId])
 }
 
 // Two-step self-serve email change. Issuing a request mints a single-use
@@ -3830,10 +4113,13 @@ model EmailChangeRequest {
   consumedAt  DateTime? @db.Timestamptz(6)
   requestedIp String?   @db.VarChar(64)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 model PerformanceReview {
@@ -3846,6 +4132,8 @@ model PerformanceReview {
   sourcePipId    String?                 @db.Uuid
   periodStart    DateTime                @db.Date
   periodEnd      DateTime                @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   overallRating  Int
   summary        String
   strengths      String?
@@ -3863,10 +4151,13 @@ model PerformanceReview {
   @@index([associateId, periodEnd])
   @@index([status])
   @@index([sourcePipId])
+  @@index([tenantId])
 }
 
 model Notification {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   channel           NotificationChannel
   status            NotificationStatus  @default(QUEUED)
   // Recipient: a user (in-app), or by phone/email for SMS/EMAIL when the
@@ -3920,12 +4211,15 @@ model Notification {
   // every real send made before providerMessageId existed).
   @@index([providerMessageId])
   @@index([externalRef])
+  @@index([tenantId])
 }
 
 model AuditLog {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   actorUserId String?  @db.Uuid
   clientId    String?  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   action      String
   entityType  String
   entityId    String
@@ -3945,6 +4239,7 @@ model AuditLog {
   @@index([clientId, createdAt(sort: Desc)])
   @@index([createdAt])
   @@index([action, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 // ===== Phase 42 — Benefits enrollment =====================================
@@ -3974,6 +4269,8 @@ enum BenefitsPlanKind {
 model BenefitsPlan {
   id                                        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId                                  String           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                                  String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind                                      BenefitsPlanKind
   name                                      String
   description                               String?
@@ -3991,6 +4288,7 @@ model BenefitsPlan {
 
   @@index([clientId, isActive])
   @@index([clientId, kind])
+  @@index([tenantId])
 }
 
 // One row per associate × plan. effectiveDate / terminationDate gate whether
@@ -4000,6 +4298,8 @@ model BenefitsEnrollment {
   id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId                 String    @db.Uuid
   planId                      String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   electedAmountCentsPerPeriod Int
   effectiveDate               DateTime  @db.Date
   terminationDate             DateTime? @db.Date
@@ -4014,6 +4314,7 @@ model BenefitsEnrollment {
   @@unique([associateId, planId, effectiveDate])
   @@index([associateId, terminationDate])
   @@index([planId])
+  @@index([tenantId])
 }
 
 // ===== Phase 44 — QuickBooks Online integration ===========================
@@ -4038,6 +4339,8 @@ model QuickbooksConnection {
   id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId                 String    @unique @db.Uuid
   realmId                  String // Intuit company / realm identifier
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                 String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   accessTokenEnc           Bytes
   refreshTokenEnc          Bytes
   expiresAt                DateTime  @db.Timestamptz(6)
@@ -4060,6 +4363,8 @@ model QuickbooksConnection {
   updatedAt                DateTime  @updatedAt @db.Timestamptz(6)
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 // ===== Phase 76 — Org hierarchy ===========================================
@@ -4073,6 +4378,8 @@ model Department {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String    @db.Uuid
   parentId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   code        String?
   description String?
@@ -4092,11 +4399,14 @@ model Department {
 
   @@index([clientId, deletedAt])
   @@index([parentId])
+  @@index([tenantId])
 }
 
 model CostCenter {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
   name        String
   description String?
@@ -4111,6 +4421,7 @@ model CostCenter {
   broadcasts Broadcast[]
 
   @@index([clientId, deletedAt])
+  @@index([tenantId])
 }
 
 // Per-client catalog of shift positions ("F&D Morning Shift", etc.).
@@ -4128,6 +4439,8 @@ model CostCenter {
 model ShiftRateDefault {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId  String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   position  String
   // Cost side — what the associate is paid per hour. Drives labor cost.
   payRate   Decimal  @db.Decimal(8, 2)
@@ -4140,11 +4453,14 @@ model ShiftRateDefault {
 
   @@unique([clientId, position])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model ShiftPosition {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId  String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name      String
   // Controls dropdown order so it isn't alphabetical chaos.
   sortOrder Int       @default(0)
@@ -4160,11 +4476,14 @@ model ShiftPosition {
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId, deletedAt])
+  @@index([tenantId])
 }
 
 model JobProfile {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
   title       String
   family      String?
@@ -4188,6 +4507,7 @@ model JobProfile {
 
   @@index([clientId, family])
   @@index([clientId, deletedAt])
+  @@index([tenantId])
 }
 
 // ===== Phase 78 — Position ================================================
@@ -4198,6 +4518,8 @@ model JobProfile {
 model Position {
   id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId            String         @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code                String
   title               String
   jobProfileId        String?        @db.Uuid
@@ -4231,6 +4553,7 @@ model Position {
   @@index([costCenterId])
   @@index([managerAssociateId])
   @@index([deletedAt])
+  @@index([tenantId])
 }
 
 // ===== Phase 77 — Effective-dated AssociateHistory ========================
@@ -4250,6 +4573,8 @@ model AssociateHistory {
   jobProfileId  String?   @db.Uuid
   state         String?   @db.VarChar(2)
   hourlyRate    Decimal?  @db.Decimal(8, 2)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   reason        String?
   actorUserId   String?   @db.Uuid
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
@@ -4258,6 +4583,7 @@ model AssociateHistory {
   actor     User?     @relation("AssociateHistoryActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([associateId, effectiveFrom(sort: Desc)])
+  @@index([tenantId])
 }
 
 // ===== Phase 80 — Workflow engine =========================================
@@ -4302,6 +4628,8 @@ enum WorkflowStepStatus {
 model WorkflowDefinition {
   id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?         @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   description String?
   trigger     WorkflowTrigger
@@ -4321,11 +4649,14 @@ model WorkflowDefinition {
 
   @@index([trigger, isActive])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model WorkflowRun {
   id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   definitionId  String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   trigger       WorkflowTrigger
   entityType    String
   entityId      String
@@ -4343,11 +4674,14 @@ model WorkflowRun {
   @@index([definitionId, status])
   @@index([entityType, entityId])
   @@index([status, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model WorkflowStep {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   runId         String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   ordinal       Int
   kind          WorkflowActionKind
   params        Json               @default("{}")
@@ -4363,6 +4697,7 @@ model WorkflowStep {
   @@unique([runId, ordinal])
   @@index([runId])
   @@index([status])
+  @@index([tenantId])
 }
 
 // ===== Phase 81 — Custom fields ===========================================
@@ -4385,6 +4720,8 @@ enum CustomFieldEntity {
 model CustomFieldDefinition {
   id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId     String?           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   entityType   CustomFieldEntity
   key          String
   label        String
@@ -4403,11 +4740,14 @@ model CustomFieldDefinition {
 
   @@index([entityType])
   @@index([clientId, entityType])
+  @@index([tenantId])
 }
 
 model CustomFieldValue {
   id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   definitionId String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   entityType   CustomFieldEntity
   entityId     String            @db.Uuid
   value        Json
@@ -4418,6 +4758,7 @@ model CustomFieldValue {
 
   @@unique([definitionId, entityId])
   @@index([entityType, entityId])
+  @@index([tenantId])
 }
 
 // ===== Phase 82 — Self-service post-onboarding ============================
@@ -4470,6 +4811,8 @@ enum TaxDocumentKind {
 model EmergencyContact {
   id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String                   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   relation    EmergencyContactRelation
   phone       String
@@ -4482,11 +4825,14 @@ model EmergencyContact {
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@index([associateId])
+  @@index([tenantId])
 }
 
 model Dependent {
   id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   firstName   String
   lastName    String
   relation    DependentRelation
@@ -4501,12 +4847,15 @@ model Dependent {
   beneficiaries Beneficiary[]
 
   @@index([associateId])
+  @@index([tenantId])
 }
 
 model Beneficiary {
   id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String            @db.Uuid
   dependentId String?           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   relation    DependentRelation
   kind        BeneficiaryKind   @default(PRIMARY)
@@ -4519,11 +4868,14 @@ model Beneficiary {
   dependent Dependent? @relation(fields: [dependentId], references: [id], onDelete: SetNull)
 
   @@index([associateId, kind])
+  @@index([tenantId])
 }
 
 model LifeEvent {
   id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind         LifeEventKind
   eventDate    DateTime        @db.Date
   notes        String?
@@ -4539,11 +4891,14 @@ model LifeEvent {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model TaxDocument {
   id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind        TaxDocumentKind
   taxYear     Int
   storageKey  String
@@ -4556,6 +4911,7 @@ model TaxDocument {
 
   @@unique([associateId, taxYear, kind])
   @@index([associateId, taxYear(sort: Desc)])
+  @@index([tenantId])
 }
 
 // ===== Phase 83 — Compensation: history, bands, merit cycles =============
@@ -4594,6 +4950,8 @@ model CompensationRecord {
   associateId     String           @db.Uuid
   effectiveFrom   DateTime         @db.Timestamptz(6)
   effectiveTo     DateTime?        @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   payType         PayType
   amount          Decimal          @db.Decimal(12, 2)
   currency        String           @default("USD") @db.VarChar(3)
@@ -4608,12 +4966,15 @@ model CompensationRecord {
   meritProposal MeritProposal? @relation(fields: [meritProposalId], references: [id], onDelete: SetNull)
 
   @@index([associateId, effectiveFrom(sort: Desc)])
+  @@index([tenantId])
 }
 
 model CompBand {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId      String    @db.Uuid
   jobProfileId  String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name          String
   level         String?
   payType       PayType
@@ -4632,11 +4993,14 @@ model CompBand {
 
   @@index([clientId])
   @@index([jobProfileId])
+  @@index([tenantId])
 }
 
 model MeritCycle {
   id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId          String           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name              String
   status            MeritCycleStatus @default(DRAFT)
   reviewPeriodStart DateTime         @db.Date
@@ -4651,6 +5015,7 @@ model MeritCycle {
   proposals MeritProposal[]
 
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 model MeritProposal {
@@ -4658,6 +5023,8 @@ model MeritProposal {
   cycleId        String              @db.Uuid
   associateId    String              @db.Uuid
   currentAmount  Decimal             @db.Decimal(12, 2)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   currentPayType PayType
   proposedAmount Decimal             @db.Decimal(12, 2)
   proposedNotes  String?
@@ -4677,6 +5044,7 @@ model MeritProposal {
 
   @@unique([cycleId, associateId])
   @@index([cycleId, status])
+  @@index([tenantId])
 }
 
 // ===== Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360s ========
@@ -4718,6 +5086,8 @@ model Goal {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String     @db.Uuid
   kind         GoalKind   @default(GOAL)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title        String
   description  String?
   parentGoalId String?    @db.Uuid
@@ -4739,11 +5109,14 @@ model Goal {
 
   @@index([associateId, status])
   @@index([parentGoalId])
+  @@index([tenantId])
 }
 
 model KeyResult {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   goalId       String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title        String
   targetValue  Decimal? @db.Decimal(14, 2)
   currentValue Decimal  @default(0) @db.Decimal(14, 2)
@@ -4755,6 +5128,7 @@ model KeyResult {
   goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
 
   @@index([goalId])
+  @@index([tenantId])
 }
 
 model OneOnOne {
@@ -4763,6 +5137,8 @@ model OneOnOne {
   managerUserId  String         @db.Uuid
   scheduledFor   DateTime       @db.Timestamptz(6)
   completedAt    DateTime?      @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   agenda         String?
   managerNotes   String?
   associateNotes String?
@@ -4775,12 +5151,15 @@ model OneOnOne {
 
   @@index([associateId, scheduledFor(sort: Desc)])
   @@index([managerUserId, scheduledFor(sort: Desc)])
+  @@index([tenantId])
 }
 
 model Kudo {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   fromUserId    String   @db.Uuid
   toAssociateId String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   message       String
   tags          String[] @default([])
   isPublic      Boolean  @default(true)
@@ -4791,6 +5170,7 @@ model Kudo {
 
   @@index([toAssociateId, createdAt(sort: Desc)])
   @@index([isPublic, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model Pip {
@@ -4803,6 +5183,8 @@ model Pip {
   sourceGoalId  String?   @db.Uuid
   startDate     DateTime  @db.Date
   endDate       DateTime  @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   reason        String
   expectations  String
   supportPlan   String?
@@ -4819,6 +5201,7 @@ model Pip {
 
   @@index([associateId, status])
   @@index([sourceGoalId])
+  @@index([tenantId])
 }
 
 model Review360 {
@@ -4831,11 +5214,14 @@ model Review360 {
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   subject     Associate           @relation("Review360Subject", fields: [subjectAssociateId], references: [id], onDelete: Cascade)
   requestedBy User?               @relation("Review360Requester", fields: [requestedById], references: [id], onDelete: SetNull)
   feedback    Review360Feedback[]
 
   @@index([subjectAssociateId, status])
+  @@index([tenantId])
 }
 
 model Review360Feedback {
@@ -4843,6 +5229,8 @@ model Review360Feedback {
   reviewId     String   @db.Uuid
   fromUserId   String?  @db.Uuid
   isAnonymous  Boolean  @default(false)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   strengths    String?
   improvements String?
   rating       Int?
@@ -4852,6 +5240,7 @@ model Review360Feedback {
   fromUser User?     @relation("Review360FeedbackFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
 
   @@index([reviewId])
+  @@index([tenantId])
 }
 
 // ===== Phase 85 — Qualifications + open-shift marketplace =================
@@ -4867,6 +5256,8 @@ enum OpenShiftClaimStatus {
 model Qualification {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
   name        String
   description String?
@@ -4880,6 +5271,7 @@ model Qualification {
   shiftRequirements       ShiftQualificationRequirement[]
 
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model AssociateQualification {
@@ -4888,6 +5280,8 @@ model AssociateQualification {
   qualificationId String    @db.Uuid
   acquiredAt      DateTime? @db.Date
   expiresAt       DateTime? @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   evidenceKey     String?
   createdAt       DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
@@ -4900,6 +5294,7 @@ model AssociateQualification {
   // filter associateId + deletedAt; the table had no indexes at all.
   @@index([associateId, deletedAt])
   @@index([qualificationId])
+  @@index([tenantId])
 }
 
 model ShiftQualificationRequirement {
@@ -4908,11 +5303,14 @@ model ShiftQualificationRequirement {
   qualificationId String   @db.Uuid
   createdAt       DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   shift         Shift         @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
 
   @@unique([shiftId, qualificationId])
   @@index([shiftId])
+  @@index([tenantId])
 }
 
 model OpenShiftClaim {
@@ -4922,6 +5320,8 @@ model OpenShiftClaim {
   status       OpenShiftClaimStatus @default(PENDING)
   decidedById  String?              @db.Uuid
   decidedAt    DateTime?            @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   decisionNote String?
   createdAt    DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime             @updatedAt @db.Timestamptz(6)
@@ -4932,6 +5332,7 @@ model OpenShiftClaim {
 
   @@index([shiftId, status])
   @@index([associateId, status])
+  @@index([tenantId])
 }
 
 // ===== Phase 86 — Projects, premium pay, tip pools =======================
@@ -4956,6 +5357,8 @@ enum TipPoolStatus {
 model Project {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
   name        String
   description String?
@@ -4969,11 +5372,14 @@ model Project {
 
   @@unique([clientId, code])
   @@index([clientId, isActive])
+  @@index([tenantId])
 }
 
 model PremiumPayRule {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId       String         @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name           String
   kind           PremiumPayKind
   multiplier     Decimal?       @db.Decimal(4, 2)
@@ -4989,11 +5395,14 @@ model PremiumPayRule {
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId, isActive])
+  @@index([tenantId])
 }
 
 model TipPool {
   id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId         String        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name             String
   shiftDate        DateTime      @db.Date
   totalAmount      Decimal       @db.Decimal(12, 2)
@@ -5015,6 +5424,7 @@ model TipPool {
   allocations TipPoolAllocation[]
 
   @@index([clientId, shiftDate(sort: Desc)])
+  @@index([tenantId])
 }
 
 model TipPoolAllocation {
@@ -5026,11 +5436,14 @@ model TipPoolAllocation {
   amount      Decimal  @db.Decimal(12, 2)
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   tipPool   TipPool   @relation(fields: [tipPoolId], references: [id], onDelete: Cascade)
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@unique([tipPoolId, associateId])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // ===== Phase 87 — Directory + broadcast + surveys =========================
@@ -5067,6 +5480,8 @@ enum SurveyQuestionKind {
 model Broadcast {
   id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   createdById  String?            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title        String
   body         String
   channels     BroadcastChannel[] @default([IN_APP])
@@ -5087,6 +5502,7 @@ model Broadcast {
 
   @@index([status])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model BroadcastReceipt {
@@ -5097,17 +5513,22 @@ model BroadcastReceipt {
   dismissedAt DateTime? @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   broadcast Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
   user      User      @relation("BroadcastReceiptUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([broadcastId, userId])
   @@index([userId])
+  @@index([tenantId])
 }
 
 model Survey {
   id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   createdById String?      @db.Uuid
   clientId    String?      @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title       String
   description String?
   isAnonymous Boolean      @default(true)
@@ -5123,11 +5544,14 @@ model Survey {
   responses SurveyResponse[]
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model SurveyQuestion {
   id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   surveyId   String             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind       SurveyQuestionKind
   prompt     String
   choices    Json?
@@ -5139,6 +5563,7 @@ model SurveyQuestion {
   answers SurveyAnswer[]
 
   @@index([surveyId])
+  @@index([tenantId])
 }
 
 model SurveyResponse {
@@ -5147,17 +5572,22 @@ model SurveyResponse {
   respondentId String?  @db.Uuid
   submittedAt  DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   survey     Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
   respondent User?          @relation("SurveyRespondent", fields: [respondentId], references: [id], onDelete: SetNull)
   answers    SurveyAnswer[]
 
   @@index([surveyId])
+  @@index([tenantId])
 }
 
 model SurveyAnswer {
   id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   responseId   String  @db.Uuid
   questionId   String  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   textValue    String?
   intValue     Int?
   choiceValues Int[]   @default([])
@@ -5167,6 +5597,7 @@ model SurveyAnswer {
 
   @@unique([responseId, questionId])
   @@index([questionId])
+  @@index([tenantId])
 }
 
 // ===== Phase 88 — OSHA + WC class codes + EEO-1 ===========================
@@ -5229,6 +5660,8 @@ model OshaIncident {
   occurredAt     DateTime             @db.Timestamptz(6)
   reportedAt     DateTime             @default(now()) @db.Timestamptz(6)
   reportedById   String?              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   location       String?
   description    String
   bodyPart       String?
@@ -5250,12 +5683,15 @@ model OshaIncident {
   @@index([clientId, occurredAt(sort: Desc)])
   @@index([locationId, occurredAt(sort: Desc)])
   @@index([status])
+  @@index([tenantId])
 }
 
 model WcClassCode {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   stateCode     String?   @db.VarChar(2)
   code          String    @db.VarChar(10)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   description   String
   ratePer100    Decimal   @db.Decimal(10, 4)
   effectiveFrom DateTime  @db.Date
@@ -5268,11 +5704,14 @@ model WcClassCode {
 
   @@unique([stateCode, code, effectiveFrom])
   @@index([stateCode])
+  @@index([tenantId])
 }
 
 model AssociateEeo {
   id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String       @unique @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category     EeoCategory?
   race         EeoRace?
   gender       EeoGender?
@@ -5283,6 +5722,8 @@ model AssociateEeo {
   updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 // ===== Phase 89 — Mail-merge document templates ===========================
@@ -5300,6 +5741,8 @@ enum DocumentTemplateKind {
 model DocumentTemplate {
   id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId         String?              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name             String
   kind             DocumentTemplateKind @default(GENERIC)
   currentVersionId String?              @db.Uuid
@@ -5316,11 +5759,14 @@ model DocumentTemplate {
 
   @@index([clientId])
   @@index([kind])
+  @@index([tenantId])
 }
 
 model DocumentTemplateVersion {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   templateId    String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   version       Int
   subject       String?
   body          String
@@ -5336,6 +5782,7 @@ model DocumentTemplateVersion {
 
   @@unique([templateId, version])
   @@index([templateId, version(sort: Desc)])
+  @@index([tenantId])
 }
 
 model DocumentRender {
@@ -5343,6 +5790,8 @@ model DocumentRender {
   templateId      String   @db.Uuid
   versionId       String   @db.Uuid
   associateId     String?  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   renderedSubject String?
   renderedBody    String
   data            Json
@@ -5357,6 +5806,7 @@ model DocumentRender {
 
   @@index([templateId])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // ===== Phase 90 — Interview kits, offers, referrals, careers =============
@@ -5389,6 +5839,8 @@ enum JobPostingStatus {
 model InterviewKit {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   description String?
   questions   Json      @default("[]")
@@ -5402,6 +5854,7 @@ model InterviewKit {
   interviews Interview[]
 
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model Interview {
@@ -5413,6 +5866,8 @@ model Interview {
   /// How long it runs — the calendar invite's end time.
   durationMinutes   Int       @default(30)
   /// Where: a store and its address, a phone number, or a video link.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   location          String?
   /// RFC 5545 SEQUENCE: bumped on every reschedule and on cancel, so a
   /// calendar replaces the invite it already holds instead of adding one.
@@ -5429,12 +5884,15 @@ model Interview {
 
   @@index([candidateId])
   @@index([interviewerUserId])
+  @@index([tenantId])
 }
 
 model Offer {
   id                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   candidateId            String      @db.Uuid
   clientId               String      @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId               String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   jobTitle               String
   startDate              DateTime    @db.Date
   salary                 Decimal?    @db.Decimal(12, 2)
@@ -5475,12 +5933,15 @@ model Offer {
 
   @@index([candidateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model Referral {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   referrerUserId String         @db.Uuid
   candidateId    String?        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   candidateName  String
   candidateEmail String
   candidatePhone String?
@@ -5498,11 +5959,14 @@ model Referral {
 
   @@index([referrerUserId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model JobPosting {
   id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?             @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title       String
   description String
   location    String?
@@ -5536,6 +6000,7 @@ model JobPosting {
 
   @@index([status])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 // Phase 91 — Garnishments + tax forms.
@@ -5577,6 +6042,8 @@ enum TaxFormStatus {
 model Garnishment {
   id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind           GarnishmentKind
   caseNumber     String?
   agencyName     String?
@@ -5602,6 +6069,7 @@ model Garnishment {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model GarnishmentDeduction {
@@ -5615,12 +6083,15 @@ model GarnishmentDeduction {
   // until the run disburses and remittances accrue.
   remittanceId  String?  @db.Uuid
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   garnishment Garnishment            @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
   payrollRun  PayrollRun?            @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
   remittance  GarnishmentRemittance? @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
 
   @@index([garnishmentId])
   @@index([remittanceId])
+  @@index([tenantId])
 }
 
 // Tier-1 — money withheld from paychecks under a court/agency order must
@@ -5641,6 +6112,8 @@ model GarnishmentRemittance {
   // Payee identity — snapshot of Garnishment.remitTo/remitAddress at
   // accrual time (orders can be edited later; the remittance shouldn't
   // drift).
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?                     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   payeeName    String
   payeeAddress String?
   amount       Decimal                     @db.Decimal(12, 2)
@@ -5658,10 +6131,13 @@ model GarnishmentRemittance {
 
   @@unique([payrollRunId, payeeName])
   @@index([status])
+  @@index([tenantId])
 }
 
 model TaxForm {
   id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind                TaxFormKind
   quarter             Int?
   taxYear             Int
@@ -5696,6 +6172,7 @@ model TaxForm {
   @@index([kind, taxYear])
   @@index([associateId])
   @@index([amendsTaxFormId])
+  @@index([tenantId])
 }
 
 // Phase 92 — Open enrollment, qualifying life events, COBRA, ACA.
@@ -5747,6 +6224,8 @@ enum AcaCoverageOffer {
 model OpenEnrollmentWindow {
   id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String               @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   startsOn    DateTime             @db.Date
   endsOn      DateTime             @db.Date
@@ -5760,11 +6239,14 @@ model OpenEnrollmentWindow {
   createdBy User?  @relation("OpenEnrollmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 model QualifyingLifeEvent {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind         QleKind
   eventDate    DateTime  @db.Date
   allowedUntil DateTime  @db.Date
@@ -5781,11 +6263,14 @@ model QualifyingLifeEvent {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model CobraOffer {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String      @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   qualifyingEvent  String
   qeDate           DateTime    @db.Date
   electionDeadline DateTime    @db.Date
@@ -5801,11 +6286,14 @@ model CobraOffer {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model AcaMonth {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId        String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   year               Int
   month              Int
   offerOfCoverage    AcaCoverageOffer?
@@ -5819,6 +6307,7 @@ model AcaMonth {
 
   @@unique([associateId, year, month])
   @@index([year])
+  @@index([tenantId])
 }
 
 // Phase 93 — Public API keys + outbound webhooks.
@@ -5833,6 +6322,8 @@ enum WebhookDeliveryStatus {
 model ApiKey {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId     String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name         String
   last4        String    @db.VarChar(4)
   keyHash      String
@@ -5849,11 +6340,14 @@ model ApiKey {
 
   @@index([clientId])
   @@index([revokedAt])
+  @@index([tenantId])
 }
 
 model Webhook {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   url         String
   secret      String
@@ -5869,11 +6363,14 @@ model Webhook {
   deliveries WebhookDelivery[]
 
   @@index([clientId, isActive])
+  @@index([tenantId])
 }
 
 model WebhookDelivery {
   id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   webhookId      String                @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   eventType      String
   payload        Json
   status         WebhookDeliveryStatus @default(PENDING)
@@ -5892,6 +6389,7 @@ model WebhookDelivery {
   @@index([webhookId])
   @@index([status])
   @@index([status, nextAttemptAt])
+  @@index([tenantId])
 }
 
 // Phase 94 — LMS: courses, modules, enrollments, certifications.
@@ -5921,6 +6419,8 @@ enum CourseModuleKind {
 model Course {
   id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId      String?        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title         String
   description   String?
   isRequired    Boolean        @default(false)
@@ -5944,11 +6444,14 @@ model Course {
   pathSteps   LearningPathStep[]
 
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 model CourseModule {
   id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   courseId  String           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind      CourseModuleKind
   title     String
   content   Json             @default("{}")
@@ -5959,6 +6462,7 @@ model CourseModule {
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@index([courseId, order])
+  @@index([tenantId])
 }
 
 model CourseEnrollment {
@@ -5975,12 +6479,15 @@ model CourseEnrollment {
   createdAt    DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime         @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   course     Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
   associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   assignedBy User?     @relation("EnrollmentAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
 
   @@index([associateId, status])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 // Phase 95 — Worktags: Workday-style multi-dimensional tags on transactions.
@@ -5995,6 +6502,8 @@ enum WorktagEntityKind {
 model WorktagCategory {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key         String   @unique @db.VarChar(80)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   label       String
   description String?
   isRequired  Boolean  @default(false)
@@ -6003,11 +6512,15 @@ model WorktagCategory {
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
   worktags Worktag[]
+
+  @@index([tenantId])
 }
 
 model Worktag {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   categoryId String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   value      String
   code       String?  @db.VarChar(80)
   isActive   Boolean  @default(true)
@@ -6019,11 +6532,14 @@ model Worktag {
 
   @@unique([categoryId, value])
   @@index([categoryId, isActive])
+  @@index([tenantId])
 }
 
 model WorktagAssignment {
   id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   worktagId   String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   entityKind  WorktagEntityKind
   entityId    String            @db.Uuid
   createdById String?           @db.Uuid
@@ -6034,6 +6550,7 @@ model WorktagAssignment {
 
   @@index([entityKind, entityId])
   @@index([worktagId])
+  @@index([tenantId])
 }
 
 // Phase 96 — Reporting builder: saved reports + scheduled deliveries.
@@ -6056,6 +6573,8 @@ enum ReportScheduleCadence {
 
 model Report {
   id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   description String?
   entity      ReportEntity
@@ -6070,11 +6589,14 @@ model Report {
   schedules ReportSchedule[]
 
   @@index([entity])
+  @@index([tenantId])
 }
 
 model ReportSchedule {
   id         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reportId   String                @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   cadence    ReportScheduleCadence
   recipients String
   isActive   Boolean               @default(true)
@@ -6089,6 +6611,7 @@ model ReportSchedule {
   report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([isActive, nextRunAt])
+  @@index([tenantId])
 }
 
 // Phase 97 — Spend management: reimbursements + expense lines.
@@ -6120,6 +6643,8 @@ enum ExpenseLineKind {
 model Reimbursement {
   id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title       String
   description String?
   totalAmount Decimal             @default(0) @db.Decimal(12, 2)
@@ -6168,11 +6693,14 @@ model Reimbursement {
 
   @@index([associateId, status])
   @@index([status, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model ExpenseLine {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reimbursementId String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind            ExpenseLineKind
   description     String
   incurredOn      DateTime        @db.Date
@@ -6187,6 +6715,7 @@ model ExpenseLine {
   reimbursement Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
 
   @@index([reimbursementId])
+  @@index([tenantId])
 }
 
 // Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -6236,6 +6765,8 @@ model KioskDevice {
   // override for the rare case where one tablet needs a tighter
   // radius than the rest of the Location.
   locationId        String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name              String
   tokenHash         String
   // Phase 131 hardening — first 16 chars of the plaintext token, used
@@ -6274,12 +6805,15 @@ model KioskDevice {
   @@index([clientId, isActive])
   @@index([locationId, isActive])
   @@index([tokenPrefix, isActive])
+  @@index([tenantId])
 }
 
 model KioskPin {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String   @db.Uuid
   clientId     String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   pinHmac      Bytes
   // Encrypted plaintext so the associate can see their own employee
   // number on /me/profile and HR can show it again in the directory.
@@ -6299,6 +6833,7 @@ model KioskPin {
   // ~80% to widen to 5+.
   @@unique([associateId])
   @@unique([pinHmac])
+  @@index([tenantId])
 }
 
 model KioskPunch {
@@ -6307,6 +6842,8 @@ model KioskPunch {
   kioskPinId      String?                 @db.Uuid
   associateId     String?                 @db.Uuid
   timeEntryId     String?                 @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   action          KioskPunchAction
   selfie          Bytes?
   rejectReason    String?
@@ -6357,6 +6894,7 @@ model KioskPunch {
   // on reviewStatus IS NOT NULL keeps the index tiny (only flagged
   // punches show up) while still serving the queue query.
   @@index([reviewStatus, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 // Phase 101 — One face descriptor per associate, captured on first
@@ -6364,6 +6902,8 @@ model KioskPunch {
 model KioskFaceReference {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId       String    @unique @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   descriptor        Bytes
   enrolledByPunchId String?   @db.Uuid
   enrolledAt        DateTime  @default(now()) @db.Timestamptz(6)
@@ -6376,6 +6916,8 @@ model KioskFaceReference {
 
   associate       Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
   enrolledByPunch KioskPunch? @relation("KioskFaceEnrolledByPunch", fields: [enrolledByPunchId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
 }
 
 // Phase 108 — Employee asset tracking. Lifecycle: AVAILABLE -> ASSIGNED
@@ -6404,6 +6946,8 @@ enum AssetStatus {
 
 model Asset {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind          AssetKind
   label         String
   serial        String?
@@ -6419,6 +6963,7 @@ model Asset {
 
   @@index([status])
   @@index([kind])
+  @@index([tenantId])
 }
 
 model AssetAssignment {
@@ -6429,6 +6974,8 @@ model AssetAssignment {
   assignedById String?   @db.Uuid
   returnedAt   DateTime? @db.Timestamptz(6)
   returnedById String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   returnNotes  String?
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
@@ -6439,6 +6986,7 @@ model AssetAssignment {
   returnedBy User?     @relation("AssetReturner", fields: [returnedById], references: [id], onDelete: SetNull)
 
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // Phase 109 — Anonymous pulse surveys. PulseResponse intentionally
@@ -6459,6 +7007,8 @@ enum PulseAudience {
 
 model PulseSurvey {
   id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   question             String
   scale                PulseScale
   audience             PulseAudience @default(ALL)
@@ -6476,11 +7026,14 @@ model PulseSurvey {
   responses          PulseResponse[]
 
   @@index([openFrom, openUntil])
+  @@index([tenantId])
 }
 
 model PulseResponse {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   surveyId      String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   responderHash Bytes
   scoreValue    Int      @db.SmallInt
   comment       String?
@@ -6490,6 +7043,7 @@ model PulseResponse {
 
   @@unique([surveyId, responderHash])
   @@index([surveyId])
+  @@index([tenantId])
 }
 
 // Phase 111 — Skills & competencies. Skill is the catalog (Python,
@@ -6505,6 +7059,8 @@ enum SkillLevel {
 
 model Skill {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name      String
   category  String?
   createdAt DateTime @default(now()) @db.Timestamptz(6)
@@ -6517,12 +7073,15 @@ model Skill {
   careerLevelRequirements CareerLevelSkill[]
 
   @@index([category])
+  @@index([tenantId])
 }
 
 model AssociateSkill {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId     String     @db.Uuid
   skillId         String     @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   level           SkillLevel
   verifiedById    String?    @db.Uuid
   verifiedAt      DateTime?  @db.Timestamptz(6)
@@ -6538,6 +7097,7 @@ model AssociateSkill {
   @@unique([associateId, skillId])
   @@index([skillId])
   @@index([level])
+  @@index([tenantId])
 }
 
 // Phase 112 — Mentorship pairings. Directed: mentor teaches mentee.
@@ -6557,6 +7117,8 @@ model Mentorship {
   mentorAssociateId String           @db.Uuid
   menteeAssociateId String           @db.Uuid
   focusSkillId      String?          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   goals             String?
   status            MentorshipStatus @default(PROPOSED)
   startedAt         DateTime?        @db.Timestamptz(6)
@@ -6574,6 +7136,7 @@ model Mentorship {
   @@index([mentorAssociateId])
   @@index([menteeAssociateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 // Phase 114 — Learning paths. Sequence Courses into ordered tracks.
@@ -6596,6 +7159,8 @@ enum LearningPathEnrollmentStatus {
 model LearningPath {
   id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title       String
   description String?
   isRequired  Boolean            @default(false)
@@ -6611,12 +7176,15 @@ model LearningPath {
   enrollments LearningPathEnrollment[]
 
   @@index([clientId, status])
+  @@index([tenantId])
 }
 
 model LearningPathStep {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   pathId    String   @db.Uuid
   courseId  String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   order     Int
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -6626,6 +7194,7 @@ model LearningPathStep {
 
   @@unique([pathId, courseId])
   @@unique([pathId, order])
+  @@index([tenantId])
 }
 
 model LearningPathEnrollment {
@@ -6638,11 +7207,14 @@ model LearningPathEnrollment {
   createdAt   DateTime                     @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime                     @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   path      LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
   associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@unique([pathId, associateId])
   @@index([associateId])
+  @@index([tenantId])
 }
 
 // ===== Phase 115 — Succession planning =====================================
@@ -6662,6 +7234,8 @@ model SuccessionCandidate {
   id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   positionId  String              @db.Uuid
   associateId String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   readiness   SuccessionReadiness
   notes       String?
   createdById String?             @db.Uuid
@@ -6675,6 +7249,7 @@ model SuccessionCandidate {
   @@unique([positionId, associateId])
   @@index([associateId])
   @@index([positionId])
+  @@index([tenantId])
 }
 
 // ===== Phase 116 — Probation period tracking ===============================
@@ -6698,6 +7273,8 @@ model ProbationPeriod {
   startDate   DateTime        @db.Date
   endDate     DateTime        @db.Date
   status      ProbationStatus @default(ACTIVE)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   decision    String?
   decidedById String?         @db.Uuid
   decidedAt   DateTime?       @db.Timestamptz(6)
@@ -6711,6 +7288,7 @@ model ProbationPeriod {
 
   @@index([associateId])
   @@index([endDate])
+  @@index([tenantId])
 }
 
 // ===== Phase 117 — Holiday calendar ========================================
@@ -6730,6 +7308,8 @@ enum HolidayType {
 model Holiday {
   id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?     @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   date        DateTime    @db.Date
   type        HolidayType
@@ -6745,6 +7325,7 @@ model Holiday {
 
   @@index([date])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 // ===== Phase 118 — Disciplinary action log =================================
@@ -6770,6 +7351,8 @@ enum DisciplineStatus {
 model DisciplinaryAction {
   id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId     String           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind            DisciplineKind
   status          DisciplineStatus @default(ACTIVE)
   incidentDate    DateTime         @db.Date
@@ -6793,6 +7376,7 @@ model DisciplinaryAction {
   @@index([associateId])
   @@index([status])
   @@index([effectiveDate])
+  @@index([tenantId])
 }
 
 // ===== Phase 119 — Separations + exit interviews ===========================
@@ -6824,6 +7408,8 @@ enum SeparationStatus {
 model Separation {
   id                       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId              String           @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId                 String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   reason                   SeparationReason
   status                   SeparationStatus @default(PLANNED)
   noticeDate               DateTime?        @db.Date
@@ -6851,6 +7437,7 @@ model Separation {
   @@index([associateId])
   @@index([status])
   @@index([lastDayWorked])
+  @@index([tenantId])
 }
 
 // ===== Phase 120 — Internal mobility =======================================
@@ -6875,6 +7462,8 @@ model InternalJobApplication {
   postingId     String                    @db.Uuid
   associateId   String                    @db.Uuid
   status        InternalApplicationStatus @default(SUBMITTED)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?                   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   coverLetter   String?
   resumeUrl     String?
   reviewerNotes String?
@@ -6890,6 +7479,7 @@ model InternalJobApplication {
   @@unique([postingId, associateId])
   @@index([associateId])
   @@index([postingId, status])
+  @@index([tenantId])
 }
 
 // ===== Phase 121 — Vaccination + medical records ===========================
@@ -6910,6 +7500,8 @@ enum VaccinationKind {
 model VaccinationRecord {
   id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind           VaccinationKind
   customLabel    String?
   doseNumber     Int             @default(1)
@@ -6931,6 +7523,7 @@ model VaccinationRecord {
   @@index([associateId])
   @@index([kind])
   @@index([expiresOn])
+  @@index([tenantId])
 }
 
 // ===== Phase 122 — Per-associate legal agreements ==========================
@@ -6960,6 +7553,8 @@ enum AgreementStatus {
 model Agreement {
   id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind           AgreementKind
   customLabel    String?
   status         AgreementStatus @default(PENDING_SIGNATURE)
@@ -6986,6 +7581,7 @@ model Agreement {
   @@index([associateId])
   @@index([status])
   @@index([expiresOn])
+  @@index([tenantId])
 }
 
 // ===== Phase 123 — HR cases (ticketing) =====================================
@@ -7025,6 +7621,8 @@ enum CaseStatus {
 model HrCase {
   id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId  String       @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category     CaseCategory
   subject      String
   description  String
@@ -7044,6 +7642,7 @@ model HrCase {
   @@index([status])
   @@index([category])
   @@index([assignedToId])
+  @@index([tenantId])
 }
 
 model HrCaseComment {
@@ -7051,6 +7650,8 @@ model HrCaseComment {
   caseId            String   @db.Uuid
   authorUserId      String?  @db.Uuid
   authorAssociateId String?  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   body              String
   internalNote      Boolean  @default(false)
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
@@ -7060,6 +7661,7 @@ model HrCaseComment {
   authorAssociate Associate? @relation("HrCaseCommentAssociateAuthor", fields: [authorAssociateId], references: [id], onDelete: SetNull)
 
   @@index([caseId])
+  @@index([tenantId])
 }
 
 // ===== Phase 124 — Knowledge base / FAQ ===================================
@@ -7078,6 +7680,8 @@ enum KbStatus {
 model KbArticle {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   title       String
   slug        String
   body        String
@@ -7098,12 +7702,15 @@ model KbArticle {
 
   @@index([status])
   @@index([category])
+  @@index([tenantId])
 }
 
 model KbFeedback {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   articleId   String   @db.Uuid
   associateId String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   helpful     Boolean
   comment     String?
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
@@ -7113,6 +7720,7 @@ model KbFeedback {
 
   @@unique([articleId, associateId])
   @@index([articleId])
+  @@index([tenantId])
 }
 
 // ===== Phase 125 — New-hire ramp plans (30/60/90) ==========================
@@ -7133,6 +7741,8 @@ model RampPlan {
   associateId String    @db.Uuid
   startDate   DateTime  @db.Date
   managerId   String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   notes       String?
   archivedAt  DateTime? @db.Timestamptz(6)
   createdById String?   @db.Uuid
@@ -7145,11 +7755,14 @@ model RampPlan {
   milestones RampMilestone[]
 
   @@index([associateId])
+  @@index([tenantId])
 }
 
 model RampMilestone {
   id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   planId        String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   dayCheckpoint Int
   title         String
   description   String?
@@ -7162,6 +7775,7 @@ model RampMilestone {
   plan RampPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([planId, dayCheckpoint])
+  @@index([tenantId])
 }
 
 // ===== Phase 126 — Career ladders ==========================================
@@ -7173,6 +7787,8 @@ model RampMilestone {
 model CareerLadder {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String?   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   family      String?
   description String?
@@ -7186,11 +7802,14 @@ model CareerLadder {
   levels    CareerLevel[]
 
   @@index([clientId])
+  @@index([tenantId])
 }
 
 model CareerLevel {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ladderId     String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   rank         Int
   title        String
   description  String?
@@ -7204,12 +7823,15 @@ model CareerLevel {
 
   @@unique([ladderId, rank])
   @@index([jobProfileId])
+  @@index([tenantId])
 }
 
 model CareerLevelSkill {
   id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   levelId   String     @db.Uuid
   skillId   String     @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   minLevel  SkillLevel
   createdAt DateTime   @default(now()) @db.Timestamptz(6)
 
@@ -7217,6 +7839,7 @@ model CareerLevelSkill {
   skill Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
   @@unique([levelId, skillId])
+  @@index([tenantId])
 }
 
 // ===== Phase 127 — Tuition reimbursement ===================================
@@ -7235,6 +7858,8 @@ enum TuitionStatus {
 model TuitionRequest {
   id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId   String        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   schoolName    String
   programName   String?
   courseName    String
@@ -7259,6 +7884,7 @@ model TuitionRequest {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 enum ReportCategory {
@@ -7282,6 +7908,8 @@ enum ReportStatus {
 model AnonymousReport {
   id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   trackingCode String         @unique
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category     ReportCategory
   subject      String
   description  String
@@ -7298,11 +7926,14 @@ model AnonymousReport {
 
   @@index([status])
   @@index([category])
+  @@index([tenantId])
 }
 
 model AnonymousReportUpdate {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reportId       String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   body           String
   authorUserId   String?  @db.Uuid
   isFromReporter Boolean  @default(false)
@@ -7313,6 +7944,7 @@ model AnonymousReportUpdate {
   authorUser User?           @relation("AnonReportAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
 
   @@index([reportId])
+  @@index([tenantId])
 }
 
 enum EquityGrantType {
@@ -7334,6 +7966,8 @@ enum EquityGrantStatus {
 model EquityGrant {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String            @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   grantType        EquityGrantType
   status           EquityGrantStatus @default(PROPOSED)
   totalShares      Int
@@ -7355,11 +7989,14 @@ model EquityGrant {
 
   @@index([associateId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model EquityVestingEvent {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   grantId    String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   eventIndex Int
   vestDate   DateTime @db.Date
   shares     Int
@@ -7371,6 +8008,7 @@ model EquityVestingEvent {
   @@unique([grantId, eventIndex])
   @@index([grantId])
   @@index([vestDate])
+  @@index([tenantId])
 }
 
 enum VtoStatus {
@@ -7385,6 +8023,8 @@ model VolunteerEntry {
   associateId    String    @db.Uuid
   activityDate   DateTime  @db.Date
   hours          Decimal   @db.Decimal(5, 2)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   organization   String
   cause          String?
   description    String
@@ -7405,6 +8045,7 @@ model VolunteerEntry {
   @@index([associateId])
   @@index([status])
   @@index([activityDate])
+  @@index([tenantId])
 }
 
 model VtoPolicy {
@@ -7416,7 +8057,11 @@ model VtoPolicy {
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 
-  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 // Singleton org-wide branding settings (Phase: settings audit row #8).
@@ -7440,6 +8085,8 @@ model OrgSetting {
   primaryColor           String?                @db.VarChar(7)
   // PNG/JPEG/WebP/SVG, ≤1MB. Embedded as data: URI in HTML emails so we
   // don't depend on a CDN being reachable.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId               String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   logoBytes              Bytes?
   logoContentType        String?                @db.VarChar(64)
   logoUpdatedAt          DateTime?              @db.Timestamptz(6)
@@ -7463,6 +8110,8 @@ model OrgSetting {
   // closes closes before a grace period after this — see recruitingCleanup.
   recruitingCleanupSince DateTime?              @db.Timestamptz(6)
   updatedAt              DateTime               @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // IRS payroll-tax constants that change yearly. One row per calendar year.
@@ -7547,6 +8196,11 @@ model SubmitterProfile {
   // (Wed–Fri paydays due next Wednesday, Sat–Tue due next Friday).
   depositSchedule String   @default("MONTHLY") @db.VarChar(12)
   updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  @@index([tenantId])
 }
 
 // Tier-1 — federal tax deposit ledger. Every disbursed run accrues a
@@ -7568,6 +8222,8 @@ enum TaxDepositStatus {
 
 model TaxDeposit {
   id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind               TaxDepositKind
   // Deposit schedule in force when this obligation was computed.
   scheduleUsed       String           @db.VarChar(12)
@@ -7594,6 +8250,7 @@ model TaxDeposit {
 
   @@index([status, dueDate])
   @@index([kind, periodLabel])
+  @@index([tenantId])
 }
 
 // Status of OUR processing of a Branch webhook delivery — distinct from
@@ -7614,6 +8271,8 @@ model BranchWebhookEvent {
   id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchEventId String              @unique
   // payment.completed, payment.failed, payment.returned, etc.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   eventType     String
   payload       Json
   status        BranchWebhookStatus @default(PROCESSED)
@@ -7628,6 +8287,7 @@ model BranchWebhookEvent {
 
   @@index([eventType, receivedAt])
   @@index([status, receivedAt])
+  @@index([tenantId])
 }
 
 enum ResendWebhookStatus {
@@ -7644,6 +8304,8 @@ model ResendWebhookEvent {
   id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   svixId         String              @unique
   // email.delivered, email.bounced, email.complained, etc.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   eventType      String
   payload        Json
   status         ResendWebhookStatus @default(PROCESSED)
@@ -7656,6 +8318,7 @@ model ResendWebhookEvent {
 
   @@index([eventType, receivedAt])
   @@index([status, receivedAt])
+  @@index([tenantId])
 }
 
 enum EmailSuppressionReason {
@@ -7674,9 +8337,13 @@ model EmailSuppression {
   id        String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // Always stored lowercased; lookups lowercase the candidate first.
   email     String                 @unique
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   reason    EmailSuppressionReason
   notes     String?
   createdAt DateTime               @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 // Manual compliance attestation — used for billing/invoicing scorecard
@@ -7704,6 +8371,8 @@ model ManualComplianceAttestation {
   // UTC dates; cadence (weekly/monthly) lives in code.
   periodStart        DateTime                 @db.Date
   periodEnd          DateTime                 @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   outcome            ManualAttestationOutcome
   // When HR actually performed the action (in Fieldglass / portal).
   // Nullable for NOT_APPLICABLE attestations.
@@ -7721,6 +8390,7 @@ model ManualComplianceAttestation {
 
   @@unique([key, periodStart])
   @@index([key, periodEnd])
+  @@index([tenantId])
 }
 
 // Daily posture snapshot — the scorecard's memory. One row per day
@@ -7732,6 +8402,8 @@ model ComplianceScoreSnapshot {
   day                  DateTime @db.Date
   // NULL = org-wide rollup. Non-null = that client's slice.
   clientId             String?  @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   score                Int
   criticalCount        Int
   warnCount            Int
@@ -7745,6 +8417,7 @@ model ComplianceScoreSnapshot {
 
   @@unique([day, clientId])
   @@index([clientId, day(sort: Desc)])
+  @@index([tenantId])
 }
 
 // Remediation state for a scorecard action. The action rows themselves
@@ -7763,11 +8436,14 @@ model ComplianceActionState {
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
 
-  assignee  User? @relation("ComplianceActionAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
-  updatedBy User? @relation("ComplianceActionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  assignee  User?   @relation("ComplianceActionAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  updatedBy User?   @relation("ComplianceActionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@index([assigneeUserId])
   @@index([status])
+  @@index([tenantId])
 }
 
 /// A recorded Fieldglass filing for one Sat→Fri week (optionally one client).
@@ -7790,8 +8466,12 @@ model TimesheetFiling {
   //   CREATE UNIQUE INDEX ... ON "TimesheetFiling"("weekStart")
   //     WHERE "clientId" IS NULL;
   // Same pattern as TimeEntry's one-ACTIVE-per-associate partial unique.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
   @@unique([weekStart, clientId])
   @@index([weekStart])
+  @@index([tenantId])
 }
 
 /// One remembered response per (user, method, path, Idempotency-Key).
@@ -7807,12 +8487,15 @@ model IdempotencyRecord {
   path           String   @db.VarChar(512)
   key            String   @db.VarChar(200)
   requestHash    String   @db.VarChar(64)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   responseStatus Int?
   responseBody   Json?
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([userId, method, path, key])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // A supervisor's shift — which of a store's named shift windows they lead,
@@ -7840,18 +8523,23 @@ model ShiftCover {
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   cancelledAt DateTime? @db.Timestamptz(6)
 
-  lead      User @relation("ShiftCoverLead", fields: [leadUserId], references: [id], onDelete: Cascade)
-  cover     User @relation("ShiftCoverCover", fields: [coverUserId], references: [id], onDelete: Cascade)
-  createdBy User @relation("ShiftCoverCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  lead      User    @relation("ShiftCoverLead", fields: [leadUserId], references: [id], onDelete: Cascade)
+  cover     User    @relation("ShiftCoverCover", fields: [coverUserId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ShiftCoverCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([leadUserId, toDate])
   @@index([coverUserId, toDate])
+  @@index([tenantId])
 }
 
 model SupervisorShiftWindow {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String   @db.Uuid
   locationId String   @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   label      String
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
 
@@ -7860,6 +8548,7 @@ model SupervisorShiftWindow {
 
   @@unique([userId, locationId, label])
   @@index([locationId, label])
+  @@index([tenantId])
 }
 
 // ===== Transportation — the Alto vans ======================================
@@ -7919,13 +8608,19 @@ model TransportStop {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   rides     Ride[]
+
+  @@index([tenantId])
 }
 
 model Van {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name         String    @db.VarChar(60)
   plate        String?   @db.VarChar(20)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   capacity     Int
   isActive     Boolean   @default(true)
   notes        String?   @db.VarChar(500)
@@ -7943,6 +8638,7 @@ model Van {
   driver       User?     @relation("VanDriver", fields: [driverUserId], references: [id], onDelete: SetNull)
 
   @@index([driverUserId])
+  @@index([tenantId])
 }
 
 /// A driver turned down a seat request — it stays open for the others, and
@@ -7953,11 +8649,14 @@ model RideRejection {
   driverUserId String   @db.Uuid
   reason       String?  @db.VarChar(200)
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   ride         Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
   driver       User     @relation("RideRejectionDriver", fields: [driverUserId], references: [id], onDelete: Cascade)
 
   @@unique([rideId, driverUserId])
   @@index([driverUserId])
+  @@index([tenantId])
 }
 
 /// An associate's saved pickup address ("Home").
@@ -7970,25 +8669,34 @@ model RidePlace {
   lng         Decimal?  @db.Decimal(9, 6)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@index([associateId])
+  @@index([tenantId])
 }
 
 /// The associate's authorization to take ride charges from their pay —
 /// given once, in the Ride tab, before their first booking.
 model RideConsent {
   associateId    String    @id @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   fareCents      Int
   noShowFeeCents Int
   acceptedAt     DateTime  @default(now()) @db.Timestamptz(6)
   ip             String?   @db.VarChar(64)
   associate      Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model Ride {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   direction      RideDirection
   /// The store: where a TO_WORK ride goes, where a FROM_WORK ride starts.
   locationId     String        @db.Uuid
@@ -8070,6 +8778,7 @@ model Ride {
   @@index([runId])
   @@index([chargedRunId])
   @@index([locationId, direction, windowLabel, targetAt])
+  @@index([tenantId])
 }
 
 /// One van trip: a van, a driver, a direction, a departure, the riders.
@@ -8077,6 +8786,8 @@ model RideRun {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   vanId          String        @db.Uuid
   driverUserId   String        @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   direction      RideDirection
   serviceDate    String        @db.VarChar(10)
   departAt       DateTime      @db.Timestamptz(6)
@@ -8105,6 +8816,7 @@ model RideRun {
 
   @@index([serviceDate])
   @@index([driverUserId, serviceDate])
+  @@index([tenantId])
 }
 
 /// A rider's, driver's or supervisor's problem with a ride — the
@@ -8114,6 +8826,8 @@ model TransportIssue {
   reportedById String                 @db.Uuid
   rideId       String?                @db.Uuid
   runId        String?                @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   category     TransportIssueCategory
   body         String                 @db.VarChar(2000)
   status       TransportIssueStatus   @default(OPEN)
@@ -8128,6 +8842,7 @@ model TransportIssue {
   run        RideRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([tenantId])
 }
 
 /// The van's trail — one row per location the driver's phone sent while
@@ -8137,6 +8852,8 @@ model RideRunPing {
   runId     String   @db.Uuid
   lat       Decimal  @db.Decimal(9, 6)
   lng       Decimal  @db.Decimal(9, 6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   heading   Int?
   speedMps  Float?
   accuracyM Int?
@@ -8145,6 +8862,7 @@ model RideRunPing {
 
   @@index([runId, at])
   @@index([at])
+  @@index([tenantId])
 }
 
 /// Address → coordinates, looked up once. `found` false remembers a miss
@@ -8173,6 +8891,11 @@ model TransportSettings {
   dispatchPhone      String?  @db.VarChar(40)
   updatedById        String?  @db.Uuid
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  @@index([tenantId])
 }
 
 // ===== Product analytics ==================================================
@@ -8193,17 +8916,20 @@ model TransportSettings {
 /// that day, and re-deriving it later from the User row would silently
 /// rewrite history when somebody changes job.
 model UserActivityDay {
-  id      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId  String   @db.Uuid
-  day     DateTime @db.Date
-  role    String   @db.VarChar(40)
-  firstAt DateTime @default(now()) @db.Timestamptz(6)
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId   String   @db.Uuid
+  day      DateTime @db.Date
+  role     String   @db.VarChar(40)
+  firstAt  DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, day])
   @@index([day])
   @@index([day, role])
   @@index([userId, day(sort: Desc)])
+  @@index([tenantId])
 }
 
 /// Per-day traffic and health, keyed by Express route pattern. Accumulated
@@ -8227,8 +8953,12 @@ model RouteUsageDaily {
   /// mean and no percentile.
   histogram   Int[]    @default([])
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @db.Uuid
+
   @@unique([day, method, route])
   @@index([day])
+  @@index([tenantId])
 }
 
 /// One row per API process start. A container OOM kill is a SIGKILL with
@@ -8241,7 +8971,11 @@ model ApiBoot {
   version     String   @db.VarChar(80)
   nodeVersion String   @db.VarChar(40)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @db.Uuid
+
   @@index([bootAt])
+  @@index([tenantId])
 }
 
 /// The reliability scorecard for one closed org week (Saturday 00:00 to
@@ -8253,6 +8987,8 @@ model ReliabilityWeek {
   weekStart     DateTime @unique @db.Timestamptz(6)
   /// Error events Sentry accepted that week across the configured
   /// projects. Null when Sentry is not connected.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?  @db.Uuid
   sentryErrors  Int?
   /// 5xx responses counted by the route rollup.
   serverErrors  Int      @default(0)
@@ -8267,6 +9003,8 @@ model ReliabilityWeek {
   /// Weekly errors at or under the budget (10).
   underBudget   Boolean  @default(false)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
 }
 
 /// Real-user web vitals (LCP, INP, CLS, TTFB), rolled up per SPA route and
@@ -8286,8 +9024,12 @@ model WebVitalDaily {
   poor      Int      @default(0)
   histogram Int[]    @default([])
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @db.Uuid
+
   @@unique([day, route, metric])
   @@index([day])
+  @@index([tenantId])
 }
 
 /// "What's new" — one note per release, written by an admin and served to
@@ -8298,6 +9040,8 @@ model WebVitalDaily {
 model ReleaseNote {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day         DateTime  @db.Date
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   items       Json
   publishedAt DateTime? @db.Timestamptz(6)
   createdById String?   @db.Uuid
@@ -8305,6 +9049,7 @@ model ReleaseNote {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   @@index([publishedAt, day])
+  @@index([tenantId])
 }
 
 /// Out-of-office cover for a manager's team inbox. While active, `to`
@@ -8319,11 +9064,14 @@ model TeamDelegation {
   endsOn     DateTime @db.Date
   note       String?  @db.VarChar(200)
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   from       User     @relation("DelegationFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
   to         User     @relation("DelegationTo", fields: [toUserId], references: [id], onDelete: Cascade)
 
   @@index([toUserId, endsOn])
   @@index([fromUserId, endsOn])
+  @@index([tenantId])
 }
 
 /// Every IP an account has successfully signed in from. Small by nature —
@@ -8338,10 +9086,13 @@ model UserKnownIp {
   firstSeenAt DateTime @default(now()) @db.Timestamptz(6)
   lastSeenAt  DateTime @default(now()) @db.Timestamptz(6)
   logins      Int      @default(1)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, ip])
   @@index([userId, lastSeenAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 /// The ready-to-work handoff: the moment an associate's clock-in number was
@@ -8366,6 +9117,8 @@ model ReadyToWorkHandoff {
   createdAt             DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
   location  Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -8373,6 +9126,7 @@ model ReadyToWorkHandoff {
 
   @@index([clientId, locationId, issuedAt(sort: Desc)])
   @@index([nudgedAt, supervisorsNotifiedAt])
+  @@index([tenantId])
 }
 
 /// Every change to how or to whom an associate is paid, and to the identity
@@ -8383,6 +9137,8 @@ model ReadyToWorkHandoff {
 model FinancialChange {
   id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId            String                @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId               String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   kind                   FinancialChangeKind
   /// Who made it: the associate, an administrator on their behalf, or the
   /// onboarding flow (the applicant, before they have an account).
@@ -8428,6 +9184,7 @@ model FinancialChange {
   @@index([status, createdAt(sort: Desc)])
   @@index([associateId, createdAt(sort: Desc)])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 enum FinancialChangeKind {
@@ -8481,10 +9238,13 @@ model PacketDownload {
   watermark             String   @db.VarChar(200)
   createdAt             DateTime @default(now()) @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  user     User    @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 /// Which clients a driver picks up for. A driver asks (all clients — a null
@@ -8506,6 +9266,8 @@ model DriverClientAccess {
   createdAt    DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime           @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   driver    User    @relation("DriverAccessDriver", fields: [driverUserId], references: [id], onDelete: Cascade)
   client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
   decidedBy User?   @relation("DriverAccessDecider", fields: [decidedById], references: [id], onDelete: SetNull)
@@ -8513,6 +9275,7 @@ model DriverClientAccess {
   @@unique([driverUserId, clientId])
   @@index([status, requestedAt])
   @@index([clientId])
+  @@index([tenantId])
 }
 
 enum DriverAccessStatus {
@@ -8568,6 +9331,8 @@ model Emergency {
   createdAt             DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime        @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId            String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   declaredBy          User?              @relation("EmergencyDeclarer", fields: [declaredById], references: [id], onDelete: SetNull)
   stoodDownBy         User?              @relation("EmergencyStandDown", fields: [stoodDownById], references: [id], onDelete: SetNull)
   destinationLocation Location?          @relation("EmergencyDestination", fields: [destinationLocationId], references: [id], onDelete: SetNull)
@@ -8577,6 +9342,7 @@ model Emergency {
   rides               Ride[]
 
   @@index([status, declaredAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model EmergencySite {
@@ -8584,11 +9350,14 @@ model EmergencySite {
   emergencyId String @db.Uuid
   locationId  String @db.Uuid
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   emergency Emergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
   location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([emergencyId, locationId])
   @@index([locationId])
+  @@index([tenantId])
 }
 
 /// One tap from the associate app: safe, or needs help; optionally a seat
@@ -8598,6 +9367,8 @@ model EmergencyCheckIn {
   id          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   emergencyId String                 @db.Uuid
   associateId String                 @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   status      EmergencyCheckInStatus
   needsRide   Boolean                @default(false)
   note        String?                @db.VarChar(300)
@@ -8611,6 +9382,7 @@ model EmergencyCheckIn {
 
   @@unique([emergencyId, associateId])
   @@index([emergencyId, status])
+  @@index([tenantId])
 }
 
 // ===== Program Lifecycle (Brief 1C-2) ======================================
@@ -8655,14 +9427,19 @@ model Sponsor {
   createdAt           DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime    @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   programs Program[]
 
   @@index([isActive, name])
+  @@index([tenantId])
 }
 
 model Program {
   id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId          String          @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId             String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   type                 ProgramType
   sponsorId            String?         @db.Uuid
   /// J-1: the DS-2019 form number and its validity.
@@ -8704,6 +9481,7 @@ model Program {
   @@index([type, programEnd])
   @@index([sponsorId])
   @@index([petitionClientId])
+  @@index([tenantId])
 }
 
 /// Which files in the encrypted document store belong to this program
@@ -8713,10 +9491,13 @@ model ProgramDocument {
   programId  String @db.Uuid
   documentId String @db.Uuid
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   program  Program        @relation(fields: [programId], references: [id], onDelete: Cascade)
   document DocumentRecord @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([programId, documentId])
+  @@index([tenantId])
 }
 
 /// Lead times, in days, for the program alerts. One row.
@@ -8729,6 +9510,11 @@ model ProgramAlertSetting {
   petitionEndDays    Int[]    @default([60, 30])
   updatedById        String?  @db.Uuid
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  @@index([tenantId])
 }
 
 // ===== Season Planner (Brief 1C-3) =========================================
@@ -8763,11 +9549,14 @@ model SeasonPlan {
   createdAt          DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
 
-  client Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  sites  SeasonPlanSite[]
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  client   Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  sites    SeasonPlanSite[]
 
   @@index([clientId, seasonStart])
   @@index([archivedAt, updatedAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model SeasonPlanSite {
@@ -8783,10 +9572,13 @@ model SeasonPlanSite {
   /// [{ week: 'YYYY-MM-DD' (org week start), day, evening, overnight }] — headcount on the floor per shift per day.
   demand         Json   @default("[]")
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   plan     SeasonPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   location Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@unique([planId, locationId])
+  @@index([tenantId])
 }
 
 // ===== WhatsApp (Brief 1C-4) ==============================================
@@ -8837,9 +9629,12 @@ model WhatsAppConsent {
   lastInboundAt DateTime?             @db.Timestamptz(6)
   updatedAt     DateTime              @updatedAt @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@index([phone])
+  @@index([tenantId])
 }
 
 /// The message record: what went out and what came in, with the receipt.
@@ -8847,6 +9642,8 @@ model WhatsAppMessage {
   id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String?               @db.Uuid
   phone          String                @db.VarChar(20)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId       String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   direction      WhatsAppDirection
   kind           WhatsAppMessageKind
   /// Meta's message id — unique, so a replayed webhook is a no-op.
@@ -8871,6 +9668,7 @@ model WhatsAppMessage {
   @@index([associateId, createdAt(sort: Desc)])
   @@index([phone, createdAt(sort: Desc)])
   @@index([status, createdAt])
+  @@index([tenantId])
 }
 
 // ===== Workers (Brief 1D-1) ================================================
@@ -8894,6 +9692,8 @@ enum WorkerStatus {
 
 model Worker {
   id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   type         WorkerType
   /// PERSON workers point at their associate; the person-specific tables
   /// keep their own foreign keys to Associate.
@@ -8918,6 +9718,7 @@ model Worker {
 
   @@index([type, status])
   @@index([ownerUserId])
+  @@index([tenantId])
 }
 
 /// Where a non-person worker works. PERSON workers keep AssociateAssignment;
@@ -8931,11 +9732,14 @@ model WorkerAssignment {
   notes      String?   @db.VarChar(500)
   createdAt  DateTime  @default(now()) @db.Timestamptz(6)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   worker   Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
   location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@index([workerId, endedAt])
   @@index([locationId, endedAt])
+  @@index([tenantId])
 }
 
 // ===== Brief 1D-2 — Agent registry, permissions and audit trail =============
@@ -8978,6 +9782,8 @@ model AgentProfile {
   /// RBAC capabilities this agent may use (AGENT_SCOPES in shared contracts).
   scopes                String[]         @default([])
   /// Calendar-month spend cap; null = no cap.
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId              String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   spendCapCents         Int?
   rateLimitPerMinute    Int              @default(60)
   /// Hours of operation, org-local 0..23; both null = any hour.
@@ -9004,6 +9810,8 @@ model AgentProfile {
   approvals   AgentApprovalRequest[]
   spend       AgentSpend[]
   scenarios   AgentScenario[]
+
+  @@index([tenantId])
 }
 
 model AgentCredential {
@@ -9022,15 +9830,20 @@ model AgentCredential {
   revokedAt     DateTime? @db.Timestamptz(6)
   revokedReason String?   @db.VarChar(200)
 
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String?      @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   agent    AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
   issuedBy User?        @relation("AgentCredentialIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
 
   @@index([workerId, revokedAt])
+  @@index([tenantId])
 }
 
 model AgentApprovalRequest {
   id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workerId     String              @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   action       AgentGatedAction
   summary      String              @db.VarChar(500)
   payload      Json
@@ -9048,12 +9861,15 @@ model AgentApprovalRequest {
 
   @@index([status, requestedAt])
   @@index([workerId, requestedAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model AgentSpend {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workerId     String   @db.Uuid
   occurredAt   DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   amountCents  Int
   taskRef      String?  @db.VarChar(120)
   note         String?  @db.VarChar(300)
@@ -9063,6 +9879,7 @@ model AgentSpend {
   agent AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
 
   @@index([workerId, occurredAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 // ===== Brief 1D-3 — Kill switch, certification and the agent scorecard =====
@@ -9074,6 +9891,11 @@ model AgentControl {
   suspendedById  String?   @db.Uuid
   reason         String?   @db.VarChar(300)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId String? @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  @@index([tenantId])
 }
 
 /// A test an agent must pass before it is active: an input and either the
@@ -9082,6 +9904,8 @@ model AgentScenario {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workerId    String   @db.Uuid
   name        String   @db.VarChar(160)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   input       Json
   expected    Json
   createdById String?  @db.Uuid
@@ -9092,6 +9916,7 @@ model AgentScenario {
   runs  AgentScenarioRun[]
 
   @@index([workerId])
+  @@index([tenantId])
 }
 
 model AgentScenarioRun {
@@ -9100,6 +9925,8 @@ model AgentScenarioRun {
   workerId     String   @db.Uuid
   /// The version under test; a certification counts only for the current one.
   modelVersion String   @db.VarChar(80)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   passed       Boolean
   actual       Json?
   reason       String?  @db.VarChar(500)
@@ -9111,4 +9938,30 @@ model AgentScenarioRun {
 
   @@index([scenarioId, ranAt(sort: Desc)])
   @@index([workerId, modelVersion])
+  @@index([tenantId])
+}
+
+// ===== Brief 2-1 — Tenants ==================================================
+//
+// One customer organization. Every tenant-scoped table carries a nullable
+// tenantId defaulting to Alto HR (tenant 1) until the enforcing migration
+// makes it required and the database policy reads it. Reference data
+// (PayrollConfig, LocalTaxRule, GeoCache) stays global; platform telemetry
+// carries a null tenant.
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Tenant {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String       @unique @db.VarChar(60)
+  name      String       @db.VarChar(160)
+  plan      String       @default("internal") @db.VarChar(40)
+  status    TenantStatus @default(ACTIVE)
+  /// Feature flags per tenant, read by the application.
+  features  Json         @default("{}")
+  createdAt DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(6)
 }

@@ -123,7 +123,7 @@ const TABLES = [
 export const TRUNCATED_TABLES: readonly string[] = TABLES;
 
 /** Reference data a migration seeds — never truncated. */
-export const PRESERVED_TABLES: readonly string[] = ['payroll_config'];
+export const PRESERVED_TABLES: readonly string[] = ['payroll_config', 'Tenant'];
 
 export async function truncateAll(): Promise<void> {
   // Wait for any in-flight fire-and-forget audit writes from the previous

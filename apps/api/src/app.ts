@@ -131,6 +131,7 @@ import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
 import { attachUser, requireAuth, requireCapability } from './middleware/auth.js';
+import { tenantMiddleware } from './lib/tenant.js';
 import { defaultApiLimiter } from './middleware/rateLimit.js';
 import { usageTracking } from './middleware/usage.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
@@ -340,6 +341,8 @@ export function createApp() {
   app.use(express.json({ limit: '2mb' }));
   app.use(cookieParser());
   app.use(attachUser);
+  // Brief 2-1, step one: every request runs inside a tenant context (Alto HR today). Nothing enforced yet.
+  app.use(tenantMiddleware);
   // Backstop rate limit for the whole authenticated surface (skips
   // anonymous requests — those surfaces carry their own limiters).
   // Sits directly after attachUser so req.user keys the bucket.
