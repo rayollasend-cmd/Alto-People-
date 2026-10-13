@@ -16,14 +16,15 @@ import { handleInbound } from '../lib/whatsappAssistant.js';
  *   POST /whatsapp/me/consent         { optIn, phone? } — opt in with a number, or out
  *   GET  /whatsapp/webhook            Meta's verification handshake
  *   POST /whatsapp/webhook            receipts and inbound messages (signed)
- *   GET  /whatsapp/admin/overview     configuration, template registry, counts   (view:communications)
- *   GET  /whatsapp/admin/messages     the message record, newest first            (view:communications)
+ *   GET  /whatsapp/admin/overview     configuration, template registry, counts   (manage:communications)
+ *   GET  /whatsapp/admin/messages     the message record, newest first            (manage:communications)
  */
 export const whatsappRouter = Router();
 /** The webhook alone: mounted before the JSON parser so the raw bytes survive for the signature. */
 export const whatsappWebhookRouter = Router();
 
-const VIEW = requireCapability('view:communications');
+// Every staff role can read communications; the message record names numbers, so it is the managers'.
+const VIEW = requireCapability('manage:communications');
 
 whatsappRouter.get('/me', requireAuth, async (req, res, next) => {
   try {

@@ -83,7 +83,8 @@ const WindowQuery = z.object({
 });
 
 function timeWindow(q: z.infer<typeof WindowQuery>): { from: Date; to: Date } {
-  const from = q.from ? new Date(q.from) : new Date(Date.now() - 24 * 3_600_000);
+  // Rounded to the hour so a request repeated within the hour is the same request (approvals hash the window).
+  const from = q.from ? new Date(q.from) : new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 24 * 3_600_000);
   const to = q.to ? new Date(q.to) : new Date(from.getTime() + 7 * 24 * 3_600_000);
   if (to <= from || to.getTime() - from.getTime() > 35 * 24 * 3_600_000) throw new HttpError(400, 'bad_window', 'The window must be between one hour and five weeks.');
   return { from, to };
@@ -152,7 +153,7 @@ agentApiRouter.get('/exports/schedule.csv', requireAgent('view:scheduling'), asy
       const r = await createApprovalRequest(prisma, req.agent!, { action: 'DATA_EXPORT', summary: `Schedule export for client ${q.clientId}, ${payload.from.slice(0, 10)} to ${payload.to.slice(0, 10)}`, payload });
       res.locals.agentAction = 'agent.export.gated';
       res.locals.agentTarget = { type: 'AgentApprovalRequest', id: r.approval.id };
-      res.status(202).json({ status: r.approval.status, approvalId: r.approval.id, created: r.created, message: 'Exports are approved by a person. Ask again with approvalId once it is approved.' });
+      res.status(202).json({ status: r.approval.status, approvalId: r.approval.id, created: r.created, payload, message: 'Exports are approved by a person. Ask again with the same clientId, from and to plus approvalId once it is approved.' });
       return;
     }
     const approval = await claimApproval(prisma, req.agent!, q.approvalId, 'DATA_EXPORT', payload);

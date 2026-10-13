@@ -4,7 +4,7 @@ import {
   formatDateInZone,
   formatTimeInZone,
 } from './timezone.js';
-import { emailUserForCategory, type NotifyOpts } from './notify.js';
+import { emailUserForCategory, trackNotificationWork, type NotifyOpts } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
@@ -84,14 +84,12 @@ export async function notifyShift(
   tx: Tx,
   params: NotifyShiftParams
 ): Promise<void> {
-  try {
-    await notifyShiftInner(tx, params);
-  } catch (err) {
-    console.warn(
-      '[notifyShift] failed:',
-      err instanceof Error ? err.message : err,
-    );
-  }
+  // Tracked, so flushPendingNotifications sees the chain this starts.
+  await trackNotificationWork(
+    notifyShiftInner(tx, params).catch((err: unknown) => {
+      console.warn('[notifyShift] failed:', err instanceof Error ? err.message : err);
+    }),
+  );
 }
 
 async function notifyShiftInner(

@@ -94,8 +94,9 @@ describe('the registry', () => {
     const me = await loginAs(agent(), assoc.email);
     expect((await me.get('/agents')).status).toBe(403);
     expect((await me.post('/agents').send({})).status).toBe(403);
-    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
-    const viewer = await loginAs(agent(), wfm.email);
+    // Finance reads the registry (view:org) but does not manage the org.
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const viewer = await loginAs(agent(), fin.email);
     expect((await viewer.get('/agents')).status).toBe(200);
     expect((await viewer.post('/agents').send({})).status).toBe(403);
     expect((await w.admin.get('/agents/approvals')).status).toBe(200);
@@ -257,7 +258,7 @@ describe('approval gates', () => {
     expect(await prisma.message.count({ where: { conversationId: t.store.id } })).toBe(0);
 
     // The owner was told; the queue shows it.
-    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.hr.id, category: 'agent_approval' } });
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.hr.id, category: 'agent_approval', channel: 'IN_APP' } });
     expect(bell?.linkUrl).toBe(`/agents?approval=${approvalId}`);
     const queue = await w.admin.get('/agents/approvals?status=PENDING');
     expect(queue.body.approvals).toHaveLength(1);
@@ -297,23 +298,26 @@ describe('approval gates', () => {
     const cred = await issue(w.admin, a.id);
     const api = () => agent().set(bearer(cred.plaintext));
 
-    const asked = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}`);
+    // The window is part of what gets approved, so the agent names it and sends the same one back.
+    const win = `from=${encodeURIComponent('2026-11-01T00:00:00.000Z')}&to=${encodeURIComponent('2026-11-08T00:00:00.000Z')}`;
+    const asked = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&${win}`);
     expect(asked.status).toBe(202);
+    expect(asked.body.payload).toMatchObject({ clientId: w.client.id, from: '2026-11-01T00:00:00.000Z' });
     const approvalId = asked.body.approvalId as string;
     const no = await w.admin.post(`/agents/approvals/${approvalId}/reject`).send({ note: 'Not this week.' });
     expect(no.body.status).toBe('REJECTED');
-    const blocked = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&approvalId=${approvalId}`);
+    const blocked = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&${win}&approvalId=${approvalId}`);
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.code).toBe('approval_rejected');
     // Deciding twice is refused.
     expect((await w.admin.post(`/agents/approvals/${approvalId}/approve`)).status).toBe(409);
 
     // A fresh ask (the rejected one is closed) that a person approves.
-    const asked2 = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}`);
+    const asked2 = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&${win}`);
     expect(asked2.status).toBe(202);
     expect(asked2.body.approvalId).not.toBe(approvalId);
     await w.admin.post(`/agents/approvals/${asked2.body.approvalId}/approve`);
-    const csv = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&approvalId=${asked2.body.approvalId}`);
+    const csv = await api().get(`/agent/v1/exports/schedule.csv?clientId=${w.client.id}&${win}&approvalId=${asked2.body.approvalId}`);
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toContain('text/csv');
     expect(csv.text.split('\n')[0]).toBe('shiftId,position,location,startsAt,endsAt,status,assignee,workerType');

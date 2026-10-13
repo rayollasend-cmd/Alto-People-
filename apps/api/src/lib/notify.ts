@@ -316,7 +316,9 @@ export function emailUserForCategory(
           url: opts.linkUrl,
         }),
         // WhatsApp, when they opted in — the same mute applies.
-        sendWhatsAppForUser(userId, opts).catch(() => undefined),
+        sendWhatsAppForUser(userId, opts).catch((err: unknown) => {
+          console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
+        }),
       ]);
     })().catch((err: unknown) => {
       console.warn(
@@ -375,7 +377,11 @@ export function notifyUser(
               url: opts.linkUrl,
             }),
           );
-          void track(sendWhatsAppForUser(userId, opts).catch(() => undefined));
+          void track(
+            sendWhatsAppForUser(userId, opts).catch((err: unknown) => {
+              console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
+            }),
+          );
         }
       }
     })().catch((err: unknown) => {

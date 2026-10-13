@@ -3,6 +3,8 @@ import { ensurePersonWorkers, scheduleWorkerOnShift } from '../../lib/workers.js
 import { flushPendingAudits } from '../../lib/audit.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+// The app's client carries the Shift.workerId adapter; the test client does not.
+import { prisma as appDb } from '../../db.js';
 
 /**
  * Workers (Brief 1D-1 acceptance).
@@ -180,10 +182,10 @@ describe('people are workers too', () => {
     expect((await hr.post(`/scheduling/shifts/${shift.id}/assign`).send({ associateId: ana.id })).status).toBe(200);
     expect((await prisma.shift.findUniqueOrThrow({ where: { id: shift.id } })).workerId).toBe(person.id);
     // Unassign clears it.
-    await prisma.shift.update({ where: { id: shift.id }, data: { assignedAssociateId: null, status: 'OPEN' } });
+    await appDb.shift.update({ where: { id: shift.id }, data: { assignedAssociateId: null, status: 'OPEN' } });
     expect((await prisma.shift.findUniqueOrThrow({ where: { id: shift.id } })).workerId).toBeNull();
     // A create with an associate carries it too.
-    const created = await prisma.shift.create({
+    const created = await appDb.shift.create({
       data: { clientId: w.client.id, locationId: w.site.id, position: 'Server', startsAt: new Date(Date.now() + 48 * HOUR), endsAt: new Date(Date.now() + 56 * HOUR), status: 'ASSIGNED', assignedAssociateId: ana.id, publishedAt: new Date() },
     });
     expect(created.workerId).toBe(person.id);

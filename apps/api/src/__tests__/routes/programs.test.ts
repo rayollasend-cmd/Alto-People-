@@ -125,7 +125,7 @@ describe('alerts fire from the dates on the record', () => {
     const supAgent = await loginAs(agent(), sup.email);
     const mine = await supAgent.get('/programs/alerts/mine');
     expect(mine.status).toBe(200);
-    expect(mine.body.alerts.map((a: { associateId: string }) => a.associateId)).toEqual([ana.id]);
+    expect(mine.body.alerts.filter((a: { kind: string }) => a.kind === 'PROGRAM_END').map((a: { associateId: string }) => a.associateId)).toEqual([ana.id]);
     // The full list is compliance's.
     expect((await supAgent.get('/programs/alerts')).status).toBe(403);
     expect((await admin.get('/programs/alerts')).body.alerts).toHaveLength(2);
@@ -162,8 +162,9 @@ describe('the H-2B client rule', () => {
     const y = await createClient('Other Client');
     const siteY = await prisma.location.findFirstOrThrow({ where: { clientId: y.id } });
     const eli = await createAssociate({ firstName: 'Eli', lastName: 'Garcia' });
+    // One open placement per associate (the database says so); the second client comes through an approved application.
     await placed(eli.id, siteX.id);
-    await placed(eli.id, siteY.id);
+    await prisma.application.create({ data: { associateId: eli.id, clientId: y.id, onboardingTrack: 'STANDARD', status: 'APPROVED' } });
     const { user: eliUser } = await createUser({ role: 'ASSOCIATE', associateId: eli.id });
     const program = await prisma.program.create({
       data: {
