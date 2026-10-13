@@ -33,6 +33,8 @@ const TABLES = [
   // singleton have no FK into the graph.
   'Sponsor',
   'ProgramAlertSetting',
+  // A company-wide SeasonPlan has no client, so nothing cascades into it.
+  'SeasonPlan',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

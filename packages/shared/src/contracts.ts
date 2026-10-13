@@ -7882,3 +7882,198 @@ export interface SponsorReportResponse {
   rows: SponsorReportRow[];
   totals: { participants: number; hours: number; incidents: number; departures: number };
 }
+
+/* -------------------------------------------------------------------------- *
+ *  Season Planner (Brief 1C-3) — demand by store, shift and week becomes
+ *  associates, beds, van seats and recruiting targets by channel. A plan is
+ *  a scenario; outputs are computed on read.
+ * -------------------------------------------------------------------------- */
+
+export const RECRUITING_CHANNELS = ['LOCAL', 'J1_NORTH', 'J1_SOUTH', 'H2B'] as const;
+export type RecruitingChannel = (typeof RECRUITING_CHANNELS)[number];
+export const RECRUITING_CHANNEL_LABELS: Record<RecruitingChannel, string> = {
+  LOCAL: 'Local hires',
+  J1_NORTH: 'J-1 northern hemisphere',
+  J1_SOUTH: 'J-1 southern hemisphere',
+  H2B: 'H-2B',
+};
+
+const ChannelPercentSchema = z.object({
+  LOCAL: z.number().min(0).max(100),
+  J1_NORTH: z.number().min(0).max(100),
+  J1_SOUTH: z.number().min(0).max(100),
+  H2B: z.number().min(0).max(100),
+});
+export type ChannelPercent = z.infer<typeof ChannelPercentSchema>;
+const ChannelWeeksSchema = z.object({
+  LOCAL: z.number().int().min(0).max(52),
+  J1_NORTH: z.number().int().min(0).max(52),
+  J1_SOUTH: z.number().int().min(0).max(52),
+  H2B: z.number().int().min(0).max(52),
+});
+export type ChannelWeeks = z.infer<typeof ChannelWeeksSchema>;
+
+export const SeasonDemandWeekSchema = z.object({
+  /** Org week start, YYYY-MM-DD (a Saturday). */
+  week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  day: z.number().int().min(0).max(2000),
+  evening: z.number().int().min(0).max(2000),
+  overnight: z.number().int().min(0).max(2000),
+});
+export type SeasonDemandWeek = z.infer<typeof SeasonDemandWeekSchema>;
+
+export const SeasonPlanSiteInputSchema = z.object({
+  locationId: UuidSchema,
+  bedsAvailable: z.number().int().min(0).max(5000).default(0),
+  vanSeatsPerRun: z.number().int().min(0).max(200).default(14),
+  runsPerShift: z.number().int().min(0).max(20).default(1),
+  routeMinutes: z.number().int().min(0).max(600).default(45),
+  demand: z.array(SeasonDemandWeekSchema).max(60).default([]),
+});
+export type SeasonPlanSiteInput = z.infer<typeof SeasonPlanSiteInputSchema>;
+
+export const SeasonPlanInputSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    clientId: UuidSchema.nullable().optional(),
+    seasonStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    seasonEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    targetHoursPerWeek: z.number().int().min(8).max(80).default(40),
+    shiftHours: z.number().int().min(4).max(12).default(8),
+    reservePct: z.number().int().min(0).max(100).default(10),
+    channelMix: ChannelPercentSchema.optional(),
+    arrivalLeadWeeks: ChannelWeeksSchema.optional(),
+    housingShare: ChannelPercentSchema.optional(),
+    rideShare: ChannelPercentSchema.optional(),
+    notes: z.string().trim().max(2000).nullable().optional(),
+    /** Sites in the plan; omitted on create = every active store of the client (or every store). */
+    sites: z.array(SeasonPlanSiteInputSchema).max(60).optional(),
+  })
+  .refine((v) => v.seasonEnd >= v.seasonStart, { message: 'seasonEnd must be on or after seasonStart', path: ['seasonEnd'] });
+export type SeasonPlanInput = z.infer<typeof SeasonPlanInputSchema>;
+
+export const SeasonPlanUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  seasonStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  seasonEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  targetHoursPerWeek: z.number().int().min(8).max(80).optional(),
+  shiftHours: z.number().int().min(4).max(12).optional(),
+  reservePct: z.number().int().min(0).max(100).optional(),
+  channelMix: ChannelPercentSchema.optional(),
+  arrivalLeadWeeks: ChannelWeeksSchema.optional(),
+  housingShare: ChannelPercentSchema.optional(),
+  rideShare: ChannelPercentSchema.optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  /** Replaces the site list when present. */
+  sites: z.array(SeasonPlanSiteInputSchema).max(60).optional(),
+  archived: z.boolean().optional(),
+});
+export type SeasonPlanUpdate = z.infer<typeof SeasonPlanUpdateSchema>;
+
+export interface SeasonPlanSiteWeek {
+  week: string;
+  day: number;
+  evening: number;
+  overnight: number;
+  /** Floor headcount per day across the three shifts. */
+  daily: number;
+  /** Shift slots that week (daily × 7). */
+  shiftSlots: number;
+  associatesNeeded: number;
+  bedsNeeded: number;
+  bedsAvailable: number;
+  bedsGap: number;
+  /** Peak seats needed on one shift's runs vs. what the vans carry. */
+  vanSeatsNeeded: number;
+  vanSeatsAvailable: number;
+  vanSeatsGap: number;
+  /** Actuals, when the week is in the past or in progress. */
+  scheduledHours: number | null;
+  activeHeadcount: number | null;
+}
+
+export interface SeasonPlanSiteComputed {
+  locationId: string;
+  siteName: string;
+  clientId: string;
+  clientName: string;
+  bedsAvailable: number;
+  vanSeatsPerRun: number;
+  runsPerShift: number;
+  routeMinutes: number;
+  weeks: SeasonPlanSiteWeek[];
+  peak: { week: string; daily: number; associatesNeeded: number; bedsNeeded: number; vanSeatsNeeded: number };
+}
+
+export interface SeasonRecruitingTarget {
+  channel: RecruitingChannel;
+  label: string;
+  sharePct: number;
+  /** Associates this channel must supply at the plan's peak. */
+  target: number;
+  /** Season start minus the channel's lead time. */
+  recruitBy: string;
+  /** Programs on the books with a start inside the season (J-1 by hemisphere, H-2B), or hires for LOCAL. */
+  pipeline: number;
+  gap: number;
+}
+
+export interface SeasonGap {
+  kind: 'HEADCOUNT' | 'BEDS' | 'VAN_SEATS' | 'RECRUITING';
+  siteName: string | null;
+  week: string | null;
+  needed: number;
+  available: number;
+  shortfall: number;
+  text: string;
+}
+
+export interface SeasonPlanSummary {
+  id: string;
+  name: string;
+  clientId: string | null;
+  clientName: string | null;
+  seasonStart: string;
+  seasonEnd: string;
+  targetHoursPerWeek: number;
+  shiftHours: number;
+  reservePct: number;
+  channelMix: ChannelPercent;
+  arrivalLeadWeeks: ChannelWeeks;
+  housingShare: ChannelPercent;
+  rideShare: ChannelPercent;
+  notes: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  siteCount: number;
+  weeks: string[];
+}
+
+export interface SeasonPlanComputed extends SeasonPlanSummary {
+  sites: SeasonPlanSiteComputed[];
+  /** Company-wide, per week. */
+  totals: Array<{
+    week: string;
+    daily: number;
+    associatesNeeded: number;
+    bedsNeeded: number;
+    bedsAvailable: number;
+    vanSeatsNeeded: number;
+    vanSeatsAvailable: number;
+    scheduledHours: number | null;
+    activeHeadcount: number | null;
+  }>;
+  peak: { week: string; daily: number; associatesNeeded: number; bedsNeeded: number; bedsAvailable: number; bedsGap: number };
+  recruiting: SeasonRecruitingTarget[];
+  gaps: SeasonGap[];
+}
+
+export interface SeasonPlanListResponse {
+  plans: SeasonPlanSummary[];
+}
+
+export interface SeasonPlanCompareResponse {
+  a: SeasonPlanComputed;
+  b: SeasonPlanComputed;
+}

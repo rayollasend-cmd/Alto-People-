@@ -795,6 +795,7 @@ model Client {
   // many Locations, e.g. Walmart → Destin / Front Beach / PCB).
   locations               Location[]
   shiftTeams              ShiftTeam[]
+  seasonPlans             SeasonPlan[]
 
   @@index([status])
   @@index([deletedAt])
@@ -838,6 +839,7 @@ model Location {
   shifts                 Shift[]
   supervisorShiftWindows SupervisorShiftWindow[]
   emergencySites         EmergencySite[]
+  seasonPlanSites        SeasonPlanSite[]
   emergencyDestinations  Emergency[]             @relation("EmergencyDestination")
   opsShifts              OpsShift[]
   oshaIncidents          OshaIncident[]
@@ -8708,4 +8710,62 @@ model ProgramAlertSetting {
   petitionEndDays    Int[]    @default([60, 30])
   updatedById        String?  @db.Uuid
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// ===== Season Planner (Brief 1C-3) =========================================
+// Demand by store, shift and week becomes associates, beds, van seats and
+// recruiting targets by channel. A plan is a scenario: save several, compare
+// them side by side. Everything derived is computed on read from the inputs
+// here; nothing downstream depends on a plan.
+
+model SeasonPlan {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String    @db.VarChar(120)
+  /// Null: a company-wide plan across clients.
+  clientId           String?   @db.Uuid
+  seasonStart        DateTime  @db.Date
+  seasonEnd          DateTime  @db.Date
+  targetHoursPerWeek Int       @default(40)
+  /// Hours one shift slot represents, for turning headcount into hours.
+  shiftHours         Int       @default(8)
+  /// Extra associates over the arithmetic need, for call-outs and churn.
+  reservePct         Int       @default(10)
+  /// Percent of associates by recruiting channel: { LOCAL, J1_NORTH, J1_SOUTH, H2B }. Sums to 100.
+  channelMix         Json      @default("{\"LOCAL\":25,\"J1_NORTH\":35,\"J1_SOUTH\":15,\"H2B\":25}")
+  /// Weeks before season start a channel's people must be recruited, by channel.
+  arrivalLeadWeeks   Json      @default("{\"LOCAL\":3,\"J1_NORTH\":10,\"J1_SOUTH\":12,\"H2B\":20}")
+  /// Percent of each channel that needs a bed, by channel.
+  housingShare       Json      @default("{\"LOCAL\":0,\"J1_NORTH\":100,\"J1_SOUTH\":100,\"H2B\":100}")
+  /// Percent of each channel that rides the vans, by channel.
+  rideShare          Json      @default("{\"LOCAL\":10,\"J1_NORTH\":100,\"J1_SOUTH\":100,\"H2B\":100}")
+  notes              String?   @db.VarChar(2000)
+  createdById        String?   @db.Uuid
+  archivedAt         DateTime? @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+
+  client Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  sites  SeasonPlanSite[]
+
+  @@index([clientId, seasonStart])
+  @@index([archivedAt, updatedAt(sort: Desc)])
+}
+
+model SeasonPlanSite {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId         String @db.Uuid
+  locationId     String @db.Uuid
+  /// Beds this site's people can use (Helios capacity by hand until a link exists).
+  bedsAvailable  Int    @default(0)
+  /// Seats one van run carries to this site, and runs per shift.
+  vanSeatsPerRun Int    @default(14)
+  runsPerShift   Int    @default(1)
+  routeMinutes   Int    @default(45)
+  /// [{ week: 'YYYY-MM-DD' (org week start), day, evening, overnight }] — headcount on the floor per shift per day.
+  demand         Json   @default("[]")
+
+  plan     SeasonPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  location Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, locationId])
 }

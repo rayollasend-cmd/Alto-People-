@@ -1,0 +1,70 @@
+import type {
+  SeasonDemandWeek,
+  SeasonPlanCompareResponse,
+  SeasonPlanComputed,
+  SeasonPlanInput,
+  SeasonPlanListResponse,
+  SeasonPlanUpdate,
+} from '@alto-people/shared';
+import { apiFetch } from './api';
+
+/**
+ * The Season Planner reads and writes. A plan is a scenario of inputs;
+ * every number the page shows is computed by the server on read, so a
+ * save is always followed by a refetch rather than local arithmetic.
+ */
+
+export interface SeasonPlanDefaultsResponse {
+  weeks: string[];
+  vans: { count: number; maxCapacity: number };
+  sites: Array<{
+    locationId: string;
+    siteName: string;
+    clientId: string;
+    clientName: string;
+    bedsAvailable: number;
+    vanSeatsPerRun: number;
+    runsPerShift: number;
+    routeMinutes: number;
+    demand: SeasonDemandWeek[];
+  }>;
+}
+
+export function listSeasonPlans(includeArchived = false): Promise<SeasonPlanListResponse> {
+  return apiFetch<SeasonPlanListResponse>(`/season-plans${includeArchived ? '?archived=1' : ''}`);
+}
+
+export function getSeasonPlan(id: string): Promise<SeasonPlanComputed> {
+  return apiFetch<SeasonPlanComputed>(`/season-plans/${id}`);
+}
+
+export function getSeasonPlanDefaults(q: { clientId?: string | null; seasonStart: string; seasonEnd: string }): Promise<SeasonPlanDefaultsResponse> {
+  const sp = new URLSearchParams({ seasonStart: q.seasonStart, seasonEnd: q.seasonEnd });
+  if (q.clientId) sp.set('clientId', q.clientId);
+  return apiFetch<SeasonPlanDefaultsResponse>(`/season-plans/defaults?${sp.toString()}`);
+}
+
+export function createSeasonPlan(body: SeasonPlanInput): Promise<SeasonPlanComputed> {
+  return apiFetch<SeasonPlanComputed>('/season-plans', { method: 'POST', body });
+}
+
+export function updateSeasonPlan(id: string, body: SeasonPlanUpdate): Promise<SeasonPlanComputed> {
+  return apiFetch<SeasonPlanComputed>(`/season-plans/${id}`, { method: 'PATCH', body });
+}
+
+export function duplicateSeasonPlan(id: string, name: string): Promise<SeasonPlanComputed> {
+  return apiFetch<SeasonPlanComputed>(`/season-plans/${id}/duplicate`, { method: 'POST', body: { name } });
+}
+
+export function compareSeasonPlans(a: string, b: string): Promise<SeasonPlanCompareResponse> {
+  return apiFetch<SeasonPlanCompareResponse>(`/season-plans/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+}
+
+/** Download hrefs — opened with window.open so iOS hands them to Files. */
+export function seasonPlanCsvUrl(id: string): string {
+  return `/api/season-plans/${id}/csv`;
+}
+
+export function seasonPlanSitePdfUrl(id: string, locationId: string): string {
+  return `/api/season-plans/${id}/sites/${locationId}/pdf`;
+}

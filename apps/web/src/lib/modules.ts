@@ -7,6 +7,7 @@ export type ModuleKey =
   | 'reliability'
   | 'emergency'
   | 'programs'
+  | 'season-planner'
   | 'portal'
   | 'region'
   | 'regions'
@@ -878,6 +879,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'The van command center — bookings, dispatch, drivers, vans, stops, issues, and ride charges.',
     requires: 'view:transport',
+    group: 'workforce',
+  },
+  {
+    key: 'season-planner',
+    path: '/season-planner',
+    label: 'Season planner',
+    description:
+      'Demand by store, shift and week becomes associates, beds, van seats and recruiting targets by channel — scenarios saved and compared side by side.',
+    requires: 'view:org',
     group: 'workforce',
   },
   {

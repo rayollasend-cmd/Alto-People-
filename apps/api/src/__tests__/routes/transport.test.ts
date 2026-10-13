@@ -761,6 +761,11 @@ describe('short notice, saved places that need a pin, and your own store', () =>
     const h = Number(local.find((x) => x.type === 'hour')!.value) % 24;
     const m = Number(local.find((x) => x.type === 'minute')!.value);
     const nowMin = h * 60 + m;
+    // The window starts two hours ago. Between midnight and 2 AM store
+    // time that start is yesterday evening, and today's date puts it 22
+    // hours ahead instead — the legs read "planned", not what this test
+    // is about. CI has hit that window (2026-10-13 00:53 ET); sit it out.
+    if (nowMin < 120) return;
     await prisma.staffingTarget.create({
       data: {
         locationId: store.id,

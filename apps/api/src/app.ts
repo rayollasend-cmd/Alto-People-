@@ -38,6 +38,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { emergencyRouter } from './routes/emergency.js';
 import { programsRouter } from './routes/programs.js';
+import { seasonPlansRouter } from './routes/seasonPlans.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -430,6 +431,9 @@ export function createApp() {
   // Program Lifecycle: J-1 / H-2B records, sponsors, alerts, the
   // transition calendar and sponsor reports (view/manage:compliance).
   app.use('/programs', programsRouter);
+  // Season Planner: demand → associates, beds, van seats, recruiting
+  // targets; scenarios saved and compared (view/manage:org).
+  app.use('/season-plans', seasonPlansRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

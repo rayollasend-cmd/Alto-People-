@@ -152,6 +152,7 @@ const DirCommsHome = lazyNamed(() => import('@/pages/dirComms/DirCommsHome'), 'D
 const DocumentsHome = lazyNamed(() => import('@/pages/documents/DocumentsHome'), 'DocumentsHome');
 const ComplianceHome = lazyNamed(() => import('@/pages/compliance/ComplianceHome'), 'ComplianceHome');
 const ProgramsHome = lazyNamed(() => import('@/pages/programs/ProgramsHome'), 'ProgramsHome');
+const SeasonPlannerHome = lazyNamed(() => import('@/pages/planner/SeasonPlannerHome'), 'SeasonPlannerHome');
 const OshaWcEeoHome = lazyNamed(() => import('@/pages/compliance/OshaWcEeoHome'), 'OshaWcEeoHome');
 const VaccinationsHome = lazyNamed(() => import('@/pages/vaccinations/VaccinationsHome'), 'VaccinationsHome');
 const AgreementsHome = lazyNamed(() => import('@/pages/agreements/AgreementsHome'), 'AgreementsHome');
@@ -240,6 +241,7 @@ registerPrefetch('/documents', () => import('@/pages/documents/DocumentsHome'));
 registerPrefetch('/communications', () => import('@/pages/communications/CommunicationsHome'));
 registerPrefetch('/compliance', () => import('@/pages/compliance/ComplianceHome'));
 registerPrefetch('/programs', () => import('@/pages/programs/ProgramsHome'));
+registerPrefetch('/season-planner', () => import('@/pages/planner/SeasonPlannerHome'));
 registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHome'));
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
@@ -421,6 +423,7 @@ const LAYOUT_ROUTES = [
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
   { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },
   { path: 'programs', element: <RequireCapability cap="view:compliance"><ProgramsHome /></RequireCapability> },
+  { path: 'season-planner', element: <RequireCapability cap="view:org"><SeasonPlannerHome /></RequireCapability> },
   { path: 'communications', element: <CommunicationsHome /> },
   { path: 'performance', element: <RequireCapability cap="view:performance"><PerformanceHome /></RequireCapability> },
   { path: 'recruiting', element: <RecruitingHome /> },
