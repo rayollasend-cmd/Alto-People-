@@ -11,7 +11,7 @@ const KIOSK_TIMEOUT_MS = 8_000;
 
 export interface KioskDevice {
   id: string;
-  clientId: string;
+  clientId: string | null;
   clientName: string;
   /** Phase 131 — physical site under the client. Null on devices
    *  registered before the Location model existed. */

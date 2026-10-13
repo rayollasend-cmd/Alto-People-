@@ -132,7 +132,7 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   res.json({
     devices: rows.map((d) => ({
       id: d.id,
-      clientId: d.clientId ?? '',
+      clientId: d.clientId,
       clientName: d.client?.name ?? '',
       locationId: d.locationId,
       locationName: d.location?.name ?? null,

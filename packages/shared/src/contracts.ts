@@ -6875,7 +6875,8 @@ export type MfaRegenerateResponse = z.infer<typeof MfaRegenerateResponseSchema>;
 
 export const LocationSummarySchema = z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  /** Brief 2-1b: null for a direct employer's site. */
+  clientId: UuidSchema.nullable(),
   name: z.string(),
   addressLine1: z.string().nullable(),
   addressLine2: z.string().nullable(),

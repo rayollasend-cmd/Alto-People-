@@ -244,8 +244,8 @@ export function toRideView(r: RideRow) {
       id: r.location.id,
       name: r.location.name,
       timezone: r.location.timezone,
-      // A ride is booked to a bookable store, which always has a client (above); the empty string is the impossible case.
-      clientId: r.location.client?.id ?? '',
+      // Brief 2-1b: a direct employer's site has no client.
+      clientId: r.location.client?.id ?? null,
       clientName: r.location.client?.name ?? '',
     },
     rider: { associateId: r.associate.id, name: `${r.associate.firstName} ${r.associate.lastName}`, phone: r.associate.phone },

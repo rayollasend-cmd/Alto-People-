@@ -152,7 +152,7 @@ export async function endRateCard(db: Db, id: string, on: Date = new Date()): Pr
 export interface WithoutRate {
   associateId: string;
   name: string;
-  clientId: string;
+  clientId: string | null;
   clientName: string;
   locationId: string | null;
   position: string | null;
@@ -181,8 +181,8 @@ export async function associatesWithoutRate(db: Db = defaultPrisma, now: Date = 
     const placement = placed.get(p.id)!;
     const position = p.applications[0]?.position ?? null;
     if (position && cardOn(cards, placement.clientId, position, now)) continue;
-    // A client-less placement (a direct employer): the org-wide card was checked above; the row names no client (the contract still says string).
-    out.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), clientId: placement.clientId ?? '', clientName: (placement.clientId ? clientName.get(placement.clientId) : undefined) ?? '', locationId: placement.locationId, position });
+    // A client-less placement (a direct employer): the org-wide card was checked above; the row names no client.
+    out.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), clientId: placement.clientId, clientName: (placement.clientId ? clientName.get(placement.clientId) : undefined) ?? '', locationId: placement.locationId, position });
   }
   return out.sort((a, b) => a.clientName.localeCompare(b.clientName) || a.name.localeCompare(b.name));
 }

@@ -69,7 +69,7 @@ export interface Ride {
     | { kind: 'address'; id: null; name: null; address: string };
   /** The home end's coordinates, when known. */
   point: GeoPoint | null;
-  store: { id: string; name: string; timezone: string; clientId: string; clientName: string };
+  store: { id: string; name: string; timezone: string; clientId: string | null; clientName: string };
   rider: { associateId: string; name: string; phone: string | null };
   pickupOrder: number | null;
   pickupAt: string | null;

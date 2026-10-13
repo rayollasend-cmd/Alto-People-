@@ -25,7 +25,7 @@ async function overview(now: Date): Promise<HeadcountOverview> {
   const noRateByClient = new Map<string, number>();
   const noRateByLocation = new Map<string, number>();
   for (const w of withoutRate) {
-    noRateByClient.set(w.clientId, (noRateByClient.get(w.clientId) ?? 0) + 1);
+    if (w.clientId) noRateByClient.set(w.clientId, (noRateByClient.get(w.clientId) ?? 0) + 1);
     if (w.locationId) noRateByLocation.set(w.locationId, (noRateByLocation.get(w.locationId) ?? 0) + 1);
   }
   const weekStart = startOfWeekUTC(now);

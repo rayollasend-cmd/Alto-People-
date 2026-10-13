@@ -556,7 +556,7 @@ function shapeLocation(row: {
 }): LocationSummary {
   return {
     id: row.id,
-    clientId: row.clientId ?? '',
+    clientId: row.clientId,
     name: row.name,
     addressLine1: row.addressLine1,
     addressLine2: row.addressLine2,
