@@ -50,6 +50,7 @@ import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
 import { INVITE_UNDO_SECONDS, invitesAreEmailed, scheduleInviteDelivery, sendInviteEmail } from '../lib/inviteDelivery.js';
 import { CANCEL_REASONS, cancelApplication, reopenApplication } from '../lib/onboardingUndo.js';
+import { ensureWorkerForAssociate } from '../lib/workers.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { runStaleNudgeSweep } from '../lib/staleNudge.js';
@@ -301,6 +302,8 @@ export async function inviteOneApplicant(
           ...(input.employmentType ? { employmentType: input.employmentType } : {}),
         },
       });
+      // Brief 1D-1: every person is a PERSON worker with an owner from day one.
+      await ensureWorkerForAssociate(tx, associate.id, actorUserId);
     } else {
       const rehireUpdates: Prisma.AssociateUpdateInput = {};
       if (input.employmentType && associate.employmentType !== input.employmentType) {
@@ -5043,6 +5046,7 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
                 hireDate: hireDateValue,
               },
             });
+            await ensureWorkerForAssociate(tx, associate.id, req.user?.id ?? null);
             await tx.application.create({
               data: {
                 associateId: associate.id,

@@ -8,6 +8,7 @@ export type ModuleKey =
   | 'emergency'
   | 'programs'
   | 'season-planner'
+  | 'workers'
   | 'portal'
   | 'region'
   | 'regions'
@@ -551,6 +552,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Regions',
     description:
       'The command-center tier above the store: which stores roll up to which region, and the accounts that run each one.',
+    requires: 'view:org',
+    group: 'workforce',
+  },
+  {
+    key: 'workers',
+    path: '/workers',
+    label: 'Worker types',
+    description:
+      'People, AI agents and robots in one registry: who owns each worker, what it can do, and where it is in its lifecycle.',
     requires: 'view:org',
     group: 'workforce',
   },

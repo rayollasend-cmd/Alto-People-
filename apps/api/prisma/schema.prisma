@@ -628,6 +628,7 @@ model User {
   fieldglassRegistrations           FieldglassRegistration[]      @relation("FieldglassRegistrar")
   emergenciesDeclared               Emergency[]                   @relation("EmergencyDeclarer")
   emergenciesStoodDown              Emergency[]                   @relation("EmergencyStandDown")
+  ownedWorkers                      Worker[]                      @relation("WorkerOwner")
   relayClaims                       RelayClaim[]                  @relation("RelayClaimHolder")
   relayClaimsHandedOff              RelayClaim[]                  @relation("RelayClaimAssigner")
   relayRequestsSent                 RelayRequest[]                @relation("RelayRequestFrom")
@@ -842,6 +843,7 @@ model Location {
   supervisorShiftWindows SupervisorShiftWindow[]
   emergencySites         EmergencySite[]
   seasonPlanSites        SeasonPlanSite[]
+  workerAssignments      WorkerAssignment[]
   emergencyDestinations  Emergency[]             @relation("EmergencyDestination")
   opsShifts              OpsShift[]
   oshaIncidents          OshaIncident[]
@@ -1761,6 +1763,7 @@ model Associate {
   user                     User?
   j1Profile                J1Profile?
   programs                 Program[]
+  worker                   Worker?
   applications             Application[]
   documents                DocumentRecord[]
   signatures               Signature[]               @relation("AssociateSignatures")
@@ -2833,8 +2836,14 @@ model Shift {
   // no pay). The status it had is kept so stand-down can put it back.
   emergencyId          String?                         @db.Uuid
   emergencyPriorStatus ShiftStatus?
+  // Brief 1D-1: the Worker on this shift — a person (kept in step with
+  // assignedAssociateId by the client extension in db.ts), an agent, or a
+  // robot. Scheduling reads this from now on; the associate column stays
+  // for every screen that already knows it.
+  workerId             String?                         @db.Uuid
   client               Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   emergency            Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
+  worker               Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
   locationRel          Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate    Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy            User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -2853,6 +2862,7 @@ model Shift {
   @@index([locationId, startsAt])
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
+  @@index([workerId, startsAt])
 }
 
 // Phase 51 — reusable shift template ("Friday closer", "weekend
@@ -3917,6 +3927,9 @@ model AuditLog {
   action      String
   entityType  String
   entityId    String
+  /// Brief 1D-1: the Worker that acted or was acted on, when one did —
+  /// an agent on its own API credential (1D-2), a robot (3-1).
+  workerId    String?  @db.Uuid
   metadata    Json?
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   actorUser   User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -8856,4 +8869,68 @@ model WhatsAppMessage {
   @@index([associateId, createdAt(sort: Desc)])
   @@index([phone, createdAt(sort: Desc)])
   @@index([status, createdAt])
+}
+
+// ===== Workers (Brief 1D-1) ================================================
+// A worker is not assumed to be a person. Every associate is a PERSON worker
+// (made by the migration and kept so by ensurePersonWorkers); agents and
+// robots are workers of their own type. Every worker has an accountable
+// owner — a user — and that is the rule the hybrid model rests on.
+
+enum WorkerType {
+  PERSON
+  AGENT
+  ROBOT
+}
+
+enum WorkerStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  OFFBOARDED
+}
+
+model Worker {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type         WorkerType
+  /// PERSON workers point at their associate; the person-specific tables
+  /// keep their own foreign keys to Associate.
+  associateId  String?      @unique @db.Uuid
+  name         String       @db.VarChar(160)
+  /// The human accountable for this worker. Required, always.
+  ownerUserId  String       @db.Uuid
+  status       WorkerStatus @default(ONBOARDING)
+  /// Certified task types, from the shared catalog (WORKER_CAPABILITIES).
+  capabilities String[]     @default([])
+  notes        String?      @db.VarChar(2000)
+  createdById  String?      @db.Uuid
+  offboardedAt DateTime?    @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+
+  associate   Associate?         @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  owner       User               @relation("WorkerOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  assignments WorkerAssignment[]
+  shifts      Shift[]
+
+  @@index([type, status])
+  @@index([ownerUserId])
+}
+
+/// Where a non-person worker works. PERSON workers keep AssociateAssignment;
+/// lib/workers.ts reads both as one.
+model WorkerAssignment {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId   String    @db.Uuid
+  locationId String    @db.Uuid
+  startedAt  DateTime  @db.Date
+  endedAt    DateTime? @db.Date
+  notes      String?   @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+
+  worker   Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, endedAt])
+  @@index([locationId, endedAt])
 }

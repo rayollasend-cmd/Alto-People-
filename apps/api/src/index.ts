@@ -46,6 +46,7 @@ import { startVitalsFlusher } from './lib/webVitals.js';
 import { recordApiBoot } from './lib/reliability.js';
 import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
+import { ensurePersonWorkers } from './lib/workers.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
@@ -126,6 +127,11 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   recordApiBoot(BUILD_VERSION).catch((err) => logger.warn({ err }, 'api boot row not written'));
   startReliabilityDigestCron();
   startProgramDigestCron();
+  // Brief 1D-1: a PERSON worker for every associate, at boot and every
+  // quarter hour, so an import that bypassed the API still ends up owned.
+  const sweepWorkers = () => ensurePersonWorkers(prisma).catch((err) => logger.warn({ err }, 'worker sweep failed'));
+  void sweepWorkers();
+  setInterval(sweepWorkers, 15 * 60_000).unref();
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

@@ -39,6 +39,7 @@ import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { emergencyRouter } from './routes/emergency.js';
 import { programsRouter } from './routes/programs.js';
 import { seasonPlansRouter } from './routes/seasonPlans.js';
+import { workersRouter } from './routes/workers.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -439,6 +440,8 @@ export function createApp() {
   // Season Planner: demand → associates, beds, van seats, recruiting
   // targets; scenarios saved and compared (view/manage:org).
   app.use('/season-plans', seasonPlansRouter);
+  // Workers: people, agents and robots with an accountable owner (view/manage:org).
+  app.use('/workers', workersRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

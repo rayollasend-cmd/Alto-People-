@@ -105,6 +105,10 @@ test('issuing from a People profile: "Back to People" lands on that profile, and
   // Back closes the profile; Back again is the kiosk page, not the void.
   await page.goBack();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  // The drawer's history handover finishes after the dialog is gone (the
+  // sibling test waits the same way). Under CI's two workers, going Back
+  // inside that window skipped the kiosk entry twice in five runs.
+  await page.waitForTimeout(800);
   await page.goBack();
   await expect.poll(() => here(page)).toBe('/time-attendance/kiosk?tab=pins');
 });

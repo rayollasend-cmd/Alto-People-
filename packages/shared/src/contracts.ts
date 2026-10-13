@@ -8140,3 +8140,106 @@ export interface WhatsAppOverview {
   last7Days: { sent: number; delivered: number; read: number; failed: number; questions: number; handoffs: number };
   templates: WhatsAppTemplateInfo[];
 }
+
+/* -------------------------------------------------------------------------- *
+ *  Workers (Brief 1D-1) — a worker is not assumed to be a person. Every
+ *  worker has a type, an accountable owner, capabilities and a lifecycle.
+ * -------------------------------------------------------------------------- */
+
+export const WorkerTypeSchema = z.enum(['PERSON', 'AGENT', 'ROBOT']);
+export type WorkerType = z.infer<typeof WorkerTypeSchema>;
+export const WORKER_TYPE_LABELS: Record<WorkerType, string> = { PERSON: 'Person', AGENT: 'AI agent', ROBOT: 'Robot' };
+
+export const WorkerStatusSchema = z.enum(['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED']);
+export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
+export const WORKER_STATUS_LABELS: Record<WorkerStatus, string> = {
+  ONBOARDING: 'Onboarding',
+  ACTIVE: 'Active',
+  SUSPENDED: 'Suspended',
+  OFFBOARDED: 'Offboarded',
+};
+
+/** Certified task types a worker can be trusted with. Grows with the hybrid crews. */
+export const WORKER_CAPABILITIES = [
+  { code: 'stocking', label: 'Stocking and replenishment', types: ['PERSON', 'ROBOT'] },
+  { code: 'floor-care', label: 'Floor care', types: ['PERSON', 'ROBOT'] },
+  { code: 'shelf-scanning', label: 'Shelf scanning', types: ['ROBOT'] },
+  { code: 'food-service', label: 'Food service and bussing', types: ['PERSON', 'ROBOT'] },
+  { code: 'room-delivery', label: 'Room and item delivery', types: ['ROBOT'] },
+  { code: 'unloading', label: 'Truck unloading and tote handling', types: ['PERSON', 'ROBOT'] },
+  { code: 'supervision', label: 'Crew supervision', types: ['PERSON'] },
+  { code: 'driving', label: 'Driving', types: ['PERSON'] },
+  { code: 'messaging', label: 'Send messages to associates', types: ['AGENT'] },
+  { code: 'schedule-read', label: 'Read schedules', types: ['AGENT'] },
+  { code: 'schedule-write', label: 'Propose schedule changes', types: ['AGENT'] },
+  { code: 'report-read', label: 'Read reports', types: ['AGENT'] },
+  { code: 'deploy', label: 'Deploy the platform', types: ['AGENT'] },
+] as const;
+export type WorkerCapabilityCode = (typeof WORKER_CAPABILITIES)[number]['code'];
+const capabilityCodes = WORKER_CAPABILITIES.map((c) => c.code) as [WorkerCapabilityCode, ...WorkerCapabilityCode[]];
+
+export const WorkerInputSchema = z.object({
+  type: z.enum(['AGENT', 'ROBOT']),
+  name: z.string().trim().min(2).max(160),
+  /** Required: no worker without a human accountable for it. */
+  ownerUserId: UuidSchema,
+  status: WorkerStatusSchema.default('ONBOARDING'),
+  capabilities: z.array(z.enum(capabilityCodes)).max(20).default([]),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  /** Where it works from day one; optional. */
+  locationId: UuidSchema.nullable().optional(),
+});
+export type WorkerInput = z.infer<typeof WorkerInputSchema>;
+
+export const WorkerUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  ownerUserId: UuidSchema.optional(),
+  status: WorkerStatusSchema.optional(),
+  capabilities: z.array(z.enum(capabilityCodes)).max(20).optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+export type WorkerUpdate = z.infer<typeof WorkerUpdateSchema>;
+
+export const WorkerAssignmentInputSchema = z.object({
+  locationId: UuidSchema,
+  startedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** Ends the current open assignment at the same site before opening this one. */
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+export type WorkerAssignmentInput = z.infer<typeof WorkerAssignmentInputSchema>;
+
+export interface WorkerSiteRef {
+  locationId: string;
+  siteName: string;
+  clientId: string;
+  clientName: string;
+  startedAt: string;
+  endedAt: string | null;
+  /** 'associate' for a PERSON worker's AssociateAssignment, 'worker' otherwise. */
+  source: 'associate' | 'worker';
+}
+
+export interface WorkerSummary {
+  id: string;
+  type: WorkerType;
+  name: string;
+  associateId: string | null;
+  owner: { id: string; name: string; email: string } | null;
+  status: WorkerStatus;
+  capabilities: string[];
+  notes: string | null;
+  sites: WorkerSiteRef[];
+  /** Shifts on the schedule from now on. */
+  upcomingShifts: number;
+  createdAt: string;
+  offboardedAt: string | null;
+}
+
+export interface WorkersResponse {
+  workers: WorkerSummary[];
+  counts: Record<WorkerType, Record<WorkerStatus, number>>;
+  /** Must be zero. Listed so the page can say so. */
+  withoutOwner: WorkerSummary[];
+  /** Associates that have no PERSON worker yet (the sweep fills them when an owner can be found). */
+  associatesWithoutWorker: number;
+}

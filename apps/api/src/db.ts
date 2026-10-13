@@ -18,8 +18,53 @@ function makeClient(): PrismaClient {
   // without masking a genuine outage: a real outage exhausts all three and
   // still surfaces to Sentry. A console.warn on first retry leaves a
   // breadcrumb so cold-start frequency stays observable in logs.
+  // Brief 1D-1: a shift carries its Worker. Every write that sets
+  // assignedAssociateId — assign, unassign, pickup approvals, swaps, bulk
+  // creates, publishes — also sets workerId to that associate's PERSON
+  // worker, or clears it, without any call site knowing. A write that sets
+  // workerId itself (an agent or a robot) is left alone.
+  const workerIdFor = async (associateId: string | null | undefined): Promise<string | null | undefined> => {
+    if (associateId === undefined) return undefined;
+    if (associateId === null) return null;
+    const w = await base.worker.findUnique({ where: { associateId }, select: { id: true } });
+    return w?.id ?? null;
+  };
+  const syncShiftData = async (data: Record<string, unknown> | undefined): Promise<void> => {
+    if (!data || typeof data !== 'object' || 'workerId' in data) return;
+    if (!('assignedAssociateId' in data)) return;
+    const raw = data.assignedAssociateId;
+    // Prisma accepts `{ set: value }` as well as a bare value.
+    const value = raw && typeof raw === 'object' && 'set' in (raw as object) ? (raw as { set: string | null }).set : (raw as string | null | undefined);
+    const workerId = await workerIdFor(value);
+    if (workerId !== undefined) data.workerId = workerId;
+  };
+
   return base.$extends({
     query: {
+      shift: {
+        async create({ args, query }) {
+          await syncShiftData(args.data as Record<string, unknown>);
+          return query(args);
+        },
+        async createMany({ args, query }) {
+          const rows = Array.isArray(args.data) ? args.data : [args.data];
+          for (const row of rows) await syncShiftData(row as Record<string, unknown>);
+          return query(args);
+        },
+        async update({ args, query }) {
+          await syncShiftData(args.data as Record<string, unknown>);
+          return query(args);
+        },
+        async updateMany({ args, query }) {
+          await syncShiftData(args.data as Record<string, unknown>);
+          return query(args);
+        },
+        async upsert({ args, query }) {
+          await syncShiftData(args.create as Record<string, unknown>);
+          await syncShiftData(args.update as Record<string, unknown>);
+          return query(args);
+        },
+      },
       $allOperations: async ({ args, query, model, operation }) => {
         const delays = [0, 800, 2000];
         let lastErr: unknown;

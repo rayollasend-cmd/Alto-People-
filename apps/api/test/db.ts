@@ -38,6 +38,9 @@ const TABLES = [
   // WhatsAppMessage keeps its row when the associate goes (SET NULL), so
   // nothing cascades into it either.
   'WhatsAppMessage',
+  // Worker.associateId is SET NULL and its owner is RESTRICT: a PERSON
+  // worker outlives its associate row, so list it.
+  'Worker',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',
