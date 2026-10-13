@@ -7625,3 +7625,260 @@ export interface MyEmergencyResponse {
     ride: { status: string; pickupAt: string | null } | null;
   } | null;
 }
+
+/* -------------------------------------------------------------------------- *
+ *  Program Lifecycle (Brief 1C-2) — J-1 and H-2B participants, their
+ *  sponsors, the dates everything turns on, and the alerts those dates fire.
+ * -------------------------------------------------------------------------- */
+
+export const ProgramTypeSchema = z.enum(['J1_SWT', 'H2B', 'DOMESTIC']);
+export type ProgramType = z.infer<typeof ProgramTypeSchema>;
+export const PROGRAM_TYPE_LABELS: Record<ProgramType, string> = {
+  J1_SWT: 'J-1 Summer Work Travel',
+  H2B: 'H-2B',
+  DOMESTIC: 'Domestic',
+};
+
+export const SecondJobStatusSchema = z.enum(['NOT_REQUESTED', 'REQUESTED', 'APPROVED', 'DENIED']);
+export type SecondJobStatus = z.infer<typeof SecondJobStatusSchema>;
+
+const ProgramDateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+export const SponsorInputSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  programType: ProgramTypeSchema.default('J1_SWT'),
+  contactName: z.string().trim().max(120).nullable().optional(),
+  contactEmail: z.string().trim().email().max(254).nullable().optional(),
+  contactPhone: z.string().trim().max(40).nullable().optional(),
+  website: z.string().trim().max(300).nullable().optional(),
+  checkInCadenceDays: z.number().int().min(1).max(365).default(30),
+  checkInRequirements: z.string().trim().max(2000).nullable().optional(),
+  reportingCadence: z.string().trim().max(500).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  isActive: z.boolean().default(true),
+});
+export type SponsorInput = z.infer<typeof SponsorInputSchema>;
+
+export interface Sponsor {
+  id: string;
+  name: string;
+  programType: ProgramType;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  website: string | null;
+  checkInCadenceDays: number;
+  checkInRequirements: string | null;
+  reportingCadence: string | null;
+  notes: string | null;
+  isActive: boolean;
+  /** Programs still running (program end on or after today). */
+  activeParticipants: number;
+}
+
+export const ProgramInputSchema = z
+  .object({
+    associateId: UuidSchema,
+    type: ProgramTypeSchema,
+    sponsorId: UuidSchema.nullable().optional(),
+    ds2019Number: z.string().trim().max(80).nullable().optional(),
+    ds2019IssuedOn: ProgramDateOnly.nullable().optional(),
+    ds2019ExpiresOn: ProgramDateOnly.nullable().optional(),
+    visaExpiresOn: ProgramDateOnly.nullable().optional(),
+    sevisId: z.string().trim().max(80).nullable().optional(),
+    country: z.string().trim().max(80).nullable().optional(),
+    programStart: ProgramDateOnly,
+    programEnd: ProgramDateOnly,
+    gracePeriodDays: z.number().int().min(0).max(120).default(30),
+    secondJobStatus: SecondJobStatusSchema.default('NOT_REQUESTED'),
+    h2bPetitionNumber: z.string().trim().max(60).nullable().optional(),
+    petitionClientId: UuidSchema.nullable().optional(),
+    petitionValidFrom: ProgramDateOnly.nullable().optional(),
+    petitionValidTo: ProgramDateOnly.nullable().optional(),
+    worksiteArea: z.string().trim().max(160).nullable().optional(),
+    lastSponsorCheckInOn: ProgramDateOnly.nullable().optional(),
+    notes: z.string().trim().max(2000).nullable().optional(),
+    /** Ids in the document store this program refers to (DS-2019, visa, petition). */
+    documentIds: z.array(UuidSchema).max(20).default([]),
+  })
+  .refine((v) => v.programEnd >= v.programStart, { message: 'programEnd must be on or after programStart', path: ['programEnd'] })
+  .refine((v) => v.type !== 'H2B' || !!v.petitionClientId, {
+    message: 'An H-2B program names the client the petition was certified for',
+    path: ['petitionClientId'],
+  });
+export type ProgramInput = z.infer<typeof ProgramInputSchema>;
+
+export const ProgramUpdateSchema = z.object({
+  sponsorId: UuidSchema.nullable().optional(),
+  ds2019Number: z.string().trim().max(80).nullable().optional(),
+  ds2019IssuedOn: ProgramDateOnly.nullable().optional(),
+  ds2019ExpiresOn: ProgramDateOnly.nullable().optional(),
+  visaExpiresOn: ProgramDateOnly.nullable().optional(),
+  sevisId: z.string().trim().max(80).nullable().optional(),
+  country: z.string().trim().max(80).nullable().optional(),
+  programStart: ProgramDateOnly.optional(),
+  programEnd: ProgramDateOnly.optional(),
+  gracePeriodDays: z.number().int().min(0).max(120).optional(),
+  secondJobStatus: SecondJobStatusSchema.optional(),
+  h2bPetitionNumber: z.string().trim().max(60).nullable().optional(),
+  petitionClientId: UuidSchema.nullable().optional(),
+  petitionValidFrom: ProgramDateOnly.nullable().optional(),
+  petitionValidTo: ProgramDateOnly.nullable().optional(),
+  worksiteArea: z.string().trim().max(160).nullable().optional(),
+  lastSponsorCheckInOn: ProgramDateOnly.nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  documentIds: z.array(UuidSchema).max(20).optional(),
+  /** Close early (left the program, transferred, no-show). */
+  closedReason: z.string().trim().max(300).nullable().optional(),
+});
+export type ProgramUpdate = z.infer<typeof ProgramUpdateSchema>;
+
+export type ProgramAlertKind =
+  | 'PROGRAM_END'
+  | 'GRACE_END'
+  | 'VISA_EXPIRY'
+  | 'DS2019_EXPIRY'
+  | 'I9_REVERIFY'
+  | 'SPONSOR_CHECKIN'
+  | 'PETITION_END';
+export const PROGRAM_ALERT_LABELS: Record<ProgramAlertKind, string> = {
+  PROGRAM_END: 'Program ends',
+  GRACE_END: 'Grace period ends',
+  VISA_EXPIRY: 'Visa expires',
+  DS2019_EXPIRY: 'DS-2019 expires',
+  I9_REVERIFY: 'I-9 reverification due',
+  SPONSOR_CHECKIN: 'Sponsor check-in due',
+  PETITION_END: 'H-2B petition ends',
+};
+
+export interface ProgramAlert {
+  kind: ProgramAlertKind;
+  label: string;
+  /** YYYY-MM-DD the thing happens. */
+  dueOn: string;
+  /** Negative when already past. */
+  daysUntil: number;
+  /** The lead time, in days, that fired this alert. */
+  lead: number;
+  severity: 'critical' | 'warn';
+  programId: string;
+  associateId: string;
+  associateName: string;
+  siteName: string | null;
+  clientId: string | null;
+  programType: ProgramType;
+}
+
+export interface ProgramSummary {
+  id: string;
+  associateId: string;
+  associateName: string;
+  associateEmail: string;
+  siteId: string | null;
+  siteName: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  type: ProgramType;
+  sponsorId: string | null;
+  sponsorName: string | null;
+  ds2019Number: string | null;
+  ds2019IssuedOn: string | null;
+  ds2019ExpiresOn: string | null;
+  visaExpiresOn: string | null;
+  sevisId: string | null;
+  country: string | null;
+  programStart: string;
+  programEnd: string;
+  gracePeriodDays: number;
+  /** YYYY-MM-DD: programEnd + grace. */
+  graceEndsOn: string;
+  secondJobStatus: SecondJobStatus;
+  h2bPetitionNumber: string | null;
+  petitionClientId: string | null;
+  petitionClientName: string | null;
+  petitionValidFrom: string | null;
+  petitionValidTo: string | null;
+  worksiteArea: string | null;
+  lastSponsorCheckInOn: string | null;
+  nextSponsorCheckInOn: string | null;
+  i9WorkAuthExpiresOn: string | null;
+  notes: string | null;
+  closedAt: string | null;
+  closedReason: string | null;
+  /** Server-computed from today. */
+  daysUntilEnd: number;
+  status: 'UPCOMING' | 'ACTIVE' | 'GRACE' | 'ENDED' | 'CLOSED';
+  documents: Array<{ id: string; kind: string; filename: string; expiresAt: string | null }>;
+  alerts: ProgramAlert[];
+}
+
+export interface ProgramListResponse {
+  programs: ProgramSummary[];
+}
+
+export interface ProgramAlertSettings {
+  programEndDays: number[];
+  visaExpiryDays: number[];
+  i9ReverifyDays: number[];
+  sponsorCheckInDays: number[];
+  petitionEndDays: number[];
+}
+export const ProgramAlertSettingsSchema = z.object({
+  programEndDays: z.array(z.number().int().min(0).max(365)).max(8),
+  visaExpiryDays: z.array(z.number().int().min(0).max(365)).max(8),
+  i9ReverifyDays: z.array(z.number().int().min(0).max(365)).max(8),
+  sponsorCheckInDays: z.array(z.number().int().min(0).max(365)).max(8),
+  petitionEndDays: z.array(z.number().int().min(0).max(365)).max(8),
+});
+
+export interface ProgramAlertsResponse {
+  alerts: ProgramAlert[];
+  settings: ProgramAlertSettings;
+}
+
+/** Counts only, by month, site and channel — safe to hand a client. */
+export interface TransitionCalendarCell {
+  /** YYYY-MM */
+  month: string;
+  siteId: string | null;
+  siteName: string;
+  clientId: string | null;
+  clientName: string;
+  channel: ProgramType;
+  arrivals: number;
+  programEnds: number;
+  departures: number;
+}
+
+export interface TransitionCalendarResponse {
+  from: string;
+  to: string;
+  months: string[];
+  cells: TransitionCalendarCell[];
+  totals: { arrivals: number; programEnds: number; departures: number };
+}
+
+export interface SponsorReportRow {
+  associateId: string;
+  associateName: string;
+  country: string | null;
+  programStart: string;
+  programEnd: string;
+  siteName: string | null;
+  clientName: string | null;
+  /** Hours worked in the window, from verified clock-ins. */
+  hours: number;
+  /** The address on file, or null. */
+  housing: string | null;
+  incidents: number;
+  lastSponsorCheckInOn: string | null;
+  departure: { lastDayWorked: string; reason: string } | null;
+}
+
+export interface SponsorReportResponse {
+  sponsor: Sponsor;
+  from: string;
+  to: string;
+  rows: SponsorReportRow[];
+  totals: { participants: number; hours: number; incidents: number; departures: number };
+}

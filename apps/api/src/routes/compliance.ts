@@ -22,6 +22,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { syncProgramFromJ1 } from '../lib/programs.js';
 import {
   clientNamesById,
   primaryClientsForAssociates,
@@ -670,6 +671,9 @@ complianceRouter.post('/j1/:associateId', MANAGE, async (req, res, next) => {
       update: data,
       include: J1_INCLUDE,
     });
+    // The Program record (Brief 1C-2) is the richer twin; keep it in step
+    // so the alerts and the H-2B rule read one source.
+    await syncProgramFromJ1(prisma, row, req.user!.id);
 
     // Auto-flag the associate as J-1 once we have a profile.
     if (!associate.j1Status) {

@@ -23,6 +23,7 @@ import {
 import { cn } from '@/lib/cn';
 import { VanArrivalsCard } from '@/components/VanArrivals';
 import { ReadyToScheduleCard } from '@/components/ReadyToScheduleCard';
+import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { enterStagger } from '@/lib/motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -773,6 +774,8 @@ export function SupervisorDashboard() {
       <VanArrivalsCard />
       {/* Hires handed to this store with no first shift yet. */}
       <ReadyToScheduleCard />
+      {/* Program dates (J-1 / H-2B) coming due for this floor. */}
+      <ProgramAlertsCard />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- What's waiting on them -------------------------------------- */}

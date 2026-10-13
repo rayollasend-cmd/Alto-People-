@@ -712,6 +712,7 @@ model Client {
   deletedAt            DateTime?    @db.Timestamptz(6)
 
   applications            Application[]
+  petitionPrograms        Program[]                 @relation("PetitionClient")
   users                   User[]
   driverAccess            DriverClientAccess[]
   policies                Policy[]
@@ -1755,6 +1756,7 @@ model Associate {
 
   user                     User?
   j1Profile                J1Profile?
+  programs                 Program[]
   applications             Application[]
   documents                DocumentRecord[]
   signatures               Signature[]               @relation("AssociateSignatures")
@@ -2120,6 +2122,7 @@ model DocumentRecord {
   signatures          Signature[]
   tasks               OnboardingTask[]
   attestationEvidence ManualComplianceAttestation[] @relation("AttestationEvidence")
+  programLinks        ProgramDocument[]
   // 2026-08 — set when this file is evidence for an externally-processed
   // pay period (kind=PAYSTUB). SetNull so deleting the payment record never
   // destroys the audit artifact — the file stays in the vault.
@@ -8587,4 +8590,122 @@ model EmergencyCheckIn {
 
   @@unique([emergencyId, associateId])
   @@index([emergencyId, status])
+}
+
+// ===== Program Lifecycle (Brief 1C-2) ======================================
+// One record per season per associate: the visa program they are here on
+// (J-1 Summer Work Travel, H-2B, or domestic), its sponsor, the dates
+// everything turns on, and — for H-2B — the client the petition was
+// certified for, which is the only client they may be scheduled at.
+
+enum ProgramType {
+  J1_SWT
+  H2B
+  DOMESTIC
+}
+
+enum SecondJobStatus {
+  NOT_REQUESTED
+  REQUESTED
+  APPROVED
+  DENIED
+}
+
+/// A J-1 sponsor organisation or an H-2B agent: who to call, what they
+/// require of us, and how often they want to hear from us.
+model Sponsor {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String      @unique @db.VarChar(160)
+  /// J1_SWT or H2B — what kind of programs this sponsor runs.
+  programType         ProgramType @default(J1_SWT)
+  contactName         String?     @db.VarChar(120)
+  contactEmail        String?     @db.VarChar(254)
+  contactPhone        String?     @db.VarChar(40)
+  website             String?     @db.VarChar(300)
+  /// How often the sponsor expects a check-in on each participant, in days
+  /// (J-1 regulation: at least monthly). Drives the check-in alert.
+  checkInCadenceDays  Int         @default(30)
+  /// What a check-in has to cover, in the sponsor's words.
+  checkInRequirements String?     @db.VarChar(2000)
+  /// What they want reported and when ("monthly placement report by the 5th").
+  reportingCadence    String?     @db.VarChar(500)
+  notes               String?     @db.VarChar(2000)
+  isActive            Boolean     @default(true)
+  createdAt           DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime    @updatedAt @db.Timestamptz(6)
+
+  programs Program[]
+
+  @@index([isActive, name])
+}
+
+model Program {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId          String          @db.Uuid
+  type                 ProgramType
+  sponsorId            String?         @db.Uuid
+  /// J-1: the DS-2019 form number and its validity.
+  ds2019Number         String?         @db.VarChar(80)
+  ds2019IssuedOn       DateTime?       @db.Date
+  ds2019ExpiresOn      DateTime?       @db.Date
+  /// Visa stamp expiry (J-1 or H-2B).
+  visaExpiresOn        DateTime?       @db.Date
+  sevisId              String?         @db.VarChar(80)
+  country              String?         @db.VarChar(80)
+  programStart         DateTime        @db.Date
+  programEnd           DateTime        @db.Date
+  /// Days after programEnd the participant may legally remain (J-1: 30).
+  gracePeriodDays      Int             @default(30)
+  secondJobStatus      SecondJobStatus @default(NOT_REQUESTED)
+  /// H-2B: the petition and the client it was certified for.
+  h2bPetitionNumber    String?         @db.VarChar(60)
+  petitionClientId     String?         @db.Uuid
+  petitionValidFrom    DateTime?       @db.Date
+  petitionValidTo      DateTime?       @db.Date
+  /// The area of intended employment on the certification ("Destin–Fort Walton Beach, FL").
+  worksiteArea         String?         @db.VarChar(160)
+  /// The last sponsor check-in we completed; the next one is due cadence days later.
+  lastSponsorCheckInOn DateTime?       @db.Date
+  notes                String?         @db.VarChar(2000)
+  /// Set when the participant left early or the program was closed by hand.
+  closedAt             DateTime?       @db.Timestamptz(6)
+  closedReason         String?         @db.VarChar(300)
+  createdById          String?         @db.Uuid
+  createdAt            DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate      Associate         @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  sponsor        Sponsor?          @relation(fields: [sponsorId], references: [id], onDelete: SetNull)
+  petitionClient Client?           @relation("PetitionClient", fields: [petitionClientId], references: [id], onDelete: SetNull)
+  documents      ProgramDocument[]
+
+  @@index([associateId, programEnd(sort: Desc)])
+  @@index([type, programEnd])
+  @@index([sponsorId])
+  @@index([petitionClientId])
+}
+
+/// Which files in the encrypted document store belong to this program
+/// (DS-2019, visa, petition approval). The file stays where it is.
+model ProgramDocument {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId  String @db.Uuid
+  documentId String @db.Uuid
+
+  program  Program        @relation(fields: [programId], references: [id], onDelete: Cascade)
+  document DocumentRecord @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, documentId])
+}
+
+/// Lead times, in days, for the program alerts. One row.
+model ProgramAlertSetting {
+  id                 String   @id @default("singleton") @db.VarChar(16)
+  programEndDays     Int[]    @default([60, 30, 14, 7])
+  visaExpiryDays     Int[]    @default([60, 30])
+  i9ReverifyDays     Int[]    @default([90, 30, 7])
+  sponsorCheckInDays Int[]    @default([7, 0])
+  petitionEndDays    Int[]    @default([60, 30])
+  updatedById        String?  @db.Uuid
+  updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 }

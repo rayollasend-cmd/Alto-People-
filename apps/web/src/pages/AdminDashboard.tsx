@@ -53,6 +53,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { ClockStrip } from '@/components/ClockStrip';
 
 /**
@@ -243,6 +244,8 @@ export function AdminDashboard() {
 
       <RoleDecisionQueue />
       <MyPlanCard />
+      {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
+      <ProgramAlertsCard />
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 

@@ -45,6 +45,7 @@ import { startUsageFlusher } from './lib/usageTracker.js';
 import { startVitalsFlusher } from './lib/webVitals.js';
 import { recordApiBoot } from './lib/reliability.js';
 import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
+import { startProgramDigestCron } from './lib/programDigest.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
@@ -124,6 +125,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // Best-effort: a boot must never fail because a bookkeeping row did.
   recordApiBoot(BUILD_VERSION).catch((err) => logger.warn({ err }, 'api boot row not written'));
   startReliabilityDigestCron();
+  startProgramDigestCron();
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

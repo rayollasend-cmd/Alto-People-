@@ -29,6 +29,10 @@ const TABLES = [
   // cascade from User or Location clears it; its sites and check-ins do
   // cascade from it.
   'Emergency',
+  // Program cascades from Associate; Sponsor and the alert-settings
+  // singleton have no FK into the graph.
+  'Sponsor',
+  'ProgramAlertSetting',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

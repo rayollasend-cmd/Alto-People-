@@ -37,6 +37,7 @@ import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
 import { emergencyRouter } from './routes/emergency.js';
+import { programsRouter } from './routes/programs.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -426,6 +427,9 @@ export function createApp() {
   // Emergency Mode: the switch and the board are capability-gated inside;
   // /me and /check-in are for any signed-in associate.
   app.use('/emergency', emergencyRouter);
+  // Program Lifecycle: J-1 / H-2B records, sponsors, alerts, the
+  // transition calendar and sponsor reports (view/manage:compliance).
+  app.use('/programs', programsRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

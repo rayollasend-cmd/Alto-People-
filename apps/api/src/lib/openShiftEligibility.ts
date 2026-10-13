@@ -1,7 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
+import { assertClientAllowed, clientRestrictionFor } from './programRules.js';
 
 /**
  * Which open shifts an associate may pick up — ONE rule for every surface:
@@ -61,7 +62,10 @@ export async function eligibleOpenShifts(
   opts: { before?: Date; shiftIds?: string[]; db?: Db } = {},
 ): Promise<Array<{ id: string; startsAt: Date; endsAt: Date }>> {
   const db = opts.db ?? prisma;
-  const clientIds = await placedClientIds(associateId, db);
+  const placed = await placedClientIds(associateId, db);
+  // An H-2B petition narrows "placed" to the one client it was certified for.
+  const restriction = await clientRestrictionFor(db as PrismaClient, associateId);
+  const clientIds = restriction ? placed.filter((c) => c === restriction.clientId) : placed;
   if (clientIds.length === 0) return [];
   const now = new Date();
   const [rows, quals] = await Promise.all([
@@ -148,6 +152,10 @@ export async function assertCanClaimOpenShift(associateId: string, shiftId: stri
   if (!shift) throw new HttpError(404, 'shift_not_available', 'This shift is no longer open');
   if (!(await placedClientIds(associateId, db)).includes(shift.clientId)) {
     throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
+  }
+  const claimant = await db.associate.findUnique({ where: { id: associateId }, select: { id: true, firstName: true, lastName: true } });
+  if (claimant) {
+    await assertClientAllowed(db as PrismaClient, claimant, shift.clientId, { actorUserId: null, via: 'claim', shiftId: shift.id });
   }
   const quals = await liveQualIds(associateId, db);
   const missing = shift.qualReqs.filter((r) => !quals.has(r.qualificationId));

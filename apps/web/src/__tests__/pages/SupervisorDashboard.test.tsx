@@ -18,6 +18,7 @@ vi.mock('@/lib/schedulingApi', () => ({
 vi.mock('@/lib/clientsApi', () => ({ listClientLocations: vi.fn() }));
 vi.mock('@/components/RoleDecisionQueue', () => ({ RoleDecisionQueue: () => <div>decision queue</div> }));
 vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => <div>my plan</div> }));
+vi.mock('@/lib/programsApi', () => ({ listMyProgramAlerts: vi.fn().mockResolvedValue({ alerts: [], settings: {} }) }));
 vi.mock('@/pages/portal/portalCharts', async (orig) => ({
   ...(await orig<typeof import('@/pages/portal/portalCharts')>()),
   CoverageCurve: () => <div>coverage curve</div>,

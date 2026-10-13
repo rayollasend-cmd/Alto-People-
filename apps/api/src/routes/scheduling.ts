@@ -114,6 +114,7 @@ import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMet
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
+import { assertClientAllowed, clientRestrictionsFor } from '../lib/programRules.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 
@@ -2896,13 +2897,40 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     // transaction (below) so it and the createMany are atomic — otherwise a
     // concurrent assign between a pre-check and the insert could slip a
     // double-booking through.
-    const candidateIds = associateIds.filter((id) => nameById.has(id));
+    // The H-2B rule: anyone whose petition names another client is skipped
+    // with a reason, like an inactive associate, and the attempt is logged.
+    const restrictions = await clientRestrictionsFor(
+      prisma,
+      associateIds.filter((id) => nameById.has(id)),
+    );
+    const restrictedIds = new Set(
+      [...restrictions.entries()].filter(([, r]) => r.clientId !== input.clientId).map(([id]) => id),
+    );
+    for (const id of restrictedIds) {
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          clientId: input.clientId,
+          action: 'program.cross_client_blocked',
+          entityType: 'Program',
+          entityId: restrictions.get(id)!.programId,
+          metadata: { associateId: id, attemptedClientId: input.clientId, petitionClientId: restrictions.get(id)!.clientId, via: 'bulk_create' },
+        },
+        'bulkCreateShifts',
+      );
+    }
+    const candidateIds = associateIds.filter((id) => nameById.has(id) && !restrictedIds.has(id));
     const inactiveIds = new Set(inactive.map((a) => a.id));
     const notFoundSkips = [
       ...inactive.map((a) => ({
         associateId: a.id,
         associateName: `${a.firstName} ${a.lastName}`,
         reason: 'inactive',
+      })),
+      ...[...restrictedIds].map((id) => ({
+        associateId: id,
+        associateName: nameById.get(id) ?? 'Unknown',
+        reason: 'program_client',
       })),
       ...associateIds
         .filter((id) => !nameById.has(id) && !inactiveIds.has(id))
@@ -3454,6 +3482,8 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     assertEmployed(associate);
+    // An H-2B worker may only be scheduled at the client on their petition.
+    await assertClientAllowed(prisma, associate, shift.clientId, { actorUserId: req.user!.id, via: 'assign', shiftId: shift.id });
 
     // Conflict + unavailability checks + write in one transaction so two
     // managers can't assign the same associate to overlapping shifts at
@@ -4394,6 +4424,13 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       select: { firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
     });
     if (claimant) assertEmployed(claimant);
+    if (claimant) {
+      await assertClientAllowed(prisma, { id: claim.associateId, ...claimant }, claim.shift.clientId, {
+        actorUserId: user.id,
+        via: 'claim_approve',
+        shiftId: claim.shiftId,
+      });
+    }
 
     // Atomic: CAS the claim, guarded-claim the shift (it must STILL be
     // open+unassigned — mirrors the auto-scheduler's TOCTOU guard), verify
@@ -5384,11 +5421,26 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       );
     }
     // Neither side of a swap may be someone who no longer works here.
-    for (const who of await prisma.associate.findMany({
+    const swapParties = await prisma.associate.findMany({
       where: { id: { in: [swap.requesterAssociateId, swap.counterpartyAssociateId] } },
-      select: { firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
-    })) {
+      select: { id: true, firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
+    });
+    for (const who of swapParties) {
       assertEmployed(who);
+    }
+    // The H-2B rule on each receiving side: the counterparty takes the
+    // requester's shift; in a trade the requester takes the exchange shift.
+    const counterparty = swapParties.find((a) => a.id === swap.counterpartyAssociateId);
+    if (counterparty) {
+      await assertClientAllowed(prisma, counterparty, swap.shift.clientId, { actorUserId: req.user!.id, via: 'swap_approve', shiftId: swap.shiftId });
+    }
+    const requester = swapParties.find((a) => a.id === swap.requesterAssociateId);
+    if (requester && swap.counterpartShift) {
+      await assertClientAllowed(prisma, requester, swap.counterpartShift.clientId, {
+        actorUserId: req.user!.id,
+        via: 'swap_approve',
+        shiftId: swap.counterpartShiftId,
+      });
     }
 
     // Declared unavailability blocks the receiving side of each leg — PTO

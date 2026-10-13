@@ -6,6 +6,7 @@ export type ModuleKey =
   | 'product-analytics'
   | 'reliability'
   | 'emergency'
+  | 'programs'
   | 'portal'
   | 'region'
   | 'regions'
@@ -1086,6 +1087,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Compliance',
     description:
       'OSHA, I-9, J-1, multi-state labor law, and certification tracking.',
+    requires: 'view:compliance',
+    group: 'compliance',
+  },
+  {
+    key: 'programs',
+    path: '/programs',
+    label: 'Programs',
+    description:
+      'J-1 and H-2B lifecycle — sponsors, DS-2019 and petition dates, expiry and check-in alerts, the H-2B client rule, and the season transition calendar.',
     requires: 'view:compliance',
     group: 'compliance',
   },

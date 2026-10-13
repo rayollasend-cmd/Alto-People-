@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { ProgramSection } from './ProgramSection';
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -1418,6 +1419,12 @@ function ProfileTab({
           associateName={`${a.firstName} ${a.lastName}`}
         />
       )}
+
+      {/* The visa program they are here on and the dates about to fire
+          (Brief 1C-2). Quiet for logins without compliance access. */}
+      <Section title="Program">
+        <ProgramSection associateId={a.id} />
+      </Section>
 
       <Section title="Org assignment">
         <InfoRow
