@@ -612,3 +612,8 @@ export const SITE_TYPE_LABEL: Record<SiteType, string> = {
 
 export const listSites = () => apiFetch<{ sites: SiteRow[] }>('/admin/sites');
 export const createSite = (body: SiteCreateInput) => apiFetch<{ site: SiteRow }>('/admin/sites', { method: 'POST', body });
+
+/** PATCH /admin/sites/:id — only the fields given change; the body is strict. */
+export type SiteUpdateInput = Partial<SiteCreateInput> & { isActive?: boolean };
+export const updateSite = (id: string, body: SiteUpdateInput) =>
+  apiFetch<{ site: Omit<SiteRow, 'clientName' | 'orgUnitName' | 'orgUnitType'> }>(`/admin/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body });

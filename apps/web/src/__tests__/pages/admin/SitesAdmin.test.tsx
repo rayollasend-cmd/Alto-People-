@@ -7,11 +7,12 @@ vi.mock('@/lib/orgApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/orgApi')>()),
   listSites: vi.fn(),
   createSite: vi.fn(),
+  updateSite: vi.fn(),
   listOrgUnits: vi.fn(),
 }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn() }));
 
-import { createSite, listOrgUnits, listSites, type SiteRow } from '@/lib/orgApi';
+import { createSite, listOrgUnits, listSites, updateSite, type SiteRow } from '@/lib/orgApi';
 import { SitesAdmin } from '@/pages/admin/SitesAdmin';
 
 const sites: SiteRow[] = [
@@ -65,5 +66,29 @@ describe('Sites', () => {
       state: 'CO',
       zip: null,
     });
+  });
+
+  it('edits a site from its row: the form is prefilled and only what changed is sent', async () => {
+    vi.mocked(updateSite).mockResolvedValue({ site: { ...sites[0]!, name: 'Harbor House East', type: 'OFFICE', isActive: false } });
+    const user = userEvent.setup();
+    renderAsAdmin(<SitesAdmin />, '/admin/sites');
+    await screen.findByText('Harbor House');
+    await user.click(screen.getByRole('button', { name: 'Edit Harbor House' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Harbor House');
+    expect(within(dialog).getByLabelText('Type')).toHaveValue('PROPERTY');
+    expect(within(dialog).getByLabelText('Time zone')).toHaveValue('America/New_York');
+    expect(within(dialog).getByLabelText('State')).toHaveValue('FL');
+    await waitFor(() => expect(within(dialog).getByLabelText('Unit')).toHaveValue('r1'));
+    // Nothing changed yet: nothing to save.
+    expect(within(dialog).getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    await user.clear(within(dialog).getByLabelText('Name'));
+    await user.type(within(dialog).getByLabelText('Name'), 'Harbor House East');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'OFFICE');
+    await user.click(within(dialog).getByLabelText('Status'));
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateSite).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(updateSite).mock.calls[0]).toEqual(['s1', { name: 'Harbor House East', type: 'OFFICE', isActive: false }]);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
