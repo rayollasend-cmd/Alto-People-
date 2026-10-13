@@ -83,7 +83,7 @@ import {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
-import { boundedClientOf, hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability, isClientBoundedRole } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -176,46 +176,6 @@ function useShiftPositionNames(clientId: string | null | undefined, orgWide = fa
     if (positions.isError) return [];
     return positions.data ? positions.data.shiftPositions.map((p) => p.name) : null;
   }, [clientId, orgWide, positions.data, positions.isError]);
-}
-
-/**
- * Brief 2-1b: the create dialog's multi-copy path for a shift with no
- * client. POST /scheduling/shifts/bulk still requires a client, so each
- * copy goes through the single create (which takes a site alone) and is
- * assigned once it lands; a copy whose assignment is refused (time off, a
- * clash, the rest gap) is deleted again and reported as skipped, the same
- * outcome the bulk path gives. Open slots are plain creates.
- */
-async function createAtSiteCopyByCopy(
-  shared: Omit<Parameters<typeof createShift>[0], 'startsAt' | 'endsAt'>,
-  occurrences: Array<{ startsAt: string; endsAt: string }>,
-  associateIds: string[],
-  openCount: number,
-  nameOf: (id: string) => string,
-): Promise<{ created: number; skipped: Array<{ associateName: string; startsAt: string; reason: string }> }> {
-  let created = 0;
-  const skipped: Array<{ associateName: string; startsAt: string; reason: string }> = [];
-  for (const occ of occurrences) {
-    for (const associateId of associateIds) {
-      const shift = await createShift({ ...shared, ...occ });
-      try {
-        await assignShift(shift.id, { associateId });
-        created += 1;
-      } catch (err) {
-        await deleteShift(shift.id).catch(() => undefined);
-        skipped.push({
-          associateName: nameOf(associateId),
-          startsAt: occ.startsAt,
-          reason: err instanceof ApiError ? err.message : 'Could not assign.',
-        });
-      }
-    }
-    for (let i = 0; i < openCount; i++) {
-      await createShift({ ...shared, ...occ });
-      created += 1;
-    }
-  }
-  return { created, skipped };
 }
 
 /**
@@ -1376,21 +1336,28 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // side, so reordering is safe — and therefore available — under site/crew
   // filters and the with-shifts-only view. Only "which client's roster?"
   // still needs answering.
-  const canReorderRows = canManage && !!clientFilter;
+  // Brief 2-1b: a tenant without clients keeps ONE tenant-wide order, made
+  // on a site's roster. Only an org-wide account writes it (the API 403s a
+  // client- or site-bound role, which would otherwise reorder everyone).
+  const tenantWideOrderer = !clientsOn && !!user && !isClientBoundedRole(user.role);
+  const canReorderRows = canManage && (!!clientFilter || (tenantWideOrderer && !!locationFilter));
   // When reordering is disarmed, say WHY above the grid instead of silently
   // hiding the arrows — "the feature doesn't exist" and "the feature is off"
   // look identical otherwise.
   const reorderHint =
     canManage && !clientFilter && clientsOn
       ? `To reorder the roster rows (drag the ⠿ grip), pick a single ${term('label.client').toLowerCase()} first.`
-      : null;
+      : canManage && tenantWideOrderer && !locationFilter
+        ? `To reorder the roster rows (drag the ⠿ grip), pick a single ${term('site').toLowerCase()} first.`
+        : null;
   const reorderBusy = useRef(false);
   // Anchor move: reposition `associateId` directly above/below its VISIBLE
   // neighbor (the grid tells us which one). Optimistic locally; the server
   // applies the same move to the full saved order.
   const moveAssociateRow = useCallback(
     (associateId: string, neighborId: string, dir: -1 | 1) => {
-      if (!clientFilter || reorderBusy.current) return;
+      const tenantWide = !clientFilter && tenantWideOrderer && !!locationFilter;
+      if ((!clientFilter && !tenantWide) || reorderBusy.current) return;
       patchRoster((prev) => {
         const from = prev.findIndex((a) => a.id === associateId);
         const anchor = prev.findIndex((a) => a.id === neighborId);
@@ -1401,12 +1368,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         // Optimistic: the row moves NOW; the save follows. On failure,
         // reload restores the server's truth.
         reorderBusy.current = true;
-        moveRosterRow(
-          clientFilter,
-          associateId,
-          neighborId,
-          dir === -1 ? 'before' : 'after',
-        )
+        (tenantWide
+          ? moveRosterRow(null, associateId, neighborId, dir === -1 ? 'before' : 'after', locationFilter)
+          : moveRosterRow(
+              clientFilter,
+              associateId,
+              neighborId,
+              dir === -1 ? 'before' : 'after',
+            ))
           .catch(() => {
             toast.error('Could not save the new order.');
             loadAssociates();
@@ -1417,7 +1386,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         return next;
       });
     },
-    [clientFilter, loadAssociates, patchRoster],
+    [clientFilter, locationFilter, tenantWideOrderer, loadAssociates, patchRoster],
   );
 
   /* ----- Coverage targets (expected floor headcount) --------------------- */
@@ -3814,6 +3783,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           onOpenChange={setShowTemplates}
           clients={clients}
           activeClientId={clientFilter || boundedClient?.id || null}
+          activeLocationId={locationFilter || null}
           weekStart={weekStart}
           onApplied={() => {
             toast.success('Template applied as a draft shift.');
@@ -5501,39 +5471,7 @@ export function CreateShiftDialog({
     };
     setSubmitting(true);
     try {
-      if (!clientsOn && (assignList.length > 0 || open > 0 || extras.length > 0)) {
-        // The bulk endpoint still names a client; a site-only shift goes
-        // copy by copy through the single create, each assigned after it
-        // lands. A copy whose assignment is refused is taken back out, so
-        // the outcome matches the bulk path: no shift for that person.
-        const effOpen =
-          assignList.length === 0 && open === 0 && extras.length > 0 ? 1 : open;
-        const res = await createAtSiteCopyByCopy(
-          shared,
-          [{ startsAt: startISO, endsAt: endISO }, ...extras],
-          assignList,
-          effOpen,
-          (id) => {
-            const a = scopedAssociates.find((x) => x.id === id);
-            return a ? `${a.firstName} ${a.lastName}`.trim() : id;
-          },
-        );
-        const made = `${res.created} shift${res.created === 1 ? '' : 's'}`;
-        const across = extras.length > 0 ? ` across ${extras.length + 1} days` : '';
-        if (res.skipped.length > 0) {
-          const skipLines = [
-            ...res.skipped.slice(0, 5).map(
-              (k) => `${k.associateName} ${fmtWeekdayTz(k.startsAt, siteTz)} — ${k.reason}`,
-            ),
-            ...(res.skipped.length > 5 ? [`+ ${res.skipped.length - 5} more`] : []),
-          ];
-          toast.warning(`Created ${made}${across} · ${res.skipped.length} skipped`, {
-            description: skipLines.join(' · '),
-          });
-        } else {
-          toast.success(`Created ${made}${across}.`);
-        }
-      } else if (assignList.length > 0 || open > 0 || extras.length > 0) {
+      if (assignList.length > 0 || open > 0 || extras.length > 0) {
         // Create one copy per selected employee (+ any open slots) per
         // selected day in a single call; employees already scheduled at a
         // given time are skipped for that day only. Extra days with no
@@ -5542,9 +5480,11 @@ export function CreateShiftDialog({
           assignList.length === 0 && open === 0 && extras.length > 0
             ? 1
             : open;
+        // Brief 2-1b: with no clients the bulk route takes the site alone
+        // (shared carries locationId), one atomic call like the client path.
         const res = await bulkCreateShifts({
           ...shared,
-          clientId,
+          ...(clientsOn ? { clientId } : {}),
           associateIds: assignList,
           openCount: effOpen,
           ...(extras.length > 0 ? { extraOccurrences: extras } : {}),
@@ -5841,7 +5781,7 @@ export function CreateShiftDialog({
             </div>
             {rosterError ? (
               <div className="flex items-center gap-2 text-xs2 text-alert">
-                Couldn&apos;t load this client&apos;s employees.
+                {clientsOn ? <>Couldn&apos;t load this client&apos;s employees.</> : <>Couldn&apos;t load the employees at this location.</>}
                 <Button
                   size="xs"
                   variant="outline"
@@ -5852,7 +5792,7 @@ export function CreateShiftDialog({
               </div>
             ) : scopedAssociates.length === 0 ? (
               <div className="text-xs2 text-silver/70">
-                No schedulable employees for this client. The shift will be created unassigned.
+                {clientsOn ? 'No schedulable employees for this client.' : 'No schedulable employees at this location.'} The shift will be created unassigned.
               </div>
             ) : (
               <>
@@ -6045,6 +5985,7 @@ function TemplatesDialog({
   onOpenChange,
   clients,
   activeClientId,
+  activeLocationId,
   weekStart,
   onApplied,
 }: {
@@ -6053,6 +5994,8 @@ function TemplatesDialog({
   clients: ClientSummary[];
   /** The page's client filter — global templates apply to THIS client. */
   activeClientId: string | null;
+  /** Brief 2-1b: the page's site filter — with no clients, a global template lands HERE. */
+  activeLocationId: string | null;
   weekStart: Date;
   onApplied: () => void;
 }) {
@@ -6081,25 +6024,31 @@ function TemplatesDialog({
 
   const onApply = async (id: string, requiresClient: boolean) => {
     let clientId: string | undefined;
-    if (requiresClient) {
+    let locationId: string | undefined;
+    if (requiresClient && !moduleOn('clientPortal')) {
+      // Brief 2-1b: no clients — a global template lands on the site the
+      // page is filtered to (the API takes locationId alone).
+      if (!activeLocationId) {
+        toast.error('Pick a location in the filter first, then apply the template.');
+        return;
+      }
+      locationId = activeLocationId;
+    } else if (requiresClient) {
       // A global template needs a target client: use the one the page is
       // filtered to — silently defaulting to the first client in the org
       // created shifts against the wrong company.
       if (!activeClientId) {
-        toast.error(
-          moduleOn('clientPortal')
-            ? 'Pick a client in the schedule filter first, then apply the global template.'
-            : 'This template has no target on this schedule.',
-        );
+        toast.error('Pick a client in the schedule filter first, then apply the global template.');
         return;
       }
       clientId = activeClientId;
     }
+    const target = locationId ? { locationId } : { clientId };
     setPendingId(id);
     try {
       await applyShiftTemplate(id, {
         weekStart: weekStart.toISOString(),
-        clientId,
+        ...target,
       });
       onApplied();
     } catch (err) {
@@ -6117,7 +6066,7 @@ function TemplatesDialog({
           try {
             await applyShiftTemplate(id, {
               weekStart: weekStart.toISOString(),
-              clientId,
+              ...target,
               allowDuplicate: true,
             });
             onApplied();

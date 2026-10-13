@@ -460,16 +460,23 @@ export function saveRosterOrder(
  * saved roster order. Safe under any filter — hidden people keep their
  * positions, which replace-all cannot guarantee from a filtered view.
  */
+/**
+ * Move one roster row above/below another. With a client, the move is made
+ * on that client's saved order. Brief 2-1b: with no client (a direct
+ * employer), it is made on the tenant-wide order, and `locationId` names
+ * the site whose roster the move was made on.
+ */
 export function moveRosterRow(
-  clientId: string,
+  clientId: string | null,
   moveId: string,
   anchorId: string,
   place: 'before' | 'after',
+  locationId?: string,
 ): Promise<{ ok: true }> {
   return apiFetch('/scheduling/roster-order', {
     method: 'POST',
     body: {
-      clientId,
+      ...(clientId ? { clientId } : locationId ? { locationId } : {}),
       moveId,
       ...(place === 'before' ? { beforeId: anchorId } : { afterId: anchorId }),
     },

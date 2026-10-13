@@ -39,7 +39,7 @@ vi.mock('@/lib/schedulingApi', async (orig) => ({
   listSchedulingAssociates: vi.fn(async () => ({ associates: [{ id: 'a1', firstName: 'Tess', lastName: 'Member', email: 'tess@example.com' }] })),
 }));
 
-import { createShift, listSchedulingAssociates } from '@/lib/schedulingApi';
+import { bulkCreateShifts, createShift, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { CreateShiftDialog } from '@/pages/scheduling/AdminSchedulingView';
 
@@ -137,5 +137,27 @@ describe('<CreateShiftDialog> for a tenant without clients', () => {
 
     await waitFor(() => expect(createShift).toHaveBeenCalledTimes(1));
     expect(vi.mocked(createShift).mock.calls[0]![0]).toMatchObject({ clientId: CLIENT, locationId: SITE });
+  });
+});
+
+describe('<CreateShiftDialog> assigning people for a tenant without clients', () => {
+  it('creates the assigned copies in one bulk call that names only the site', async () => {
+    const user = userEvent.setup();
+    const { onCreated } = renderDialog(defaultTenantProfile('DIRECT_EMPLOYER'));
+
+    const location = await screen.findByLabelText(/location/i);
+    await waitFor(() => expect((location as HTMLSelectElement).value).toBe(SITE));
+    await user.click(await screen.findByRole('checkbox', { name: /tess member/i }));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Housekeeper' })).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/position/i), 'Housekeeper');
+    await user.click(screen.getByRole('button', { name: /save as draft/i }));
+
+    await waitFor(() => expect(bulkCreateShifts).toHaveBeenCalledTimes(1));
+    const body = vi.mocked(bulkCreateShifts).mock.calls[0]![0];
+    expect(body).toMatchObject({ locationId: SITE, position: 'Housekeeper', associateIds: ['a1'], status: 'DRAFT' });
+    expect(body).not.toHaveProperty('clientId');
+    // One atomic call: no copy-by-copy single creates.
+    expect(createShift).not.toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalled();
   });
 });
