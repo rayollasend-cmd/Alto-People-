@@ -79,13 +79,43 @@ import {
   atClient,
   benchFor,
   effectiveClientIdFilter,
+  placedAtSite,
   scopeClients,
   scopeShifts,
   scopeTimeEntries,
 } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { moduleOn } from '../lib/tenantProfile.js';
+import type { SessionUser } from '../types/express.js';
 
 // Impossible id used to fail a mis-provisioned client-bounded caller CLOSED.
 const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Brief 2-1b: the site a client-less shift lands on (a direct employer).
+ * The same rules as POST /scheduling/shifts, in one place for the bulk and
+ * template paths: no site → site_required; a site outside the caller's
+ * tenant, deleted or inactive → location_not_found; a client's site needs
+ * its client named → client_required; a site-only account uses its own
+ * site and nowhere else → 403. Fails closed at every step.
+ */
+async function clientlessSite(
+  user: SessionUser,
+  bounded: string | null | undefined,
+  locationId: string | null | undefined,
+): Promise<{ id: string; name: string; state: string | null; timezone: string }> {
+  if (!locationId) throw new HttpError(400, 'site_required', 'Name the site for this shift.');
+  const site = await prisma.site.findFirst({
+    where: { id: locationId, tenantId: user.tenantId ?? tenantIdForWrite(), deletedAt: null, isActive: true },
+    select: { id: true, name: true, clientId: true, state: true, timezone: true },
+  });
+  if (!site) throw new HttpError(404, 'location_not_found', 'Site not found.');
+  if (site.clientId) throw new HttpError(400, 'client_required', 'This site belongs to a client; name the client.');
+  if (bounded === null && user.locationId && user.locationId !== site.id) {
+    throw new HttpError(403, 'forbidden', 'You can only manage shifts at your own site.');
+  }
+  return { id: site.id, name: site.name, state: site.state, timezone: site.timezone };
+}
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { z } from 'zod';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
@@ -2521,9 +2551,11 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
     // associates first (by position), everyone else keeps the alphabetical
     // tail — new hires join at the bottom until placed. The ARRAY ORDER is
     // the contract; the grid renders rows in response order.
-    if (clientId) {
+    // Brief 2-1b: a direct employer has no client, so its order is the
+    // tenant-wide one (rows with no client), read on the by-site view.
+    if (clientId || locationId) {
       const order = await prisma.schedulingRosterOrder.findMany({
-        where: { clientId },
+        where: clientId ? { clientId } : { clientId: null, tenantId: req.user!.tenantId ?? tenantIdForWrite() },
         select: { associateId: true, position: true },
       });
       if (order.length > 0) {
@@ -2564,7 +2596,10 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
   try {
     const parsed = z
       .object({
-        clientId: z.string().uuid(),
+        /** Brief 2-1b: omitted for a direct employer's tenant-wide order. */
+        clientId: z.string().uuid().optional(),
+        /** The site whose roster a move is made on, when there is no client. */
+        locationId: z.string().uuid().optional(),
         orderedIds: z.array(z.string().uuid()).min(1).max(500).optional(),
         moveId: z.string().uuid().optional(),
         beforeId: z.string().uuid().optional(),
@@ -2581,11 +2616,28 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const clamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
-    const clientId = clamped === null ? NO_MATCH_ID : (clamped ?? parsed.data.clientId);
-    if (clientId !== parsed.data.clientId) {
-      throw new HttpError(403, 'forbidden', 'You can only reorder your own client\'s roster.');
+    // Brief 2-1b: no client named means the tenant-wide order, which only a
+    // tenant without the client portal has, and only an unbounded account
+    // writes (a client- or site-bound account would reorder everyone).
+    const tenantWide = !parsed.data.clientId;
+    const tenantId = req.user!.tenantId ?? tenantIdForWrite();
+    let clientId: string | null;
+    if (tenantWide) {
+      if (effectiveClientIdFilter(req.user!, undefined) !== undefined) {
+        throw new HttpError(403, 'forbidden', 'You can only reorder your own client\'s roster.');
+      }
+      if (await moduleOn('clientPortal', tenantId)) {
+        throw new HttpError(400, 'client_required', 'Name the client whose roster this is.');
+      }
+      clientId = null;
+    } else {
+      const clamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+      clientId = clamped === null ? NO_MATCH_ID : (clamped ?? parsed.data.clientId!);
+      if (clientId !== parsed.data.clientId) {
+        throw new HttpError(403, 'forbidden', 'You can only reorder your own client\'s roster.');
+      }
     }
+    const orderWhere: Prisma.SchedulingRosterOrderWhereInput = clientId ? { clientId } : { clientId: null, tenantId };
 
     let unique: string[];
     if (parsed.data.orderedIds) {
@@ -2599,19 +2651,38 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
       // Rebuild the client's FULL current order: the same composition the
       // roster endpoint renders — positioned people first (position asc),
       // everyone else in the alphabetical tail.
-      const roster = await prisma.associate.findMany({
-        where: {
-          deletedAt: null,
-          AND: [SCHEDULABLE_USER_FILTER, atClient(clientId, { approvedOnly: true })],
-        },
-        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-        select: { id: true },
-        take: 1000,
-      });
+      // Tenant-wide (no client): everyone already positioned, plus the
+      // named site's roster for the alphabetical tail; people at other
+      // sites keep their places.
+      const roster = clientId
+        ? await prisma.associate.findMany({
+            where: {
+              deletedAt: null,
+              AND: [SCHEDULABLE_USER_FILTER, atClient(clientId, { approvedOnly: true })],
+            },
+            orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+            select: { id: true },
+            take: 1000,
+          })
+        : parsed.data.locationId
+          ? await prisma.associate.findMany({
+              where: {
+                deletedAt: null,
+                AND: [SCHEDULABLE_USER_FILTER, placedAtSite(parsed.data.locationId, { approvedOnly: true })],
+              },
+              orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+              select: { id: true },
+              take: 1000,
+            })
+          : [];
       const order = await prisma.schedulingRosterOrder.findMany({
-        where: { clientId },
+        where: orderWhere,
         select: { associateId: true, position: true },
       });
+      if (!clientId) {
+        const onRoster = new Set(roster.map((r) => r.id));
+        for (const o of order) if (!onRoster.has(o.associateId)) roster.push({ id: o.associateId });
+      }
       const pos = new Map(order.map((o) => [o.associateId, o.position]));
       const full = [...roster].sort((a, b) => {
         const pa = pos.get(a.id);
@@ -2632,9 +2703,9 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
     }
 
     await prisma.$transaction([
-      prisma.schedulingRosterOrder.deleteMany({ where: { clientId } }),
+      prisma.schedulingRosterOrder.deleteMany({ where: orderWhere }),
       prisma.schedulingRosterOrder.createMany({
-        data: unique.map((associateId, i) => ({ clientId, associateId, position: i })),
+        data: unique.map((associateId, i) => ({ clientId, associateId, position: i, ...(clientId ? {} : { tenantId }) })),
       }),
     ]);
     enqueueAudit(
@@ -2642,8 +2713,8 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
         actorUserId: req.user!.id,
         clientId,
         action: 'scheduling.roster_reordered',
-        entityType: 'Client',
-        entityId: clientId,
+        entityType: clientId ? 'Client' : 'Tenant',
+        entityId: clientId ?? tenantId,
         metadata: parsed.data.orderedIds
           ? { count: unique.length }
           : { count: unique.length, moveId: parsed.data.moveId },
@@ -2791,38 +2862,52 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     // own client — the read scopes don't cover create (clientId comes from the
     // body, not a scoped query).
     const bounded = effectiveClientIdFilter(req.user!, undefined);
-    if (bounded !== undefined && input.clientId !== bounded) {
+    if (bounded !== undefined && input.clientId !== (bounded ?? undefined)) {
       throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
     }
 
-    const client = await prisma.client.findFirst({
-      where: { id: input.clientId, deletedAt: null },
-    });
-    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
-
-    // Resolve the work-site (explicit pick or the client's first Location).
+    // Resolve the work-site: with a client, an explicit pick of its sites or
+    // its first Location; without one (Brief 2-1b, a direct employer) the
+    // named site, under the same rules as the single create.
     let location: { id: string; timezone: string };
-    if (input.locationId) {
-      const picked = await prisma.site.findFirst({
-        where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
-        select: { id: true, timezone: true },
+    let noticeState: string | null;
+    // What the notice names: the client, or the site when there is none.
+    let placeName: string;
+    if (input.clientId) {
+      const client = await prisma.client.findFirst({
+        where: { id: input.clientId, deletedAt: null },
       });
-      if (!picked) {
-        throw new HttpError(
-          400,
-          'location_mismatch',
-          'Location does not belong to the chosen client.',
-        );
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+      noticeState = client.state;
+      placeName = client.name;
+      if (input.locationId) {
+        const picked = await prisma.site.findFirst({
+          where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
+          select: { id: true, timezone: true },
+        });
+        if (!picked) {
+          throw new HttpError(
+            400,
+            'location_mismatch',
+            'Location does not belong to the chosen client.',
+          );
+        }
+        location = picked;
+      } else {
+        const first = await firstLocationForClient(prisma, client.id);
+        const full = await prisma.site.findUniqueOrThrow({
+          where: { id: first.id },
+          select: { id: true, timezone: true },
+        });
+        location = full;
       }
-      location = picked;
     } else {
-      const first = await firstLocationForClient(prisma, client.id);
-      const full = await prisma.site.findUniqueOrThrow({
-        where: { id: first.id },
-        select: { id: true, timezone: true },
-      });
-      location = full;
+      const site = await clientlessSite(req.user!, bounded, input.locationId);
+      location = { id: site.id, timezone: site.timezone };
+      noticeState = site.state;
+      placeName = site.name;
     }
+    const bulkClientId = input.clientId ?? null;
 
     // Every day copy of the shift: the primary date + any "also on …"
     // chips. Each occurrence is conflict-checked and created per day.
@@ -2845,7 +2930,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       const strict = occurrences
         .map((o) =>
           evaluateShiftNotice({
-            state: client.state,
+            state: noticeState,
             startsAt: o.startsAt,
             publishAt: now,
           }),
@@ -2887,17 +2972,18 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       associateIds.filter((id) => nameById.has(id)),
     );
     const restrictedIds = new Set(
-      [...restrictions.entries()].filter(([, r]) => r.clientId !== input.clientId).map(([id]) => id),
+      // A petition certifies a client: a client-less shift is never that client.
+      [...restrictions.entries()].filter(([, r]) => r.clientId !== bulkClientId).map(([id]) => id),
     );
     for (const id of restrictedIds) {
       enqueueAudit(
         {
           actorUserId: req.user!.id,
-          clientId: input.clientId,
+          clientId: bulkClientId,
           action: 'program.cross_client_blocked',
           entityType: 'Program',
           entityId: restrictions.get(id)!.programId,
-          metadata: { associateId: id, attemptedClientId: input.clientId, petitionClientId: restrictions.get(id)!.clientId, via: 'bulk_create' },
+          metadata: { associateId: id, attemptedClientId: bulkClientId, petitionClientId: restrictions.get(id)!.clientId, via: 'bulk_create' },
         },
         'bulkCreateShifts',
       );
@@ -2921,7 +3007,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     ];
 
     const baseData = {
-      clientId: input.clientId,
+      clientId: bulkClientId,
       locationId: location.id,
       position: input.position,
       location: input.location ?? null,
@@ -3035,7 +3121,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
             const rows = await tx.shift.findMany({
               where: {
                 createdById: req.user!.id,
-                clientId: input.clientId,
+                clientId: bulkClientId,
                 locationId: location.id,
                 position: input.position,
                 startsAt: occ.startsAt,
@@ -3060,7 +3146,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       actorUserId: req.user!.id,
       action: 'shift.bulk_created',
       shiftId: createdIds[0] ?? 'bulk',
-      clientId: input.clientId,
+      clientId: bulkClientId,
       metadata: {
         position: input.position,
         status,
@@ -3080,7 +3166,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       for (const n of notifyList) {
         const line = formatShiftLine({
           position: input.position,
-          clientName: client.name,
+          clientName: placeName,
           startsAt: n.startsAt,
           endsAt: n.endsAt,
           timezone: location.timezone,
@@ -3091,7 +3177,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
           body: `You've been assigned: ${line}`,
           category: 'shift_assigned',
           senderUserId: req.user!.id,
-          wa: shiftWa('alto_shift_assigned', { position: input.position, clientName: client.name, locationName: null, startsAt: n.startsAt, endsAt: n.endsAt, timezone: location.timezone }),
+          wa: shiftWa('alto_shift_assigned', { position: input.position, clientName: placeName, locationName: null, startsAt: n.startsAt, endsAt: n.endsAt, timezone: location.timezone }),
         });
       }
     }
@@ -6347,23 +6433,25 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
     });
     if (!tpl) throw new HttpError(404, 'template_not_found', 'Template not found');
 
-    const clientId = tpl.clientId ?? parsed.data.clientId;
-    if (!clientId) {
-      throw new HttpError(
-        400,
-        'client_required',
-        'Global templates require a clientId at apply time'
-      );
-    }
+    const clientId = tpl.clientId ?? parsed.data.clientId ?? null;
     // Same guard as POST /shifts — apply creates a Shift, so a bounded
     // role must not be able to smuggle one into another client via a
     // template. Without this, template-apply bypassed the create guard.
     const applyBounded = effectiveClientIdFilter(req.user!, undefined);
-    if (applyBounded !== undefined && clientId !== applyBounded) {
+    if (applyBounded !== undefined && (clientId ?? undefined) !== (applyBounded ?? undefined)) {
       throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
     }
-    // Phase 131 — derive locationId from the resolved client.
-    const location = await firstLocationForClient(prisma, clientId);
+    // Phase 131 — derive locationId from the resolved client. Brief 2-1b:
+    // a global template applied with no client lands on the named site.
+    let location: { id: string; timezone: string | null };
+    if (clientId) {
+      location = await firstLocationForClient(prisma, clientId);
+    } else {
+      if (!parsed.data.locationId) {
+        throw new HttpError(400, 'site_required', 'Global templates need a client or a site at apply time.');
+      }
+      location = await clientlessSite(req.user!, applyBounded, parsed.data.locationId);
+    }
 
     // Template minutes are wall-clock AT THE WORK SITE (same rule as the
     // drag-drop apply path in the UI). The old server-local setHours() put
@@ -6404,7 +6492,8 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
     if (!parsed.data.allowDuplicate) {
       const twin = await prisma.shift.findFirst({
         where: {
-          clientId,
+          // Without a client the slot is the site's (Brief 2-1b).
+          ...(clientId ? { clientId } : { clientId: null, locationId: location.id }),
           position: tpl.position,
           startsAt,
           endsAt,

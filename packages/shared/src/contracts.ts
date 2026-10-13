@@ -2114,7 +2114,8 @@ export type ShiftCreateInput = z.infer<typeof ShiftCreateInputSchema>;
  */
 export const BulkCreateShiftsInputSchema = z
   .object({
-    clientId: UuidSchema,
+    /** Brief 2-1b: optional — a direct employer names the site alone (`locationId`). */
+    clientId: UuidSchema.optional(),
     locationId: UuidSchema.optional(),
     position: z.string().min(1).max(120),
     startsAt: z.string().datetime(),
@@ -2326,6 +2327,8 @@ export const ShiftTemplateApplyInputSchema = z.object({
   weekStart: z.string().datetime(),
   /** Override the template's clientId (required if template is global). */
   clientId: UuidSchema.optional(),
+  /** Brief 2-1b: the site a global template lands on when there is no client (a direct employer). */
+  locationId: UuidSchema.optional(),
   /** Applying onto a week that already has an identical draft 409s
    *  (duplicate_shift) unless this is set — a deliberate second slot at
    *  the same time is legitimate, an accidental double-apply is not. */
