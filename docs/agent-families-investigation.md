@@ -195,3 +195,80 @@ From Workday's public descriptions (approximate; not re-verified here): Workday 
 | 6. Acceptance | Both agents live in Alto HR for a week with scorecards; the hotel tenant runs both with the forbidden-word harness green; MCP catalog (2-7) generated from the capability catalog as a read-only preview | ½ week |
 
 Acceptance for the brief, proposed: every sweep in §2.3 appears under a capability with an owner, a scope and a scorecard; a fill proposal reaches the supervisor's queue and assigns only after approval; the hotel sees nothing from a module it has off; suspending one capability stops its next run within one sweep interval; a week of scorecard numbers for both agents in Alto HR.
+
+## 8. Step 0 design (registry additions)
+
+Ready to build once Brief 2-1b's CI is green. One migration, additive; no product behaviour changes until a capability is wired in step 1. Everything below lands in `apps/api` and `packages/shared` unless named.
+
+### 8.1 Schema
+
+| Model / field | Shape | Why |
+|---|---|---|
+| `AgentCapability` (new) | `id uuid`, `workerId uuid → AgentProfile`, `key varchar(60)` (from `AGENT_CAPABILITIES`), `enabled bool default true`, `suspendedAt`, `suspendedById`, `suspendReason`, `driftErrorRatePct int? default 25`, `lastDriftAlertAt`, `createdAt`, `updatedAt`, `tenantId` (the defaulted nullable column, like the other 265 models). Unique `(workerId, key)` | Capability = unit of governance (decision 1): own switch, own drift, scorecard keyed by it |
+| Catalog `AGENT_CAPABILITIES` (code, not a table) | `{ key, family, label, requiresModule: TenantModule[], scopes: AgentScope[], gate: AgentGatedAction or null, metrics: string[], scenarios: ScenarioFixture[] }` in `packages/shared/src/agentCapabilities.ts` | Ships with the code; certification compares against it; the MCP catalog (2-7) reads it later |
+| `AgentProposal` (new) | `id`, `workerId`, `capabilityKey varchar(60)`, `subjectType varchar(40)` (`Shift`, `HrCase`, `Document`…), `subjectId uuid?`, `payload jsonb`, `approvalId uuid? → AgentApprovalRequest` (unique), `status AgentProposalStatus default PROPOSED`, `statusAt`, `outcome jsonb?` (e.g. `{ filled: true, filledAt }`), `outcomeAt`, `createdAt`, `tenantId` (defaulted nullable). Indexes `(workerId, capabilityKey, createdAt desc)`, `(subjectType, subjectId)` | The outcome record a scorecard needs (gap 6). States: PROPOSED → APPROVED, REJECTED or EXPIRED; APPROVED → EXECUTED or FAILED; PROPOSED → SUPERSEDED when the subject resolves on its own |
+| `enum AgentProposalStatus` (new) | `PROPOSED APPROVED REJECTED EXPIRED EXECUTED FAILED SUPERSEDED` | |
+| `enum AgentGatedAction` | add `SHIFT_ASSIGN`, `CASE_OPEN` (`ALTER TYPE … ADD VALUE`) | Decision 2 |
+| `AgentProfile.builtInKey` | drop the global unique index; add a partial unique `(tenantId, builtInKey) WHERE builtInKey IS NOT NULL`, plus `(builtInKey) WHERE tenantId IS NULL AND builtInKey IS NOT NULL` for the nullable-tenant case | Per-tenant built-ins (decision 5). Code: `findUnique({ builtInKey })` becomes `findFirst({ builtInKey, tenantId })` in `lib/agents.ts` (`builtInAgentId`, `ensureBuiltInAgents`, `listAgents`) |
+| `AgentTenantControl` (new) | `tenantId uuid` (unique, not null), `allSuspendedAt`, `suspendedById`, `reason`, `updatedAt` | Per-tenant kill switch (decision 5) without touching the `AgentControl` singleton |
+
+**AgentControl and 2-1 Migration C.** Converting the `AgentControl` singleton is listed in 2-1's Migration C, which the owner sequenced after a clean 1A-1 run. Step 0 therefore does not convert it. The singleton stays as the **platform** switch (the operator's "suspend everything", unchanged code path), and the new `AgentTenantControl` is the tenant's switch. An agent is stopped when either is set. Migration C later folds the two, or keeps both, without a data conflict, because the new table is already keyed by tenant.
+
+### 8.2 Migration `20261121090000_agent_capabilities`
+
+1. `ALTER TYPE "AgentGatedAction" ADD VALUE 'SHIFT_ASSIGN';` and the same for `'CASE_OPEN'`. Postgres 12+ allows this inside the migration transaction as long as the new values are not used in the same transaction; nothing below uses them.
+2. `CREATE TYPE "AgentProposalStatus" AS ENUM (…)`.
+3. `CREATE TABLE` for `"AgentCapability"`, `"AgentProposal"` and `"AgentTenantControl"`, with FKs (`ON DELETE CASCADE` to `AgentProfile`, `SET NULL` to the approval), the tenantId default `'00000000-0000-4000-8000-000000000001'::uuid`, and the indexes.
+4. `DROP INDEX "AgentProfile_builtInKey_key";` then `CREATE UNIQUE INDEX "AgentProfile_tenant_builtInKey_key" ON "AgentProfile"("tenantId","builtInKey") WHERE "builtInKey" IS NOT NULL;` and `CREATE UNIQUE INDEX "AgentProfile_notenant_builtInKey_key" ON "AgentProfile"("builtInKey") WHERE "tenantId" IS NULL AND "builtInKey" IS NOT NULL;` in the same migration, per risk ruling 3.
+5. Backfill: `INSERT INTO "AgentTenantControl"("tenantId","allSuspendedAt","suspendedById","reason","updatedAt") SELECT t.id, NULL, NULL, NULL, now() FROM "Tenant" t ON CONFLICT DO NOTHING;` One row per existing tenant; Alto's is unsuspended. No enum literal appears in a SELECT; any added later carries the `'X'::"Enum"` cast.
+6. No `AgentCapability` rows in SQL. `ensureBuiltInAgents` creates them at boot from the catalog. The 3 existing agents get none; the two family agents arrive in step 1.
+
+Additive and reversible: three new tables and two enum values. The only replaced object is the builtInKey index, whose new form admits every row the old one did (all current rows are Alto's). Down: drop the three tables and the type, recreate the old index. Postgres cannot drop enum values, which is harmless because nothing references them until step 1.
+
+### 8.3 Contracts (`packages/shared`)
+
+| Addition | Detail |
+|---|---|
+| `AgentGatedActionSchema` | adds `SHIFT_ASSIGN` and `CASE_OPEN`; `AGENT_EXECUTABLE_ACTIONS` adds both (the agent executes after a human approves); labels in `AGENT_GATED_ACTION_LABELS` |
+| `AGENT_SCOPES` | adds `view:org` (read people and sites), `manage:scheduling` (assign shifts, through an approval), `manage:compliance` (send compliance reminders), and `open:hr-case` (open HR cases, through an approval). The last is agent-only, because HR case staff routes gate on role rather than a capability; see the question below |
+| `AGENT_CAPABILITIES` (new file `agentCapabilities.ts`) | Workforce: `shift.fill` (scheduling; SHIFT_ASSIGN), `attendance.confirm` (scheduling + time; SHIFT_ASSIGN for the backup), `schedule.repair` (scheduling; SHIFT_ASSIGN), `coverage.forecast` (scheduling; no gate). Compliance: `document.chase` (compliance; no gate), `i9.section2` (compliance; no gate), `incident.loop` (compliance + hrCases; CASE_OPEN), `coverage.credentials` (compliance; no gate). Each with its scopes and the metric keys from §4.3 |
+| `capabilitiesFor(modules)` | the catalog filtered to entries whose `requiresModule` are all on: the one source for Hugo's help text, the Agents page and the MCP catalog |
+| Views | `AgentCapabilitySummary`, `AgentProposalSummary`, `AgentTenantControlState`, `CapabilityScorecard` zod schemas |
+
+### 8.4 API surface
+
+| Route | Gate | Audit |
+|---|---|---|
+| `GET /agents/:id/capabilities` | `view:org` (exec stays read-only and holds it) | none |
+| `POST /agents/:id/capabilities/:key/suspend` and `/resume` | `manage:org`; resume by the agent's owner only, as `resumeAgent` does | `agent.capability_suspended`, `agent.capability_resumed` |
+| `GET /agents/:id/capabilities/:key/scorecard` | `view:org` | none |
+| `GET /agents/proposals?capability=&status=` | `view:org`, tenant-filtered | none |
+| `GET /agents/control`, `POST /agents/suspend-all`, `POST /agents/resume-all` | same paths, now reading and writing `AgentTenantControl` for the caller's tenant; the platform singleton moves to `POST /agents/platform/suspend-all` and `/resume-all`, gated `manage:org` plus the platform scope | `agent.tenant_suspended`, `agent.platform_suspended` |
+| `POST /agents/:id/scenarios/run` | unchanged; the runner gains fixture scenarios for capabilities (test 5) | `agent.scenarios_run` |
+| `POST /agent/v1/proposals` (new) | `requireAgent(<the capability's scope>)`; refuses a disabled or suspended capability (`capability_suspended`) or one whose module is off (404); files an `AgentApprovalRequest` when the capability has a gate; writes the `AgentProposal` | `agent.proposal_created` under the agent's workerId |
+| Desk approval | a pending SHIFT_ASSIGN or CASE_OPEN request becomes a decision item in `lib/roleDecisions.ts` for the subject's desk (the shift's supervisor, HR); approving in place calls the existing `decideApproval` | the existing approval decision audit |
+
+`authenticateAgent` (`lib/agents.ts`) and `requireAgent` (`middleware/agentAuth.ts`) gain two reads per call: `AgentTenantControl` for the agent's tenant, and, on capability routes, the capability's `enabled` and `suspendedAt`. Both are single-row lookups by a unique key.
+
+### 8.5 Tests, in the order to write them
+
+1. **Nothing executes until a human approves, for the new actions** (`__tests__/routes/agents.test.ts`, extending the CLIENT_MESSAGE case): SHIFT_ASSIGN and CASE_OPEN proposals wait PENDING; `claimApproval` refuses pending, rejected, expired, consumed and mismatched payloads; an approved one executes exactly once and its proposal moves to EXECUTED.
+2. **Per-tenant kill switch** (`__tests__/routes/agentControls.test.ts`): tenant two's suspend-all stops tenant two's agent on its next call and leaves Alto's running; the platform switch stops both; only an admin of that tenant lifts its switch.
+3. **Per-tenant built-ins**: `ensureBuiltInAgents` under `runForEachTenant` creates one `whatsapp-assistant` per tenant, owned by that tenant's oldest admin; a second run creates none; a duplicate `(tenantId, builtInKey)` insert is refused by the partial index (risk ruling 3).
+4. **Capability scorecard and switch**: proposals with outcomes over seven days give per-capability counts (proposed, approved, executed, rejected, expired, outcome rate); a suspended capability refuses `/agent/v1/proposals` with `capability_suspended` while the agent's other capability still works.
+5. **Fixture scenario runner**: a `shift.fill` fixture (two open shifts, three people on the bench, one with an overlapping shift) loaded into a throwaway tenant and run with a fixed `now` passes when the proposal names the free person and fails when the expectation names the overlapping one; the fixture tenant is deleted afterwards.
+6. **Capabilities follow modules**: under the hotel profile with `scheduling` on and `compliance` off, `capabilitiesFor` lists only Workforce; the Agents page payload and Hugo's help text carry no Compliance capability and pass the forbidden-word check.
+7. **Cross-tenant**: the new `/agents/...` routes are called by the generated suite; none may enter the baseline.
+
+### 8.6 Risks, and what is out of step 0
+
+| Risk | Handling |
+|---|---|
+| `ALTER TYPE … ADD VALUE` inside the migration transaction | Safe on Postgres 12+ while the value is unused in that transaction; the migration does not use it. Read twice before push (no scratch Postgres on the dev machine). |
+| Dropping the global builtInKey index lets two Alto rows share a key | The partial `(tenantId, builtInKey)` index is created in the same migration; test 3 proves the refusal. |
+| Two kill switches confuse the operator | The Agents page shows both lines ("This organization" and "Platform"), and the trail names which switch stopped the call. |
+| Capability reads add latency to every agent call | Two indexed single-row reads, held to test 2's five-second budget. |
+
+Out of step 0: any capability's behaviour (the sweeps stay where they are until step 1 moves them), Hugo's intent registry and app panel (step 3), desk UI beyond the decision item, the MCP server (2-7), billing (2-6), and converting the `AgentControl` singleton (2-1 Migration C).
+
+**Question for the owner:** HR case staff routes gate on role (`manage:onboarding` sees all cases, `process:payroll` sees payroll cases), not on a case capability. Step 0 proposes an agent-only scope `open:hr-case` for CASE_OPEN rather than lending agents `manage:onboarding`. Confirm, or name the existing capability a case-opening agent should hold.
