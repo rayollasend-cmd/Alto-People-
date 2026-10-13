@@ -7503,3 +7503,125 @@ export const DocumentStatsSchema = z.object({
   oldestPendingAt: z.string().datetime().nullable(),
 });
 export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Emergency Mode (Brief 1C-1) — one switch that protects the workforce.
+ *
+ *  Declaring suspends the shifts in scope, tells every associate in their
+ *  language, opens the "I'm safe" check-in and books evacuation seats for
+ *  whoever asks; stand down puts the schedule back from the next shift on.
+ * -------------------------------------------------------------------------- */
+
+export const EmergencyStatusSchema = z.enum(['ACTIVE', 'STOOD_DOWN']);
+export type EmergencyStatus = z.infer<typeof EmergencyStatusSchema>;
+
+export const EmergencyCheckInStatusSchema = z.enum(['SAFE', 'NEEDS_HELP']);
+export type EmergencyCheckInStatus = z.infer<typeof EmergencyCheckInStatusSchema>;
+
+export const EmergencyDeclareInputSchema = z.object({
+  title: z.string().trim().min(2).max(120),
+  /** The declarer's words, English. Sent as written. */
+  message: z.string().trim().min(2).max(2000),
+  /** Optional renderings; English is sent to that language when empty. */
+  messageEs: z.string().trim().max(2000).optional(),
+  messageTr: z.string().trim().max(2000).optional(),
+  allSites: z.boolean(),
+  locationIds: z.array(UuidSchema).max(200).default([]),
+  /** Shifts ending after this are suspended. Defaults to now. */
+  startsAt: z.string().datetime().optional(),
+  /** Evacuation vans leave around this time; omit for no transport mode. */
+  pickupAt: z.string().datetime().nullable().optional(),
+  /** Where the vans go; null means each rider's own store. */
+  destinationLocationId: UuidSchema.nullable().optional(),
+  escalationMinutes: z.number().int().min(5).max(1440).default(60),
+});
+export type EmergencyDeclareInput = z.infer<typeof EmergencyDeclareInputSchema>;
+
+export const EmergencyCheckInInputSchema = z.object({
+  status: EmergencyCheckInStatusSchema,
+  needsRide: z.boolean().default(false),
+  note: z.string().trim().max(300).optional(),
+});
+export type EmergencyCheckInInput = z.infer<typeof EmergencyCheckInInputSchema>;
+
+export interface EmergencySiteRef {
+  id: string;
+  name: string;
+  clientId: string;
+  clientName: string;
+}
+
+export interface EmergencySummary {
+  id: string;
+  title: string;
+  status: EmergencyStatus;
+  allSites: boolean;
+  sites: EmergencySiteRef[];
+  startsAt: string;
+  pickupAt: string | null;
+  destination: { id: string; name: string } | null;
+  escalationMinutes: number;
+  declaredAt: string;
+  declaredBy: string | null;
+  stoodDownAt: string | null;
+  stoodDownBy: string | null;
+  shiftsSuspended: number;
+  associatesNotified: number;
+  shiftsRestored: number;
+  checkIns: { total: number; responded: number; safe: number; needsHelp: number; needsRide: number };
+}
+
+export interface EmergencyBoardRow {
+  associateId: string;
+  name: string;
+  siteId: string | null;
+  siteName: string;
+  clientId: string | null;
+  phone: string | null;
+  /** The address on file: the rider's saved Home, else the associate record. */
+  address: string | null;
+  status: EmergencyCheckInStatus | null;
+  needsRide: boolean;
+  note: string | null;
+  respondedAt: string | null;
+  ride: { id: string; status: string; located: boolean } | null;
+  /** No response after the escalation interval. */
+  overdue: boolean;
+}
+
+export interface EmergencyBoard {
+  emergency: EmergencySummary;
+  rows: EmergencyBoardRow[];
+  escalation: EmergencyBoardRow[];
+  bySite: Array<{ siteId: string | null; siteName: string; total: number; responded: number; safe: number; needsHelp: number }>;
+  /** When the escalation interval lapses, ISO. */
+  escalateAt: string;
+}
+
+export interface EmergencyListResponse {
+  emergencies: EmergencySummary[];
+}
+
+export interface EmergencySitesResponse {
+  sites: EmergencySiteRef[];
+}
+
+/** What the associate app shows: the active emergency they are in, if any. */
+export interface MyEmergencyResponse {
+  emergency: {
+    id: string;
+    title: string;
+    /** In the associate's language. */
+    message: string;
+    startsAt: string;
+    pickupAt: string | null;
+    declaredAt: string;
+    rideOffered: boolean;
+  } | null;
+  checkIn: {
+    status: EmergencyCheckInStatus;
+    needsRide: boolean;
+    respondedAt: string;
+    ride: { status: string; pickupAt: string | null } | null;
+  } | null;
+}

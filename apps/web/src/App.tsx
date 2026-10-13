@@ -95,6 +95,7 @@ const LaborCostsHome = lazyNamed(() => import('@/pages/scheduling/LaborCostsHome
 const OpsHome = lazyNamed(() => import('@/pages/ops/OpsHome'), 'OpsHome');
 const RideHome = lazyNamed(() => import('@/pages/transport/RideHome'), 'RideHome');
 const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'), 'TransportHome');
+const EmergencyHome = lazyNamed(() => import('@/pages/emergency/EmergencyHome'), 'EmergencyHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
@@ -413,6 +414,7 @@ const LAYOUT_ROUTES = [
   { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops', 'assist:ops-shifts']}><OpsHome /></RequireCapability> },
   { path: 'rides', element: <RequireCapability cap="ride:transport"><RideHome /></RequireCapability> },
   { path: 'transport', element: <RequireCapability cap="view:transport"><TransportHome /></RequireCapability> },
+  { path: 'emergency', element: <RequireCapability cap="view:emergency"><EmergencyHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
   { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },

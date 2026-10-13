@@ -5,6 +5,7 @@ import type { Capability } from './roles';
 export type ModuleKey =
   | 'product-analytics'
   | 'reliability'
+  | 'emergency'
   | 'portal'
   | 'region'
   | 'regions'
@@ -876,6 +877,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'The van command center — bookings, dispatch, drivers, vans, stops, issues, and ride charges.',
     requires: 'view:transport',
+    group: 'workforce',
+  },
+  {
+    key: 'emergency',
+    path: '/emergency',
+    label: 'Emergency mode',
+    description:
+      'One switch for a storm: suspend shifts without penalty, tell every associate in their language, see who checked in safe, book evacuation vans, and stand down.',
+    requires: 'view:emergency',
     group: 'workforce',
   },
   {

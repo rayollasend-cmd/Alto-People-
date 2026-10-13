@@ -36,6 +36,7 @@ import { complianceRouter } from './routes/compliance.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
+import { emergencyRouter } from './routes/emergency.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -422,6 +423,9 @@ export function createApp() {
   // the workforce analytics above, so its own capability rather than a
   // sub-path under view:dashboard.
   app.use('/product-analytics', productAnalyticsRouter);
+  // Emergency Mode: the switch and the board are capability-gated inside;
+  // /me and /check-in are for any signed-in associate.
+  app.use('/emergency', emergencyRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

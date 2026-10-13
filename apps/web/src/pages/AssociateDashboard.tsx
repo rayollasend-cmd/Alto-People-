@@ -35,6 +35,7 @@ import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
+import { EmergencyBanner } from '@/components/EmergencyBanner';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -171,6 +172,9 @@ export function AssociateDashboard() {
           stake", "Open room") and a knowledge-worker plan card here — for
           an associate those only ever restated what OnboardingBanner and
           ActionNeededCard below already say, in ops jargon. */}
+      {/* A storm outranks everything below: the one-tap check-in, only
+          while an emergency that includes this person is active. */}
+      <EmergencyBanner />
       <CelebrationRibbon />
       <OnboardingBanner />
       {/* From the clock-in number to the first punch: where they work, who

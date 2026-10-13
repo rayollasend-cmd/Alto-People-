@@ -187,7 +187,12 @@ export type Capability =
   | 'ride:transport'
   | 'drive:transport'
   | 'view:transport'
-  | 'manage:transport';
+  | 'manage:transport'
+  // Emergency Mode (Brief 1C-1):
+  //  - view:emergency     the live check-in board and the event history
+  //  - manage:emergency   declare an emergency, stand it down
+  | 'view:emergency'
+  | 'manage:emergency';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -249,6 +254,10 @@ const FULL_ADMIN: Capability[] = [
   'drive:transport',
   'view:transport',
   'manage:transport',
+  // Any org-wide admin can declare an emergency; the storm does not wait
+  // for the one person who holds the switch.
+  'view:emergency',
+  'manage:emergency',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -269,6 +278,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:ops',
     'manage:ops-library',
     'view:transport',
+    // The board during a storm, never the switch (read-only everywhere).
+    'view:emergency',
   ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
@@ -413,6 +424,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:ops', 'run:ops-shifts', 'assist:ops-shifts', 'manage:ops-library',
     // Field leadership covers the vans too — and staffs the drivers.
     'ride:transport', 'drive:transport', 'view:transport', 'manage:transport',
+    // Field leadership declares the emergency and runs the check-in board.
+    'view:emergency', 'manage:emergency',
   ]),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
@@ -440,6 +453,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.
     'view:communications',
+    // Who on their floor has checked in safe during an emergency.
+    'view:emergency',
   ]),
   // Step-down from SHIFT_SUPERVISOR: watches the live floor for one
   // client, decides nothing. Deliberately NO manage:time — walk-in
@@ -464,6 +479,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Can take a run themselves in a pinch.
     'drive:transport',
     'ride:transport',
+    // The evacuation list: who asked for a seat and where they are.
+    'view:emergency',
   ]),
   // Drives an Alto van: their own runs only.
   DRIVER: new Set<Capability>([

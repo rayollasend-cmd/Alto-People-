@@ -36,6 +36,10 @@ vi.mock('@/lib/documentsApi', () => ({
 vi.mock('@/lib/communicationsApi', () => ({
   listMyInbox: vi.fn(),
 }));
+vi.mock('@/lib/emergencyApi', () => ({
+  getMyEmergency: vi.fn().mockResolvedValue({ emergency: null, checkIn: null }),
+  emergencyCheckIn: vi.fn(),
+}));
 vi.mock('@/lib/onboardingApi', () => ({
   listApplications: vi.fn().mockResolvedValue({
     applications: [],

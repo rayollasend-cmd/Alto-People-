@@ -92,6 +92,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'time-off': CalendarOff,
   'rides': BusIcon,
   'transport': BusIcon,
+  'emergency': HotlineIcon,
   'scheduling': Calendar,
   'ops': ClipboardCheck,
   'approvals': ApprovalsIcon,
