@@ -184,15 +184,35 @@ export const WA_REPLY = {
       },
       lang,
     ),
-  optedIn: (lang: WaLang) =>
+  /** The first thing Hugo says in a tenant: who he is, what he is, and what he can do. */
+  intro: (lang: WaLang, name: string) =>
     say(
+      {
+        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. Ask me about your next payday, your ride or your schedule; anything else I pass to your supervisor.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. Pregúntame por tu próximo día de pago, tu viaje o tu horario; todo lo demás se lo paso a tu supervisor.`,
+        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. Bana bir sonraki maaş gününü, servisini veya programını sorabilirsin; diğer her şeyi amirine iletirim.`,
+      },
+      lang,
+    ),
+  /** Whenever anyone asks who or what he is. */
+  whoAmI: (lang: WaLang, name: string) =>
+    say(
+      {
+        en: `I'm ${name}, the AI assistant in Alto People, by Alto People. I'm not a person: I answer from your own records (payday, ride, schedule) and hand everything else to your supervisor.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People, por Alto People. No soy una persona: respondo con tus propios datos (pago, viaje, horario) y paso todo lo demás a tu supervisor.`,
+        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım (Alto People tarafından). Bir insan değilim: kendi kayıtlarından yanıt veririm (maaş, servis, program), diğer her şeyi amirine iletirim.`,
+      },
+      lang,
+    ),
+  optedIn: (lang: WaLang, name: string) =>
+    `${WA_REPLY.intro(lang, name)} ${say(
       {
         en: 'Alto updates on WhatsApp are on. Reply STOP any time to leave.',
         es: 'Los avisos de Alto por WhatsApp están activados. Responde BAJA cuando quieras para salir.',
         tr: 'Alto WhatsApp bildirimleri açık. Çıkmak için istediğin zaman DUR yaz.',
       },
       lang,
-    ),
+    )}`,
   languageSet: (lang: WaLang) =>
     say({ en: 'Got it — English from now on.', es: 'Listo — español de ahora en adelante.', tr: 'Tamam — bundan sonra Türkçe.' }, lang),
   payday: (lang: WaLang, date: string, period: string) =>

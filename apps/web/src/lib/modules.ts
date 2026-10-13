@@ -97,18 +97,28 @@ export type ModuleKey =
  * is the array order in `MODULES`. The "core" group is rendered without a
  * header (it's the always-on stuff: dashboard, onboarding, recruiting).
  */
+/**
+ * The Products layer of the product taxonomy (docs/product-taxonomy.md):
+ * Workforce Management · Operations · Compliance · Payroll and Finance ·
+ * Client Services · Platform. "core" is the always-on set rendered without
+ * a header.
+ */
 export type ModuleGroup =
   | 'core'
-  | 'workforce'
-  | 'time-and-pay'
+  | 'workforce-management'
+  | 'operations'
   | 'compliance'
-  | 'insights';
+  | 'payroll-finance'
+  | 'client-services'
+  | 'platform';
 
 export const GROUP_LABEL: Record<Exclude<ModuleGroup, 'core'>, string> = {
-  workforce: 'Workforce',
-  'time-and-pay': 'Time & Pay',
+  'workforce-management': 'Workforce Management',
+  operations: 'Operations',
   compliance: 'Compliance',
-  insights: 'Insights',
+  'payroll-finance': 'Payroll and Finance',
+  'client-services': 'Client Services',
+  platform: 'Platform',
 };
 
 export interface ModuleNav {
@@ -527,7 +537,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Digital application, document vault, e-signatures, background checks, and J-1 visa tracking.',
     requires: 'view:onboarding',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'recruiting',
@@ -536,7 +546,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'people',
@@ -545,7 +555,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Directory of every associate — active, pending onboarding, and inactive — with workplace, pay rate, employment type, manager, and contact info in one row.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'regions',
@@ -554,7 +564,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'The command-center tier above the store: which stores roll up to which region, and the accounts that run each one.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'client-services',
   },
   {
     key: 'workers',
@@ -563,7 +573,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'People, AI agents and robots in one registry: who owns each worker, what it can do, and where it is in its lifecycle.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'agents',
@@ -572,7 +582,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Every AI agent Alto runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'platform',
   },
   {
     key: 'org',
@@ -581,7 +591,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'org-chart',
@@ -590,7 +600,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'celebrations',
@@ -599,7 +609,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Upcoming birthdays and work anniversaries. Send a quick high-five from any row.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'assets',
@@ -608,7 +618,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Physical items assigned to associates: laptops, phones, badges, keys, vehicles. Track who has what and when it came back.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'pulse',
@@ -617,7 +627,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Anonymous one-question check-ins for engagement signal. Score distributions and verbatim comments — never the responder.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'headcount',
@@ -626,7 +636,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'payroll-finance',
   },
   {
     key: 'skills',
@@ -635,7 +645,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Catalog of competencies and per-associate skill claims with proficiency level. Search the company by skill — useful for staffing and internal mobility.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'mentorship',
@@ -644,7 +654,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Pair experienced associates with juniors. Suggestions use skills data to recommend ADVANCED+ mentors for a target growth skill.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'expirations',
@@ -662,7 +672,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Sequence multiple courses into ordered tracks. Associates work through them in order; status reflects the next incomplete step.',
     requires: 'view:compliance',
-    group: 'compliance',
+    group: 'workforce-management',
   },
   {
     key: 'succession',
@@ -671,7 +681,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Designate successors for each position with a readiness band — ready now, 1–2 years, 3+ years, or emergency cover.',
     requires: 'view:hr-admin',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'probation',
@@ -680,7 +690,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'New-hire probation periods. See who is active, ending soon, or overdue. Pass, extend, or fail before the end date.',
     requires: 'view:hr-admin',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'holidays',
@@ -689,7 +699,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Federal, state, company, and client-specific holidays. Drives premium pay multipliers and shift planning.',
     requires: 'view:scheduling',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'discipline',
@@ -707,7 +717,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
     requires: 'view:hr-admin',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'internal-jobs',
@@ -716,7 +726,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Open positions across the company that current associates can apply to directly. Hiring managers review and decide.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'vaccinations',
@@ -755,7 +765,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Self-service knowledge base. Search articles by category and tag; vote helpful / not helpful. Deflects HR cases.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'ramp',
@@ -764,7 +774,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'New-hire 30/60/90 day milestones. Manager updates status as they progress; achieve / miss is captured for the timeline.',
     requires: 'view:hr-admin',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'career',
@@ -773,7 +783,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Progression paths through your job family. Each rung links a job profile and lists required skills with a minimum proficiency.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'learning',
@@ -782,7 +792,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Courses assigned to you — work through required training and see what’s complete, due, or overdue.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'tuition',
@@ -791,7 +801,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Tuition reimbursement requests. Submit course-by-course with receipt and grade; HR approves and payroll pays out.',
     requires: 'view:dashboard',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'hotline',
@@ -809,7 +819,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Stock and option grants with vesting schedules. Associates see their own grants; HR proposes, grants, cancels, exercises.',
     requires: 'view:dashboard',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'volunteer',
@@ -818,7 +828,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Log volunteer hours and request employer match payouts. Approved hours roll into the annual cap; HR triages, approves, and disburses match.',
     requires: 'view:dashboard',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'team',
@@ -827,7 +837,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Direct reports, timesheet reviews, and time-off decisions. Visible to anyone with at least one direct report.',
     requires: 'view:my-team',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'workflows',
@@ -836,7 +846,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Trigger-condition-action automation that fires on hires, time-off decisions, position changes, and other events.',
     requires: 'view:org',
-    group: 'insights',
+    group: 'platform',
   },
   {
     key: 'clients',
@@ -845,7 +855,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'CRM, contracts, SOW renewals, and client portal access.',
     requires: 'view:clients',
-    group: 'workforce',
+    group: 'client-services',
   },
   {
     key: 'performance',
@@ -854,7 +864,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
     requires: 'view:performance',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'time-attendance',
@@ -863,7 +873,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'kiosk',
@@ -872,7 +882,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Manage kiosk devices, assign 4-digit clock-in PINs, and review punches.',
     requires: 'manage:time',
-    group: 'time-and-pay',
+    group: 'operations',
   },
   {
     key: 'time-off',
@@ -881,7 +891,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'PTO requests, sick-leave balances, and HR approval queue.',
     requires: 'view:time',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'rides',
@@ -890,7 +900,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Book a seat on an Alto van to or from work — your rides, pickups, and what comes out of pay.',
     requires: 'ride:transport',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'transport',
@@ -899,7 +909,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'The van command center — bookings, dispatch, drivers, vans, stops, issues, and ride charges.',
     requires: 'view:transport',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'season-planner',
@@ -908,7 +918,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Demand by store, shift and week becomes associates, beds, van seats and recruiting targets by channel — scenarios saved and compared side by side.',
     requires: 'view:org',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'emergency',
@@ -917,7 +927,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'One switch for a storm: suspend shifts without penalty, tell every associate in their language, see who checked in safe, book evacuation vans, and stand down.',
     requires: 'view:emergency',
-    group: 'workforce',
+    group: 'workforce-management',
   },
   {
     key: 'scheduling',
@@ -926,7 +936,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'ops',
@@ -936,7 +946,7 @@ export const MODULES: ModuleNav[] = [
       'SOP checklists, live operational shifts, shift-to-shift handover, and the standards library.',
     requires: 'run:ops-shifts',
     requiresAny: ['run:ops-shifts', 'view:ops', 'assist:ops-shifts'],
-    group: 'time-and-pay',
+    group: 'operations',
   },
   {
     key: 'labor-costs',
@@ -950,7 +960,7 @@ export const MODULES: ModuleNav[] = [
     requires: 'manage:scheduling',
     // Finance reads spend too — labor cost IS the payroll-funding input.
     requiresAny: ['manage:scheduling', 'view:executive', 'process:payroll'],
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'approvals',
@@ -959,7 +969,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'One inbox for every decision waiting on you — swap requests, open-shift pickups, unconfirmed shifts, time-off requests, and timesheets to review.',
     requires: 'manage:scheduling',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'payroll',
@@ -968,7 +978,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'payroll-tax',
@@ -980,7 +990,7 @@ export const MODULES: ModuleNav[] = [
     // process:payroll, never the view:payroll every associate holds for
     // their own paystubs. (An associate's own W-2s live at /me?tab=tax-docs.)
     requires: 'process:payroll',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'payroll-compliance',
@@ -989,7 +999,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Federal tax deposit deadlines, garnishment remittances owed to agencies, and state new-hire reporting.',
     requires: 'process:payroll',
-    group: 'time-and-pay',
+    group: 'compliance',
   },
   {
     key: 'marketplace',
@@ -998,7 +1008,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
     requires: 'view:scheduling',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'timesheets',
@@ -1010,7 +1020,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Review and approve worked hours, run the corrections window, and export the payroll hours sheets.',
     requires: 'view:time',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'fieldglass',
@@ -1022,7 +1032,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Fieldglass-ready weekly hours (Saturday → Friday): enter each worker’s week before Monday 2 PM Pacific, import what the buyer approved, and open any associate’s timesheet history across pay periods.',
     requires: 'manage:time',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'fieldglass-setup',
@@ -1033,7 +1043,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Register new associates in Fieldglass with everything the buyer’s form asks, move transfers, close out separations, and keep every Worker ID on file.',
     requires: 'process:payroll',
-    group: 'time-and-pay',
+    group: 'workforce-management',
   },
   {
     key: 'statements',
@@ -1046,7 +1056,7 @@ export const MODULES: ModuleNav[] = [
     // (it hid behind the Clients module, gated view:clients).
     requires: 'process:payroll',
     requiresAny: ['process:payroll', 'view:executive'],
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'payrules',
@@ -1059,7 +1069,7 @@ export const MODULES: ModuleNav[] = [
     // page in every hourly worker's nav. process:payroll = the payroll
     // operators (HR, Finance, the admin roles).
     requires: 'process:payroll',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'reimbursements',
@@ -1070,7 +1080,7 @@ export const MODULES: ModuleNav[] = [
     // Every associate can submit their own — the page scopes what each
     // role sees; approval/settlement actions stay capability-gated inside.
     requires: 'view:dashboard',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'compensation',
@@ -1079,7 +1089,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Pay bands, effective-dated comp history, and merit cycles — plan and apply pay changes for an entire population at once.',
     requires: 'view:comp',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'benefits',
@@ -1088,7 +1098,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Health, dental, vision, 401(k), HSA/FSA — pre-tax elections that come out of every paycheck.',
     requires: 'view:payroll',
-    group: 'time-and-pay',
+    group: 'payroll-finance',
   },
   {
     key: 'documents',
@@ -1127,7 +1137,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'J-1 and H-2B lifecycle — sponsors, DS-2019 and petition dates, expiry and check-in alerts, the H-2B client rule, and the season transition calendar.',
     requires: 'view:compliance',
-    group: 'compliance',
+    group: 'workforce-management',
   },
   {
     key: 'audit',
@@ -1145,7 +1155,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'List every account, change a role or status, and force a password reset (revokes active sessions).',
     requires: 'view:hr-admin',
-    group: 'compliance',
+    group: 'platform',
   },
   {
     key: 'branding',
@@ -1154,7 +1164,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Org name, sender display, support email, primary colour, and logo applied to every outbound email.',
     requires: 'view:hr-admin',
-    group: 'compliance',
+    group: 'platform',
   },
   {
     key: 'billing',
@@ -1166,7 +1176,7 @@ export const MODULES: ModuleNav[] = [
     // The company's own vendor bill — banking relationships and payment
     // methods are the finance charter's territory.
     requiresAny: ['view:hr-admin', 'process:payroll'],
-    group: 'compliance',
+    group: 'payroll-finance',
   },
   {
     key: 'dircomms',
@@ -1178,7 +1188,7 @@ export const MODULES: ModuleNav[] = [
     // phone, so it's gated like the People directory (view:org) — NOT
     // view:dashboard, which every associate has.
     requires: 'view:org',
-    group: 'insights',
+    group: 'client-services',
   },
   {
     key: 'communications',
@@ -1187,7 +1197,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'SMS, push notifications, broadcast messaging, and templates.',
     requires: 'view:communications',
-    group: 'insights',
+    group: 'client-services',
   },
   {
     key: 'analytics',
@@ -1196,7 +1206,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Executive dashboard, custom reports, and predictive analytics.',
     requires: 'view:analytics',
-    group: 'insights',
+    group: 'payroll-finance',
   },
   {
     key: 'product-analytics',
@@ -1205,7 +1215,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
     requires: 'view:product-analytics',
-    group: 'insights',
+    group: 'platform',
   },
   {
     key: 'reliability',
@@ -1214,7 +1224,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Errors against the weekly budget, p95 by route, kiosk punch success, ride completion, and API restarts — with a Saturday summary by email.',
     requires: 'view:product-analytics',
-    group: 'insights',
+    group: 'platform',
   },
   {
     key: 'reports',
@@ -1223,7 +1233,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Custom tabular reports — pick an entity (associates, time entries, payroll runs, applications…), choose columns and filters, save, run, and export.',
     requires: 'view:analytics',
-    group: 'insights',
+    group: 'payroll-finance',
   },
   {
     key: 'integrations',
@@ -1232,7 +1242,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Public API keys + outbound webhooks. Mint ASN bridge keys for AltoHR / ShiftReport Nexus and any other programmatic consumer.',
     requires: 'view:integrations',
-    group: 'insights',
+    group: 'platform',
   },
 ];
 

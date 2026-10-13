@@ -8,6 +8,7 @@ import {
   type AgentCredentialState,
   type AgentCredentialSummary,
   type AgentDetail,
+  type AgentFamily,
   type AgentGatedAction,
   type AgentInput,
   type AgentIssuedCredential,
@@ -122,6 +123,8 @@ export const BUILT_IN_AGENTS = [
   {
     key: 'claude-code-deploy',
     name: 'Claude Code deployment workflow',
+    family: 'deployment',
+    capability: 'Build, test, push and watch the deploy',
     purpose: 'Builds Alto People from the briefs, runs the tests, pushes to main and watches the deploy. Acts through git and CI, not through the API, so it holds no credential.',
     vendor: 'Anthropic',
     model: 'Claude Fable',
@@ -134,6 +137,8 @@ export const BUILT_IN_AGENTS = [
   {
     key: 'boardroom',
     name: 'Boardroom agents',
+    family: 'decision-intelligence',
+    capability: 'Read reports and draft recommendations for leadership',
     purpose: 'Advisory agents that read reports and draft recommendations for leadership. Registered from the brief: confirm vendor, model version and owner before issuing a credential.',
     vendor: 'Anthropic',
     model: 'Claude',
@@ -145,7 +150,9 @@ export const BUILT_IN_AGENTS = [
   },
   {
     key: 'whatsapp-assistant',
-    name: 'WhatsApp messaging assistant',
+    name: 'Hugo on WhatsApp',
+    family: 'associate-self-service',
+    capability: 'Payday, ride and schedule answers on WhatsApp; supervisor handoff',
     purpose: "Answers payday, ride and schedule questions on WhatsApp from the associate's own records and hands anything else to their supervisor (Brief 1C-4). Runs inside the API; every reply is logged under this record.",
     vendor: 'Alto People',
     model: 'Rule-based assistant (lib/whatsappAssistant)',
@@ -158,6 +165,8 @@ export const BUILT_IN_AGENTS = [
 ] as const satisfies readonly {
   key: string;
   name: string;
+  family: AgentFamily;
+  capability: string;
   purpose: string;
   vendor: string;
   model: string;
@@ -214,6 +223,8 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ cre
             environment: b.environment,
             scopes: [...b.scopes],
             builtInKey: b.key,
+            family: b.family,
+            capability: b.capability,
             // Already running when the registry arrived: certified for this version; the next one recertifies.
             ...(b.status === 'ACTIVE' ? { certifiedAt: new Date(), certifiedModelVersion: b.modelVersion } : {}),
           },
@@ -275,6 +286,8 @@ function profileSummary(p: ProfileRow): AgentSummary['profile'] {
     allowedHoursEnd: p.allowedHoursEnd,
     builtInKey: p.builtInKey,
     lastActiveAt: p.lastActiveAt?.toISOString() ?? null,
+    family: (p.family as AgentFamily | null) ?? null,
+    capability: p.capability,
   };
 }
 
@@ -414,6 +427,8 @@ export async function createAgent(db: Db, input: AgentInput, actorUserId: string
       rateLimitPerMinute: input.rateLimitPerMinute,
       allowedHoursStart: input.allowedHoursStart,
       allowedHoursEnd: input.allowedHoursEnd,
+      family: input.family ?? null,
+      capability: input.capability ?? null,
       // Registered as already active = the registering admin attests it runs today;
       // it is certified for this version and recertifies on the next (Brief 1D-3).
       ...(input.status === 'ACTIVE' ? { certifiedAt: now, certifiedModelVersion: input.modelVersion } : {}),

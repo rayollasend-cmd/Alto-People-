@@ -13,6 +13,8 @@ import type { PrismaClient } from '@prisma/client';
 
 export interface BrandingSnapshot {
   orgName: string;
+  /** What this tenant's team calls Hugo. */
+  assistantName: string;
   senderName: string | null;
   supportEmail: string | null;
   primaryColor: string | null;
@@ -27,6 +29,7 @@ export interface BrandingSnapshot {
 
 export const DEFAULT_BRANDING: BrandingSnapshot = {
   orgName: 'Alto HR',
+  assistantName: 'Hugo',
   senderName: null,
   supportEmail: null,
   primaryColor: null,
@@ -61,6 +64,7 @@ export async function refreshBranding(prisma: PrismaClient): Promise<BrandingSna
             : null;
         cached = {
           orgName: row.orgName,
+          assistantName: row.assistantName,
           senderName: row.senderName,
           supportEmail: row.supportEmail,
           primaryColor: row.primaryColor,

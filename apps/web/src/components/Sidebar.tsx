@@ -55,10 +55,12 @@ import { openKeyboardShortcuts } from './KeyboardShortcutsDialog';
 import { RoleSwitcher } from './RoleSwitcher';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
-  'workforce',
-  'time-and-pay',
+  'workforce-management',
+  'operations',
   'compliance',
-  'insights',
+  'payroll-finance',
+  'client-services',
+  'platform',
 ];
 
 const COLLAPSED_GROUPS_KEY = 'alto.sidebar.collapsedGroups';

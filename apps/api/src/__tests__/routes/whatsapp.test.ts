@@ -322,3 +322,26 @@ describe('the assistant', () => {
     expect(list.body.messages.map((m: { kind: string }) => m.kind).sort()).toEqual(['ANSWER', 'QUESTION']);
   });
 });
+
+describe('Hugo', () => {
+  it('says who and what he is, by the name the tenant chose, and introduces himself on the first message', async () => {
+    const w = await world();
+    expect(detectIntent('who are you?').intent).toBe('WHO');
+    expect(detectIntent('eres un robot').intent).toBe('WHO');
+    expect(detectIntent('sen kimsin').intent).toBe('WHO');
+    const hr = await loginAs(agent(), w.hr.email);
+    expect((await hr.patch('/admin/org/settings').send({ assistantName: 'Coco' })).status).toBe(200);
+    const maria = await loginAs(agent(), w.mariaUser.email);
+    await maria.post('/whatsapp/me/consent').send({ optIn: true });
+    const first = await handleInbound({ from: '18505550101', waMessageId: 'wamid.hello', text: 'ALTA' }, prisma);
+    expect(first.reply).toContain('Coco');
+    expect(first.reply).toContain('Alto People');
+    expect(first.reply).toMatch(/inteligencia artificial|AI assistant/);
+    const who = await handleInbound({ from: '18505550101', waMessageId: 'wamid.who', text: '¿quién eres?' }, prisma);
+    expect(who.intent).toBe('WHO');
+    expect(who.reply).toContain('Coco');
+    expect(who.reply).toContain('Alto People');
+    expect(who.reply).toContain('No soy una persona');
+    await hr.patch('/admin/org/settings').send({ assistantName: 'Hugo' });
+  });
+});

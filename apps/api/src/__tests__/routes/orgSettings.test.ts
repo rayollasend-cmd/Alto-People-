@@ -33,6 +33,7 @@ describe('GET /admin/org/settings', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       orgName: 'Alto HR',
+      assistantName: 'Hugo',
       senderName: null,
       supportEmail: null,
       primaryColor: null,

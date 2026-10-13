@@ -48,6 +48,7 @@ export function BrandingHome() {
   const [saving, setSaving] = useState(false);
 
   const [orgName, setOrgName] = useState('Alto HR');
+  const [assistantName, setAssistantName] = useState('Hugo');
   const [senderName, setSenderName] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
   const [supportEmailTouched, setSupportEmailTouched] = useState(false);
@@ -72,6 +73,7 @@ export function BrandingHome() {
     if (b === undefined) return;
     setBranding(b);
     setOrgName(b.orgName);
+    setAssistantName(b.assistantName ?? 'Hugo');
     setSenderName(b.senderName ?? '');
     setSupportEmail(b.supportEmail ?? '');
     setSupportEmailTouched(false);
@@ -129,6 +131,7 @@ export function BrandingHome() {
     try {
       const updated = await patchOrgBranding({
         orgName: orgName.trim() || 'Alto HR',
+        assistantName: assistantName.trim() || 'Hugo',
         senderName: senderName.trim() === '' ? null : senderName.trim(),
         supportEmail: supportEmail.trim() === '' ? null : supportEmail.trim(),
         primaryColor: primaryColor.trim() === '' ? null : primaryColor.trim(),
@@ -259,6 +262,20 @@ export function BrandingHome() {
                     onChange={(e) => setOrgName(e.target.value)}
                     maxLength={120}
                     placeholder="Alto HR"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field
+                label="What would you like your team to call me?"
+                hint="Hugo is the AI assistant in Alto People. This is the name your team sees on WhatsApp and in every message he sends; he always says he is an AI assistant."
+              >
+                {(p) => (
+                  <Input
+                    value={assistantName}
+                    onChange={(e) => setAssistantName(e.target.value)}
+                    maxLength={60}
+                    placeholder="Hugo"
                     {...p}
                   />
                 )}

@@ -8,6 +8,7 @@ import {
   AGENT_ENVIRONMENT_LABELS,
   AGENT_EXECUTABLE_ACTIONS,
   AGENT_GATED_ACTION_LABELS,
+  AGENT_FAMILIES,
   AGENT_SCOPES,
   WORKER_STATUS_LABELS,
   type AgentApprovalStatus,
@@ -125,6 +126,10 @@ const TTL_OPTIONS: { value: number; label: string }[] = [
 ];
 const SCOPE_LABEL = new Map<string, string>(AGENT_SCOPES.map((s) => [s.code, s.label]));
 const HUMAN_ONLY_ACTIONS = (Object.keys(AGENT_GATED_ACTION_LABELS) as AgentGatedAction[]).filter((a) => !AGENT_EXECUTABLE_ACTIONS.includes(a));
+
+function familyLabel(code: string | null | undefined): string {
+  return AGENT_FAMILIES.find((f) => f.code === code)?.label ?? '';
+}
 
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -312,6 +317,20 @@ export function AgentRegistryAdmin() {
         ),
       },
       {
+        key: 'family',
+        header: 'Family',
+        accessor: (a) => familyLabel(a.profile.family),
+        sortable: true,
+        searchable: true,
+        cardMeta: true,
+        cell: (a) => (
+          <span className="flex flex-col">
+            <span>{familyLabel(a.profile.family) || <span className="text-silver/60">Unplaced</span>}</span>
+            {a.profile.capability && <span className="text-xs2 text-silver/70">{a.profile.capability}</span>}
+          </span>
+        ),
+      },
+      {
         key: 'owner',
         header: 'Owner',
         accessor: (a) => a.owner?.name ?? a.owner?.email ?? '',
@@ -449,8 +468,8 @@ export function AgentRegistryAdmin() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="AI agents"
-        subtitle="Every AI agent Alto runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person."
+        title="Agents, orchestrated by Hugo"
+        subtitle="Every AI agent Alto People runs, by family: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person."
         primaryAction={
           canManage ? (
             <Button onClick={() => setCreating(true)}>

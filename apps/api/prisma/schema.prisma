@@ -8073,6 +8073,8 @@ model VtoPolicy {
 model OrgSetting {
   id                     String                 @id @default("singleton") @db.VarChar(16)
   orgName                String                 @default("Alto HR") @db.VarChar(120)
+  /// What this tenant's team calls Hugo, the assistant (product taxonomy 2026-10-13).
+  assistantName          String                 @default("Hugo") @db.VarChar(60)
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
@@ -9789,6 +9791,9 @@ model AgentProfile {
   /// Hours of operation, org-local 0..23; both null = any hour.
   allowedHoursStart     Int?
   allowedHoursEnd       Int?
+  /// Product taxonomy: the agent family (AGENT_FAMILIES) and the capability it performs.
+  family                String?          @db.VarChar(40)
+  capability            String?          @db.VarChar(120)
   /// Set for the agents Alto already runs, so the boot sweep finds them.
   builtInKey            String?          @unique @db.VarChar(60)
   lastActiveAt          DateTime?        @db.Timestamptz(6)

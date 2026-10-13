@@ -21,10 +21,12 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
-  'workforce',
-  'time-and-pay',
+  'workforce-management',
+  'operations',
   'compliance',
-  'insights',
+  'payroll-finance',
+  'client-services',
+  'platform',
 ];
 
 interface MobileNavProps {

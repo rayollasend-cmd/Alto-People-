@@ -7,6 +7,7 @@ import { resolveStoreForAssociate, storeSupervisors } from './readyToWork.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { logBuiltInAgentAction } from './agents.js';
+import { getBrandingSync } from './branding.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
 
 /**
@@ -35,7 +36,7 @@ export interface InboundMessage {
   timestamp?: Date;
 }
 
-export type Intent = 'OPT_OUT' | 'OPT_IN' | 'LANGUAGE' | 'PAYDAY' | 'RIDE' | 'SCHEDULE' | 'HANDOFF';
+export type Intent = 'OPT_OUT' | 'OPT_IN' | 'LANGUAGE' | 'WHO' | 'PAYDAY' | 'RIDE' | 'SCHEDULE' | 'HANDOFF';
 
 const norm = (s: string) =>
   s
@@ -52,6 +53,8 @@ const LANGS: Array<[RegExp, WaLang]> = [
   [/\b(espanol|spanish|castellano)\b/, 'es'],
   [/\b(turkce|turkish|turk)\b/, 'tr'],
 ];
+// "Who are you?" in three languages: the answer always says the product and that he is an AI.
+const WHO = /\b(who are you|what are you|are you (a |an )?(bot|robot|ai|human|real person|person)|is this a (bot|robot|person)|quien eres|que eres|eres (un|una) (bot|robot|persona|humano|ia)|kimsin|nesin|sen kimsin|bot musun|robot musun|insan misin)\b/;
 const PAYDAY = /\b(pay ?day|paid|pay\b|paycheck|paystub|cobr\w*|pago|pagan|sueldo|nomina|maas|odeme|para)\b/;
 const RIDE = /\b(ride|van|pick ?up|bus|shuttle|viaje|camioneta|recog\w*|transporte|servis|arac|minibus|ulasim)\b/;
 const SCHEDULE = /\b(schedule|shift|shifts|work|working|hours|horario|turno|turnos|trabajo|vardiya|calis\w*|program|mesai)\b/;
@@ -61,6 +64,7 @@ export function detectIntent(text: string): { intent: Intent; lang?: WaLang } {
   if (OPT_OUT.test(t)) return { intent: 'OPT_OUT' };
   if (OPT_IN.test(t)) return { intent: 'OPT_IN' };
   for (const [re, lang] of LANGS) if (re.test(t) && t.split(/\s+/).length <= 4) return { intent: 'LANGUAGE', lang };
+  if (WHO.test(t)) return { intent: 'WHO' };
   if (PAYDAY.test(t)) return { intent: 'PAYDAY' };
   if (RIDE.test(t)) return { intent: 'RIDE' };
   if (SCHEDULE.test(t)) return { intent: 'SCHEDULE' };
@@ -204,8 +208,10 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
     }
     case 'OPT_IN': {
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_IN', optedInAt: now, optedOutAt: null, source: 'reply' } });
-      return { intent, reply: await say(WA_REPLY.optedIn(lang), 'SYSTEM'), associateId };
+      return { intent, reply: await say(WA_REPLY.optedIn(lang, getBrandingSync().assistantName), 'SYSTEM'), associateId };
     }
+    case 'WHO':
+      return { intent, reply: await say(WA_REPLY.whoAmI(lang, getBrandingSync().assistantName)), associateId };
     case 'LANGUAGE': {
       lang = wanted ?? lang;
       if (user) await db.user.update({ where: { id: user.id }, data: { language: lang } });

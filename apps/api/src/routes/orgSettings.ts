@@ -53,6 +53,7 @@ async function loadResponse(): Promise<OrgBranding> {
   if (!row) {
     return {
       orgName: 'Alto HR',
+      assistantName: 'Hugo',
       senderName: null,
       supportEmail: null,
       primaryColor: null,
@@ -66,6 +67,7 @@ async function loadResponse(): Promise<OrgBranding> {
   }
   return {
     orgName: row.orgName,
+    assistantName: row.assistantName,
     senderName: row.senderName,
     supportEmail: row.supportEmail,
     primaryColor: row.primaryColor,
@@ -103,6 +105,7 @@ orgSettingsRouter.patch(
       create: {
         id: 'singleton',
         orgName: body.orgName ?? 'Alto HR',
+        assistantName: body.assistantName ?? 'Hugo',
         senderName: body.senderName ?? null,
         supportEmail: body.supportEmail ?? null,
         primaryColor: body.primaryColor ?? null,

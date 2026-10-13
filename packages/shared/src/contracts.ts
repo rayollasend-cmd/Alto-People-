@@ -6696,8 +6696,19 @@ export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
 // role mapping for ADMINS lives in roles.ts (isMfaAdminRole).
 export const MfaRequirementSchema = z.enum(['OFF', 'ADMINS', 'ALL']);
 
+/* ---------------------------------------------------------------------------
+ *  Names (product taxonomy, 2026-10-13). Hugo is the orchestrator and the
+ *  assistant persona; each tenant picks what its team calls him. Compass is
+ *  the logo mark only.
+ * -------------------------------------------------------------------------- */
+export const PRODUCT_NAME = 'Alto People';
+export const ASSISTANT_PLATFORM_NAME = 'Hugo';
+export const ASSISTANT_NAME_PROMPT = 'What would you like your team to call me?';
+
 export const OrgBrandingSchema = z.object({
   orgName: z.string().min(1).max(120),
+  /** The tenant's display name for Hugo. */
+  assistantName: z.string().min(1).max(60),
   senderName: z.string().min(1).max(120).nullable(),
   supportEmail: z
     .string()
@@ -6728,6 +6739,7 @@ export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
 export const UpdateOrgBrandingInputSchema = z
   .object({
     orgName: z.string().min(1).max(120).optional(),
+    assistantName: z.string().trim().min(1).max(60).optional(),
     senderName: z.string().min(1).max(120).nullable().optional(),
     supportEmail: z
       .string()
@@ -8277,6 +8289,34 @@ export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
 const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];
 export const AgentScopeSchema = z.enum(agentScopeCodes);
 
+/**
+ * The agent families of the product taxonomy. An agent record names its
+ * family and the capability it performs; the Agents page groups by family.
+ */
+export const AGENT_FAMILIES = [
+  { group: 'Agents for the Workforce', code: 'talent', label: 'Talent' },
+  { group: 'Agents for the Workforce', code: 'workforce', label: 'Workforce' },
+  { group: 'Agents for the Workforce', code: 'programs', label: 'Programs' },
+  { group: 'Agents for the Workforce', code: 'payroll', label: 'Payroll' },
+  { group: 'Agents for the Workforce', code: 'decision-intelligence', label: 'Decision Intelligence' },
+  { group: 'Agents for Operations', code: 'operations', label: 'Operations' },
+  { group: 'Agents for Operations', code: 'robotics', label: 'Robotics' },
+  { group: 'Agents for Operations', code: 'safety', label: 'Safety' },
+  { group: 'Agents for Compliance', code: 'compliance', label: 'Compliance' },
+  { group: 'Agents for Compliance', code: 'audit', label: 'Audit' },
+  { group: 'Agents for Compliance', code: 'contracts', label: 'Contracts' },
+  { group: 'Agents for Finance and Clients', code: 'billing', label: 'Billing' },
+  { group: 'Agents for Finance and Clients', code: 'client', label: 'Client' },
+  { group: 'Agents for IT and Developers', code: 'deployment', label: 'Deployment' },
+  { group: 'Agents for IT and Developers', code: 'reliability', label: 'Reliability' },
+  { group: 'Agents for IT and Developers', code: 'developer', label: 'Developer' },
+  { group: 'Agents for Everyone', code: 'associate-self-service', label: 'Associate Self-Service' },
+  { group: 'Agents for Everyone', code: 'manager-self-service', label: 'Manager Self-Service' },
+] as const;
+export type AgentFamily = (typeof AGENT_FAMILIES)[number]['code'];
+const agentFamilyCodes = AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...AgentFamily[]];
+export const AgentFamilySchema = z.enum(agentFamilyCodes);
+
 /** High-risk actions an agent may only request; a person approves or rejects from the queue. */
 export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT']);
 export type AgentGatedAction = z.infer<typeof AgentGatedActionSchema>;
@@ -8317,6 +8357,8 @@ export const AgentInputSchema = z.object({
   model: z.string().trim().min(1).max(120),
   modelVersion: z.string().trim().min(1).max(80),
   environment: AgentEnvironmentSchema.default('PRODUCTION'),
+  family: AgentFamilySchema.nullable().optional(),
+  capability: z.string().trim().max(120).nullable().optional(),
   scopes: z.array(AgentScopeSchema).max(20).default([]),
   spendCapCents: AgentLimitsShape.spendCapCents.optional().default(null),
   rateLimitPerMinute: AgentLimitsShape.rateLimitPerMinute.default(60),
@@ -8336,6 +8378,8 @@ export const AgentUpdateSchema = z.object({
   model: z.string().trim().min(1).max(120).optional(),
   modelVersion: z.string().trim().min(1).max(80).optional(),
   environment: AgentEnvironmentSchema.optional(),
+  family: AgentFamilySchema.nullable().optional(),
+  capability: z.string().trim().max(120).nullable().optional(),
   scopes: z.array(AgentScopeSchema).max(20).optional(),
   spendCapCents: AgentLimitsShape.spendCapCents.optional(),
   rateLimitPerMinute: AgentLimitsShape.rateLimitPerMinute.optional(),
@@ -8424,6 +8468,8 @@ export interface AgentTrailEntry {
 
 export interface AgentProfileSummary {
   purpose: string;
+  family: AgentFamily | null;
+  capability: string | null;
   vendor: string;
   model: string;
   modelVersion: string;
