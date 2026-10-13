@@ -41,6 +41,8 @@ const TABLES = [
   // Worker.associateId is SET NULL and its owner is RESTRICT: a PERSON
   // worker outlives its associate row, so list it.
   'Worker',
+  // Brief 1D-3: the global agent switch has no foreign key, so no CASCADE reaches it.
+  'AgentControl',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

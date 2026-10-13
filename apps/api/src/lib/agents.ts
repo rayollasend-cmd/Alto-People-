@@ -25,6 +25,7 @@ import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { fanOutMessage, syncStoreChannel } from './messaging.js';
 import { createWorker, getWorker, listWorkers, updateWorker } from './workers.js';
+import { allAgentsSuspended, certification, controlState, onModelVersionChanged, scorecard } from './agentControls.js';
 
 /**
  * The agent registry (Brief 1D-2).
@@ -205,7 +206,17 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ cre
         capabilities: [...b.capabilities],
         notes: 'Registered by the boot sweep (Brief 1D-2). Owner defaulted to the first org admin; confirm.',
         agent: {
-          create: { purpose: b.purpose, vendor: b.vendor, model: b.model, modelVersion: b.modelVersion, environment: b.environment, scopes: [...b.scopes], builtInKey: b.key },
+          create: {
+            purpose: b.purpose,
+            vendor: b.vendor,
+            model: b.model,
+            modelVersion: b.modelVersion,
+            environment: b.environment,
+            scopes: [...b.scopes],
+            builtInKey: b.key,
+            // Already running when the registry arrived: certified for this version; the next one recertifies.
+            ...(b.status === 'ACTIVE' ? { certifiedAt: new Date(), certifiedModelVersion: b.modelVersion } : {}),
+          },
         },
       },
     });
@@ -283,15 +294,24 @@ async function decorate(db: Db, workers: WorkerSummary[], profiles: ProfileRow[]
   const credBy = new Map(creds.map((c) => [c.workerId, c._count._all]));
   const pendBy = new Map(pending.map((c) => [c.workerId, c._count._all]));
   const spendBy = new Map(spend.map((c) => [c.workerId, c._sum.amountCents ?? 0]));
-  return workers
-    .filter((w) => byId.has(w.id))
-    .map((w) => ({
+  const out: AgentSummary[] = [];
+  for (const w of workers) {
+    const p = byId.get(w.id);
+    if (!p) continue;
+    const suspendedBy = p.suspendedById ? await db.user.findUnique({ where: { id: p.suspendedById }, select: PERSON_SELECT }) : null;
+    out.push({
       ...w,
-      profile: profileSummary(byId.get(w.id)!),
+      profile: profileSummary(p),
       activeCredentials: credBy.get(w.id) ?? 0,
       pendingApprovals: pendBy.get(w.id) ?? 0,
       spendThisMonthCents: spendBy.get(w.id) ?? 0,
-    }));
+      certification: await certification(db, w.id),
+      scorecard: await scorecard(db, w.id, 7, now),
+      kill: { suspendedAt: p.suspendedAt?.toISOString() ?? null, suspendedBy: personName(suspendedBy), suspendReason: p.suspendReason },
+      drift: { driftErrorRatePct: p.driftErrorRatePct, driftCostPerTaskCents: p.driftCostPerTaskCents, lastDriftAlertAt: p.lastDriftAlertAt?.toISOString() ?? null },
+    });
+  }
+  return out;
 }
 
 export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = new Date()): Promise<AgentRegistryResponse> {
@@ -300,7 +320,7 @@ export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = n
   const agents = await decorate(db, workers, profiles, now);
   const pendingApprovals = await db.agentApprovalRequest.count({ where: { status: 'PENDING' } });
   const builtInMissing = BUILT_IN_AGENTS.filter((b) => !profiles.some((p) => p.builtInKey === b.key)).map((b) => b.key);
-  return { agents, counts: counts.AGENT, pendingApprovals, builtInMissing };
+  return { agents, counts: counts.AGENT, pendingApprovals, builtInMissing, control: await controlState(db) };
 }
 
 function personName(u: { id: string; email: string; associate: { firstName: string; lastName: string } | null } | null): { id: string; name: string } | null {
@@ -394,19 +414,28 @@ export async function createAgent(db: Db, input: AgentInput, actorUserId: string
       rateLimitPerMinute: input.rateLimitPerMinute,
       allowedHoursStart: input.allowedHoursStart,
       allowedHoursEnd: input.allowedHoursEnd,
+      // Registered as already active = the registering admin attests it runs today;
+      // it is certified for this version and recertifies on the next (Brief 1D-3).
+      ...(input.status === 'ACTIVE' ? { certifiedAt: now, certifiedModelVersion: input.modelVersion } : {}),
     },
   });
   return getAgent(db, worker.id, now);
 }
 
-export async function updateAgent(db: Db, workerId: string, input: AgentUpdate, now: Date = new Date()): Promise<AgentDetail> {
-  const profile = await db.agentProfile.findUnique({ where: { workerId }, select: { workerId: true } });
+export async function updateAgent(db: Db, workerId: string, input: AgentUpdate, now: Date = new Date(), actorUserId: string | null = null): Promise<AgentDetail> {
+  const profile = await db.agentProfile.findUnique({ where: { workerId }, select: { workerId: true, modelVersion: true, certifiedModelVersion: true, worker: { select: { status: true } } } });
   if (!profile) throw new HttpError(404, 'agent_not_found', 'No such agent.');
   const { name, ownerUserId, status, capabilities, notes, ...rest } = input;
+  const versionAfter = rest.modelVersion ?? profile.modelVersion;
+  // Brief 1D-3: nothing leaves onboarding (or comes back from suspension) uncertified for the version it runs.
+  if (status === 'ACTIVE' && profile.worker.status !== 'ACTIVE' && profile.certifiedModelVersion !== versionAfter) {
+    throw new HttpError(409, 'agent_not_certified', `This agent must pass its scenarios under model version ${versionAfter} before it is active.`);
+  }
   if (name !== undefined || ownerUserId !== undefined || status !== undefined || capabilities !== undefined || notes !== undefined) {
     await updateWorker(db, workerId, { name, ownerUserId, status, capabilities, notes }, now);
   }
   if (Object.keys(rest).length) await db.agentProfile.update({ where: { workerId }, data: rest });
+  if (rest.modelVersion !== undefined && rest.modelVersion !== profile.modelVersion) await onModelVersionChanged(db, workerId, profile.modelVersion, rest.modelVersion, actorUserId, now);
   // A suspended or offboarded agent holds no working credential.
   if (status === 'SUSPENDED' || status === 'OFFBOARDED') await revokeAllCredentials(db, workerId, status.toLowerCase(), now);
   return getAgent(db, workerId, now);
@@ -482,7 +511,7 @@ function denial(status: 401 | 403 | 429, code: string, message: string, workerId
  * refused; so is any agent that is not ACTIVE, is outside its hours or
  * has spent its month. The rate limit is the caller's to take after.
  */
-export async function authenticateAgent(db: Db, presented: string, now: Date = new Date()): Promise<AgentAuthResult> {
+export async function authenticateAgent(db: Db, presented: string, now: Date = new Date(), opts: { allowOnboarding?: boolean } = {}): Promise<AgentAuthResult> {
   if (!presented.startsWith(AGENT_TOKEN_PREFIX) || !/^[0-9a-f]{64}$/.test(presented.slice(AGENT_TOKEN_PREFIX.length))) {
     return denial(401, 'unauthenticated', 'Invalid or missing agent credential.');
   }
@@ -494,8 +523,11 @@ export async function authenticateAgent(db: Db, presented: string, now: Date = n
   const workerId = c.workerId;
   if (c.revokedAt && c.revokedAt <= now) return denial(401, 'credential_revoked', 'This credential was revoked.', workerId, c.id);
   if (c.expiresAt <= now) return denial(401, 'credential_expired', 'This credential expired; ask the owner for a new one.', workerId, c.id);
+  // Brief 1D-3: the global switch is read on every call, so it bites at once.
+  if (await allAgentsSuspended(db)) return denial(403, 'agents_suspended', 'All agents are suspended.', workerId, c.id);
   const w = c.agent.worker;
-  if (w.status !== 'ACTIVE') return denial(403, 'agent_not_active', `This agent is ${w.status.toLowerCase()}; its owner can restore it.`, workerId, c.id);
+  const allowed = w.status === 'ACTIVE' || (opts.allowOnboarding === true && w.status === 'ONBOARDING');
+  if (!allowed) return denial(403, 'agent_not_active', `This agent is ${w.status.toLowerCase()}; its owner can restore it.`, workerId, c.id);
   if (!withinAllowedHours(c.agent.allowedHoursStart, c.agent.allowedHoursEnd, now)) {
     return denial(403, 'agent_outside_hours', `This agent may only run between ${c.agent.allowedHoursStart}:00 and ${c.agent.allowedHoursEnd}:00 org time.`, workerId, c.id);
   }

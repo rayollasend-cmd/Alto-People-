@@ -1,11 +1,17 @@
 import type {
   AgentApprovalStatus,
   AgentApprovalSummary,
+  AgentCertification,
+  AgentControlState,
   AgentCredentialIssue,
   AgentDetail,
+  AgentDrift,
   AgentInput,
   AgentIssuedCredential,
   AgentRegistryResponse,
+  AgentScenarioInput,
+  AgentScenarioSummary,
+  AgentScorecard,
   AgentSpendInput,
   AgentSummary,
   AgentUpdate,
@@ -18,20 +24,32 @@ import { apiFetch } from './api';
  * an agent may only request sit in the approval queue until a person
  * decides them.
  *
+ * Brief 1D-3 adds the controls: the kill switch (one agent or all of
+ * them), certification scenarios, the scorecard and drift thresholds.
+ *
  * Query keys name their inputs:
- *   ['agents', 'list']                 the registry
+ *   ['agents', 'list']                 the registry (carries `control`)
  *   ['agents', 'detail', id]           one agent, in full
  *   ['agents', 'approvals', filters]   the queue
+ *   ['agents', 'control']              the global switch
+ *   ['agents', 'scenarios', id]        one agent's certification scenarios
+ *   ['agents', 'scorecard', id, days]  one agent's scorecard for a window
  */
 
 export type {
   AgentApprovalStatus,
   AgentApprovalSummary,
+  AgentCertification,
+  AgentControlState,
   AgentCredentialIssue,
   AgentDetail,
+  AgentDrift,
   AgentInput,
   AgentIssuedCredential,
   AgentRegistryResponse,
+  AgentScenarioInput,
+  AgentScenarioSummary,
+  AgentScorecard,
   AgentSpendInput,
   AgentSummary,
   AgentUpdate,
@@ -104,4 +122,62 @@ export function decideAgentApproval(id: string, decision: 'approve' | 'reject', 
     method: 'POST',
     body: note ? { note } : {},
   });
+}
+
+/* ------------------------------------------------- Brief 1D-3: controls */
+
+/** The global switch. */
+export function getAgentControl(): Promise<AgentControlState> {
+  return apiFetch<AgentControlState>('/agents/control');
+}
+
+/** Suspend every agent at once; every live credential is revoked. */
+export function suspendAllAgents(reason: string): Promise<{ revoked: number; agents: number }> {
+  return apiFetch<{ revoked: number; agents: number }>('/agents/suspend-all', { method: 'POST', body: { reason } });
+}
+
+export function resumeAllAgents(): Promise<AgentControlState> {
+  return apiFetch<AgentControlState>('/agents/resume-all', { method: 'POST' });
+}
+
+/** Suspend one agent; its credentials are revoked in the same transaction. */
+export function suspendAgent(id: string, reason: string): Promise<{ revoked: number; agent: AgentDetail }> {
+  return apiFetch<{ revoked: number; agent: AgentDetail }>(`/agents/${encodeURIComponent(id)}/suspend`, { method: 'POST', body: { reason } });
+}
+
+/** The owner's to do (403 `owner_only` otherwise). No credential comes back. */
+export function resumeAgent(id: string): Promise<AgentDetail> {
+  return apiFetch<AgentDetail>(`/agents/${encodeURIComponent(id)}/resume`, { method: 'POST' });
+}
+
+export function listAgentScenarios(id: string): Promise<{ scenarios: AgentScenarioSummary[] }> {
+  return apiFetch<{ scenarios: AgentScenarioSummary[] }>(`/agents/${encodeURIComponent(id)}/scenarios`);
+}
+
+export function addAgentScenario(id: string, input: AgentScenarioInput): Promise<AgentScenarioSummary> {
+  return apiFetch<AgentScenarioSummary>(`/agents/${encodeURIComponent(id)}/scenarios`, { method: 'POST', body: input });
+}
+
+export function removeAgentScenario(id: string, scenarioId: string): Promise<void> {
+  return apiFetch<void>(`/agents/${encodeURIComponent(id)}/scenarios/${encodeURIComponent(scenarioId)}`, { method: 'DELETE' });
+}
+
+/** Built-in agents only (409 `agent_answers_itself` for the rest). */
+export function runAgentScenarios(id: string): Promise<{ ran: number; passed: number; scenarios: AgentScenarioSummary[] }> {
+  return apiFetch<{ ran: number; passed: number; scenarios: AgentScenarioSummary[] }>(`/agents/${encodeURIComponent(id)}/scenarios/run`, { method: 'POST' });
+}
+
+/** 409 `agent_not_certified` (with the reason in the message) when not every scenario passes. */
+export function certifyAgent(id: string): Promise<{ certification: AgentCertification; agent: AgentDetail }> {
+  return apiFetch<{ certification: AgentCertification; agent: AgentDetail }>(`/agents/${encodeURIComponent(id)}/certify`, { method: 'POST' });
+}
+
+export function getAgentScorecard(id: string, days: number): Promise<AgentScorecard> {
+  return apiFetch<AgentScorecard>(`/agents/${encodeURIComponent(id)}/scorecard?days=${encodeURIComponent(String(days))}`);
+}
+
+export type AgentDriftInput = Partial<Pick<AgentDrift, 'driftErrorRatePct' | 'driftCostPerTaskCents'>>;
+
+export function updateAgentDrift(id: string, input: AgentDriftInput): Promise<AgentDetail> {
+  return apiFetch<AgentDetail>(`/agents/${encodeURIComponent(id)}/drift`, { method: 'PATCH', body: input });
 }

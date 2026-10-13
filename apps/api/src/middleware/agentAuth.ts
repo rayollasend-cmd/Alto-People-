@@ -38,6 +38,15 @@ function deny(req: Request, res: Response, d: AgentDenial, scope?: string): void
 }
 
 export function requireAgent(...scopes: AgentScope[]) {
+  return guard(scopes, {});
+}
+
+/** The certification endpoints: an onboarding agent may answer its scenarios and nothing else. */
+export function requireOnboardingAgent() {
+  return guard([], { allowOnboarding: true });
+}
+
+function guard(scopes: AgentScope[], opts: { allowOnboarding?: boolean }) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       res.locals.agentScopes = scopes;
@@ -48,7 +57,7 @@ export function requireAgent(...scopes: AgentScope[]) {
         deny(req, res, { ok: false, status: 401, code: 'unauthenticated', message: 'An agent credential is required.', workerId: null, credentialId: null });
         return;
       }
-      const auth = await authenticateAgent(prisma, presented, new Date());
+      const auth = await authenticateAgent(prisma, presented, new Date(), opts);
       if (!auth.ok) {
         deny(req, res, auth);
         return;

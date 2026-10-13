@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { AGENT_EXECUTABLE_ACTIONS, AgentMessageInputSchema, AgentRequestInputSchema, AgentSpendInputSchema, type AgentSelf } from '@alto-people/shared';
+import { AGENT_EXECUTABLE_ACTIONS, AgentMessageInputSchema, AgentRequestInputSchema, AgentScenarioAnswerSchema, AgentSpendInputSchema, type AgentSelf } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { recordAgentCalls, requireAgent } from '../middleware/agentAuth.js';
+import { recordAgentCalls, requireAgent, requireOnboardingAgent } from '../middleware/agentAuth.js';
 import { claimApproval, createApprovalRequest, getApproval, monthSpendCents, postAgentMessage, recordSpend, rotateCredential, scheduleCsv } from '../lib/agents.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
+import { recordScenarioAnswer } from '../lib/agentControls.js';
 
 /**
  * What an agent can call (Brief 1D-2). Bearer alto_agent_… on every route;
@@ -20,6 +21,8 @@ import { computeExecutiveSummary } from '../lib/executiveSummary.js';
  *   GET  /agent/v1/exports/schedule.csv        gated (DATA_EXPORT): names leave the system
  *   POST /agent/v1/requests                    ask for any gated action; PAY_CHANGE and SEPARATION are only ever asked
  *   GET  /agent/v1/requests/:id                where it stands
+ *   GET  /agent/v1/certification               the scenarios to answer (inputs only) — open to an onboarding agent
+ *   POST /agent/v1/certification/:scenarioId   the answer; pass or fail is recorded under the current model version
  */
 export const agentApiRouter = Router();
 
@@ -190,6 +193,31 @@ agentApiRouter.get('/requests/:id', requireAgent(), async (req, res, next) => {
     res.locals.agentAction = 'agent.request.read';
     res.locals.agentTarget = { type: 'AgentApprovalRequest', id: a.id };
     res.json({ id: a.id, action: a.action, status: a.status, requestedAt: a.requestedAt, expiresAt: a.expiresAt, decidedAt: a.decidedAt, decisionNote: a.decisionNote, consumedAt: a.consumedAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Brief 1D-3: certification ----------------------------------------------
+
+agentApiRouter.get('/certification', requireOnboardingAgent(), async (req, res, next) => {
+  try {
+    const rows = await prisma.agentScenario.findMany({ where: { workerId: req.agent!.workerId }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, input: true } });
+    res.locals.agentAction = 'agent.certification.read';
+    res.json({ scenarios: rows.map((s) => ({ id: s.id, name: s.name, input: s.input })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentApiRouter.post('/certification/:scenarioId', requireOnboardingAgent(), async (req, res, next) => {
+  try {
+    const scenarioId = Id.parse(req.params.scenarioId);
+    const answer = AgentScenarioAnswerSchema.parse(req.body);
+    const run = await recordScenarioAnswer(prisma, req.agent!.workerId, scenarioId, answer, null);
+    res.locals.agentAction = 'agent.scenario.answered';
+    res.locals.agentTarget = { type: 'AgentScenario', id: scenarioId };
+    res.status(201).json({ passed: run.passed, reason: run.reason, modelVersion: run.modelVersion });
   } catch (err) {
     next(err);
   }

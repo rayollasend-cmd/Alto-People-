@@ -67,6 +67,14 @@ workersRouter.patch('/:id', MANAGE, async (req, res, next) => {
   try {
     const id = Id.parse(req.params.id);
     const input = WorkerUpdateSchema.parse(req.body);
+    if (input.status === 'ACTIVE') {
+      // Brief 1D-3: an agent leaves onboarding only through certification on /agents.
+      const row = await prisma.worker.findUnique({ where: { id }, select: { type: true, status: true } });
+      if (row?.type === 'AGENT' && row.status !== 'ACTIVE') {
+        res.status(409).json({ error: { code: 'use_agent_registry', message: 'An agent becomes active through certification in the AI agents registry.' } });
+        return;
+      }
+    }
     const worker = await updateWorker(prisma, id, input);
     enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'worker.updated', entityType: 'Worker', entityId: id, workerId: id, metadata: { fields: Object.keys(input), status: worker.status, ownerUserId: worker.owner?.id ?? null } }, 'workers');
     res.json(worker);

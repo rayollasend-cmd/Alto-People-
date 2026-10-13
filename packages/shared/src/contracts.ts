@@ -8442,6 +8442,12 @@ export interface AgentSummary extends WorkerSummary {
   activeCredentials: number;
   pendingApprovals: number;
   spendThisMonthCents: number;
+  /** Brief 1D-3. Always sent by the API; optional so earlier fixtures still compile. */
+  certification?: AgentCertification;
+  /** The trailing seven days. */
+  scorecard?: AgentScorecard;
+  kill?: AgentKillState;
+  drift?: AgentDrift;
 }
 
 export interface AgentDetail extends AgentSummary {
@@ -8457,6 +8463,8 @@ export interface AgentRegistryResponse {
   pendingApprovals: number;
   /** Built-in agents the boot sweep could not register (no owner account yet). */
   builtInMissing: string[];
+  /** Brief 1D-3: the global switch. */
+  control?: AgentControlState;
 }
 
 export interface AgentIssuedCredential {
@@ -8476,4 +8484,105 @@ export interface AgentSelf {
   limits: { spendCapCents: number | null; rateLimitPerMinute: number; allowedHoursStart: number | null; allowedHoursEnd: number | null };
   spendThisMonthCents: number;
   credential: { id: string; expiresAt: string };
+}
+
+/* ---------------------------------------------------------------------------
+ *  Agent controls (Brief 1D-3) — the off switch, certification before
+ *  production, the scorecard and the drift alert.
+ * -------------------------------------------------------------------------- */
+
+export const AgentSuspendSchema = z.object({ reason: z.string().trim().min(3).max(300) });
+
+/**
+ * A scenario is an input and what must come back. `expected.output` is
+ * compared whole (order of keys ignored); `expected.allowedActions` passes
+ * when every action the agent took is in the set.
+ */
+export const AgentScenarioInputSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  input: z.record(z.string(), z.unknown()),
+  expected: z
+    .object({
+      output: z.record(z.string(), z.unknown()).optional(),
+      allowedActions: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
+    })
+    .refine((e) => e.output !== undefined || e.allowedActions !== undefined, { message: 'Give an expected output or the allowed actions.' }),
+});
+export type AgentScenarioInput = z.infer<typeof AgentScenarioInputSchema>;
+
+/** What the agent answers a scenario with, through /agent/v1. */
+export const AgentScenarioAnswerSchema = z.object({
+  output: z.record(z.string(), z.unknown()).optional(),
+  actions: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
+});
+export type AgentScenarioAnswer = z.infer<typeof AgentScenarioAnswerSchema>;
+
+export const AgentDriftSchema = z.object({
+  driftErrorRatePct: z.number().int().min(1).max(100).nullable().optional(),
+  driftCostPerTaskCents: z.number().int().min(1).max(100_000_000).nullable().optional(),
+});
+
+export interface AgentScenarioRunSummary {
+  id: string;
+  modelVersion: string;
+  passed: boolean;
+  actual: Record<string, unknown> | null;
+  reason: string | null;
+  ranBy: { id: string; name: string } | null;
+  ranAt: string;
+}
+
+export interface AgentScenarioSummary {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  expected: { output?: Record<string, unknown>; allowedActions?: string[] };
+  /** The newest run under the agent's current model version, if any. */
+  latest: AgentScenarioRunSummary | null;
+  createdAt: string;
+}
+
+export interface AgentCertification {
+  modelVersion: string;
+  certifiedAt: string | null;
+  certifiedModelVersion: string | null;
+  /** Certified for the version it runs now. */
+  current: boolean;
+  scenarios: number;
+  passing: number;
+  /** Every scenario has a passing run under the current version, and there is at least one. */
+  ready: boolean;
+  /** Built-in agents the API can exercise itself. */
+  runnable: boolean;
+}
+
+export interface AgentScorecard {
+  days: number;
+  tasksCompleted: number;
+  errors: number;
+  /** errors / (tasks + errors), whole percent; null with nothing to measure. */
+  errorRatePct: number | null;
+  exceptionsEscalated: number;
+  approvalsRequested: number;
+  approvalsRejected: number;
+  spendCents: number;
+  costPerTaskCents: number | null;
+}
+
+export interface AgentControlState {
+  allSuspendedAt: string | null;
+  suspendedBy: { id: string; name: string } | null;
+  reason: string | null;
+}
+
+export interface AgentKillState {
+  suspendedAt: string | null;
+  suspendedBy: { id: string; name: string } | null;
+  suspendReason: string | null;
+}
+
+export interface AgentDrift {
+  driftErrorRatePct: number | null;
+  driftCostPerTaskCents: number | null;
+  lastDriftAlertAt: string | null;
 }

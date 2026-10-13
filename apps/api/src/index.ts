@@ -48,6 +48,7 @@ import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
+import { startAgentDriftCron } from './lib/agentControls.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
@@ -141,6 +142,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
       .catch((err) => logger.warn({ err }, 'agent sweep failed'));
   void sweepAgents();
   setInterval(sweepAgents, 15 * 60_000).unref();
+  startAgentDriftCron();
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

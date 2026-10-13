@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { BotMessageSquare, Copy, Plus } from 'lucide-react';
+import { BotMessageSquare, Copy, Plus, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AGENT_APPROVAL_STATUS_LABELS,
@@ -12,30 +12,46 @@ import {
   WORKER_STATUS_LABELS,
   type AgentApprovalStatus,
   type AgentApprovalSummary,
+  type AgentCertification,
+  type AgentControlState,
   type AgentCredentialState,
   type AgentDetail,
   type AgentEnvironment,
   type AgentGatedAction,
+  type AgentScenarioSummary,
   type AgentScope,
+  type AgentScorecard,
   type AgentSummary,
   type WorkerStatus,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { fmtDate, fmtDateTime, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, fmtPercent, fmtRelativeDate } from '@/lib/format';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import {
+  addAgentScenario,
+  certifyAgent,
   createAgent,
   decideAgentApproval,
   ensureBuiltInAgents,
   getAgent,
+  getAgentControl,
+  getAgentScorecard,
   issueAgentCredential,
   listAgentApprovals,
+  listAgentScenarios,
   listAgents,
   recordAgentSpend,
+  removeAgentScenario,
+  resumeAgent,
+  resumeAllAgents,
   revokeAgentCredential,
+  runAgentScenarios,
+  suspendAgent,
+  suspendAllAgents,
   updateAgent,
+  updateAgentDrift,
 } from '@/lib/agentsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -62,8 +78,16 @@ import {
  * what it did. The hero is the approval queue: the gated actions an
  * agent may only ask for wait here until a person decides.
  *
- * Deep link: `?approval=<id>` opens that request's decision dialog (the
- * owner's notification points here); the param is dropped once consumed.
+ * Brief 1D-3 adds the controls: a kill switch for one agent or all of
+ * them (credentials revoked at once; only the owner resumes one), a
+ * certification tab (scenarios every agent must pass under its current
+ * model version before it leaves onboarding), a scorecard and the drift
+ * thresholds that raise an alert.
+ *
+ * Deep links: `?approval=<id>` opens that request's decision dialog (the
+ * owner's notification points here); `?agent=<id>` opens that agent's
+ * detail (the kill, recertification and drift notifications point here).
+ * Each param is dropped once consumed.
  */
 
 const STATUSES: WorkerStatus[] = ['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED'];
@@ -111,6 +135,12 @@ function errorMessage(err: unknown, fallback: string): string {
     if (code === 'approval_decided') return 'This request was already decided.';
     if (code === 'approval_expired') return 'This request expired before it was decided.';
     if (code === 'credential_already_revoked') return 'That credential was already revoked.';
+    if (code === 'owner_only') return 'Only the accountable owner can resume this agent.';
+    if (code === 'agent_not_suspended') return 'This agent is not suspended.';
+    if (code === 'agent_offboarded') return 'An offboarded agent cannot be suspended.';
+    if (code === 'agents_not_suspended') return 'Agents are not suspended.';
+    if (code === 'agent_answers_itself') return 'This agent answers its scenarios itself through the agent API; Alto cannot run them for it.';
+    // agent_not_certified carries the reason ("2 of 5 scenarios are not passing …").
     return err.message || fallback;
   }
   return fallback;
@@ -119,6 +149,27 @@ function errorMessage(err: unknown, fallback: string): string {
 /** Cents → "$12.34". Money reads in heavy sans, never the display serif. */
 function Money({ cents, className = '' }: { cents: number; className?: string }) {
   return <span className={`font-semibold tabular-nums ${className}`}>{fmtMoney(cents / 100)}</span>;
+}
+
+/** A compact one-line JSON for scenario cells. */
+function compactJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * ✓ + version when certified for the version it runs now; the onboarding
+ * count while it is still onboarding; "Recertify" for a live agent whose
+ * model version moved past its certificate (or that never had one).
+ */
+function certificationLabel(c: AgentCertification | undefined, status: WorkerStatus): { text: string; variant: 'success' | 'pending' | 'destructive' | 'outline' } {
+  if (!c) return { text: '—', variant: 'outline' };
+  if (c.current) return { text: `✓ ${c.certifiedModelVersion ?? c.modelVersion}`, variant: 'success' };
+  if (status === 'ONBOARDING') return { text: `Onboarding: ${c.passing}/${c.scenarios} scenarios`, variant: 'pending' };
+  return { text: 'Recertify', variant: 'destructive' };
 }
 
 function hoursLabel(start: number | null, end: number | null): string {
@@ -152,11 +203,21 @@ export function AgentRegistryAdmin() {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [ensuring, setEnsuring] = useState(false);
+  const [suspendingAll, setSuspendingAll] = useState(false);
+  const [resumingAll, setResumingAll] = useState(false);
   const [deciding, setDeciding] = useState<{ approval: AgentApprovalSummary; decision: 'approve' | 'reject' | null } | null>(null);
 
   const registry = useQuery({ queryKey: ['agents', 'list'], queryFn: listAgents });
   const queueFilters = useMemo(() => ({ status: 'PENDING' as const }), []);
   const queue = useQuery({ queryKey: ['agents', 'approvals', queueFilters], queryFn: () => listAgentApprovals(queueFilters) });
+  // The registry carries the global switch; the dedicated read is only
+  // for an API that answers without it.
+  const controlQuery = useQuery({
+    queryKey: ['agents', 'control'],
+    queryFn: getAgentControl,
+    enabled: registry.data !== undefined && registry.data.control === undefined,
+  });
+  const control: AgentControlState | undefined = registry.data?.control ?? controlQuery.data;
 
   const agents = registry.data?.agents ?? [];
   const counts = registry.data?.counts;
@@ -189,6 +250,33 @@ export function AgentRegistryAdmin() {
     // target going null ends the cycle, so they're deliberately not deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, queueLoaded, pending]);
+
+  // Deep link: ?agent=<id> opens that agent's detail (the kill,
+  // recertification and drift notifications point here). The detail
+  // dialog loads the agent itself, so nothing waits on the registry.
+  const agentTarget = searchParams.get('agent');
+  useEffect(() => {
+    if (!agentTarget) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('agent');
+    setSearchParams(next, { replace: true });
+    setOpenId(agentTarget);
+    // Same reasoning as above: the consume changes searchParams' identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentTarget]);
+
+  const onResumeAll = async () => {
+    setResumingAll(true);
+    try {
+      await resumeAllAgents();
+      toast.success('Agents resumed. No credential was restored — issue new ones per agent.');
+      await refetchAll();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not resume the agents.'));
+    } finally {
+      setResumingAll(false);
+    }
+  };
 
   const onEnsure = async () => {
     setEnsuring(true);
@@ -250,6 +338,22 @@ export function AgentRegistryAdmin() {
         cell: (a) => <Badge variant={STATUS_VARIANT[a.status]}>{WORKER_STATUS_LABELS[a.status]}</Badge>,
       },
       {
+        key: 'certified',
+        header: 'Certified',
+        accessor: (a) => certificationLabel(a.certification, a.status).text,
+        sortable: true,
+        cell: (a) => {
+          const c = a.certification;
+          const l = certificationLabel(c, a.status);
+          const title = c ? (c.current ? `Certified ${c.certifiedAt ? fmtDate(c.certifiedAt) : ''} for ${c.certifiedModelVersion ?? c.modelVersion}` : c.certifiedModelVersion ? `Certified for ${c.certifiedModelVersion}; now runs ${c.modelVersion} · ${c.passing}/${c.scenarios} passing` : `${c.passing}/${c.scenarios} scenarios passing under ${c.modelVersion}`) : undefined;
+          return (
+            <Badge variant={l.variant} size="sm" withDot={false} title={title}>
+              {l.text}
+            </Badge>
+          );
+        },
+      },
+      {
         key: 'environment',
         header: 'Environment',
         accessor: (a) => AGENT_ENVIRONMENT_LABELS[a.profile.environment],
@@ -271,6 +375,56 @@ export function AgentRegistryAdmin() {
         align: 'right',
         cell: (a) => <Money cents={a.spendThisMonthCents} />,
         csv: (a) => (a.spendThisMonthCents / 100).toFixed(2),
+      },
+      {
+        key: 'tasks7d',
+        header: 'Tasks (7d)',
+        accessor: (a) => a.scorecard?.tasksCompleted ?? null,
+        sortable: true,
+        align: 'right',
+        cell: (a) => {
+          const s = a.scorecard;
+          if (!s) return <span className="text-silver/60">—</span>;
+          return (
+            <span className="tabular-nums" title={`${s.errors} errors · ${s.exceptionsEscalated} escalated · ${s.approvalsRequested} approvals asked, ${s.approvalsRejected} rejected`}>
+              {s.tasksCompleted}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'errorRate7d',
+        header: 'Error rate (7d)',
+        accessor: (a) => a.scorecard?.errorRatePct ?? null,
+        sortable: true,
+        align: 'right',
+        cell: (a) => {
+          const s = a.scorecard;
+          if (!s || s.errorRatePct === null) return <span className="text-silver/60">—</span>;
+          const over = a.drift?.driftErrorRatePct !== null && a.drift?.driftErrorRatePct !== undefined && s.errorRatePct >= a.drift.driftErrorRatePct;
+          return (
+            <span className={`tabular-nums ${over ? 'font-medium text-warning' : ''}`} title={over ? `Above the ${a.drift?.driftErrorRatePct}% drift threshold` : undefined}>
+              {fmtPercent(s.errorRatePct, { decimals: 0 })}
+            </span>
+          );
+        },
+        csv: (a) => a.scorecard?.errorRatePct ?? '',
+      },
+      {
+        key: 'costPerTask7d',
+        header: 'Cost per task (7d)',
+        accessor: (a) => (a.scorecard?.costPerTaskCents === null || a.scorecard?.costPerTaskCents === undefined ? null : a.scorecard.costPerTaskCents / 100),
+        sortable: true,
+        align: 'right',
+        // The grid is wide already; the chooser turns this on.
+        defaultHidden: true,
+        cell: (a) => {
+          const s = a.scorecard;
+          if (!s || s.costPerTaskCents === null) return <span className="text-silver/60">—</span>;
+          const over = a.drift?.driftCostPerTaskCents !== null && a.drift?.driftCostPerTaskCents !== undefined && s.costPerTaskCents >= a.drift.driftCostPerTaskCents;
+          return <Money cents={s.costPerTaskCents} className={over ? 'text-warning' : ''} />;
+        },
+        csv: (a) => (a.scorecard?.costPerTaskCents === null || a.scorecard?.costPerTaskCents === undefined ? '' : (a.scorecard.costPerTaskCents / 100).toFixed(2)),
       },
       {
         key: 'lastActive',
@@ -304,9 +458,36 @@ export function AgentRegistryAdmin() {
             </Button>
           ) : undefined
         }
+        secondaryActions={
+          canManage && control && !control.allSuspendedAt ? (
+            <Button variant="outline" className="border-alert/50 text-alert hover:border-alert hover:text-alert" onClick={() => setSuspendingAll(true)}>
+              <ShieldAlert className="h-4 w-4" aria-hidden="true" /> Suspend all agents
+            </Button>
+          ) : undefined
+        }
       />
 
       {registry.error && <QueryError what="agents" query={registry} />}
+
+      {/* The global switch, when thrown: nothing below it is live. */}
+      {control?.allSuspendedAt && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-alert/40 bg-alert/10 px-4 py-3 text-sm">
+          <ShieldAlert className="h-5 w-5 shrink-0 text-alert" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-white">
+              All agents suspended since {fmtDateTime(control.allSuspendedAt)}
+              {control.suspendedBy ? ` by ${control.suspendedBy.name}` : ''}
+              {control.reason ? ` — ${control.reason}` : ''}
+            </p>
+            <p className="text-xs2 text-silver/80">Every credential was revoked and every agent call is refused until this is lifted. Resuming restores no credential.</p>
+          </div>
+          {canManage && (
+            <Button variant="secondary" onClick={onResumeAll} disabled={resumingAll}>
+              {resumingAll ? 'Resuming…' : 'Resume all agents'}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Hero: the approval queue. */}
       <section aria-labelledby="agent-queue-heading" className="space-y-3">
@@ -408,6 +589,16 @@ export function AgentRegistryAdmin() {
         />
       )}
       {openId && <AgentDetailDialog id={openId} canManage={canManage} onClose={() => setOpenId(null)} onChanged={refetchAll} />}
+      {suspendingAll && (
+        <SuspendAllDialog
+          agents={counts ? counts.ACTIVE + counts.ONBOARDING : agents.length}
+          onClose={() => setSuspendingAll(false)}
+          onSuspended={async () => {
+            setSuspendingAll(false);
+            await refetchAll();
+          }}
+        />
+      )}
       {deciding && (
         <DecisionDialog
           approval={deciding.approval}
@@ -503,6 +694,60 @@ function DecisionDialog({
             )}
           </DialogFooter>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------- kill switch */
+
+function SuspendAllDialog({ agents, onClose, onSuspended }: { agents: number; onClose: () => void; onSuspended: () => Promise<void> }) {
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const valid = reason.trim().length >= 3;
+
+  const submit = async () => {
+    if (!valid) return;
+    setSaving(true);
+    try {
+      const r = await suspendAllAgents(reason.trim());
+      toast.success(`All agents suspended. ${r.revoked === 1 ? '1 credential' : `${r.revoked} credentials`} revoked.`);
+      await onSuspended();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not suspend the agents.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} confirmDiscard={reason !== '' && !saving}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Suspend all agents?</DialogTitle>
+          <DialogDescription>
+            Every credential is revoked at once and every agent call is refused until an org admin resumes. {agents === 1 ? '1 agent is' : `${agents} agents are`} live now. Resuming restores no credential.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Field label="Reason" required hint="Kept with the switch and shown to every owner.">
+            {(p) => <Textarea {...p} value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={300} autoFocus />}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="destructive" disabled={!valid || saving}>
+              {saving ? 'Suspending…' : 'Suspend all agents'}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -801,6 +1046,7 @@ function AgentDetailDialog({ id, canManage, onClose, onChanged }: { id: string; 
 function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: AgentDetail; canManage: boolean; onClose: () => void; onChanged: () => Promise<unknown> }) {
   const confirm = useConfirm();
   const [tab, setTab] = useState('profile');
+  const certification = agent.certification;
   const [form, setForm] = useState<ProfileForm>(() => formFromAgent(agent));
   const [saving, setSaving] = useState(false);
   const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -871,10 +1117,14 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
           </DialogDescription>
         </DialogHeader>
 
+        <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} />
+
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="credentials">Credentials ({liveCredentials})</TabsTrigger>
+            <TabsTrigger value="certification">Certification{certification ? ` (${certification.passing}/${certification.scenarios})` : ''}</TabsTrigger>
+            <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
             <TabsTrigger value="requests">Requests ({agent.approvals.length})</TabsTrigger>
             <TabsTrigger value="spend">Spend ({agent.spend.length})</TabsTrigger>
             <TabsTrigger value="trail">Trail ({agent.trail.length})</TabsTrigger>
@@ -906,6 +1156,14 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
             <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} />
           </TabsContent>
 
+          <TabsContent value="certification">
+            <CertificationSection agent={agent} canManage={canManage} onChanged={onChanged} />
+          </TabsContent>
+
+          <TabsContent value="scorecard">
+            <ScorecardSection agent={agent} canManage={canManage} onChanged={onChanged} />
+          </TabsContent>
+
           <TabsContent value="requests">
             <RequestsSection approvals={agent.approvals} />
           </TabsContent>
@@ -920,6 +1178,501 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
         </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* -------------------------------------------------------- kill switch */
+
+/**
+ * The status area under the header: suspend (any org admin, with a
+ * reason) or resume (the owner, and only the owner). Suspending revokes
+ * every credential; resuming gives none back.
+ */
+function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+  const { user } = useAuth();
+  const prompt = usePrompt();
+  const [busy, setBusy] = useState(false);
+  const [resumed, setResumed] = useState(false);
+  const isOwner = Boolean(user?.id && agent.owner?.id && user.id === agent.owner.id);
+  const kill = agent.kill;
+
+  const suspend = async () => {
+    const reason = await prompt({
+      title: `Suspend ${agent.name}?`,
+      description: 'Every credential is revoked the moment this is saved and the agent stops being able to call Alto. Only the owner can resume it.',
+      confirmLabel: 'Suspend',
+      destructive: true,
+      reasonLabel: 'Reason',
+      reasonMaxLength: 300,
+      required: true,
+    });
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      toast.error('Give a reason of at least 3 characters.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await suspendAgent(agent.id, reason.trim());
+      toast.success(`${agent.name} suspended. ${r.revoked === 1 ? '1 credential' : `${r.revoked} credentials`} revoked.`);
+      setResumed(false);
+      await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not suspend the agent.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resume = async () => {
+    setBusy(true);
+    try {
+      await resumeAgent(agent.id);
+      toast.success(`${agent.name} resumed. No credential was restored.`);
+      setResumed(true);
+      await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not resume the agent.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (agent.status === 'SUSPENDED') {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-alert/40 bg-alert/10 px-3 py-2 text-sm" data-testid="kill-switch">
+        <ShieldAlert className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-white">
+            Suspended{kill?.suspendedAt ? ` ${fmtDateTime(kill.suspendedAt)}` : ''}
+            {kill?.suspendedBy ? ` by ${kill.suspendedBy.name}` : ''}
+          </p>
+          <p className="text-xs2 text-silver/80">{kill?.suspendReason ? kill.suspendReason : 'Credentials revoked.'}</p>
+          {!isOwner && <p className="text-xs2 text-silver/70">Only the owner{agent.owner ? ` (${agent.owner.name || agent.owner.email})` : ''} can resume.</p>}
+        </div>
+        {canManage && (
+          <Button size="sm" variant="secondary" onClick={resume} disabled={!isOwner || busy} title={isOwner ? undefined : 'Only the owner can resume'}>
+            {busy ? 'Resuming…' : 'Resume'}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (agent.status === 'OFFBOARDED') return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="kill-switch">
+      {resumed && (
+        <p className="min-w-0 flex-1 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs2 text-warning" role="status">
+          Resumed. No credential was restored — issue a new one under Credentials.
+        </p>
+      )}
+      {canManage && (
+        <Button size="sm" variant="outline" className="ml-auto border-alert/50 text-alert hover:border-alert hover:text-alert" onClick={suspend} disabled={busy}>
+          <ShieldAlert className="h-4 w-4" aria-hidden="true" /> {busy ? 'Suspending…' : 'Suspend'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ certification */
+
+/** Parse a JSON object typed by hand; the message is for the field's error line. */
+function parseJsonObject(text: string): { value: Record<string, unknown> } | { error: string } {
+  if (text.trim() === '') return { error: 'Required.' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { error: 'Not valid JSON.' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: 'Must be a JSON object, like {"text": "…"}.' };
+  return { value: parsed as Record<string, unknown> };
+}
+
+function CertificationSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const scenarios = useQuery({ queryKey: ['agents', 'scenarios', agent.id], queryFn: () => listAgentScenarios(agent.id), select: (d) => d.scenarios });
+  const cert = agent.certification;
+  const [running, setRunning] = useState(false);
+  const [certifying, setCertifying] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [input, setInput] = useState('');
+  const [mode, setMode] = useState<'output' | 'actions'>('output');
+  const [expectedOutput, setExpectedOutput] = useState('');
+  const [allowedActions, setAllowedActions] = useState('');
+  const [touched, setTouched] = useState(false);
+
+  const inputParsed = parseJsonObject(input);
+  const outputParsed = parseJsonObject(expectedOutput);
+  const actionsList = allowedActions
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const nameValid = name.trim().length >= 2;
+  const expectedValid = mode === 'output' ? 'value' in outputParsed : actionsList.length > 0;
+  const formValid = nameValid && 'value' in inputParsed && expectedValid;
+  const formDirty = name !== '' || input !== '' || expectedOutput !== '' || allowedActions !== '';
+
+  const refresh = async () => {
+    await Promise.all([qc.invalidateQueries({ queryKey: ['agents', 'scenarios', agent.id] }), onChanged()]);
+  };
+
+  const add = async () => {
+    setTouched(true);
+    if (!formValid || !('value' in inputParsed)) return;
+    setAdding(true);
+    try {
+      await addAgentScenario(agent.id, {
+        name: name.trim(),
+        input: inputParsed.value,
+        expected: mode === 'output' && 'value' in outputParsed ? { output: outputParsed.value } : { allowedActions: actionsList },
+      });
+      toast.success('Scenario added.');
+      setName('');
+      setInput('');
+      setExpectedOutput('');
+      setAllowedActions('');
+      setTouched(false);
+      await refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not add the scenario.'));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const remove = async (s: AgentScenarioSummary) => {
+    const ok = await confirm({ title: `Delete “${s.name}”?`, description: 'Its runs go with it. Certification is recomputed from what remains.', confirmLabel: 'Delete', destructive: true });
+    if (!ok) return;
+    setRemoving(s.id);
+    try {
+      await removeAgentScenario(agent.id, s.id);
+      toast.success('Scenario deleted.');
+      await refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not delete the scenario.'));
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      const r = await runAgentScenarios(agent.id);
+      qc.setQueryData(['agents', 'scenarios', agent.id], { scenarios: r.scenarios });
+      toast[r.passed === r.ran ? 'success' : 'info'](`${r.passed} of ${r.ran} scenarios passed.`);
+      await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not run the scenarios.'));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const certify = async () => {
+    setCertifying(true);
+    try {
+      const r = await certifyAgent(agent.id);
+      toast.success(r.agent.status === 'ACTIVE' && agent.status === 'ONBOARDING' ? `${agent.name} certified and active.` : `${agent.name} certified for ${r.certification.modelVersion}.`);
+      await refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not certify the agent.'));
+    } finally {
+      setCertifying(false);
+    }
+  };
+
+  const canCertify = Boolean(cert?.ready) && (agent.status === 'ONBOARDING' || !cert?.current);
+  const rows = scenarios.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      {/* The summary. */}
+      <div className="flex flex-wrap items-start gap-3 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {cert ? (
+            <>
+              <p className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-white">Runs {cert.modelVersion}</span>
+                <Badge variant={certificationLabel(cert, agent.status).variant} size="sm" withDot={false}>
+                  {cert.current ? 'Certified for this version' : cert.certifiedModelVersion ? `Certified for ${cert.certifiedModelVersion}` : 'Not certified'}
+                </Badge>
+              </p>
+              <p className="text-xs2 text-silver/80">
+                {cert.passing} of {cert.scenarios} {cert.scenarios === 1 ? 'scenario' : 'scenarios'} passing under {cert.modelVersion}
+                {cert.certifiedAt ? ` · last certified ${fmtDateTime(cert.certifiedAt)}` : ''}
+                {' · '}
+                {cert.ready ? 'ready to certify' : cert.scenarios === 0 ? 'add at least one scenario' : 'not ready'}
+              </p>
+            </>
+          ) : (
+            <p className="text-silver/70">No certification data.</p>
+          )}
+        </div>
+        {canManage && (
+          <div className="flex flex-wrap gap-2">
+            {cert?.runnable && (
+              <Button size="sm" variant="secondary" onClick={run} disabled={running || rows.length === 0}>
+                {running ? 'Running…' : 'Run scenarios'}
+              </Button>
+            )}
+            <Button size="sm" onClick={certify} disabled={!canCertify || certifying}>
+              {certifying ? 'Certifying…' : 'Certify'}
+            </Button>
+          </div>
+        )}
+      </div>
+      {cert && !cert.runnable && (
+        <p className="text-xs2 text-silver/70">
+          This agent answers its scenarios itself: it reads them from <code className="font-mono text-silver">GET /agent/v1/certification</code> and answers each with{' '}
+          <code className="font-mono text-silver">POST /agent/v1/certification/:scenarioId</code>, using its credential. Each answer is recorded as a run under its current model version.
+        </p>
+      )}
+      {cert && !cert.current && agent.status !== 'ONBOARDING' && (
+        <p className="text-xs2 text-warning">The model version moved past the certificate. Every scenario must pass again under {cert.modelVersion} before this agent is certified.</p>
+      )}
+
+      {/* The scenarios. */}
+      {scenarios.error && <QueryError what="the scenarios" query={scenarios} />}
+      {scenarios.isLoading ? (
+        <p className="text-sm text-silver/70">Loading scenarios…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-silver/70">No scenarios yet. An agent is certified only once every scenario passes.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs2 text-silver/70">
+              <tr>
+                <th scope="col" className="py-1 pr-3 font-medium">Scenario</th>
+                <th scope="col" className="py-1 pr-3 font-medium">Input</th>
+                <th scope="col" className="py-1 pr-3 font-medium">Expected</th>
+                <th scope="col" className="py-1 pr-3 font-medium">Latest run</th>
+                {canManage && (
+                  <th scope="col" className="py-1 font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-navy-secondary align-top">
+              {rows.map((s) => (
+                <tr key={s.id}>
+                  <td className="py-1.5 pr-3 font-medium text-white">{s.name}</td>
+                  <td className="max-w-[14rem] py-1.5 pr-3">
+                    <code className="block truncate font-mono text-xs text-silver" title={compactJson(s.input)}>
+                      {compactJson(s.input)}
+                    </code>
+                  </td>
+                  <td className="max-w-[14rem] py-1.5 pr-3">
+                    {s.expected.output !== undefined ? (
+                      <code className="block truncate font-mono text-xs text-silver" title={compactJson(s.expected.output)}>
+                        {compactJson(s.expected.output)}
+                      </code>
+                    ) : (
+                      <span className="text-xs text-silver" title={(s.expected.allowedActions ?? []).join(', ')}>
+                        Actions: {(s.expected.allowedActions ?? []).join(', ') || '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    {s.latest ? (
+                      <span className="flex flex-col gap-0.5">
+                        <span>
+                          <Badge variant={s.latest.passed ? 'success' : 'destructive'} size="sm">
+                            {s.latest.passed ? 'Pass' : 'Fail'}
+                          </Badge>
+                        </span>
+                        {s.latest.reason && <span className="text-xs2 text-silver">{s.latest.reason}</span>}
+                        <span className="text-xs2 text-silver/70">
+                          {fmtDateTime(s.latest.ranAt)} · {s.latest.ranBy ? s.latest.ranBy.name : 'the agent'}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-xs2 text-silver/60">Not run under {cert?.modelVersion ?? 'this version'}</span>
+                    )}
+                  </td>
+                  {canManage && (
+                    <td className="py-1.5 text-right">
+                      <Button size="sm" variant="ghost" onClick={() => remove(s)} disabled={removing === s.id} aria-label={`Delete ${s.name}`}>
+                        {removing === s.id ? 'Deleting…' : 'Delete'}
+                      </Button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add one. */}
+      {canManage && (
+        <form
+          className="space-y-3 rounded-md border border-navy-secondary p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void add();
+          }}
+        >
+          <p className="text-sm font-medium text-white">Add scenario</p>
+          <Field label="Name" required error={touched && !nameValid ? 'At least 2 characters.' : undefined}>
+            {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={160} />}
+          </Field>
+          <Field label="Input (JSON)" required hint='What the agent is given, e.g. {"text": "when do I work tomorrow?"}' error={touched && 'error' in inputParsed ? inputParsed.error : undefined}>
+            {(p) => <Textarea {...p} value={input} onChange={(e) => setInput(e.target.value)} rows={2} className="font-mono text-xs" spellCheck={false} />}
+          </Field>
+          <Field label="Expected">
+            {(p) => (
+              <Select {...p} value={mode} onChange={(e) => setMode(e.target.value as 'output' | 'actions')}>
+                <option value="output">Output (JSON, compared whole)</option>
+                <option value="actions">Allowed actions (every action taken must be listed)</option>
+              </Select>
+            )}
+          </Field>
+          {mode === 'output' ? (
+            <Field label="Expected output (JSON)" required error={touched && 'error' in outputParsed ? outputParsed.error : undefined}>
+              {(p) => <Textarea {...p} value={expectedOutput} onChange={(e) => setExpectedOutput(e.target.value)} rows={2} className="font-mono text-xs" spellCheck={false} />}
+            </Field>
+          ) : (
+            <Field label="Allowed actions" required hint="Comma-separated, e.g. schedule.read, message.reply" error={touched && actionsList.length === 0 ? 'List at least one action.' : undefined}>
+              {(p) => <Input {...p} value={allowedActions} onChange={(e) => setAllowedActions(e.target.value)} maxLength={2000} />}
+            </Field>
+          )}
+          <div className="flex justify-end">
+            <Button type="submit" variant="secondary" disabled={adding || (touched && !formValid) || !formDirty}>
+              {adding ? 'Adding…' : 'Add scenario'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------- scorecard */
+
+const SCORECARD_WINDOWS = [7, 30] as const;
+
+/** Money inside a MetricCard: the card's display serif is for counts; money reads in heavy sans. */
+function MoneyValue({ cents }: { cents: number | null }) {
+  if (cents === null) return <span className="font-sans text-2xl font-semibold text-silver/60">—</span>;
+  return <span className="font-sans text-2xl font-semibold tabular-nums">{fmtMoney(cents / 100)}</span>;
+}
+
+function ScorecardSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+  const [days, setDays] = useState<number>(7);
+  const scorecard = useQuery({
+    queryKey: ['agents', 'scorecard', agent.id, days],
+    queryFn: () => getAgentScorecard(agent.id, days),
+    // The registry already carries the trailing week; show it while the fresh read lands.
+    placeholderData: days === 7 && agent.scorecard?.days === 7 ? agent.scorecard : undefined,
+  });
+  const s: AgentScorecard | undefined = scorecard.data;
+
+  const drift = agent.drift;
+  const [errorRate, setErrorRate] = useState(drift?.driftErrorRatePct === null || drift?.driftErrorRatePct === undefined ? '' : String(drift.driftErrorRatePct));
+  const [costPerTask, setCostPerTask] = useState(drift?.driftCostPerTaskCents === null || drift?.driftCostPerTaskCents === undefined ? '' : (drift.driftCostPerTaskCents / 100).toFixed(2));
+  const [savingDrift, setSavingDrift] = useState(false);
+
+  const errorRateNum = errorRate === '' ? null : Number(errorRate);
+  const costNum = costPerTask === '' ? null : Number(costPerTask);
+  const driftValid = (errorRateNum === null || (Number.isInteger(errorRateNum) && errorRateNum >= 1 && errorRateNum <= 100)) && (costNum === null || (Number.isFinite(costNum) && costNum >= 0.01));
+  const driftBaseline = `${drift?.driftErrorRatePct ?? ''}|${drift?.driftCostPerTaskCents ?? ''}`;
+  const driftNow = `${errorRateNum ?? ''}|${costNum === null ? '' : Math.round(costNum * 100)}`;
+  const driftDirty = driftBaseline !== driftNow;
+
+  const saveDrift = async () => {
+    if (!driftValid || !driftDirty) return;
+    setSavingDrift(true);
+    try {
+      await updateAgentDrift(agent.id, {
+        driftErrorRatePct: errorRateNum,
+        driftCostPerTaskCents: costNum === null ? null : Math.round(costNum * 100),
+      });
+      toast.success('Thresholds saved.');
+      await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not save the thresholds.'));
+    } finally {
+      setSavingDrift(false);
+    }
+  };
+
+  const loading = scorecard.isLoading && !s;
+  const dash = '—';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-silver">
+          Trailing {days} days, from the trail, the queue and the spend records.
+          {scorecard.isFetching && s ? ' Refreshing…' : ''}
+        </p>
+        <div role="group" aria-label="Scorecard window" className="flex gap-1">
+          {SCORECARD_WINDOWS.map((d) => (
+            <Button key={d} size="xs" variant={days === d ? 'secondary' : 'ghost'} aria-pressed={days === d} onClick={() => setDays(d)}>
+              {d} days
+            </Button>
+          ))}
+        </div>
+      </div>
+      {scorecard.error && <QueryError what="the scorecard" query={scorecard} />}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <MetricCard label="Tasks completed" value={loading || !s ? dash : String(s.tasksCompleted)} hint={s ? `${s.errors} ${s.errors === 1 ? 'error' : 'errors'}` : undefined} />
+        <MetricCard
+          label="Error rate"
+          value={loading || !s ? dash : s.errorRatePct === null ? dash : fmtPercent(s.errorRatePct, { decimals: 0 })}
+          accent={Boolean(s && drift?.driftErrorRatePct !== null && drift?.driftErrorRatePct !== undefined && s.errorRatePct !== null && s.errorRatePct >= drift.driftErrorRatePct)}
+          hint={s?.errorRatePct === null ? 'Nothing to measure' : 'Errors over tasks and errors'}
+        />
+        <MetricCard label="Exceptions escalated" value={loading || !s ? dash : String(s.exceptionsEscalated)} hint="Handed to a person" />
+        <MetricCard label="Approvals" value={loading || !s ? dash : String(s.approvalsRequested)} hint={s ? `${s.approvalsRejected} rejected` : undefined} />
+        <MetricCard label="Spend" value={loading || !s ? dash : <MoneyValue cents={s.spendCents} />} />
+        <MetricCard
+          label="Cost per task"
+          value={loading || !s ? dash : <MoneyValue cents={s.costPerTaskCents} />}
+          accent={Boolean(s && drift?.driftCostPerTaskCents !== null && drift?.driftCostPerTaskCents !== undefined && s.costPerTaskCents !== null && s.costPerTaskCents >= drift.driftCostPerTaskCents)}
+          hint={s?.costPerTaskCents === null ? 'No completed tasks' : undefined}
+        />
+      </div>
+
+      {/* Drift thresholds. */}
+      <form
+        className="space-y-3 rounded-md border border-navy-secondary p-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void saveDrift();
+        }}
+      >
+        <div>
+          <p className="text-sm font-medium text-white">Drift thresholds</p>
+          <p className="text-xs2 text-silver/70">A daily look at the trailing week. The owner is alerted when either line is crossed. Blank = not watched.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3 sm:items-end">
+          <Field label="Error rate (%)" hint="1–100">
+            {(p) => <Input {...p} type="number" inputMode="numeric" min={1} max={100} step={1} value={errorRate} onChange={(e) => setErrorRate(e.target.value)} placeholder="Not watched" disabled={!canManage} />}
+          </Field>
+          <Field label="Cost per task ($)">
+            {(p) => <Input {...p} type="number" inputMode="decimal" min={0.01} step="0.01" value={costPerTask} onChange={(e) => setCostPerTask(e.target.value)} placeholder="Not watched" disabled={!canManage} />}
+          </Field>
+          <Field label="Last alert">{(p) => <Input {...p} value={drift?.lastDriftAlertAt ? fmtDateTime(drift.lastDriftAlertAt) : 'Never'} readOnly />}</Field>
+        </div>
+        {canManage && (
+          <div className="flex justify-end">
+            <Button type="submit" variant="secondary" disabled={!driftValid || !driftDirty || savingDrift}>
+              {savingDrift ? 'Saving…' : 'Save thresholds'}
+            </Button>
+          </div>
+        )}
+      </form>
+    </div>
   );
 }
 

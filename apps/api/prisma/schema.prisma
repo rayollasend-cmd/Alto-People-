@@ -8969,30 +8969,41 @@ enum AgentApprovalStatus {
 }
 
 model AgentProfile {
-  workerId           String           @id @db.Uuid
-  purpose            String           @db.VarChar(500)
-  vendor             String           @db.VarChar(80)
-  model              String           @db.VarChar(120)
-  modelVersion       String           @db.VarChar(80)
-  environment        AgentEnvironment @default(PRODUCTION)
+  workerId              String           @id @db.Uuid
+  purpose               String           @db.VarChar(500)
+  vendor                String           @db.VarChar(80)
+  model                 String           @db.VarChar(120)
+  modelVersion          String           @db.VarChar(80)
+  environment           AgentEnvironment @default(PRODUCTION)
   /// RBAC capabilities this agent may use (AGENT_SCOPES in shared contracts).
-  scopes             String[]         @default([])
+  scopes                String[]         @default([])
   /// Calendar-month spend cap; null = no cap.
-  spendCapCents      Int?
-  rateLimitPerMinute Int              @default(60)
+  spendCapCents         Int?
+  rateLimitPerMinute    Int              @default(60)
   /// Hours of operation, org-local 0..23; both null = any hour.
-  allowedHoursStart  Int?
-  allowedHoursEnd    Int?
+  allowedHoursStart     Int?
+  allowedHoursEnd       Int?
   /// Set for the agents Alto already runs, so the boot sweep finds them.
-  builtInKey         String?          @unique @db.VarChar(60)
-  lastActiveAt       DateTime?        @db.Timestamptz(6)
-  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  builtInKey            String?          @unique @db.VarChar(60)
+  lastActiveAt          DateTime?        @db.Timestamptz(6)
+  /// Brief 1D-3. Certified for certifiedModelVersion; a different modelVersion sends the agent back to onboarding.
+  certifiedAt           DateTime?        @db.Timestamptz(6)
+  certifiedModelVersion String?          @db.VarChar(80)
+  suspendedAt           DateTime?        @db.Timestamptz(6)
+  suspendedById         String?          @db.Uuid
+  suspendReason         String?          @db.VarChar(300)
+  /// Drift thresholds over the trailing seven days; null = not watched.
+  driftErrorRatePct     Int?             @default(25)
+  driftCostPerTaskCents Int?
+  lastDriftAlertAt      DateTime?        @db.Timestamptz(6)
+  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
 
   worker      Worker                 @relation(fields: [workerId], references: [id], onDelete: Cascade)
   credentials AgentCredential[]
   approvals   AgentApprovalRequest[]
   spend       AgentSpend[]
+  scenarios   AgentScenario[]
 }
 
 model AgentCredential {
@@ -9052,4 +9063,52 @@ model AgentSpend {
   agent AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
 
   @@index([workerId, occurredAt(sort: Desc)])
+}
+
+// ===== Brief 1D-3 — Kill switch, certification and the agent scorecard =====
+
+/// One row. When allSuspendedAt is set no agent credential works.
+model AgentControl {
+  id             String    @id @default("singleton") @db.VarChar(16)
+  allSuspendedAt DateTime? @db.Timestamptz(6)
+  suspendedById  String?   @db.Uuid
+  reason         String?   @db.VarChar(300)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+/// A test an agent must pass before it is active: an input and either the
+/// exact output expected or the set of actions it is allowed to take.
+model AgentScenario {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId    String   @db.Uuid
+  name        String   @db.VarChar(160)
+  input       Json
+  expected    Json
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  agent AgentProfile       @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+  runs  AgentScenarioRun[]
+
+  @@index([workerId])
+}
+
+model AgentScenarioRun {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scenarioId   String   @db.Uuid
+  workerId     String   @db.Uuid
+  /// The version under test; a certification counts only for the current one.
+  modelVersion String   @db.VarChar(80)
+  passed       Boolean
+  actual       Json?
+  reason       String?  @db.VarChar(500)
+  /// Null when the agent answered through /agent/v1.
+  ranById      String?  @db.Uuid
+  ranAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  scenario AgentScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([scenarioId, ranAt(sort: Desc)])
+  @@index([workerId, modelVersion])
 }
