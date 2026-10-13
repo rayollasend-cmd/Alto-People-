@@ -448,6 +448,8 @@ model User {
   // center for every store in the region (Manager, Business Operations
   // Support). Mutually exclusive with clientId.
   regionId            String?          @db.Uuid
+  /// Brief 2-1b step 5: permission scope at any level of the organizational tree.
+  orgUnitId           String?          @db.Uuid
   // The name an invite addressed (portal accounts carry no associate).
   displayName         String?          @db.VarChar(120)
   /// Brief 1A-4: a deactivation is reversible for 30 days (purgeAfter =
@@ -465,6 +467,7 @@ model User {
   client              Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
   location            Location?        @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
   region              Region?          @relation("UserRegionScope", fields: [regionId], references: [id], onDelete: SetNull)
+  orgUnit             OrgUnit?         @relation("UserOrgUnitScope", fields: [orgUnitId], references: [id], onDelete: SetNull)
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime         @updatedAt @db.Timestamptz(6)
   deletedAt           DateTime?        @db.Timestamptz(6)
@@ -732,6 +735,7 @@ model Client {
   deletedAt            DateTime?             @db.Timestamptz(6)
   /// Brief 2-1b: the employer-of-record row that carries this client's legal facts, when it is one.
   employerOrganization EmployerOrganization?
+  orgUnits             OrgUnit[]
 
   applications            Application[]
   petitionPrograms        Program[]                 @relation("PetitionClient")
@@ -853,6 +857,8 @@ model Location {
   // The region this store rolls up to (the command center). Stores may
   // belong to different clients and still share a region.
   regionId             String?   @db.Uuid
+  /// Brief 2-1b step 5: the organizational unit this site belongs to (division / region / business unit / cost center).
+  orgUnitId            String?   @db.Uuid
   isActive             Boolean   @default(true)
   createdAt            DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
@@ -879,6 +885,7 @@ model Location {
   clientRequests         ClientRequest[]         @relation("ClientRequestStore")
   conversations          Conversation[]
   region                 Region?                 @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  orgUnit                OrgUnit?                @relation("OrgUnitSites", fields: [orgUnitId], references: [id], onDelete: SetNull)
   candidateSubmittals    CandidateSubmittal[]
   rides                  Ride[]
   readyToWorkHandoffs    ReadyToWorkHandoff[]
@@ -1166,6 +1173,7 @@ model Region {
   tenantId  String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   locations Location[]
   users     User[]     @relation("UserRegionScope")
+  orgUnit   OrgUnit?
 
   @@index([deletedAt])
   @@index([tenantId])
@@ -1790,6 +1798,8 @@ model Associate {
   managerId           String?            @db.Uuid
   departmentId        String?            @db.Uuid
   costCenterId        String?            @db.Uuid
+  /// Brief 2-1b step 5: the home unit (the cost center folded into the tree).
+  orgUnitId           String?            @db.Uuid
   jobProfileId        String?            @db.Uuid
   // Wave 1.1 — pay schedule assignment. Drives the payroll run wizard's
   // "next period to run" calculation and determines pay frequency for
@@ -1926,6 +1936,7 @@ model Associate {
   directReports            Associate[]               @relation("AssociateManager")
   department               Department?               @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   costCenter               CostCenter?               @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  orgUnit                  OrgUnit?                  @relation("OrgUnitAssociates", fields: [orgUnitId], references: [id], onDelete: SetNull)
   jobProfile               JobProfile?               @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
   payrollSchedule          PayrollSchedule?          @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
@@ -4440,6 +4451,7 @@ model CostCenter {
   positions  Position[]
   // Phase 87 — broadcast targeting.
   broadcasts Broadcast[]
+  orgUnit    OrgUnit?
 
   @@index([clientId, deletedAt])
   @@index([tenantId])
@@ -4551,6 +4563,7 @@ model Position {
   jobProfileId        String?        @db.Uuid
   departmentId        String?        @db.Uuid
   costCenterId        String?        @db.Uuid
+  orgUnitId           String?        @db.Uuid
   managerAssociateId  String?        @db.Uuid
   fteAuthorized       Decimal        @default(1.00) @db.Decimal(4, 2)
   status              PositionStatus @default(PLANNED)
@@ -4568,6 +4581,7 @@ model Position {
   jobProfile     JobProfile?           @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
   department     Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   costCenter     CostCenter?           @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  orgUnit        OrgUnit?              @relation("OrgUnitPositions", fields: [orgUnitId], references: [id], onDelete: SetNull)
   manager        Associate?            @relation("PositionManager", fields: [managerAssociateId], references: [id], onDelete: SetNull)
   filledBy       Associate?            @relation("PositionFilledBy", fields: [filledByAssociateId], references: [id], onDelete: SetNull)
   // Phase 115 — designated successors.
@@ -10089,6 +10103,56 @@ model Employment {
   @@index([associateId, endDate])
   @@index([employerOrgId])
   @@index([tenantId])
+}
+
+/// Brief 2-1b, step 5: the organizational hierarchy — division, region,
+/// business unit, cost center — one tree per tenant, used by direct
+/// employers (hotel chain → region → property) and by staffing tenants
+/// (their own regions and cost centers; a client-specific unit carries
+/// clientId). Region and CostCenter rows are mirrored here (legacy ids)
+/// until they are dropped; permissions scope at any level by path.
+enum OrgUnitType {
+  DIVISION
+  REGION
+  BUSINESS_UNIT
+  COST_CENTER
+}
+
+model OrgUnit {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  type               OrgUnitType
+  parentId           String?     @db.Uuid
+  name               String      @db.VarChar(160)
+  /// The unit's own code.
+  code               String?     @db.VarChar(40)
+  /// The ledger account it posts to.
+  glCode             String?     @db.VarChar(40)
+  /// Materialized ancestry: "/<root id>/<child id>/…/<this id>", so "under X" is one prefix match.
+  path               String      @db.VarChar(2000)
+  /// A staffing tenant's client-specific unit.
+  clientId           String?     @db.Uuid
+  legacyRegionId     String?     @unique @db.Uuid
+  legacyCostCenterId String?     @unique @db.Uuid
+  isActive           Boolean     @default(true)
+  createdAt          DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt          DateTime?   @db.Timestamptz(6)
+
+  parent     OrgUnit?    @relation("OrgUnitTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children   OrgUnit[]   @relation("OrgUnitTree")
+  client     Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  region     Region?     @relation(fields: [legacyRegionId], references: [id], onDelete: SetNull)
+  costCenter CostCenter? @relation(fields: [legacyCostCenterId], references: [id], onDelete: SetNull)
+  locations  Location[]  @relation("OrgUnitSites")
+  users      User[]      @relation("UserOrgUnitScope")
+  associates Associate[] @relation("OrgUnitAssociates")
+  positions  Position[]  @relation("OrgUnitPositions")
+
+  @@index([tenantId, type])
+  @@index([parentId])
+  @@index([path])
+  @@index([deletedAt])
 }
 
 model Tenant {

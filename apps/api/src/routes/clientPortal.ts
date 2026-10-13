@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { regionSiteIds, regionUnitPath } from '../lib/orgUnits.js';
 import type { OpsPeriod } from '@prisma/client';
 import { z } from 'zod';
 import { hasCapability, paidMinutesForRange } from '@alto-people/shared';
@@ -98,7 +99,7 @@ async function resolveScope(
     const loc =
       typeof query.locationId === 'string' && query.locationId
         ? await prisma.location.findFirst({
-            where: { id: query.locationId, regionId: user.regionId, deletedAt: null },
+            where: { AND: [{ id: query.locationId }, { id: { in: await regionSiteIds(prisma, user.regionId) } }], deletedAt: null },
             select: { id: true, clientId: true },
           })
         : null;
@@ -1865,7 +1866,7 @@ clientPortalRouter.post('/client-portal/candidates/:id/decision', requireAuth, a
       where: { id: req.params.id },
       include: {
         client: { select: { name: true } },
-        location: { select: { name: true, regionId: true } },
+        location: { select: { name: true, regionId: true, orgUnit: { select: { path: true } } } },
         candidate: { select: { firstName: true, lastName: true, deletedAt: true } },
       },
     });
@@ -1878,7 +1879,7 @@ clientPortalRouter.post('/client-portal/candidates/:id/decision', requireAuth, a
       !s.candidate.deletedAt &&
       (user.clientId
         ? s.clientId === user.clientId && (!user.locationId || !s.locationId || s.locationId === user.locationId)
-        : Boolean(user.regionId && s.location?.regionId === user.regionId));
+        : Boolean(user.regionId && s.location?.orgUnit?.path && (await regionUnitPath(prisma, user.regionId)) && s.location.orgUnit.path.startsWith((await regionUnitPath(prisma, user.regionId))!)));
     if (!s || !theirs) throw new HttpError(404, 'not_found', 'Candidate not found');
     if (s.status !== 'PENDING') {
       throw new HttpError(409, 'already_decided', s.status === 'WITHDRAWN' ? 'Alto withdrew this candidate.' : 'Already answered.');

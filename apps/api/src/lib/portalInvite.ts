@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { ensureRegionUnit } from './orgUnits.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache } from '../middleware/auth.js';
@@ -137,10 +138,12 @@ export async function invitePortalAccount(input: {
 
   const invite = generateInviteToken();
   const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
+  // Brief 2-1b step 5: a region account is pinned to the region's unit in the organizational tree.
+  const regionUnit = scope.kind === 'region' ? await ensureRegionUnit(prisma, { id: scope.regionId, name: scope.regionName }) : null;
   const bind =
     scope.kind === 'store'
-      ? { clientId: scope.clientId, locationId: scope.location?.id ?? null, regionId: null }
-      : { clientId: null, locationId: null, regionId: scope.regionId };
+      ? { clientId: scope.clientId, locationId: scope.location?.id ?? null, regionId: null, orgUnitId: null }
+      : { clientId: null, locationId: null, regionId: scope.regionId, orgUnitId: regionUnit?.id ?? null };
   const user = await prisma.$transaction(async (tx) => {
     const u = existing
       ? await tx.user.update({

@@ -154,6 +154,8 @@ export async function attachUser(
         locationId: true,
         regionId: true,
         tenantId: true,
+        orgUnitId: true,
+        orgUnit: { select: { path: true } },
         associateId: true,
         tokenVersion: true,
         timezone: true,
@@ -217,6 +219,7 @@ export async function attachUser(
       mfaEnabledAt,
       additionalRoles: _additionalRoles,
       activeRole: _activeRole,
+      orgUnit,
       ...rest
     } = user;
     const sessionUser: SessionUser = {
@@ -232,6 +235,7 @@ export async function attachUser(
       lastName: associate?.lastName ?? null,
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,
       mfaEnabled: mfaEnabledAt !== null,
+      orgUnitPath: orgUnit?.path ?? null,
     };
     userCache.set(payload.sub, {
       user: sessionUser,
@@ -354,6 +358,8 @@ export async function allowMfaEnrollToken(
         locationId: true,
         regionId: true,
         tenantId: true,
+        orgUnitId: true,
+        orgUnit: { select: { path: true } },
         associateId: true,
         tokenVersion: true,
         timezone: true,
@@ -384,6 +390,7 @@ export async function allowMfaEnrollToken(
       mfaEnabledAt,
       additionalRoles: _additionalRoles,
       activeRole: _activeRole,
+      orgUnit,
       ...rest
     } = user;
     req.user = {
@@ -395,6 +402,7 @@ export async function allowMfaEnrollToken(
       lastName: associate?.lastName ?? null,
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,
       mfaEnabled: mfaEnabledAt !== null,
+      orgUnitPath: orgUnit?.path ?? null,
     };
     req.mfaEnrollment = true;
     next();

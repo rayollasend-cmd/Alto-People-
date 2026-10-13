@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { ensureCostCenterUnit } from '../lib/orgUnits.js';
 import type { Request, Response } from 'express';
 import {
   AssociateDeactivateInputSchema,
@@ -283,6 +284,8 @@ orgRouter.post('/cost-centers', MANAGE, async (req: Request, res: Response) => {
       description: input.description ?? null,
     },
   });
+  // Brief 2-1b step 5: a cost center is a COST_CENTER unit in the organizational tree.
+  await ensureCostCenterUnit(prisma, { id: created.id, name: created.name, code: created.code, clientId: created.clientId });
   await audit(req, 'cost_center.create', 'CostCenter', created.id, {});
   res.status(201).json({
     id: created.id,
@@ -309,6 +312,7 @@ orgRouter.put('/cost-centers/:id', MANAGE, async (req: Request, res: Response) =
       description: input.description === undefined ? undefined : input.description,
     },
   });
+  await prisma.orgUnit.updateMany({ where: { legacyCostCenterId: id }, data: { name: updated.name, code: updated.code } });
   await audit(req, 'cost_center.update', 'CostCenter', id, {});
   res.json({
     id: updated.id,
@@ -333,6 +337,7 @@ orgRouter.delete(
       where: { id },
       data: { deletedAt: new Date() },
     });
+    await prisma.orgUnit.updateMany({ where: { legacyCostCenterId: id, deletedAt: null }, data: { deletedAt: new Date(), isActive: false } });
     await prisma.associate.updateMany({
       where: { costCenterId: id },
       data: { costCenterId: null },

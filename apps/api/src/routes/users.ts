@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { ensureRegionUnit } from '../lib/orgUnits.js';
 import { z } from 'zod';
 import {
   ROLES,
@@ -421,6 +422,7 @@ usersRouter.patch(
       regionId?: string | null;
       regionApprovedById?: string | null;
       regionApprovedAt?: Date | null;
+      orgUnitId?: string | null;
       tokenVersion?: { increment: number };
     } = {};
     if (effectiveRegionId) {
@@ -456,6 +458,7 @@ usersRouter.patch(
     }
     if (effectiveRegionId !== undefined && effectiveRegionId !== target.regionId) {
       data.regionId = effectiveRegionId;
+      data.orgUnitId = effectiveRegionId ? (await ensureRegionUnit(prisma, { id: effectiveRegionId, name: (await prisma.region.findUniqueOrThrow({ where: { id: effectiveRegionId }, select: { name: true } })).name })).id : null;
       data.regionApprovedById = regionApprover?.id ?? null;
       data.regionApprovedAt = regionApprover ? new Date() : null;
     }

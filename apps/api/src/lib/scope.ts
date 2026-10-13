@@ -22,13 +22,27 @@ interface Bounds {
   tenantId: string;
   clientId: string | null;
   locationId: string | null;
+  /** Brief 2-1b step 5: pinned to an organizational unit — every site under it. */
+  orgUnitPath: string | null;
 }
 
 function boundsOf(user: SessionUser): Bounds | null {
   if (!user.tenantId) return null;
-  if (user.clientId) return { tenantId: user.tenantId, clientId: user.clientId, locationId: user.locationId ?? null };
-  if (user.locationId) return { tenantId: user.tenantId, clientId: null, locationId: user.locationId };
+  if (user.clientId) return { tenantId: user.tenantId, clientId: user.clientId, locationId: user.locationId ?? null, orgUnitPath: null };
+  if (user.locationId) return { tenantId: user.tenantId, clientId: null, locationId: user.locationId, orgUnitPath: null };
+  if (user.orgUnitPath) return { tenantId: user.tenantId, clientId: null, locationId: null, orgUnitPath: user.orgUnitPath };
   return null;
+}
+
+/** The sites a site-only or unit-only account stands on: one store, or every store under the unit. */
+function siteFilter(b: Bounds): Prisma.LocationWhereInput {
+  if (b.locationId) return { id: b.locationId };
+  return { orgUnit: { is: { path: { startsWith: b.orgUnitPath ?? NO_CLIENT }, deletedAt: null } } };
+}
+
+/** People placed at those sites. */
+function atSites(b: Bounds): Prisma.AssociateWhereInput {
+  return { assignments: { some: { endedAt: null, location: { is: siteFilter(b) } } } };
 }
 
 /** The three roles that are bounded to a client (or a site). */
@@ -68,7 +82,7 @@ export function scopeApplications(
     const b = boundsOf(user);
     if (!b) return { ...base, clientId: NO_CLIENT };
     if (b.clientId) return { ...base, tenantId: b.tenantId, clientId: b.clientId };
-    return { ...base, tenantId: b.tenantId, locationId: b.locationId };
+    return { ...base, tenantId: b.tenantId, location: { is: siteFilter(b) } };
   }
   return base;
 }
@@ -109,7 +123,7 @@ export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInp
     if (!b) return { ...base, clientId: NO_CLIENT };
     if (b.clientId) return { ...base, tenantId: b.tenantId, clientId: b.clientId };
     // A site-only account sees the documents of the people at its site.
-    return { ...base, tenantId: b.tenantId, associate: { is: atStore(b.locationId!) } };
+    return { ...base, tenantId: b.tenantId, associate: { is: atSites(b) } };
   }
   return base;
 }
@@ -144,7 +158,7 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
       // A portal account pinned to a store sees that store; a supervisor sees the client.
       return { tenantId: b.tenantId, clientId: b.clientId, ...(user.role === 'CLIENT_PORTAL' && b.locationId ? { locationId: b.locationId } : {}) };
     }
-    return { tenantId: b.tenantId, locationId: b.locationId };
+    return { tenantId: b.tenantId, locationRel: { is: siteFilter(b) } };
   }
   return {};
 }
@@ -223,7 +237,7 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
   if (isBounded(user)) {
     const b = boundsOf(user);
     if (!b) return { id: NO_CLIENT };
-    if (!b.clientId) return { tenantId: b.tenantId, ...atStore(b.locationId!) };
+    if (!b.clientId) return { tenantId: b.tenantId, ...atSites(b) };
     if (user.role === 'CLIENT_PORTAL' && b.locationId) return { tenantId: b.tenantId, ...atStore(b.locationId) };
     return { tenantId: b.tenantId, ...associatesOfClient(b.clientId) };
   }
@@ -274,7 +288,7 @@ export function scopeTimeOffRequests(
   if (isBounded(user)) {
     const b = boundsOf(user);
     if (!b) return { associateId: NO_CLIENT };
-    if (!b.clientId) return { associate: { is: { tenantId: b.tenantId, ...atStore(b.locationId!) } } };
+    if (!b.clientId) return { associate: { is: { tenantId: b.tenantId, ...atSites(b) } } };
     return { associate: { is: { tenantId: b.tenantId, ...associatesOfClient(b.clientId) } } };
   }
   return {};
@@ -287,15 +301,15 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   if (isBounded(user)) {
     const b = boundsOf(user);
     if (!b) return { clientId: NO_CLIENT };
-    const atSite = (locationId: string): Prisma.TimeEntryWhereInput => ({
-      OR: [{ locationId }, { shift: { is: { locationId } } }],
+    const atSite = (sites: Prisma.LocationWhereInput): Prisma.TimeEntryWhereInput => ({
+      OR: [{ location: { is: sites } }, { shift: { is: { locationRel: { is: sites } } } }],
     });
     if (b.clientId) {
       return user.role === 'CLIENT_PORTAL' && b.locationId
-        ? { tenantId: b.tenantId, clientId: b.clientId, ...atSite(b.locationId) }
+        ? { tenantId: b.tenantId, clientId: b.clientId, ...atSite({ id: b.locationId }) }
         : { tenantId: b.tenantId, clientId: b.clientId };
     }
-    return { tenantId: b.tenantId, ...atSite(b.locationId!) };
+    return { tenantId: b.tenantId, ...atSite(siteFilter(b)) };
   }
   return {};
 }

@@ -9,6 +9,7 @@ import { storeSnapshot, type StoreSnapshot } from '../lib/storeSnapshot.js';
 import { invitePortalAccount } from '../lib/portalInvite.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 import { requireRegionApprover } from '../lib/accessCleanup.js';
+import { ensureRegionUnit, regionSiteIds } from '../lib/orgUnits.js';
 
 /**
  * The region command center — the Manager, Business Operations Support's
@@ -47,21 +48,19 @@ async function resolveRegion(user: SessionUser, query: { regionId?: unknown }) {
   } else {
     throw new HttpError(403, 'forbidden', 'The region command center is for region accounts.');
   }
-  const region = await prisma.region.findFirst({
-    where: { id: regionId, deletedAt: null },
-    select: {
-      id: true,
-      name: true,
-      locations: {
-        where: { deletedAt: null, isActive: true },
+  const found = await prisma.region.findFirst({ where: { id: regionId, deletedAt: null }, select: { id: true, name: true } });
+  if (!found) throw new HttpError(404, 'region_not_found', 'Region not found');
+  // Brief 2-1b step 5: the region's stores are every site under its unit in the organizational tree.
+  const siteIds = await regionSiteIds(prisma, found.id);
+  const locations = siteIds.length
+    ? await prisma.location.findMany({
+        where: { id: { in: siteIds }, deletedAt: null, isActive: true },
         select: { id: true, name: true, timezone: true, clientId: true, client: { select: { name: true } } },
         orderBy: { name: 'asc' },
         take: 200,
-      },
-    },
-  });
-  if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
-  return region;
+      })
+    : [];
+  return { ...found, locations };
 }
 
 const RANK: Record<NonNullable<StoreSnapshot['reliability']['grade']>, number> = { F: 0, D: 1, C: 2, B: 3, A: 4 };
@@ -222,8 +221,10 @@ regionsAdminRouter.post('/', ADMIN, async (req, res, next) => {
   try {
     const input = RegionInput.extend({ name: z.string().trim().min(2).max(120) }).parse(req.body);
     const region = await prisma.region.create({ data: { name: input.name }, select: { id: true } });
+    // Brief 2-1b step 5: the region is a REGION unit in the organizational tree; its stores are pinned there.
+    const unit = await ensureRegionUnit(prisma, { id: region.id, name: input.name });
     if (input.locationIds?.length) {
-      await prisma.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id } });
+      await prisma.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
     }
     res.status(201).json({ id: region.id });
   } catch (err) {
@@ -234,14 +235,19 @@ regionsAdminRouter.post('/', ADMIN, async (req, res, next) => {
 regionsAdminRouter.patch('/:id', ADMIN, async (req, res, next) => {
   try {
     const input = RegionInput.parse(req.body);
-    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true } });
+    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true, name: true } });
     if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
     await prisma.$transaction(async (tx) => {
-      if (input.name) await tx.region.update({ where: { id: region.id }, data: { name: input.name } });
+      const unit = await ensureRegionUnit(tx, region);
+      if (input.name) {
+        await tx.region.update({ where: { id: region.id }, data: { name: input.name } });
+        await tx.orgUnit.update({ where: { id: unit.id }, data: { name: input.name } });
+      }
       if (input.locationIds) {
         await tx.location.updateMany({ where: { regionId: region.id }, data: { regionId: null } });
+        await tx.location.updateMany({ where: { orgUnitId: unit.id }, data: { orgUnitId: null } });
         if (input.locationIds.length) {
-          await tx.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id } });
+          await tx.location.updateMany({ where: { id: { in: input.locationIds } }, data: { regionId: region.id, orgUnitId: unit.id } });
         }
       }
     });
@@ -310,6 +316,10 @@ regionsAdminRouter.delete('/:id', ADMIN, async (req, res, next) => {
       prisma.location.updateMany({ where: { regionId: region.id }, data: { regionId: null } }),
       prisma.user.updateMany({ where: { regionId: region.id }, data: { regionId: null, tokenVersion: { increment: 1 } } }),
       prisma.region.update({ where: { id: region.id }, data: { deletedAt: new Date() } }),
+      // The mirror unit goes with it; its sites and accounts are unpinned.
+      prisma.location.updateMany({ where: { orgUnit: { is: { legacyRegionId: region.id } } }, data: { orgUnitId: null } }),
+      prisma.user.updateMany({ where: { orgUnit: { is: { legacyRegionId: region.id } } }, data: { orgUnitId: null } }),
+      prisma.orgUnit.updateMany({ where: { legacyRegionId: region.id, deletedAt: null }, data: { deletedAt: new Date(), isActive: false } }),
     ]);
     res.status(204).end();
   } catch (err) {

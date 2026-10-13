@@ -125,6 +125,7 @@ import { vto130Router } from './routes/vto130.js';
 import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
+import { orgUnitsRouter } from './routes/orgUnits.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
 import { transportRouter } from './routes/transport.js';
@@ -610,6 +611,7 @@ export function createApp() {
   // Self-gates per route on view:hr-admin.
   app.use('/', usersRouter);
   app.use('/', employersRouter);
+  app.use('/', orgUnitsRouter);
   app.use('/', shiftWindowsRouter);
   // Floor supervisors' shift supervisor, and shift hand-overs (covers).
   app.use('/', floorTeamRouter);

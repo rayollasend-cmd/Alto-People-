@@ -1,4 +1,5 @@
 import type { PrismaClient, Role } from '@prisma/client';
+import { regionSiteIds } from './orgUnits.js';
 import { ROLE_LABELS } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
@@ -84,8 +85,9 @@ export function canMessage(from: Messenger, to: Messenger): boolean {
 
 /** Clients that have a store in the caller's region (region accounts). */
 export async function regionClientIds(regionId: string, prisma: PrismaClient = defaultPrisma): Promise<string[]> {
+  // Brief 2-1b step 5: a region's stores are the sites under its unit.
   const rows = await prisma.location.findMany({
-    where: { regionId, deletedAt: null },
+    where: { id: { in: await regionSiteIds(prisma, regionId) }, deletedAt: null },
     select: { clientId: true },
     distinct: ['clientId'],
     take: 500,

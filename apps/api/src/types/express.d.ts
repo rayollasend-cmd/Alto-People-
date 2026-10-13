@@ -33,6 +33,9 @@ export interface SessionUser {
   timezone: string | null;
   /** Brief 2-1b: the account's tenant, part of every client-bounded scope. */
   tenantId?: string | null;
+  /** Brief 2-1b step 5: the organizational unit the account is pinned to, and its path for "under" checks. */
+  orgUnitId?: string | null;
+  orgUnitPath?: string | null;
   /** Email language preference (en/es/tr); null or absent means English. */
   language?: string | null;
   mfaEnabled: boolean;
