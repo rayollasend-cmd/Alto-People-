@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
 import { fmtMoney, ymdLocal } from '@/lib/format';
 import { DecisionRoom } from '@/components/DecisionRoom';
@@ -88,6 +88,7 @@ export function RoleDecisionQueue({
   hideWhenEmpty?: boolean;
 }) {
   const { user } = useAuth();
+  const term = useTerm();
   const [rows, setRows] = useState<RoleDecision[] | null>(null);
   const [error, setError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -579,7 +580,7 @@ export function RoleDecisionQueue({
                   placeholder={
                     picker?.mode === 'assign'
                       ? 'e.g. "Can you take this one? I\'m on the floor until 3."'
-                      : 'e.g. "Heads up — this touches your store."'
+                      : `e.g. "Heads up — this touches your ${term('site').toLowerCase()}."`
                   }
                 />
               </div>

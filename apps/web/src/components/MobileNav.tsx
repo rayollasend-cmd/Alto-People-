@@ -4,7 +4,7 @@ import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucid
 import {
   applyTerms,
   DASHBOARD_NAV,
-  GROUP_LABEL,
+  groupLabel,
   visibleModules,
   useActiveNavPath,
   type ModuleGroup,
@@ -47,7 +47,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
-  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term);
+  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term, tenant.modules);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))
@@ -267,7 +267,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             return (
               <div key={group} className="mt-3">
                 <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
-                  {GROUP_LABEL[group]}
+                  {groupLabel(group, term, tenant.modules)}
                 </div>
                 {items.map((m) => (
                   <MobileLink

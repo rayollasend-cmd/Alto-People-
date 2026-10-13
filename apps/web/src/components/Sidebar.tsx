@@ -21,7 +21,7 @@ import { Logo } from '@/components/Logo';
 import {
   applyTerms,
   DASHBOARD_NAV,
-  GROUP_LABEL,
+  groupLabel,
   visibleModules,
   useActiveNavPath,
   type ModuleGroup,
@@ -121,7 +121,7 @@ export function Sidebar() {
   const { can, user } = useAuth();
   const tenant = useTenant();
   const term = useTerm();
-  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term);
+  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term, tenant.modules);
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
   // Same key as the phone tab bar's badge, so one request serves both.
@@ -309,7 +309,7 @@ export function Sidebar() {
           return (
             <SidebarSection
               key={group}
-              label={GROUP_LABEL[group]}
+              label={groupLabel(group, term, tenant.modules)}
               collapsed={isGroupCollapsed}
               onToggle={() => toggleGroup(group)}
               railCollapsed={railCollapsed}

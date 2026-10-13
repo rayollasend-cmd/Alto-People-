@@ -5,7 +5,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { createOrgUnit, deleteOrgUnit, getOrgUnit, listOrgUnits, setOrgUnitSites, siteIdsUnder, updateOrgUnit } from '../lib/orgUnits.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { LocationCreateInputSchema } from '@alto-people/shared';
+import { LocationCreateInputSchema, LocationUpdateInputSchema } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 
 /**
@@ -17,6 +17,9 @@ import { HttpError } from '../middleware/error.js';
  *   DELETE /admin/org-units/:id        soft delete; children move up, sites and people unpinned
  *   PUT    /admin/org-units/:id/sites  the sites pinned directly to the unit
  *   GET    /admin/org-units/:id/sites  every site under the unit, its descendants included
+ *   POST   /admin/sites                a site with no client, optionally under a unit
+ *   PATCH  /admin/sites/:id            name, type, address, time zone, unit, active
+ *   GET    /admin/sites                every site with its unit
  */
 export const orgUnitsRouter = Router();
 
@@ -95,6 +98,36 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
   });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'site.created', entityType: 'Location', entityId: created.id, metadata: { name: created.name, orgUnitId: created.orgUnitId } }, 'org');
   res.status(201).json({ site: created });
+});
+
+/** A site's name, type, address, time zone, unit or active flag; a client's store edits through its client, the same way. */
+orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const input = LocationUpdateInputSchema.partial().extend({ orgUnitId: z.string().uuid().nullable().optional() }).strict().parse(req.body);
+  const existing = await prisma.location.findFirst({ where: { id, deletedAt: null }, select: { id: true, name: true, orgUnitId: true } });
+  if (!existing) throw new HttpError(404, 'site_not_found', 'That site does not exist.');
+  if (input.orgUnitId) {
+    const unit = await getOrgUnit(prisma, input.orgUnitId);
+    if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
+  }
+  const updated = await prisma.location.update({
+    where: { id },
+    data: {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.type !== undefined ? { type: input.type } : {}),
+      ...(input.addressLine1 !== undefined ? { addressLine1: input.addressLine1 } : {}),
+      ...(input.addressLine2 !== undefined ? { addressLine2: input.addressLine2 } : {}),
+      ...(input.city !== undefined ? { city: input.city } : {}),
+      ...(input.state !== undefined ? { state: input.state } : {}),
+      ...(input.zip !== undefined ? { zip: input.zip } : {}),
+      ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+      ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+      ...(input.orgUnitId !== undefined ? { orgUnitId: input.orgUnitId } : {}),
+    },
+    select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true },
+  });
+  enqueueAudit({ actorUserId: req.user!.id, clientId: updated.clientId, action: 'site.updated', entityType: 'Location', entityId: id, metadata: { fields: Object.keys(input), from: { name: existing.name, orgUnitId: existing.orgUnitId } } }, 'org');
+  res.json({ site: updated });
 });
 
 orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {

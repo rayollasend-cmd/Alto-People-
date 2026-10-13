@@ -90,6 +90,26 @@ describe('the tree', () => {
     const { user: assoc } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
     expect((await (await loginAs(agent(), assoc.email)).post('/admin/org-units').send({ type: 'DIVISION', name: 'X' })).status).toBe(403);
   });
+
+  it('a site is edited in place: name, type, time zone, unit and active flag; a missing site or unit is refused', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(agent(), hr.email);
+    const reg = await admin.post('/admin/org-units').send({ type: 'REGION', name: 'Gulf Coast' });
+    const made = await admin.post('/admin/sites').send({ name: 'Grand Hotel', timezone: 'America/Chicago', state: 'FL' });
+    expect(made.status).toBe(201);
+    const id = made.body.site.id as string;
+    const edited = await admin.patch(`/admin/sites/${id}`).send({ name: 'The Grand Hotel', type: 'OFFICE', timezone: 'America/New_York', orgUnitId: reg.body.unit.id, isActive: false });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect(edited.body.site).toMatchObject({ id, name: 'The Grand Hotel', type: 'OFFICE', timezone: 'America/New_York', orgUnitId: reg.body.unit.id, isActive: false, clientId: null });
+    expect((await admin.get('/admin/sites')).body.sites).toEqual([expect.objectContaining({ id, orgUnitName: 'Gulf Coast', type: 'OFFICE', isActive: false })]);
+    expect((await admin.patch(`/admin/sites/${id}`).send({ orgUnitId: null })).body.site.orgUnitId).toBeNull();
+    expect((await admin.patch(`/admin/sites/${id}`).send({ orgUnitId: '00000000-0000-4000-8000-000000000099' })).body.error.code).toBe('org_unit_not_found');
+    expect((await admin.patch('/admin/sites/00000000-0000-4000-8000-000000000098').send({ name: 'X' })).status).toBe(404);
+    expect((await admin.patch(`/admin/sites/${id}`).send({ clientId: 'nope' })).status).toBe(400);
+    const a = await createAssociate();
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
+    expect((await (await loginAs(agent(), assoc.email)).patch(`/admin/sites/${id}`).send({ name: 'X' })).status).toBe(403);
+  });
 });
 
 describe('Region reads the tree', () => {

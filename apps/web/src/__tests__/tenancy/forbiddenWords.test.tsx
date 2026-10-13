@@ -44,16 +44,6 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
  *
  * TODO (surfaces not rendered here yet — deep pages that need their own
  * fixtures before the words on them can be chased):
- *   - Dashboard home (AdminDashboard): reads KPI shapes the lenient mock
- *     cannot satisfy (a nested length on an undefined field); it needs its
- *     own fixture before its words can be chased.
- *   - CommandPalette: lists every module with its catalog description. The
- *     nouns are substituted (termizeText), but descriptions written for a
- *     staffing company still say "client" (holidays by client, labor spend
- *     by client, client SLAs on the audit page) and the hotel's own word for
- *     a client is "Client" in the shared defaults. Clears once the direct
- *     employer default for label.client is a non-client word, or those
- *     descriptions get a clientless variant. Skipped until then.
  *   - Organization profile (/admin/organization): it names every module a
  *     tenant can turn on, in the shared catalog's words ("Client portal",
  *     "Bill rates and margin", "Housing link", "Transportation: rides, vans
@@ -67,7 +57,9 @@ const FORBIDDEN_RE = new RegExp(`\\b(${FORBIDDEN.map((w) => w.replace(' ', '\\s+
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
-  apiFetch: vi.fn(async () => EMPTY),
+  // Route-aware: the dashboard's endpoints get a small real fixture (it
+  // reads nested shapes the lenient empty cannot satisfy); the rest get EMPTY.
+  apiFetch: vi.fn(async (path: string) => DASHBOARD_FIXTURES[path.split('?')[0] ?? ''] ?? EMPTY),
 }));
 vi.mock('@/lib/usersAdminApi', async (orig) => {
   const actual = await orig<typeof import('@/lib/usersAdminApi')>();
@@ -130,6 +122,39 @@ const EMPTY: any = new Proxy(() => undefined, {
   ownKeys: () => [],
   getOwnPropertyDescriptor: () => undefined,
 });
+
+/** The dashboard's data, with counts above zero so every hint and tile renders. */
+const DASHBOARD_FIXTURES: Record<string, unknown> = {
+  '/analytics/dashboard': {
+    activeAssociates: 42,
+    openShiftsNext30d: 7,
+    associatesClockedIn: 5,
+    pendingOnboardingApplications: 3,
+    pendingI9Section2: 2,
+    pendingDocumentReviews: 4,
+    netPaidLast30d: 12_345.67,
+    netPendingDisbursement: 2_345.5,
+    applicationStatusCounts: { DRAFT: 1, SUBMITTED: 2, IN_REVIEW: 1, APPROVED: 5, REJECTED: 1 },
+    windowDays: 30,
+    trends: {
+      hires: { series: [1, 2, 3, 2, 4, 3, 5, 2], delta: 2 },
+      shiftsScheduled: { series: [10, 12, 11, 14, 13, 15, 16, 9], delta: 1 },
+      applications: { series: [2, 3, 2, 4, 3, 5, 4, 2], delta: -1 },
+    },
+  },
+  '/w4-recollection/summary': { outstanding: 1, notified: 1, resolved: 0 },
+  '/osha/incidents': { incidents: [{ status: 'OPEN' }, { status: 'RESOLVED' }] },
+  '/audit/logs': {
+    entries: [
+      { id: '11111111-1111-4111-8111-111111111111', action: 'application.approved', actorUserId: null, actorEmail: 'hr@hotel.example', entityType: 'Application', entityId: 'a1', clientId: null, metadata: null, createdAt: '2026-10-13T00:00:00.000Z' },
+      { id: '22222222-2222-4222-8222-222222222222', action: 'time.entry_approved', actorUserId: null, actorEmail: null, entityType: 'TimeEntry', entityId: 't1', clientId: null, metadata: null, createdAt: '2026-10-12T00:00:00.000Z' },
+    ],
+    nextBefore: null,
+  },
+  '/me/decisions': { decisions: [] },
+  '/me/colleagues': { colleagues: [] },
+  '/me/plan': { items: [] },
+};
 
 const HOTEL = defaultTenantProfile('DIRECT_EMPLOYER');
 const ALTO = defaultTenantProfile('WORKFORCE_PROVIDER');
@@ -239,8 +264,8 @@ type Surface = { name: string; ui: () => ReactNode; route?: string; skip?: strin
 const SURFACES: Surface[] = [
   { name: 'Sidebar', ui: () => <Sidebar /> },
   { name: 'MobileNav', ui: () => <MobileNav open onClose={() => undefined} onOpenCommandPalette={() => undefined} /> },
-  { name: 'CommandPalette', ui: () => <CommandPalette open onOpenChange={() => undefined} onShowKeyboardShortcuts={() => undefined} />, skip: 'module descriptions still say client; see the TODO above' },
-  { name: 'Dashboard home', ui: () => <AdminDashboard />, skip: 'needs a KPI fixture; see the TODO above' },
+  { name: 'CommandPalette', ui: () => <CommandPalette open onOpenChange={() => undefined} onShowKeyboardShortcuts={() => undefined} /> },
+  { name: 'Dashboard home', ui: () => <AdminDashboard /> },
   { name: 'People directory', ui: () => <PeopleDirectory />, route: '/people' },
   { name: 'Scheduling home', ui: () => <SchedulingHome />, route: '/scheduling' },
   { name: 'Time home', ui: () => <TimeHome />, route: '/time' },

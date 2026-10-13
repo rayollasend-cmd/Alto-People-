@@ -131,6 +131,8 @@ export interface ModuleNav {
   path: string;
   label: string;
   description: string;
+  /** Brief 2-1b: the same description for a tenant that has no clients (client portal off). */
+  descriptionNoClients?: string;
   requires: Capability;
   /** When set, ANY of these capabilities also reveals the module —
    *  used where two audiences share a page (e.g. Labor costs is both a
@@ -474,14 +476,26 @@ export function termizeText(text: string, term: (key: TermKey) => string): strin
 }
 
 /** The same entries with the tenant's words on them: labels by key, descriptions by noun. */
-export function applyTerms(modules: ModuleNav[], term: (key: TermKey) => string): ModuleNav[] {
+export function applyTerms(modules: ModuleNav[], term: (key: TermKey) => string, tenantModules?: TenantModules | null): ModuleNav[] {
+  const clients = hasClients(tenantModules);
   return modules.map((m) => {
     const key = NAV_TERM[m.key];
     const build = NAV_LABEL[m.key];
     const label = key ? term(key) : build ? build(term) : m.label;
-    const description = termizeText(m.description, term);
+    const description = termizeText(!clients && m.descriptionNoClients ? m.descriptionNoClients : m.description, term);
     return label === m.label && description === m.description ? m : { ...m, label, description };
   });
+}
+
+/** A tenant has clients when it runs the client portal; with no module set known, assume it does (Alto HR's words). */
+export function hasClients(tenantModules?: TenantModules | null): boolean {
+  return !tenantModules || tenantModules.clientPortal;
+}
+
+/** The sidebar group's heading in the tenant's words: with no clients, the group holds communications and insights. */
+export function groupLabel(group: Exclude<ModuleGroup, 'core'>, term: (key: TermKey) => string, tenantModules?: TenantModules | null): string {
+  if (group === 'client-services' && !hasClients(tenantModules)) return 'Communications and Insights';
+  return termizeText(GROUP_LABEL[group], term);
 }
 
 export function visibleModules(
@@ -825,6 +839,8 @@ export const MODULES: ModuleNav[] = [
     label: 'Holidays',
     description:
       'Federal, state, company, and client-specific holidays. Drives premium pay multipliers and shift planning.',
+    descriptionNoClients:
+      'Federal, state, and company holidays. Drives premium pay multipliers and shift planning.',
     requires: 'view:scheduling',
     group: 'workforce-management',
   },
@@ -861,6 +877,8 @@ export const MODULES: ModuleNav[] = [
     label: 'Vaccinations',
     description:
       'Vaccination + TB-test records. Required by many client SLAs. Coverage % per kind, expiring-soon feed.',
+    descriptionNoClients:
+      'Vaccination + TB-test records. Coverage % per kind, expiring-soon feed.',
     requires: 'view:compliance',
     group: 'compliance',
   },
@@ -1081,6 +1099,8 @@ export const MODULES: ModuleNav[] = [
     label: 'Labor costs',
     description:
       'Daily scheduled vs worked labor spend, broken down by client and store.',
+    descriptionNoClients:
+      'Daily scheduled vs worked labor spend, broken down by site.',
     // Same audience as the scheduling KPI strip that already shows cost —
     // supervisors see their own client, org roles see everything. Also an
     // executive read (live margin board).

@@ -25,8 +25,9 @@ import type {
   AuditSearchEntry,
   DashboardKPIs,
   KpiTrend,
+  TermKey,
 } from '@alto-people/shared';
-import { useAuth, useRoleLabel } from '@/lib/auth';
+import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
 import {
   hasCapability,
   type Capability,
@@ -378,6 +379,7 @@ function ActionRequiredSection({
   ssnRecollectionOutstanding: number;
   openIncidents: number;
 }) {
+  const term = useTerm();
   const hasAnyActionCapability =
     canManageOnboarding ||
     canManageCompliance ||
@@ -411,7 +413,7 @@ function ActionRequiredSection({
           openIncidents === 1
             ? 'Safety incident awaiting review'
             : 'Safety incidents awaiting review',
-        hint: 'Reported from the field. Resolving one notifies the supervisor who filed it.',
+        hint: `Reported from the field. Resolving one notifies the ${term('manager').toLowerCase()} who filed it.`,
         to: '/compliance/osha',
         cta: 'Open the injury log',
         icon: AlertTriangle,
@@ -477,6 +479,7 @@ function ActionRequiredSection({
     canProcessPayroll,
     ssnRecollectionOutstanding,
     openIncidents,
+    term,
   ]);
 
   // Roles with no manage capabilities at all (EXECUTIVE_CHAIRMAN,
@@ -625,12 +628,13 @@ function KpiSection({
   kpis: DashboardKPIs | null;
   role: Role | null;
 }) {
+  const term = useTerm();
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
       <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis ? (
-          buildKpis(kpis, role).map((kpi) => (
+          buildKpis(kpis, role, term).map((kpi) => (
             <KpiTile key={kpi.label} kpi={kpi} />
           ))
         ) : (
@@ -657,7 +661,7 @@ function withLabel(
   return trend ? { ...trend, deltaLabel } : undefined;
 }
 
-function buildKpis(k: DashboardKPIs, role: Role | null): Kpi[] {
+function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => string): Kpi[] {
   const has = (cap: Capability) => (role ? hasCapability(role, cap) : false);
   // A tile links out only when the viewer can actually open the destination
   // module (/people → view:org, /onboarding → view:onboarding, /payroll →
@@ -668,7 +672,8 @@ function buildKpis(k: DashboardKPIs, role: Role | null): Kpi[] {
 
   const xs: Kpi[] = [
     {
-      label: 'Active associates',
+      // Brief 2-1b: the tenant's word for its people (a hotel says team members).
+      label: `Active ${term('workers').toLowerCase()}`,
       value: fmtInt(k.activeAssociates),
       hint:
         k.associatesClockedIn > 0
