@@ -98,6 +98,9 @@ employersRouter.patch('/admin/employers/:id', MANAGE, async (req, res) => {
 
 employersRouter.get('/org/associates/:id/employment', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
+  // The person must be this tenant's; another tenant's id does not exist here.
+  const person = await prisma.associate.findFirst({ where: { id, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true } });
+  if (!person) throw new HttpError(404, 'associate_not_found', 'No such associate.');
   const rows = await employmentHistory(prisma, id);
   res.json({
     employment: rows.map((e) => ({

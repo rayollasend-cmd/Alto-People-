@@ -66,13 +66,19 @@ export function resetTenantObservations(): void {
 
 const CWD = process.cwd().replace(/\\/g, '/');
 
-/** The first stack frame outside this file, db.ts, Prisma and node itself. */
+/**
+ * The first stack frame outside this file, db.ts, Prisma and node itself.
+ * A Prisma call is a lazy promise that runs when awaited, so the frame of
+ * the code that issued it is not always on the stack at execution; when
+ * it is not, the result is 'unknown' and the model and operation still say
+ * what ran.
+ */
 export function applicationCallSite(stack: string | undefined): string {
   if (!stack) return 'unknown';
   for (const raw of stack.split('\n').slice(1)) {
     const line = raw.trim().replace(/\\/g, '/');
     if (!line.startsWith('at ')) continue;
-    if (/tenantGuard\.ts|\/src\/db\.ts|node_modules|@prisma|node:internal|\(node:/.test(line)) continue;
+    if (/tenantGuard\.ts|\/src\/db\.ts|node_modules|@prisma|node:internal|\(node:|^at async Promise\./.test(line)) continue;
     const m = /\(?((?:file:\/\/\/)?[^()]+?):(\d+):\d+\)?$/.exec(line);
     if (!m) continue;
     let file = m[1]!.replace(/^file:\/\/\//, '');

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { employerByEin, employerFor, employersForYear } from '../lib/employment.js';
+import { employerByEin, employersForYear } from '../lib/employment.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -1201,7 +1201,7 @@ async function renderW2ForForm(
   // first-disbursed-run heuristic.
   // Brief 2-1b: the employer of record comes from the employment record (the EIN the
   // form was stamped with, else the employer on the last day of the year), never from a client row.
-  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employersForYear(prisma, form.associateId, form.taxYear))[0]!;
   if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,
@@ -1371,7 +1371,7 @@ async function renderF1099NecForForm(formId: string): Promise<{
   // one tied to the chronologically-first disbursed item in the year.
   // Brief 2-1b: the employer of record comes from the employment record (the EIN the
   // form was stamped with, else the employer on the last day of the year), never from a client row.
-  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employersForYear(prisma, form.associateId, form.taxYear))[0]!;
   if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,
@@ -1457,7 +1457,7 @@ async function renderF1099MiscForForm(formId: string): Promise<{
 
   // Brief 2-1b: the employer of record comes from the employment record (the EIN the
   // form was stamped with, else the employer on the last day of the year), never from a client row.
-  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employerFor(prisma, form.associateId, new Date(Date.UTC(form.taxYear, 11, 31))));
+  const client = (form.ein ? await employerByEin(prisma, form.ein) : null) ?? (await employersForYear(prisma, form.associateId, form.taxYear))[0]!;
   if (!client.legalName || !client.ein) {
     throw new HttpError(
       400,

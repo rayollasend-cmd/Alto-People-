@@ -107,8 +107,23 @@ export async function employersForYear(db: Db, associateId: string, taxYear: num
   const seen = new Map<string, EmployerFacts>();
   for (const s of spells) seen.set(s.employer.id, s.employer);
   if (seen.size === 0) {
-    const d = await employerFor(db, associateId, dec31);
-    seen.set(d.id, d);
+    // No spell on file (a person hired before the record existed): the
+    // employers are the ones whose payroll paid them in the year — each
+    // client with legal facts through its own employer row (made on first
+    // use), the client-less runs through the tenant's default.
+    const runs = await db.payrollRun.findMany({
+      where: { status: { not: 'CANCELLED' }, disbursedAt: { gte: jan1, lt: new Date(Date.UTC(taxYear + 1, 0, 1)) }, items: { some: { associateId, status: { not: 'VOIDED' } } } },
+      select: { clientId: true },
+      distinct: ['clientId'],
+    });
+    for (const r of runs) {
+      const e = (r.clientId ? await employerOrgForClient(db, r.clientId) : null) ?? (await employerFor(db, associateId, dec31));
+      seen.set(e.id, e);
+    }
+    if (seen.size === 0) {
+      const d = await employerFor(db, associateId, dec31);
+      seen.set(d.id, d);
+    }
   }
   return [...seen.values()];
 }

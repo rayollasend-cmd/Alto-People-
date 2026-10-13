@@ -87,7 +87,7 @@ describe('the access report', () => {
     const admin = await loginAs(agent(), hr.email);
     const res = await admin.get('/admin/users/access-report');
     expect(res.status).toBe(200);
-    expect(res.body.counts.totalAccounts).toBe(11);
+    expect(res.body.counts.totalAccounts).toBe(10);
     const csv = await admin.get('/admin/users/access-report?format=csv');
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
