@@ -40,6 +40,26 @@ const EXEMPT_PHRASES = ['Alto People'];
 const SEED_DATA_NAMES = ['Alto Etho LLC', 'Alto Etho', 'Demo Store', 'Front Beach 218', 'Seaside Hospitality Group', 'Coastal Resort Holdings', 'Front-of-house associate'];
 
 const admin = PERSONAS.find((p) => p.name === 'admin')!;
+const associate = PERSONAS.find((p) => p.name === 'associate')!;
+
+/** The team member's own screens: everything the ASSOCIATE nav offers with transportation off. */
+const TEAM_MEMBER_ROUTES = [
+  '/me',
+  '/scheduling',
+  '/marketplace',
+  '/time-attendance',
+  '/time-off',
+  '/payroll',
+  '/documents',
+  '/communications',
+  '/reimbursements',
+  '/learning',
+  '/internal-jobs',
+  '/agreements',
+  '/hr-cases',
+  '/help-center',
+  '/settings',
+];
 
 /** Every forbidden word in a text, singular or plural, with context. */
 export function forbiddenHits(route: string, text: string): string[] {
@@ -100,7 +120,7 @@ test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server (set E2E_FULLSTA
 test.describe.configure({ mode: 'serial' });
 test.setTimeout(300_000);
 
-test('the hotel sees no client, bill rate, housing, van, store, associate or Alto on any screen of its journey', async ({ page }) => {
+test('the hotel sees no client, bill rate, housing, van, store, associate or Alto on any screen of its journey', async ({ page, browser }) => {
   await signIn(page, admin);
   const api = page.request;
   const hits: string[] = [];
@@ -194,6 +214,22 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       const text = await visibleText(page);
       seen.set(route, text);
       hits.push(...forbiddenHits(route, text));
+    }
+
+    // The team member's own screens, in a second browser as the seeded
+    // associate, while the tenant is still the hotel.
+    const memberContext = await browser.newContext();
+    try {
+      const member = await memberContext.newPage();
+      await signIn(member, associate);
+      for (const route of TEAM_MEMBER_ROUTES) {
+        await settle(member, route);
+        const text = await visibleText(member);
+        seen.set(`member:${route}`, text);
+        hits.push(...forbiddenHits(`member:${route}`, text));
+      }
+    } finally {
+      await memberContext.close();
     }
 
     // The journey's facts are on the screens.
