@@ -42,9 +42,13 @@ import {
   type DriverAccessRow,
   getLiveBoard,
   getTransportBoard,
+  getRideAuthorizations,
   getTransportCharges,
   getTransportSettings,
   type GeocoderStatus,
+  type RideAuthorizationRow,
+  type RideAuthorizationState,
+  type RideRate,
   type TransportSettings,
   listStops,
   listTransportIssues,
@@ -2533,8 +2537,18 @@ function ChargesTab() {
   const totals = charges.data?.totals;
   const exportCsv = () =>
     downloadCsv(`ride-charges-${from}-to-${to}.csv`, [
-      ['Associate', 'Rides', 'No-shows', 'Still owed', 'Taken from pay', 'Waived'],
-      ...rows.map((r) => [r.name, r.rides, r.noShows, (r.owedCents / 100).toFixed(2), (r.takenCents / 100).toFixed(2), (r.waivedCents / 100).toFixed(2)]),
+      ['Associate', 'Rides', 'No-shows', 'Still owed', 'Taken from pay', 'Deferred (minimum-wage guard)', 'Not authorized (not deducted)', 'Waived', 'Authorization'],
+      ...rows.map((r) => [
+        r.name,
+        r.rides,
+        r.noShows,
+        (r.owedCents / 100).toFixed(2),
+        (r.takenCents / 100).toFixed(2),
+        ((r.deferredCents ?? 0) / 100).toFixed(2),
+        ((r.unauthorizedCents ?? 0) / 100).toFixed(2),
+        (r.waivedCents / 100).toFixed(2),
+        AUTHORIZATION_LABEL[r.authorization ?? 'none'],
+      ]),
     ]);
   return (
     <div className="space-y-3">
@@ -2555,6 +2569,20 @@ function ChargesTab() {
           <MetricCard label="Taken from pay" value={cents(totals.takenCents)} />
           <MetricCard label="Waived" value={cents(totals.waivedCents)} />
         </div>
+      )}
+      {totals && ((totals.deferredCents ?? 0) > 0 || (totals.unauthorizedCents ?? 0) > 0) && (
+        <p className="text-xs text-silver">
+          {(totals.deferredCents ?? 0) > 0 && (
+            <>
+              <span className="font-medium text-white">{cents(totals.deferredCents)}</span> deferred by the minimum-wage guard — taken from a later check.{' '}
+            </>
+          )}
+          {(totals.unauthorizedCents ?? 0) > 0 && (
+            <>
+              <span className="font-medium text-white">{cents(totals.unauthorizedCents)}</span> not deducted — no signed authorization on file. See Fares → Authorizations.
+            </>
+          )}
+        </p>
       )}
       {charges.isLoading ? (
         <Skeleton className="h-40" />
@@ -2578,7 +2606,10 @@ function ChargesTab() {
               { key: 'noShows', header: 'No-shows', accessor: (r) => r.noShows, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
               { key: 'owed', header: 'Still owed', accessor: (r) => r.owedCents, csv: (r) => cents(r.owedCents), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => cents(r.owedCents) },
               { key: 'taken', header: 'Taken from pay', accessor: (r) => r.takenCents, csv: (r) => cents(r.takenCents), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.takenCents) },
+              { key: 'deferred', header: 'Deferred', accessor: (r) => r.deferredCents ?? 0, csv: (r) => cents(r.deferredCents ?? 0), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.deferredCents ?? 0) },
+              { key: 'unauthorized', header: 'Not authorized', accessor: (r) => r.unauthorizedCents ?? 0, csv: (r) => cents(r.unauthorizedCents ?? 0), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.unauthorizedCents ?? 0) },
               { key: 'waived', header: 'Waived', accessor: (r) => r.waivedCents, csv: (r) => cents(r.waivedCents), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => cents(r.waivedCents) },
+              { key: 'authorization', header: 'Authorization', accessor: (r) => AUTHORIZATION_LABEL[r.authorization ?? 'none'], sortable: true, searchable: false, cell: (r) => <AuthorizationChip status={r.authorization ?? 'none'} /> },
             ]}
           />
         </div>
@@ -2589,32 +2620,137 @@ function ChargesTab() {
 
 /* ===== Fares ================================================================ */
 
+const AUTHORIZATION_LABEL: Record<RideAuthorizationState, string> = {
+  current: 'Signed',
+  none: 'Must sign',
+  legacy: 'Must sign (old one-click consent)',
+  outdated: 'Must sign again (rate or wording changed)',
+  withdrawn: 'Withdrawn',
+};
+
+function AuthorizationChip({ status }: { status: RideAuthorizationState }) {
+  const variant = status === 'current' ? 'success' : status === 'withdrawn' ? 'destructive' : 'pending';
+  return <Badge variant={variant}>{status === 'current' ? 'Signed' : status === 'withdrawn' ? 'Withdrawn' : 'Must sign'}</Badge>;
+}
+
 function SettingsTab({ manage }: { manage: boolean }) {
   const settings = useQuery({ queryKey: ['transport', 'settings'], queryFn: getTransportSettings });
   if (settings.isError) return <QueryError what="the transport settings" query={settings} />;
   if (settings.isLoading || !settings.data) return <Skeleton className="h-40 max-w-md" />;
   return (
-    <SettingsForm
-      key={JSON.stringify(settings.data.settings)}
-      initial={settings.data.settings}
-      geocoder={settings.data.geocoder ?? null}
-      manage={manage}
-    />
+    <div className="space-y-6">
+      <SettingsForm
+        key={JSON.stringify(settings.data.settings)}
+        initial={settings.data.settings}
+        rates={settings.data.rates ?? []}
+        geocoder={settings.data.geocoder ?? null}
+        manage={manage}
+      />
+      <AuthorizationsSection />
+    </div>
+  );
+}
+
+/** Brief 1A-3: every rate that has been in force, newest first. */
+function RateHistory({ rates }: { rates: RideRate[] }) {
+  if (rates.length === 0) return null;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-silver hover:text-white">Rate history ({rates.length})</summary>
+      <table className="mt-2 w-full text-left text-xs">
+        <caption className="sr-only">Ride rate history</caption>
+        <thead>
+          <tr className="text-silver">
+            <th scope="col" className="py-1 pr-3 font-medium">From</th>
+            <th scope="col" className="py-1 pr-3 font-medium">To</th>
+            <th scope="col" className="py-1 pr-3 text-right font-medium">Fare</th>
+            <th scope="col" className="py-1 text-right font-medium">No-show</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rates.map((r) => (
+            <tr key={r.id} className="border-t border-navy-secondary text-white">
+              <td className="py-1 pr-3 tabular-nums">{r.effectiveFrom}</td>
+              <td className="py-1 pr-3 tabular-nums">{r.effectiveTo ?? 'current'}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{cents(r.fareCents)}</td>
+              <td className="py-1 text-right tabular-nums">{cents(r.noShowFeeCents)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
+/** Brief 1A-3: who has signed the ride charge authorization, and who must. */
+function AuthorizationsSection() {
+  const q = useQuery({ queryKey: ['transport', 'authorizations'], queryFn: getRideAuthorizations });
+  const rows = q.data?.rows ?? [];
+  const signed = rows.filter((r) => r.status === 'current').length;
+  const mustSign = rows.filter((r) => r.status === 'none' || r.status === 'legacy' || r.status === 'outdated').length;
+  const withdrawn = rows.filter((r) => r.status === 'withdrawn').length;
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-white">Authorizations</h3>
+        <p className="text-xs text-silver">
+          A rider is charged only with a signed written authorization on file that names the rate in force. A rate change asks everyone to sign again
+          before their next booking.
+        </p>
+      </div>
+      {q.isLoading ? (
+        <Skeleton className="h-24" />
+      ) : q.isError ? (
+        <QueryError what="the authorizations" query={q} />
+      ) : rows.length === 0 ? (
+        <EmptyState icon={Bus} title="No riders yet" />
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3 sm:max-w-md">
+            <MetricCard label="Signed" value={signed} />
+            <MetricCard label="Must sign" value={mustSign} hint={mustSign > 0 ? 'cannot book or be charged' : undefined} />
+            <MetricCard label="Withdrawn" value={withdrawn} />
+          </div>
+          <div className="overflow-x-auto">
+            <DataGrid<RideAuthorizationRow>
+              id="ride-authorizations"
+              caption="Ride charge authorizations by associate"
+              rows={rows}
+              rowKey={(r) => r.associateId}
+              search={{ placeholder: 'Associate…' }}
+              urlState={false}
+              exportCsv={{ filename: 'ride-authorizations' }}
+              columns={[
+                { key: 'associate', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true },
+                { key: 'status', header: 'Status', accessor: (r) => AUTHORIZATION_LABEL[r.status], sortable: true, searchable: false, cardMeta: true, cell: (r) => <AuthorizationChip status={r.status} /> },
+                { key: 'signedAt', header: 'Signed', accessor: (r) => r.signedAt ?? '', sortable: true, searchable: false, cell: (r) => (r.signedAt ? `${fmtDateTime(r.signedAt)} as ${r.signedName ?? ''}` : '—') },
+                { key: 'rate', header: 'Rate signed', accessor: (r) => r.fareCents ?? 0, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.fareCents === null ? '—' : `${cents(r.fareCents)} · ${cents(r.noShowFeeCents ?? 0)}`) },
+                { key: 'reason', header: 'Note', accessor: (r) => r.reason ?? '', searchable: false, cell: (r) => <span className="text-silver">{r.status === 'current' ? '' : (r.reason ?? '')}</span> },
+              ]}
+            />
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
 function SettingsForm({
   initial,
+  rates,
   geocoder,
   manage,
 }: {
   initial: TransportSettings;
+  rates: RideRate[];
   geocoder: GeocoderStatus | null;
   manage: boolean;
 }) {
   const queryClient = useQueryClient();
   const [fare, setFare] = useState((initial.fareCents / 100).toFixed(2));
   const [fee, setFee] = useState((initial.noShowFeeCents / 100).toFixed(2));
+  const [effectiveFrom, setEffectiveFrom] = useState(ymdLocal(new Date()));
+  const rateChanged = Math.round(Number(fare) * 100) !== initial.fareCents || Math.round(Number(fee) * 100) !== initial.noShowFeeCents;
   const [cutoff, setCutoff] = useState(String(initial.cutoffHours));
   const [shortNotice, setShortNotice] = useState(String(initial.shortNoticeMinutes));
   const [dispatchPhone, setDispatchPhone] = useState(initial.dispatchPhone ?? '');
@@ -2628,8 +2764,9 @@ function SettingsForm({
         cutoffHours: Number(cutoff),
         shortNoticeMinutes: Math.max(0, Math.round(Number(shortNotice) || 0)),
         dispatchPhone: dispatchPhone.trim() || null,
+        ...(rateChanged ? { effectiveFrom } : {}),
       });
-      toast.success('Saved — new bookings use these');
+      toast.success(rateChanged ? `Saved — the new rate starts ${effectiveFrom}; riders sign again before their next booking` : 'Saved — new bookings use these');
       await queryClient.invalidateQueries({ queryKey: ['transport'] });
     } catch (err) {
       toast.error(errMsg(err));
@@ -2654,6 +2791,12 @@ function SettingsForm({
         <Field label="No-show fee ($)" hint="When the driver marks a rider who didn't come.">
           {(p) => <Input {...p} type="number" min={0} step="0.25" value={fee} onChange={(e) => setFee(e.target.value)} disabled={!manage} />}
         </Field>
+        {rateChanged && (
+          <Field label="New rate effective from" hint="Rides booked from this day are priced at the new rate. Every rider signs a new authorization naming it before their next booking.">
+            {(p) => <Input {...p} type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} disabled={!manage} className="w-44" />}
+          </Field>
+        )}
+        <RateHistory rates={rates} />
         <Field label="Plan ahead (hours)" hint="Rides booked this far ahead are planned onto vans. Inside it, see short notice.">
           {(p) => <Input {...p} type="number" min={0} max={72} value={cutoff} onChange={(e) => setCutoff(e.target.value)} disabled={!manage} />}
         </Field>
@@ -2676,7 +2819,8 @@ function SettingsForm({
           </p>
         )}
         <p className="text-xs text-silver">
-          Changes apply to new bookings. Rides already booked keep the fare the rider agreed to.
+          Changes apply to new bookings. Rides already booked keep the fare the rider signed for; a rider is never charged without a signed
+          authorization, and no check takes ride charges past the minimum wage for the hours worked.
         </p>
         {manage && (
           <Button onClick={() => void save()} loading={busy} disabled={busy}>

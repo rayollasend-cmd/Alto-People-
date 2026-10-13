@@ -18,8 +18,9 @@ import {
   getMyCrew,
   getMyLiveRide,
   getShiftTrips,
-  giveRideConsent,
   NO_SHOW_WAIT_MS,
+  signRideAuthorization,
+  withdrawRideAuthorization,
   reportTransportIssue,
   signalDriver,
   type BookRideInput,
@@ -41,6 +42,7 @@ import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShif
 import { fmtWindow, shiftTargetIso, windowForShift } from './shiftTrips';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
+import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -135,10 +137,13 @@ export function RideHome() {
   const [booking, setBooking] = useState<BookPrefill | null>(null);
   const [reporting, setReporting] = useState<{ rideId?: string } | null>(null);
   const data = me.data;
-  const canBook = !!data?.consent && (data?.stores.length ?? 0) > 0;
+  // Brief 1A-3: booking needs a current signed authorization (`consent` is
+  // the older shape of the same fact).
+  const authorized = data ? isAuthorized(data) : false;
+  const canBook = authorized && (data?.stores.length ?? 0) > 0;
   useRiderAlerts(data, useMyLiveRide());
   // With a ride coming the trip leads — the explainer steps aside.
-  const riding = !!data?.consent && sortedLive(data.rides, Date.now()).length > 0;
+  const riding = authorized && sortedLive(data!.rides, Date.now()).length > 0;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -168,14 +173,15 @@ export function RideHome() {
             </CardContent>
           </Card>
         )
-      ) : !data.consent ? (
-        <ConsentCard data={data} />
+      ) : !authorized ? (
+        <AuthorizationCard data={data} />
       ) : (
         <>
           <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
           <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
           <RideCalendar data={data} />
           <ChargesCard data={data} />
+          <AuthorizationStatusCard data={data} />
           <PastRides
             data={data}
             onReport={(rideId) => setReporting({ rideId })}
@@ -205,16 +211,24 @@ export function RideHome() {
   );
 }
 
-/* ----- The deal, once ------------------------------------------------------ */
+/* ----- The deal, signed ---------------------------------------------------- */
 
-function ConsentCard({ data }: { data: MyTransport }) {
+/** Brief 1A-3: a current signed authorization — the only state that books or charges. */
+function isAuthorized(data: MyTransport): boolean {
+  return data.authorization ? data.authorization.current : !!data.consent;
+}
+
+function AuthorizationCard({ data }: { data: MyTransport }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const agree = useMutation({
-    mutationFn: giveRideConsent,
+  const [typedName, setTypedName] = useState('');
+  const auth = data.authorization ?? null;
+  const agreement = auth?.agreement ?? null;
+  const sign = useMutation({
+    mutationFn: () => signRideAuthorization(typedName.trim(), agreement?.version),
     onSuccess: async () => {
       hapticConfirm();
-      toast.success(t('ride.consentDone'));
+      toast.success(t('ride.authorizationDone'));
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
     },
     onError: (err) => toast.error(why(err)),
@@ -226,6 +240,9 @@ function ConsentCard({ data }: { data: MyTransport }) {
     t('ride.consentPay'),
     t('ride.consentCutoff', { hours: s.cutoffHours }),
   ];
+  // Signed before, but the words or the rate changed, or they withdrew.
+  const signedBefore = !!auth?.signedAt;
+  const canSign = typedName.trim().length >= 2 && !!agreement;
   return (
     <section className="relative mb-4 overflow-hidden rounded-lg border border-gold/30 bg-navy bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
       <div className="relative p-5">
@@ -245,16 +262,117 @@ function ConsentCard({ data }: { data: MyTransport }) {
         </ul>
         {data.stores.length === 0 ? (
           <p className="mt-5 text-sm text-warning">{t('ride.noStores')}</p>
+        ) : !agreement ? (
+          <p className="mt-5 text-sm text-warning">{t('ride.authorizationNoRate')}</p>
         ) : (
-          <>
-            <Button className="mt-5" onClick={() => agree.mutate()} loading={agree.isPending} disabled={agree.isPending}>
-              {t('ride.consentAgree')}
+          <form
+            className="mt-5 space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (canSign && !sign.isPending) sign.mutate();
+            }}
+          >
+            {signedBefore && (
+              <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {t('ride.authorizationAgain')}
+                  {auth?.reason ? ` — ${auth.reason}` : ''}
+                </span>
+              </p>
+            )}
+            <div className="rounded-md border border-navy-secondary bg-navy-secondary/40">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-navy-secondary px-4 py-2.5">
+                <h3 className="text-sm font-semibold text-white">{agreement.title}</h3>
+                <span className="text-xs text-silver tabular-nums">
+                  {t('ride.authorizationRate', { fare: cents(agreement.fareCents), fee: cents(agreement.noShowFeeCents) })}
+                </span>
+              </div>
+              <div className="max-h-64 space-y-2 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-silver" data-testid="ride-authorization-text">
+                {agreement.body.split(/\n\s*\n/).map((para, i) => (
+                  <p key={i} className="whitespace-pre-line">
+                    {para}
+                  </p>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-silver/80">{t('ride.authorizationRead')}</p>
+            <Field label={t('ride.authorizationName')}>
+              {(p) => (
+                <Input
+                  {...p}
+                  value={typedName}
+                  onChange={(e) => setTypedName(e.target.value)}
+                  autoComplete="name"
+                  maxLength={200}
+                  className="font-serif text-lg italic"
+                />
+              )}
+            </Field>
+            <Button type="submit" loading={sign.isPending} disabled={!canSign || sign.isPending}>
+              {t('ride.authorizationSign')}
             </Button>
-            <p className="mt-2 text-xs text-silver/80">{t('ride.consentFine')}</p>
-          </>
+          </form>
         )}
       </div>
     </section>
+  );
+}
+
+/** Once signed: when, as whom, at what rate — the PDF, and the way out. */
+function AuthorizationStatusCard({ data }: { data: MyTransport }) {
+  const { t } = useI18n();
+  const confirm = useConfirm();
+  const queryClient = useQueryClient();
+  const auth = data.authorization;
+  const withdraw = useMutation({
+    mutationFn: withdrawRideAuthorization,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+    },
+    onError: (err) => toast.error(why(err)),
+  });
+  if (!auth?.signedAt) return null;
+  return (
+    <Card className="mb-4">
+      <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-5">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium uppercase tracking-wider text-silver">{t('ride.authorizationTitle')}</div>
+          <div className="mt-0.5 text-sm text-white">
+            {t('ride.authorizationSigned', { date: fmtDayShort(new Date(auth.signedAt), { anchored: true }), name: auth.signedName ?? '' })}
+          </div>
+          <div className="text-xs text-silver tabular-nums">
+            {t('ride.authorizationTerms', { version: auth.version ?? 1, fare: cents(auth.fareCents ?? 0), fee: cents(auth.noShowFeeCents ?? 0) })}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {auth.documentId && (
+            <Button variant="secondary" size="sm" asChild>
+              <a href={downloadDocumentUrl(auth.documentId)} target="_blank" rel="noreferrer">
+                {t('ride.authorizationPdf')}
+              </a>
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={withdraw.isPending}
+            disabled={withdraw.isPending}
+            onClick={async () => {
+              const ok = await confirm({
+                title: t('ride.authorizationWithdrawTitle'),
+                description: t('ride.authorizationWithdrawBody'),
+                confirmLabel: t('ride.authorizationWithdraw'),
+                destructive: true,
+              });
+              if (ok) withdraw.mutate();
+            }}
+          >
+            {t('ride.authorizationWithdraw')}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

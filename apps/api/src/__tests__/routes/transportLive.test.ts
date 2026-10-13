@@ -299,7 +299,7 @@ describe('addresses on the map', () => {
     await prisma.application.create({ data: { associateId: a.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' } });
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
     const kim = await loginAs(user.email);
-    await kim.post('/transport/me/consent');
+    await kim.post('/transport/me/authorization').send({ typedName: 'Kim Nguyen' });
 
     expect((await kim.get('/transport/me/where?lat=30.25&lng=-85.9')).body.address).toBe('9 Harbor Rd, Panama City Beach, FL 32413');
 

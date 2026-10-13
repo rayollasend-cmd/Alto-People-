@@ -89,6 +89,7 @@ export async function computePaystubYtd(
       postTaxDeductions: true,
       reimbursementsTotal: true,
       netPay: true,
+      rideChargesCents: true,
     },
   });
   const s = prior._sum;
@@ -103,6 +104,7 @@ export async function computePaystubYtd(
     local: add(s.localWithholding, item.localWithholding),
     preTax: add(s.preTaxDeductions, item.preTaxDeductions),
     postTax: add(s.postTaxDeductions, item.postTaxDeductions),
+    rides: round2(((s.rideChargesCents ?? 0) + item.rideChargesCents) / 100),
     reimb: add(s.reimbursementsTotal, item.reimbursementsTotal),
     net: add(s.netPay, item.netPay),
   };
@@ -176,10 +178,24 @@ export async function buildPaystubDataFromItem(
     Number(item.preTaxDeductions) > 0
       ? [{ label: 'Health & benefits', current: Number(item.preTaxDeductions), ytd: ytd.preTax }]
       : [];
-  const postTaxDeductions: PaystubLine[] =
-    Number(item.postTaxDeductions) > 0
-      ? [{ label: 'Post-tax deductions', current: Number(item.postTaxDeductions), ytd: ytd.postTax }]
-      : [];
+  // Brief 1A-3: van ride charges are their own line — what this check
+  // took, and when the minimum-wage guard held part back, the statement
+  // says so in the label. Other post-tax deductions keep their line.
+  const rideCurrent = round2(item.rideChargesCents / 100);
+  const rideDeferred = round2(item.rideChargesDeferredCents / 100);
+  const guard = (item.rideChargeGuard ?? null) as { minimumWageCents?: number; state?: string } | null;
+  const otherPostTax = round2(Number(item.postTaxDeductions) - rideCurrent);
+  const postTaxDeductions: PaystubLine[] = [];
+  if (rideCurrent > 0 || rideDeferred > 0) {
+    const guardNote =
+      rideDeferred > 0 && guard?.minimumWageCents
+        ? ` — ${rideDeferred.toFixed(2)} carried to a later check so pay stays at the ${guard.state && guard.state !== 'FEDERAL' ? guard.state + ' ' : ''}minimum wage of ${(guard.minimumWageCents / 100).toFixed(2)}/h`
+        : '';
+    postTaxDeductions.push({ label: `Van rides${guardNote}`, current: rideCurrent, ytd: ytd.rides });
+  }
+  if (otherPostTax > 0) {
+    postTaxDeductions.push({ label: 'Post-tax deductions', current: otherPostTax, ytd: round2(ytd.postTax - ytd.rides) });
+  }
 
   return {
     company: {

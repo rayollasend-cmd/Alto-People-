@@ -38,7 +38,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
-import { applyRideCharges, releaseRideCharges } from '../lib/transport.js';
+import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported } from '../lib/payrollTax.js';
 import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggregator.js';
@@ -416,6 +416,27 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
       defaultRate,
     });
 
+    // Ride charges on the preview too (Brief 1A-3): the same plan the run
+    // will stamp, read-only, so the preview's net is the run's net.
+    const periodEndKey = input.periodEnd;
+    const ridePlans = new Map(
+      await Promise.all(
+        projection.items.map(async (p) => {
+          const plan = await planRideCharges(prisma, {
+            associateId: p.associateId,
+            availableNet: p.netPay,
+            grossPay: p.grossPay,
+            regularHours: p.regularHours,
+            overtimeHours: p.overtimeHours,
+            hoursWorked: p.hoursWorked,
+            taxState: p.taxState,
+            periodEnd: periodEndKey,
+            clientId: input.clientId ?? null,
+          });
+          return [p.associateId, plan] as const;
+        }),
+      ),
+    );
     const body: PayrollRunPreviewResponse = PayrollRunPreviewResponseSchema.parse({
       items: projection.items.map((p) => ({
         associateId: p.associateId,
@@ -435,8 +456,17 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
         taxState: p.taxState,
         payFrequency: p.payFrequency,
         disposableEarnings: p.disposableEarnings,
-        postTaxDeductions: p.postTaxDeductions,
-        netPay: p.netPay,
+        postTaxDeductions: round2(p.postTaxDeductions + (ridePlans.get(p.associateId)?.totalCents ?? 0) / 100),
+        netPay: round2(p.netPay - (ridePlans.get(p.associateId)?.totalCents ?? 0) / 100),
+        rideCharges: ridePlans.get(p.associateId)
+          ? {
+              amount: ridePlans.get(p.associateId)!.totalCents / 100,
+              deferred: ridePlans.get(p.associateId)!.deferredCents / 100,
+              rides: ridePlans.get(p.associateId)!.rides,
+              noShows: ridePlans.get(p.associateId)!.noShows,
+              unauthorized: ridePlans.get(p.associateId)!.guard.unauthorizedCents / 100,
+            }
+          : undefined,
         employerFica: p.employerFica,
         employerMedicare: p.employerMedicare,
         employerFuta: p.employerFuta,
@@ -910,29 +940,38 @@ async function aggregateAndPersistRun(
           });
         }
 
-        // Van rides: every $5 fare and $1 no-show fee owed up to this
-        // period's last day, whole rides only, never below $0 net — what
-        // doesn't fit waits for the next check.
+        // Van rides (Brief 1A-3): the fares and no-show fees owed up to
+        // this period's last day, whole rides oldest first — only rides
+        // charged under a signed authorization, never past the
+        // minimum-wage floor for the hours worked, never below $0 net.
+        // What doesn't fit is deferred to a later check; the item keeps
+        // the guard's arithmetic so the statement can say so.
         const netAfterClawbacks = round2(Number(upserted.netPay) - consumed.totalApplied);
         const rides = await applyRideCharges(tx, {
           associateId: p.associateId,
           availableNet: netAfterClawbacks,
+          grossPay: p.grossPay,
+          regularHours: p.regularHours,
+          overtimeHours: p.overtimeHours,
+          hoursWorked: p.hoursWorked,
+          taxState: p.taxState,
           payrollRunId: run.id,
           payrollItemId: upserted.id,
           periodEnd: run.periodEnd.toISOString().slice(0, 10),
           clientId: run.clientId,
         });
-        if (rides.totalApplied > 0) {
-          await tx.payrollItem.update({
-            where: { id: upserted.id },
-            data: {
-              postTaxDeductions: round2(
-                Number(upserted.postTaxDeductions) + consumed.totalApplied + rides.totalApplied,
-              ),
-              netPay: round2(netAfterClawbacks - rides.totalApplied),
-            },
-          });
-        }
+        await tx.payrollItem.update({
+          where: { id: upserted.id },
+          data: {
+            postTaxDeductions: round2(
+              Number(upserted.postTaxDeductions) + consumed.totalApplied + rides.totalApplied,
+            ),
+            netPay: round2(netAfterClawbacks - rides.totalApplied),
+            rideChargesCents: rides.totalCents,
+            rideChargesDeferredCents: rides.deferredCents,
+            rideChargeGuard: rides.guard as unknown as Prisma.InputJsonValue,
+          },
+        });
 
         // Replace earning lines on every (re-)aggregation.
         await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: upserted.id } });
@@ -2523,6 +2562,9 @@ payrollRouter.post('/runs/:id/void', VOID, async (req, res, next) => {
         where: { payrollRunId: run.id, status: 'DISBURSED' },
         data: { status: 'VOIDED', voidedAt: now },
       });
+      // Brief 1A-3: a voided check took nothing, so its ride charges are
+      // owed again and the next check takes them under the same guard.
+      await releaseRideCharges(tx, run.id);
       return tx.payrollRun.update({
         where: { id: run.id },
         data: {
@@ -3130,17 +3172,21 @@ payrollRouter.get('/me/items', async (req, res, next) => {
           select: { chargedItemId: true, chargeCents: true, status: true },
         })
       : [];
-    const transportFor = (itemId: string) => {
-      const mine = rideRows.filter((r) => r.chargedItemId === itemId);
-      if (mine.length === 0) return undefined;
+    const transportFor = (item: { id: string; rideChargesDeferredCents: number; rideChargeGuard: Prisma.JsonValue | null }) => {
+      const mine = rideRows.filter((r) => r.chargedItemId === item.id);
+      if (mine.length === 0 && item.rideChargesDeferredCents === 0) return undefined;
+      const guard = (item.rideChargeGuard ?? null) as { minimumWageCents?: number; state?: string } | null;
       return {
         amount: mine.reduce((n, r) => n + r.chargeCents, 0) / 100,
         rides: mine.filter((r) => r.status !== 'NO_SHOW').length,
         noShows: mine.filter((r) => r.status === 'NO_SHOW').length,
+        deferred: item.rideChargesDeferredCents / 100,
+        minimumWage: guard?.minimumWageCents ? guard.minimumWageCents / 100 : undefined,
+        minimumWageState: guard?.state,
       };
     };
     const payload: PayrollItemListResponse = PayrollItemListResponseSchema.parse({
-      items: rows.map((r) => ({ ...toItem(r), transport: transportFor(r.id) })),
+      items: rows.map((r) => ({ ...toItem(r), transport: transportFor(r) })),
     });
     res.json(payload);
   } catch (err) {

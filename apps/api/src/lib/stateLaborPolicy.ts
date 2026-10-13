@@ -227,7 +227,22 @@ const TABLE: Record<string, StateLaborPolicy> = {
   },
   FL: {
     state: 'FL',
-    minimumWageCents: 1300,
+    // $15.00 since 2026-09-30 (Amendment 2 schedule); was $13.00 from 2024-09-30 and $14.00 from 2025-09-30.
+    minimumWageCents: 1500,
+    dailyOTHoursThreshold: null,
+    weeklyOTHoursThreshold: 40,
+    mealBreakMinMinutes: 0,
+    mealBreakRequiredAfterHours: null,
+    restBreakMinMinutes: 0,
+    restBreakRequiredPerHours: null,
+    paidSickLeaveAccrualPerHour: 0,
+    hasPredictiveSchedulingLaw: false,
+    splitShiftPremiumApplies: false,
+  },
+  AL: {
+    state: 'AL',
+    // Alabama has no state minimum wage; the federal floor applies (Dune Lakes and the Alabama sites).
+    minimumWageCents: 725,
     dailyOTHoursThreshold: null,
     weeklyOTHoursThreshold: 40,
     mealBreakMinMinutes: 0,

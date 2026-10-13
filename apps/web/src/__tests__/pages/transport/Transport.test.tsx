@@ -7,7 +7,7 @@ import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shar
 import { AuthContext } from '@/lib/auth';
 import { ConfirmProvider } from '@/lib/confirm';
 import { zonedDayKey } from '@/lib/format';
-import type { MyLiveRide, MyTransport, Ride, RideRun, RunMap, TransportBoard } from '@/lib/transportApi';
+import type { MyLiveRide, MyTransport, Ride, RideAuthorizationStatus, RideRun, RunMap, TransportBoard } from '@/lib/transportApi';
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
@@ -66,10 +66,38 @@ function ride(over: Partial<Ride> & { id: string }): Ride {
   };
 }
 
+const AGREEMENT = {
+  title: 'Authorization for van ride charges',
+  body: 'I ask Alto to provide van rides and I authorize the charges below to be deducted from my pay.\n\n1. The charge for each ride I board is $5.00. The no-show fee is $1.00.\n\nI have read this authorization. By typing my name below I sign it.',
+  version: 1,
+  lang: 'en' as const,
+  fareCents: 500,
+  noShowFeeCents: 100,
+};
+
+/** Brief 1A-3: a current signed authorization — what books and charges. */
+function signed(over: Partial<RideAuthorizationStatus> = {}): RideAuthorizationStatus {
+  return {
+    current: true,
+    signedAt: '2026-10-01T12:00:00.000Z',
+    signedName: 'Kim Nguyen',
+    version: 1,
+    fareCents: 500,
+    noShowFeeCents: 100,
+    withdrawnAt: null,
+    documentId: 'doc-1',
+    reason: null,
+    agreement: AGREEMENT,
+    ...over,
+  };
+}
+const UNSIGNED: RideAuthorizationStatus = { ...signed(), current: false, signedAt: null, signedName: null, version: null, fareCents: null, noShowFeeCents: null, documentId: null, reason: 'No signed authorization on file.' };
+
 function me(over: Partial<MyTransport> = {}): MyTransport {
   return {
     settings: { fareCents: 500, noShowFeeCents: 100, cutoffHours: 10, shortNoticeMinutes: 90, dispatchPhone: null },
     consent: { acceptedAt: new Date().toISOString() },
+    authorization: signed(),
     places: [],
     stops: [{ id: 's1', name: 'Seaside Housing', address: '100 Seaside Dr' }],
     stores: [{ id: 'l1', name: 'Front Beach 218', timezone: tz, clientName: 'Coastal Resort Holdings', address: null }],
@@ -119,13 +147,13 @@ beforeEach(() => {
 });
 
 describe('<RideHome> — the associate’s Ride tab', () => {
-  it('shows the deal once — $5 a ride, $1 for a missed van, from pay — and records the agreement', async () => {
+  it('shows the deal once — $5 a ride, $1 for a missed van, from pay — and takes a typed signature on the written authorization', async () => {
     let agreed = false;
     routes((path, init) => {
-      if (path === '/transport/me') return me({ consent: agreed ? { acceptedAt: 'now' } : null });
-      if (path === '/transport/me/consent' && init?.method === 'POST') {
+      if (path === '/transport/me') return me(agreed ? {} : { consent: null, authorization: UNSIGNED });
+      if (path === '/transport/me/authorization' && init?.method === 'POST') {
         agreed = true;
-        return { ok: true };
+        return { authorization: signed() };
       }
     });
     renderAs('ASSOCIATE', <RideHome />);
@@ -133,9 +161,36 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     expect(screen.getByText('$1.00 if you miss your van')).toBeInTheDocument();
     expect(screen.getByText(/Taken out of your paycheck each pay period/)).toBeInTheDocument();
     expect(screen.getByText('Book 10 hours ahead when you can — short notice when a driver can take it')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /I agree/ }));
-    expect(apiFetch).toHaveBeenCalledWith('/transport/me/consent', { method: 'POST' });
+    // The words themselves, and no booking until they are signed.
+    expect(screen.getByText('Authorization for van ride charges')).toBeInTheDocument();
+    expect(screen.getByText(/The charge for each ride I board is \$5\.00/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request a seat' })).not.toBeInTheDocument();
+    const sign = screen.getByRole('button', { name: 'Sign and start booking' });
+    expect(sign).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('Type your full name to sign'), 'Kim Nguyen');
+    expect(sign).toBeEnabled();
+    await userEvent.click(sign);
+    expect(apiFetch).toHaveBeenCalledWith('/transport/me/authorization', { method: 'POST', body: { typedName: 'Kim Nguyen', version: 1 } });
     expect(await screen.findByText('No rides booked')).toBeInTheDocument();
+    // Once signed: when, as whom, and the way out.
+    expect(screen.getByText(/Signed .* as Kim Nguyen/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Signed copy (PDF)' })).toHaveAttribute('href', '/api/documents/doc-1/download');
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeInTheDocument();
+  });
+
+  it('asks for a new signature when the rate changed, and says why', async () => {
+    routes((path) =>
+      path === '/transport/me'
+        ? me({
+            consent: null,
+            authorization: signed({ current: false, fareCents: 400, reason: 'The rate changed since it was signed; a new signature is needed.' }),
+          })
+        : undefined,
+    );
+    renderAs('ASSOCIATE', <RideHome />);
+    expect(await screen.findByText(/Please sign again before your next ride — The rate changed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign and start booking' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Request a seat' })).not.toBeInTheDocument();
   });
 
   it('leads with the next ride — the pickup time, the van and driver — and cancels it', async () => {

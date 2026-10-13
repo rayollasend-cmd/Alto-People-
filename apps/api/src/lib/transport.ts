@@ -3,6 +3,8 @@ import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { placedClientIds } from './openShiftEligibility.js';
+import { getLaborPolicy } from './stateLaborPolicy.js';
+import { rideRateOn } from './rideAuthorization.js';
 
 /**
  * Transportation — the Alto vans.
@@ -15,10 +17,22 @@ import { placedClientIds } from './openShiftEligibility.js';
  *   dispatch   the Transportation Director puts bookings on van runs: a
  *              van, a driver, a departure, the pickups in order with a
  *              time each. The rider hears their pickup time and van.
- *   ride       the driver marks each rider on board (the fare, $5) or a
- *              no-show (the fee, $1), then completes the run.
+ *   ride       the driver marks each rider on board (the fare) or a
+ *              no-show (the fee), then completes the run.
  *   pay        what's owed comes out of the paycheck of the pay period the
  *              ride was in (payroll's aggregate step — applyRideCharges).
+ *
+ * Brief 1A-3 — the three rules every charge obeys:
+ *   1. a charge exists only with a SIGNED written authorization on file
+ *      (lib/rideAuthorization.ts); the signature is stamped on the ride
+ *      when the charge is set, and payroll takes nothing unstamped;
+ *   2. the fare and fee are an effective-dated rate (TransportRate); a
+ *      ride is priced at booking at the rate then in force and the signed
+ *      words name that rate;
+ *   3. the minimum-wage guard: a check never takes ride charges past the
+ *      point where the period's pay would fall below the applicable
+ *      minimum wage for the hours worked (nor below $0 net). What does
+ *      not fit is deferred to a later check and the statement says so.
  *
  * Money is in cents everywhere here; payroll converts at the boundary.
  */
@@ -71,9 +85,12 @@ export async function getTransportSettings(db: Db = prisma): Promise<TransportSe
       create: { id: 'default' },
       update: {},
     }));
+  // The fare and fee come from the effective-dated rate; the settings row
+  // mirrors it and is only the fallback.
+  const rate = await rideRateOn(db);
   return {
-    fareCents: row.fareCents,
-    noShowFeeCents: row.noShowFeeCents,
+    fareCents: rate?.fareCents ?? row.fareCents,
+    noShowFeeCents: rate?.noShowFeeCents ?? row.noShowFeeCents,
     cutoffHours: row.cutoffHours,
     shortNoticeMinutes: row.shortNoticeMinutes,
     dispatchPhone: row.dispatchPhone,
@@ -163,6 +180,7 @@ export const rideSelect = {
   waiveReason: true,
   chargedRunId: true,
   chargedAt: true,
+  authorizedSignatureId: true,
   boardedAt: true,
   completedAt: true,
   noShowAt: true,
@@ -252,6 +270,7 @@ export function toRideView(r: RideRow) {
     waived: !!r.waivedAt,
     waiveReason: r.waiveReason,
     charged: !!r.chargedRunId,
+    authorized: !!r.authorizedSignatureId,
     boardedAt: r.boardedAt?.toISOString() ?? null,
     completedAt: r.completedAt?.toISOString() ?? null,
     noShowAt: r.noShowAt?.toISOString() ?? null,
@@ -285,27 +304,64 @@ export const NO_SHOW_WAIT_MS = 3 * 60_000;
  *  cancelled or dispatched. */
 export const OPEN_RIDE_STATUSES = ['REQUESTED', 'SCHEDULED'] as const;
 
+export interface RideChargeInput {
+  associateId: string;
+  /** Net pay before ride charges (dollars). Charges never take it below $0. */
+  availableNet: number;
+  /** Gross pay for the period (dollars) — the minimum-wage guard's base. */
+  grossPay: number;
+  regularHours: number;
+  overtimeHours: number;
+  /** Used when the regular/overtime split is empty (salaried items). */
+  hoursWorked: number;
+  /** Two-letter state whose minimum wage applies; null → federal. */
+  taxState: string | null;
+  /** YYYY-MM-DD — rides on or before the period's last day. */
+  periodEnd: string;
+  /** A client-scoped run only takes its own client's rides. */
+  clientId: string | null;
+}
+
+/** The guard's arithmetic, kept on the PayrollItem so the statement can explain it. */
+export interface RideChargeGuard {
+  state: string;
+  minimumWageCents: number;
+  regularHours: number;
+  overtimeHours: number;
+  /** Hours × minimum wage (overtime at 1.5×): the pay the period must keep. */
+  floorCents: number;
+  grossCents: number;
+  /** grossCents − floorCents, never negative: what the guard lets through. */
+  roomCents: number;
+  /** Net before ride charges, never negative. */
+  netCents: number;
+  /** min(roomCents, netCents). */
+  budgetCents: number;
+  owedCents: number;
+  appliedCents: number;
+  deferredCents: number;
+  /** Charges on file with no signed authorization — never taken. */
+  unauthorizedCents: number;
+}
+
+export interface RideChargePlan {
+  rideIds: string[];
+  totalCents: number;
+  rides: number;
+  noShows: number;
+  deferredCents: number;
+  guard: RideChargeGuard;
+}
+
+const FEDERAL_MINIMUM_WAGE_CENTS = 725;
+
 /**
- * Payroll's step: take every ride charge an associate owes into this run's
- * paycheck — whole rides, oldest first, never taking net pay below zero (a
- * ride that doesn't fit waits for the next check). Stamped with the run so
- * re-aggregating the run first releases them (releaseRideCharges) and
- * applies them again: the same idempotency rule as clawbacks.
+ * Decide which owed rides this check takes: authorized ones only, oldest
+ * first, whole rides, within the minimum-wage room and the net. Read-only;
+ * previews use it as is and applyRideCharges stamps what it chose.
  */
-export async function applyRideCharges(
-  tx: Prisma.TransactionClient,
-  input: {
-    associateId: string;
-    availableNet: number;
-    payrollRunId: string;
-    payrollItemId: string;
-    /** YYYY-MM-DD — rides on or before the period's last day. */
-    periodEnd: string;
-    /** A client-scoped run only takes its own client's rides. */
-    clientId: string | null;
-  },
-): Promise<{ totalApplied: number; rides: number }> {
-  const owed = await tx.ride.findMany({
+export async function planRideCharges(db: Db, input: RideChargeInput): Promise<RideChargePlan> {
+  const owed = await db.ride.findMany({
     where: {
       associateId: input.associateId,
       chargeCents: { gt: 0 },
@@ -315,24 +371,82 @@ export async function applyRideCharges(
       ...(input.clientId ? { location: { clientId: input.clientId } } : {}),
     },
     orderBy: [{ serviceDate: 'asc' }, { targetAt: 'asc' }],
-    select: { id: true, chargeCents: true },
+    select: { id: true, chargeCents: true, status: true, authorizedSignatureId: true },
   });
-  let budget = Math.max(0, Math.round(input.availableNet * 100));
-  const taken: string[] = [];
+  const policy = getLaborPolicy(input.taxState);
+  const minimumWageCents = Math.max(policy.minimumWageCents, FEDERAL_MINIMUM_WAGE_CENTS);
+  const split = input.regularHours + input.overtimeHours > 0;
+  const regularHours = split ? input.regularHours : input.hoursWorked;
+  const overtimeHours = split ? input.overtimeHours : 0;
+  const floorCents = Math.round(regularHours * minimumWageCents + overtimeHours * minimumWageCents * 1.5);
+  const grossCents = Math.round(input.grossPay * 100);
+  const roomCents = Math.max(0, grossCents - floorCents);
+  const netCents = Math.max(0, Math.round(input.availableNet * 100));
+  const budgetCents = Math.min(roomCents, netCents);
+
+  let budget = budgetCents;
+  const rideIds: string[] = [];
   let totalCents = 0;
+  let rides = 0;
+  let noShows = 0;
+  let owedCents = 0;
+  let unauthorizedCents = 0;
   for (const r of owed) {
+    if (!r.authorizedSignatureId) {
+      unauthorizedCents += r.chargeCents;
+      continue;
+    }
+    owedCents += r.chargeCents;
     if (r.chargeCents > budget) continue;
     budget -= r.chargeCents;
     totalCents += r.chargeCents;
-    taken.push(r.id);
+    rideIds.push(r.id);
+    if (r.status === 'NO_SHOW') noShows += 1;
+    else rides += 1;
   }
-  if (taken.length > 0) {
+  const deferredCents = owedCents - totalCents;
+  return {
+    rideIds,
+    totalCents,
+    rides,
+    noShows,
+    deferredCents,
+    guard: {
+      state: policy.state,
+      minimumWageCents,
+      regularHours,
+      overtimeHours,
+      floorCents,
+      grossCents,
+      roomCents,
+      netCents,
+      budgetCents,
+      owedCents,
+      appliedCents: totalCents,
+      deferredCents,
+      unauthorizedCents,
+    },
+  };
+}
+
+/**
+ * Take what the associate owes for rides out of this pay period's
+ * paycheck — the plan above, stamped with the run so re-aggregating the
+ * run first releases them (releaseRideCharges) and applies them again:
+ * the same idempotency rule as clawbacks.
+ */
+export async function applyRideCharges(
+  tx: Prisma.TransactionClient,
+  input: RideChargeInput & { payrollRunId: string; payrollItemId: string },
+): Promise<RideChargePlan & { totalApplied: number }> {
+  const plan = await planRideCharges(tx, input);
+  if (plan.rideIds.length > 0) {
     await tx.ride.updateMany({
-      where: { id: { in: taken } },
+      where: { id: { in: plan.rideIds } },
       data: { chargedRunId: input.payrollRunId, chargedItemId: input.payrollItemId, chargedAt: new Date() },
     });
   }
-  return { totalApplied: totalCents / 100, rides: taken.length };
+  return { ...plan, totalApplied: plan.totalCents / 100 };
 }
 
 /** Un-stamp this run's ride charges — before re-aggregating or deleting it. */

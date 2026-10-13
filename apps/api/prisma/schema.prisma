@@ -3441,92 +3441,98 @@ model PayrollRun {
 }
 
 model PayrollItem {
-  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  payrollRunId        String            @db.Uuid
-  associateId         String            @db.Uuid
+  id                       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId             String            @db.Uuid
+  associateId              String            @db.Uuid
   // Snapshot of inputs at the time of aggregation. Source TimeEntries /
   // Shifts can change later (e.g. a bug-fix amendment), but the paystub
   // record is immutable.
-  hoursWorked         Decimal           @db.Decimal(8, 2)
-  hourlyRate          Decimal           @db.Decimal(8, 2)
-  grossPay            Decimal           @db.Decimal(12, 2)
+  hoursWorked              Decimal           @db.Decimal(8, 2)
+  hourlyRate               Decimal           @db.Decimal(8, 2)
+  grossPay                 Decimal           @db.Decimal(12, 2)
   // Phase 18 employee-side tax breakdown. federalWithholding is now FIT
   // alone — it used to absorb the placeholder flat tax. fica =
   // 6.2% Social Security (capped at SS wage base), medicare = 1.45% +
   // 0.9% surcharge over $200k YTD, stateWithholding = per-state SIT.
-  federalWithholding  Decimal           @db.Decimal(12, 2)
-  fica                Decimal           @default(0) @db.Decimal(12, 2)
-  medicare            Decimal           @default(0) @db.Decimal(12, 2)
-  stateWithholding    Decimal           @default(0) @db.Decimal(12, 2)
+  federalWithholding       Decimal           @db.Decimal(12, 2)
+  fica                     Decimal           @default(0) @db.Decimal(12, 2)
+  medicare                 Decimal           @default(0) @db.Decimal(12, 2)
+  stateWithholding         Decimal           @default(0) @db.Decimal(12, 2)
   // Phase 18 employer-side. The company owes these on top of gross.
-  employerFica        Decimal           @default(0) @db.Decimal(12, 2)
-  employerMedicare    Decimal           @default(0) @db.Decimal(12, 2)
-  employerFuta        Decimal           @default(0) @db.Decimal(12, 2)
-  employerSuta        Decimal           @default(0) @db.Decimal(12, 2)
+  employerFica             Decimal           @default(0) @db.Decimal(12, 2)
+  employerMedicare         Decimal           @default(0) @db.Decimal(12, 2)
+  employerFuta             Decimal           @default(0) @db.Decimal(12, 2)
+  employerSuta             Decimal           @default(0) @db.Decimal(12, 2)
   // YTD snapshots at the moment this paystub was computed. Required for
   // SS-cap and Medicare-surcharge math; preserved for paystub display.
-  ytdWages            Decimal           @default(0) @db.Decimal(12, 2)
-  ytdMedicareWages    Decimal           @default(0) @db.Decimal(12, 2)
+  ytdWages                 Decimal           @default(0) @db.Decimal(12, 2)
+  ytdMedicareWages         Decimal           @default(0) @db.Decimal(12, 2)
   // Phase 42 — pre-tax benefit deductions taken this period. Reduced
   // from gross before federal/FICA/Medicare/state are computed; also
   // subtracted again from net to land on take-home. Stored as a sum
   // here; per-plan breakdown lives in BenefitsEnrollment + the period.
-  preTaxDeductions    Decimal           @default(0) @db.Decimal(12, 2)
+  preTaxDeductions         Decimal           @default(0) @db.Decimal(12, 2)
   // Wave 4.2 — post-tax deductions taken this period (garnishments,
   // Roth 401k, etc.). Subtracted AFTER taxes to land on take-home; does
   // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
   // garnishments lives in GarnishmentDeduction rows tied to the run.
-  postTaxDeductions   Decimal           @default(0) @db.Decimal(12, 2)
+  postTaxDeductions        Decimal           @default(0) @db.Decimal(12, 2)
+  /// Brief 1A-3: van ride charges taken from this check (inside
+  /// postTaxDeductions), the charges that were owed but deferred by the
+  /// minimum-wage guard, and the guard's arithmetic for the statement.
+  rideChargesCents         Int               @default(0)
+  rideChargesDeferredCents Int               @default(0)
+  rideChargeGuard          Json?
   // Gap 1 — sub-bucket of preTaxDeductions that reduces FIT base only,
   // NOT FICA / Medicare base (traditional 401(k) / 403(b)). Section-125
   // pre-tax = preTaxDeductions - preTaxRetirement. CHECK enforces
   // preTaxRetirement <= preTaxDeductions at the DB layer.
-  preTaxRetirement    Decimal           @default(0) @db.Decimal(12, 2)
+  preTaxRetirement         Decimal           @default(0) @db.Decimal(12, 2)
   // Gap 10 — sum of folded reimbursement amounts on this item. Added to
   // netPay after taxes / deductions; never affects grossPay or any wage
   // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-
   // Earning rows with kind=REIMBURSEMENT, isTaxable=false.
-  reimbursementsTotal Decimal           @default(0) @db.Decimal(10, 2)
-  netPay              Decimal           @db.Decimal(12, 2)
+  reimbursementsTotal      Decimal           @default(0) @db.Decimal(10, 2)
+  netPay                   Decimal           @db.Decimal(12, 2)
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
   // CA-rate was applied to someone who later moved to TX.
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId            String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  taxState            String?
+  tenantId                 String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  taxState                 String?
   // Tier-2 — city/county withholding (W-2 Box 19). Zero unless the
   // associate carries a LocalTaxRule.
-  localWithholding    Decimal           @default(0) @db.Decimal(12, 2)
-  status              PayrollItemStatus @default(PENDING)
+  localWithholding         Decimal           @default(0) @db.Decimal(12, 2)
+  status                   PayrollItemStatus @default(PENDING)
   // sha256 of the rendered paystub PDF the FIRST time it was downloaded.
   // Subsequent downloads must produce the same hash; verifies immutability.
-  paystubHash         String?
+  paystubHash              String?
   // Stub for now; in production this is the Wise transfer ID or Branch txn ID.
-  disbursementRef     String?
-  disbursedAt         DateTime?         @db.Timestamptz(6)
+  disbursementRef          String?
+  disbursedAt              DateTime?         @db.Timestamptz(6)
   // Wave 8 — when the paystub PDF was emailed to the associate. Set the
   // first time email-on-disburse fires successfully; lets the disburse
   // hook stay idempotent if a webhook ever delivers the SUCCESS event
   // twice, and lets HR see "did the associate get their stub?" at a
   // glance. Null means never emailed (e.g. associate has no email on
   // file, or the item is from before this column existed).
-  paystubEmailedAt    DateTime?         @db.Timestamptz(6)
-  failureReason       String?
+  paystubEmailedAt         DateTime?         @db.Timestamptz(6)
+  failureReason            String?
   // Gap 3 — set when the parent run is voided; mirrors the run's
   // cancelledAt at void time. Lets the paystub PDF render a "VOID"
   // watermark dated to this timestamp.
-  voidedAt            DateTime?         @db.Timestamptz(6)
+  voidedAt                 DateTime?         @db.Timestamptz(6)
   // Gap 3 — points to the original PayrollItem this row corrects.
   // Required when the parent run is kind=AMENDMENT (route handler
   // enforces; cross-row CHECK is awkward in Postgres). The live YTD
   // recalc joins on this column to sum original + amendment items.
-  amendsItemId        String?           @db.Uuid
-  payrollRun          PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
-  associate           Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  amendsItem          PayrollItem?      @relation("PayrollItemAmendments", fields: [amendsItemId], references: [id], onDelete: Restrict)
-  amendments          PayrollItem[]     @relation("PayrollItemAmendments")
-  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime          @updatedAt @db.Timestamptz(6)
+  amendsItemId             String?           @db.Uuid
+  payrollRun               PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  associate                Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  amendsItem               PayrollItem?      @relation("PayrollItemAmendments", fields: [amendsItemId], references: [id], onDelete: Restrict)
+  amendments               PayrollItem[]     @relation("PayrollItemAmendments")
+  createdAt                DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime          @updatedAt @db.Timestamptz(6)
 
   // Phase 22 — every disbursement call (success or fail) appends a row
   // here, even retries. PayrollItem.disbursementRef stores the latest
@@ -8699,82 +8705,113 @@ model RideConsent {
   noShowFeeCents Int
   acceptedAt     DateTime  @default(now()) @db.Timestamptz(6)
   ip             String?   @db.VarChar(64)
+  /// Brief 1A-3: a charge needs a SIGNED written authorization. These are
+  /// set by the e-sign flow; a row without signatureId is a legacy one-click
+  /// consent and authorizes nothing.
+  signatureId    String?   @db.Uuid
+  documentId     String?   @db.Uuid
+  /// RIDE_AUTHORIZATION_VERSION the words were signed at.
+  version        Int?
+  signedName     String?   @db.VarChar(200)
+  /// The TransportRate the signed words name.
+  rateId         String?   @db.Uuid
+  withdrawnAt    DateTime? @db.Timestamptz(6)
   associate      Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
 }
 
+/// Brief 1A-3: the ride fare and no-show fee, effective-dated. A change
+/// never reprices a past ride and asks every rider to sign again.
+model TransportRate {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  fareCents      Int
+  noShowFeeCents Int
+  effectiveFrom  DateTime  @db.Date
+  effectiveTo    DateTime? @db.Date
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([effectiveFrom])
+  @@index([tenantId])
+}
+
 model Ride {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId    String        @db.Uuid
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId           String        @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId       String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  direction      RideDirection
+  tenantId              String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  direction             RideDirection
   /// The store: where a TO_WORK ride goes, where a FROM_WORK ride starts.
-  locationId     String        @db.Uuid
+  locationId            String        @db.Uuid
   /// The home end — a stop, or an address (snapshotted at booking).
-  stopId         String?       @db.Uuid
-  address        String?       @db.VarChar(300)
-  lat            Decimal?      @db.Decimal(9, 6)
-  lng            Decimal?      @db.Decimal(9, 6)
+  stopId                String?       @db.Uuid
+  address               String?       @db.VarChar(300)
+  lat                   Decimal?      @db.Decimal(9, 6)
+  lng                   Decimal?      @db.Decimal(9, 6)
   /// TO_WORK: arrive at the store by. FROM_WORK: picked up at the store at.
-  targetAt       DateTime      @db.Timestamptz(6)
+  targetAt              DateTime      @db.Timestamptz(6)
   /// The store-local day of targetAt — the board's day and the pay period.
-  serviceDate    String        @db.VarChar(10)
-  status         RideStatus    @default(REQUESTED)
+  serviceDate           String        @db.VarChar(10)
+  status                RideStatus    @default(REQUESTED)
   /// Informational only — rides never depend on the schedule.
-  shiftId        String?       @db.Uuid
+  shiftId               String?       @db.Uuid
   /// The store shift this seat is for ("Morning") — booked by shift, the
   /// ride's time is the shift's start (to work) or end (home). Riders on
   /// the same store shift, way and day share its vans' seats; when they're
   /// full the rest wait in line. Null: booked at an "other time".
-  windowLabel    String?       @db.VarChar(80)
-  note           String?       @db.VarChar(300)
+  windowLabel           String?       @db.VarChar(80)
+  note                  String?       @db.VarChar(300)
   /// Requested inside the planning cutoff — a driver has to take it.
-  shortNotice    Boolean       @default(false)
+  shortNotice           Boolean       @default(false)
   // Dispatch: the run, the pickup order and time.
-  runId          String?       @db.Uuid
-  pickupOrder    Int?
-  pickupAt       DateTime?     @db.Timestamptz(6)
+  runId                 String?       @db.Uuid
+  pickupOrder           Int?
+  pickupAt              DateTime?     @db.Timestamptz(6)
   // Charges, snapshotted at booking; chargeCents is what's owed (the fare
   // once on board, the fee on a no-show). chargedRunId stamps the payroll
   // run that took it — the same apply/un-apply rule as clawbacks.
-  fareCents      Int
-  noShowFeeCents Int
-  chargeCents    Int           @default(0)
-  waivedAt       DateTime?     @db.Timestamptz(6)
-  waivedById     String?       @db.Uuid
-  waiveReason    String?       @db.VarChar(300)
-  chargedRunId   String?       @db.Uuid
-  chargedItemId  String?       @db.Uuid
-  chargedAt      DateTime?     @db.Timestamptz(6)
-  boardedAt      DateTime?     @db.Timestamptz(6)
-  completedAt    DateTime?     @db.Timestamptz(6)
-  noShowAt       DateTime?     @db.Timestamptz(6)
-  cancelledAt    DateTime?     @db.Timestamptz(6)
-  cancelledById  String?       @db.Uuid
-  cancelReason   String?       @db.VarChar(300)
+  fareCents             Int
+  noShowFeeCents        Int
+  chargeCents           Int           @default(0)
+  waivedAt              DateTime?     @db.Timestamptz(6)
+  waivedById            String?       @db.Uuid
+  waiveReason           String?       @db.VarChar(300)
+  chargedRunId          String?       @db.Uuid
+  chargedItemId         String?       @db.Uuid
+  chargedAt             DateTime?     @db.Timestamptz(6)
+  /// Brief 1A-3: the Signature that authorized this charge, stamped when
+  /// the charge is set (boarding / no-show). Payroll never takes a charge
+  /// without it.
+  authorizedSignatureId String?       @db.Uuid
+  boardedAt             DateTime?     @db.Timestamptz(6)
+  completedAt           DateTime?     @db.Timestamptz(6)
+  noShowAt              DateTime?     @db.Timestamptz(6)
+  cancelledAt           DateTime?     @db.Timestamptz(6)
+  cancelledById         String?       @db.Uuid
+  cancelReason          String?       @db.VarChar(300)
   /// The rider heard "your van is about 10 minutes away" (once).
-  nearNotifiedAt DateTime?     @db.Timestamptz(6)
+  nearNotifiedAt        DateTime?     @db.Timestamptz(6)
   /// The driver tapped "Arrived" at this rider's pickup — the rider hears
   /// "your van is here", and a no-show can only be marked 3 minutes later.
-  vanArrivedAt   DateTime?     @db.Timestamptz(6)
+  vanArrivedAt          DateTime?     @db.Timestamptz(6)
   /// The rider told the driver "I'm outside" (OUTSIDE) or "running a few
   /// minutes late" (LATE).
-  riderSignal    String?       @db.VarChar(20)
-  riderSignalAt  DateTime?     @db.Timestamptz(6)
+  riderSignal           String?       @db.VarChar(20)
+  riderSignalAt         DateTime?     @db.Timestamptz(6)
   /// Who put the seat on a van: a driver accepting the request, or the
   /// director dispatching it (their word overrides).
-  acceptedAt     DateTime?     @db.Timestamptz(6)
-  acceptedById   String?       @db.Uuid
+  acceptedAt            DateTime?     @db.Timestamptz(6)
+  acceptedById          String?       @db.Uuid
   /// Every driver has declined — the director has been told (once).
-  allDeclinedAt  DateTime?     @db.Timestamptz(6)
+  allDeclinedAt         DateTime?     @db.Timestamptz(6)
   /// An evacuation seat booked from an emergency check-in: fare zero,
   /// pickup at the address on file, bound for the emergency's destination.
-  emergencyId    String?       @db.Uuid
-  createdById    String        @db.Uuid
-  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  emergencyId           String?       @db.Uuid
+  createdById           String        @db.Uuid
+  createdAt             DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
 
   associate         Associate          @relation(fields: [associateId], references: [id], onDelete: Cascade)
   location          Location           @relation(fields: [locationId], references: [id], onDelete: Restrict)

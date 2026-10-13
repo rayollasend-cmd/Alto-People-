@@ -144,7 +144,7 @@ export async function renderExternalPayrollSheetXlsx(
         // flip to scientific notation.
         cell.numFmt = TEXT_FMT;
         cell.value = value === null || value === undefined ? '' : String(value);
-      } else if (col.key === 'payRate') {
+      } else if (col.key === 'payRate' || col.key === 'rideCharges') {
         cell.numFmt = USD_FMT;
         cell.value = value as number | null;
       } else if (col.key === 'regularHours' || col.key === 'overtimeHours') {

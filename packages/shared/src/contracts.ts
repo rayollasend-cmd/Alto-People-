@@ -2912,9 +2912,18 @@ export const PayrollItemSchema = z.object({
   // Wave 1.2 — per-kind breakdown that sums to grossPay.
   earnings: z.array(PayrollItemEarningSchema),
   /** Van rides taken from this check (part of postTaxDeductions) — the
-   *  paystub's own "Transportation" line. Associate-facing reads only. */
+   *  paystub's own "Transportation" line. Associate-facing reads only.
+   *  Brief 1A-3: `deferred` is what was owed but held back by the
+   *  minimum-wage guard (carried to a later check). */
   transport: z
-    .object({ amount: z.number().nonnegative(), rides: z.number().int(), noShows: z.number().int() })
+    .object({
+      amount: z.number().nonnegative(),
+      rides: z.number().int(),
+      noShows: z.number().int(),
+      deferred: z.number().nonnegative().optional(),
+      minimumWage: z.number().nonnegative().optional(),
+      minimumWageState: z.string().optional(),
+    })
     .optional(),
 });
 export type PayrollItem = z.infer<typeof PayrollItemSchema>;
@@ -3058,6 +3067,18 @@ export const PayrollRunPreviewItemSchema = z.object({
   employerFuta: z.number().nonnegative(),
   employerSuta: z.number().nonnegative(),
   ytdWages: z.number().nonnegative(),
+  /** Brief 1A-3: the van ride charges this check will take (inside
+   *  postTaxDeductions), what the minimum-wage guard defers, and charges on
+   *  file with no signed authorization (never taken). */
+  rideCharges: z
+    .object({
+      amount: z.number().nonnegative(),
+      deferred: z.number().nonnegative(),
+      rides: z.number().int(),
+      noShows: z.number().int(),
+      unauthorized: z.number().nonnegative(),
+    })
+    .optional(),
 });
 export type PayrollRunPreviewItem = z.infer<typeof PayrollRunPreviewItemSchema>;
 

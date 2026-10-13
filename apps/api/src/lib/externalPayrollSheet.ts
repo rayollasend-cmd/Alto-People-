@@ -1,4 +1,5 @@
 import { KIND_LABEL, resolvePayoutsForPayroll } from './financialChanges.js';
+import { planRideCharges } from './transport.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type {
   ExternalPayrollSheetGaps,
@@ -55,6 +56,10 @@ export interface ExternalPayrollRow {
   payType: string;
   regularHours: number;
   overtimeHours: number;
+  /** Brief 1A-3: van ride charges the bureau may deduct this period —
+   *  authorized rides only, capped so the period never falls below the
+   *  applicable minimum wage (dollars). Null when nothing is owed. */
+  rideCharges: number | null;
 }
 
 /** One financial change, as the packet's "Changes since last packet" lists it. */
@@ -312,6 +317,33 @@ export async function buildExternalPayrollSheet(
     missingPayRate: 0,
   };
 
+  // Brief 1A-3: the ride charges each row may carry, planned the way
+  // payroll would (signed authorization only, minimum-wage guard on the
+  // sheet's own hours and rate). The bureau sees a number it can deduct and
+  // a flag when the guard or a missing signature held part back.
+  const ridePlanByAssociate = new Map<string, Awaited<ReturnType<typeof planRideCharges>>>();
+  await Promise.all(
+    hoursSheet.associates.map(async (a) => {
+      const comp = compById.get(a.associateId);
+      const rate = money(comp?.amount);
+      const regular = a.regularMinutes / 60;
+      const overtime = a.overtimeMinutes / 60;
+      const gross = rate === null || comp?.payType !== 'HOURLY' ? 0 : Math.round((regular * rate + overtime * rate * 1.5) * 100) / 100;
+      const plan = await planRideCharges(prisma, {
+        associateId: a.associateId,
+        availableNet: gross,
+        grossPay: gross,
+        regularHours: regular,
+        overtimeHours: overtime,
+        hoursWorked: regular + overtime,
+        taxState: personById.get(a.associateId)?.state ?? null,
+        periodEnd: input.to.slice(0, 10),
+        clientId: input.clientId ?? null,
+      });
+      if (plan.totalCents > 0 || plan.deferredCents > 0 || plan.guard.unauthorizedCents > 0) ridePlanByAssociate.set(a.associateId, plan);
+    }),
+  );
+
   const rows: ExternalPayrollRow[] = hoursSheet.associates.map((a) => {
     const person = personById.get(a.associateId);
     const w4 = w4ById.get(a.associateId);
@@ -373,6 +405,16 @@ export async function buildExternalPayrollSheet(
     const payRate = money(comp?.amount);
     if (payRate === null) gaps.missingPayRate += 1;
 
+    const ridePlan = ridePlanByAssociate.get(a.associateId) ?? null;
+    if (ridePlan && ridePlan.deferredCents > 0) {
+      flags.push(
+        `VAN RIDES: ${(ridePlan.deferredCents / 100).toFixed(2)} deferred — deducting it would take the period below the ${ridePlan.guard.state} minimum wage (${(ridePlan.guard.minimumWageCents / 100).toFixed(2)}/h)`,
+      );
+    }
+    if (ridePlan && ridePlan.guard.unauthorizedCents > 0) {
+      flags.push(`VAN RIDES: ${(ridePlan.guard.unauthorizedCents / 100).toFixed(2)} not deducted — no signed authorization on file`);
+    }
+
     return {
       associateId: a.associateId,
       fullName: a.name,
@@ -395,6 +437,7 @@ export async function buildExternalPayrollSheet(
       payType: comp?.payType ?? '',
       regularHours: hours(a.regularMinutes),
       overtimeHours: hours(a.overtimeMinutes),
+      rideCharges: ridePlan && ridePlan.totalCents > 0 ? ridePlan.totalCents / 100 : null,
     };
   });
 
@@ -436,4 +479,7 @@ export const EXTERNAL_PAYROLL_COLUMNS: Array<{
   // Last on purpose: a bureau's intake mapping is by column position, so
   // the new column must not shift the ones they already map.
   { key: 'flags', label: 'Flags', width: 40 },
+  // After Flags on purpose (same rule): a bureau that already maps Flags by
+  // position keeps its mapping.
+  { key: 'rideCharges', label: 'Van Ride Charges', width: 16 },
 ];

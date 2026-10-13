@@ -163,9 +163,40 @@ export interface RideStore {
   windows?: StoreShiftWindow[];
 }
 
+/** Brief 1A-3: the fare and no-show fee, effective-dated. */
+export interface RideRate {
+  id: string;
+  fareCents: number;
+  noShowFeeCents: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+/**
+ * Brief 1A-3: the signed written authorization for ride charges. `current`
+ * means signed, not withdrawn, on the current words and at the rate in
+ * force — the only state in which a ride can be booked or charged.
+ */
+export interface RideAuthorizationStatus {
+  current: boolean;
+  signedAt: string | null;
+  signedName: string | null;
+  version: number | null;
+  fareCents: number | null;
+  noShowFeeCents: number | null;
+  withdrawnAt: string | null;
+  documentId: string | null;
+  /** Why it is not current, in words. */
+  reason: string | null;
+  /** The words to sign now, in the rider's language, with the rate in force. */
+  agreement: { title: string; body: string; version: number; lang: 'en' | 'es' | 'tr'; fareCents: number; noShowFeeCents: number } | null;
+}
+
 export interface MyTransport {
   settings: TransportSettings;
+  /** Older shape: non-null only while the authorization is current. */
   consent: { acceptedAt: string } | null;
+  authorization?: RideAuthorizationStatus;
   places: RidePlace[];
   stops: Array<{ id: string; name: string; address: string }>;
   stores: RideStore[];
@@ -190,7 +221,12 @@ export interface MyTransport {
 
 export const getMyTransport = () => apiFetch<MyTransport>('/transport/me');
 
-export const giveRideConsent = () => apiFetch<{ ok: true }>('/transport/me/consent', { method: 'POST' });
+/** Sign the authorization by typing one's name under the words shown. */
+export const signRideAuthorization = (typedName: string, version?: number) =>
+  apiFetch<{ authorization: RideAuthorizationStatus }>('/transport/me/authorization', { method: 'POST', body: { typedName, version } });
+/** Withdraw: no new ride is booked or charged; rides already taken are still owed. */
+export const withdrawRideAuthorization = () =>
+  apiFetch<{ authorization: RideAuthorizationStatus }>('/transport/me/authorization', { method: 'DELETE' });
 
 export const addRidePlace = (body: { label: string; address: string; lat?: number; lng?: number }) =>
   apiFetch<{ place: RidePlace }>('/transport/me/places', { method: 'POST', body });
@@ -754,6 +790,8 @@ export const listTransportIssues = (status?: TransportIssueStatus) =>
 export const updateTransportIssue = (id: string, body: { status: TransportIssueStatus; resolution?: string }) =>
   apiFetch<{ ok: true }>(`/transport/issues/${id}`, { method: 'PATCH', body });
 
+export type RideAuthorizationState = 'current' | 'none' | 'legacy' | 'withdrawn' | 'outdated';
+
 export interface TransportChargeRow {
   associateId: string;
   name: string;
@@ -762,6 +800,11 @@ export interface TransportChargeRow {
   owedCents: number;
   takenCents: number;
   waivedCents: number;
+  /** Charges on file with no signed authorization — never deducted. */
+  unauthorizedCents: number;
+  /** Held back by the minimum-wage guard, carried to a later check. */
+  deferredCents: number;
+  authorization: RideAuthorizationState;
 }
 
 export const getTransportCharges = (from: string, to: string) =>
@@ -769,8 +812,29 @@ export const getTransportCharges = (from: string, to: string) =>
     from: string;
     to: string;
     rows: TransportChargeRow[];
-    totals: Omit<TransportChargeRow, 'associateId' | 'name'>;
+    totals: Omit<TransportChargeRow, 'associateId' | 'name' | 'authorization'>;
+    rate: RideRate | null;
   }>(`/transport/charges?from=${from}&to=${to}`);
+
+/** The server's CSV of the same report. */
+export const transportChargesCsvUrl = (from: string, to: string) => `/api/transport/charges?from=${from}&to=${to}&format=csv`;
+
+export interface RideAuthorizationRow {
+  associateId: string;
+  name: string;
+  status: RideAuthorizationState;
+  reason: string | null;
+  signedAt: string | null;
+  signedName: string | null;
+  version: number | null;
+  fareCents: number | null;
+  noShowFeeCents: number | null;
+  withdrawnAt: string | null;
+  documentId: string | null;
+}
+
+export const getRideAuthorizations = () =>
+  apiFetch<{ rows: RideAuthorizationRow[]; rate: RideRate | null; version: number }>('/transport/authorizations');
 
 export interface GeocoderStatus {
   primary: 'mapbox' | 'nominatim' | 'off';
@@ -778,9 +842,10 @@ export interface GeocoderStatus {
 }
 
 export const getTransportSettings = () =>
-  apiFetch<{ settings: TransportSettings; geocoder?: GeocoderStatus }>('/transport/settings');
-export const saveTransportSettings = (body: TransportSettings) =>
-  apiFetch<{ settings: TransportSettings }>('/transport/settings', { method: 'PUT', body });
+  apiFetch<{ settings: TransportSettings; rates?: RideRate[]; geocoder?: GeocoderStatus }>('/transport/settings');
+/** `effectiveFrom` (YYYY-MM-DD) dates a fare/fee change; a change asks every rider to sign again. */
+export const saveTransportSettings = (body: TransportSettings & { effectiveFrom?: string }) =>
+  apiFetch<{ settings: TransportSettings; rates?: RideRate[] }>('/transport/settings', { method: 'PUT', body });
 
 /* ----- The store supervisors' heads-up ----------------------------------- */
 

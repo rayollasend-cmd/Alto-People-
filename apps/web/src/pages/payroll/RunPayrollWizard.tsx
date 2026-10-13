@@ -916,6 +916,7 @@ function PaycheckCard({
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
               )}
+              {item.rideCharges && item.rideCharges.amount > 0 && <> · {fmtMoney(item.rideCharges.amount)} van rides</>}
             </div>
           </div>
           {item.rateSource === 'DEFAULT' && (
@@ -1168,6 +1169,23 @@ function TaxDrillDown({ item }: { item: PayrollRunPreviewItem }) {
         }
         accent={item.postTaxDeductions > 0}
       />
+      {item.rideCharges && (item.rideCharges.amount > 0 || item.rideCharges.deferred > 0 || item.rideCharges.unauthorized > 0) && (
+        <DrillRow
+          label={
+            <span>
+              Van rides ({item.rideCharges.rides} rides, {item.rideCharges.noShows} missed)
+              {item.rideCharges.deferred > 0 && (
+                <span className="ml-2 text-xs text-silver/60">+{fmtMoney(item.rideCharges.deferred)} deferred by the minimum-wage guard</span>
+              )}
+              {item.rideCharges.unauthorized > 0 && (
+                <span className="ml-2 text-xs text-silver/60">{fmtMoney(item.rideCharges.unauthorized)} not authorized — not deducted</span>
+              )}
+            </span>
+          }
+          amount={item.rideCharges.amount > 0 ? `−${fmtMoney(item.rideCharges.amount)}` : '—'}
+          accent={item.rideCharges.amount > 0}
+        />
+      )}
       <DrillRow label="Net pay" amount={fmtMoney(item.netPay)} bold accent />
       <DrillRow
         label={

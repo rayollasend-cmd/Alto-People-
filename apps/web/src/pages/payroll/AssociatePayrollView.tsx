@@ -908,6 +908,25 @@ function PaystubCard({
                       },
                     ]
                   : []),
+                // Brief 1A-3: what the minimum-wage guard held back, in words.
+                ...((item.transport?.deferred ?? 0) > 0
+                  ? [
+                      {
+                        key: 'transport-deferred',
+                        cells: [
+                          t('pay.transportDeferred', {
+                            amount: fmtMoney(item.transport!.deferred!),
+                            state: item.transport!.minimumWageState ?? 'federal',
+                            wage: fmtMoney(item.transport!.minimumWage ?? 7.25),
+                          }),
+                          '',
+                          '',
+                          '',
+                          '',
+                        ],
+                      },
+                    ]
+                  : []),
               ]}
               footer={[
                 t('pay.totalDeductions'),

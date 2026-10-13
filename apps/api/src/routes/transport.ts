@@ -25,6 +25,17 @@ import {
   tripStates,
 } from '../lib/transportSeats.js';
 import { haversineM } from '../lib/transportLive.js';
+import {
+  authorizationCovers,
+  rideAuthorizationStatus,
+  rideChargeAuthorized,
+  rideRateHistory,
+  rideRateOn,
+  setRideRate,
+  signRideAuthorization,
+  withdrawRideAuthorization,
+} from '../lib/rideAuthorization.js';
+import { RIDE_AUTHORIZATION_VERSION } from '../lib/rideAuthorizationContent.js';
 import { approvedForClient, assertDriverMayServe, driverAccessFor, ridesForAccess } from '../lib/driverAccess.js';
 import { clusterAndOrder, type ClusterMember } from '../lib/rideClusters.js';
 import {
@@ -140,9 +151,9 @@ async function notifyTransportDesk(opts: { subject: string; body: string; linkUr
 transportRouter.get('/me', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const now = new Date();
-  const [settings, consent, places, stops, stores, rides, shifts, payday, profile] = await Promise.all([
+  const [settings, authorization, places, stops, stores, rides, shifts, payday, profile] = await Promise.all([
     getTransportSettings(),
-    prisma.rideConsent.findUnique({ where: { associateId } }),
+    rideAuthorizationStatus(prisma, { id: associateId, language: req.user!.language ?? null }, now),
     prisma.ridePlace.findMany({ where: { associateId }, orderBy: { createdAt: 'asc' } }),
     prisma.transportStop.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
     bookableStores(associateId, req.user!.clientId ?? null),
@@ -237,7 +248,10 @@ transportRouter.get('/me', RIDE, async (req, res) => {
   ]);
   res.json({
     settings,
-    consent: consent ? { acceptedAt: consent.acceptedAt.toISOString() } : null,
+    // Brief 1A-3: `consent` is kept for older clients and means "a current
+    // signed authorization"; `authorization` is the whole state.
+    consent: authorization.current && authorization.signedAt ? { acceptedAt: authorization.signedAt } : null,
+    authorization,
     places: places.map((p) => ({
       id: p.id,
       label: p.label,
@@ -284,25 +298,42 @@ transportRouter.get('/me', RIDE, async (req, res) => {
   });
 });
 
-transportRouter.post('/me/consent', RIDE, async (req, res) => {
+/**
+ * Brief 1A-3 — the signed written authorization. The associate types their
+ * name under the words (rendered with the rate in force); the PDF, its
+ * hash, a DocumentRecord and a Signature row are kept, and the consent row
+ * becomes current for that rate and that version of the words.
+ */
+transportRouter.post('/me/authorization', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
-  const s = await getTransportSettings();
-  await prisma.rideConsent.upsert({
-    where: { associateId },
-    create: { associateId, fareCents: s.fareCents, noShowFeeCents: s.noShowFeeCents, ip: req.ip ?? null },
-    update: { fareCents: s.fareCents, noShowFeeCents: s.noShowFeeCents, acceptedAt: new Date(), ip: req.ip ?? null },
+  const input = z.object({ typedName: z.string().trim().min(2).max(200), version: z.number().int().optional() }).parse(req.body);
+  if (input.version !== undefined && input.version !== RIDE_AUTHORIZATION_VERSION) {
+    throw new HttpError(409, 'authorization_version', 'The authorization text changed; reload and read it again.');
+  }
+  const status = await signRideAuthorization(prisma, {
+    associateId,
+    userId: req.user!.id,
+    typedName: input.typedName,
+    language: req.user!.language ?? null,
+    ipAddress: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
   });
-  enqueueAudit(
-    {
-      actorUserId: req.user!.id,
-      action: 'transport.consent_given',
-      entityType: 'Associate',
-      entityId: associateId,
-      metadata: { fareCents: s.fareCents, noShowFeeCents: s.noShowFeeCents },
-    },
-    'transport',
-  );
-  res.status(201).json({ ok: true });
+  res.status(201).json({ authorization: status });
+});
+
+/** Withdraw: no new ride is booked or charged; rides already taken are still owed. */
+transportRouter.delete('/me/authorization', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  await withdrawRideAuthorization(prisma, associateId, req.user!.id);
+  res.json({ authorization: await rideAuthorizationStatus(prisma, { id: associateId, language: req.user!.language ?? null }) });
+});
+
+/** The signed PDF, for the associate's own records. */
+transportRouter.get('/me/authorization/document', RIDE, async (req, res) => {
+  const associateId = requireAssociate(req);
+  const c = await prisma.rideConsent.findUnique({ where: { associateId }, select: { documentId: true } });
+  if (!c?.documentId) throw new HttpError(404, 'no_authorization', 'No signed authorization on file.');
+  res.json({ documentId: c.documentId });
 });
 
 const LatLng = {
@@ -513,8 +544,14 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   const associateId = requireAssociate(req);
   const input = BookInput.parse(req.body);
   const settings = await getTransportSettings();
-  if (!(await prisma.rideConsent.findUnique({ where: { associateId } }))) {
-    throw new HttpError(409, 'consent_required', 'Agree to the ride charges before your first booking.');
+  // Brief 1A-3: no booking without a current signed authorization naming
+  // the rate the ride is priced at (the rate in force today, snapshotted
+  // on the ride at booking).
+  const authorization = await rideAuthorizationStatus(prisma, { id: associateId, language: req.user!.language ?? null });
+  if (!authorization.current) {
+    throw new HttpError(409, 'authorization_required', authorization.reason ?? 'Sign the ride charge authorization before booking.', {
+      reason: authorization.reason,
+    });
   }
   const store = (await bookableStores(associateId, req.user!.clientId ?? null)).find((s) => s.id === input.locationId);
   if (!store) throw new HttpError(403, 'store_not_allowed', 'You can book rides to your own stores only.');
@@ -945,12 +982,17 @@ async function driverRide(req: Request) {
 transportRouter.post('/driver/rides/:id/board', DRIVE, async (req, res) => {
   const ride = await driverRide(req);
   if (ride.status !== 'SCHEDULED') throw new HttpError(409, 'not_scheduled', 'This rider is already marked.');
+  const now = new Date();
+  const charge = await chargeUnder(ride.associate.id, ride, now);
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'BOARDED', boardedAt: new Date(), chargeCents: ride.fareCents },
+    data: { status: 'BOARDED', boardedAt: now, chargeCents: charge.ok ? ride.fareCents : 0, ...charge.data },
     select: rideSelect,
   });
-  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.boarded', entityType: 'Ride', entityId: ride.id }, 'transport');
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.boarded', entityType: 'Ride', entityId: ride.id, metadata: { chargeCents: updated.chargeCents, authorized: charge.ok, reason: charge.reason } },
+    'transport',
+  );
   res.json({ ride: toRideView(updated) });
 });
 
@@ -1005,18 +1047,26 @@ transportRouter.post('/driver/rides/:id/no-show', DRIVE, async (req, res) => {
       `Give them until ${fmtTime(new Date(waitUntil), ride.location.timezone)} — riders get 3 minutes after you arrive.`,
     );
   }
+  const now = new Date();
+  const charge = await chargeUnder(ride.associate.id, ride, now);
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'NO_SHOW', noShowAt: new Date(), chargeCents: ride.noShowFeeCents },
+    data: { status: 'NO_SHOW', noShowAt: now, chargeCents: charge.ok ? ride.noShowFeeCents : 0, ...charge.data },
     select: rideSelect,
   });
-  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.no_show', entityType: 'Ride', entityId: ride.id }, 'transport');
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.no_show', entityType: 'Ride', entityId: ride.id, metadata: { chargeCents: updated.chargeCents, authorized: charge.ok, reason: charge.reason } },
+    'transport',
+  );
   void trackNotificationWork(
     notifyAssociate(ride.associate.id, {
       subject: 'Missed your van',
       body:
         `The driver marked you a no-show for ${ride.run?.van.name ?? 'your van'} (${fmtWhen(ride.pickupAt ?? ride.targetAt, ride.location.timezone)}). ` +
-        `A ${money(ride.noShowFeeCents)} no-show fee comes out of your next paycheck. Think it's wrong? Report it in the Ride tab.`,
+        (charge.ok
+          ? `A ${money(ride.noShowFeeCents)} no-show fee comes out of your next paycheck. `
+          : 'No fee was charged: there is no signed ride authorization on file. ') +
+        `Think it's wrong? Report it in the Ride tab.`,
       category: 'transport',
       linkUrl: '/rides',
     }),
@@ -1034,11 +1084,37 @@ transportRouter.post('/driver/rides/:id/undo', DRIVE, async (req, res) => {
   if (ride.chargedRunId) throw new HttpError(409, 'already_charged', 'Payroll has already taken this charge.');
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'SCHEDULED', boardedAt: null, noShowAt: null, chargeCents: 0 },
+    data: { status: 'SCHEDULED', boardedAt: null, noShowAt: null, chargeCents: 0, authorizedSignatureId: null, waivedAt: null, waiveReason: null },
     select: rideSelect,
   });
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.mark_undone', entityType: 'Ride', entityId: ride.id, metadata: { was: ride.status, chargeCents: ride.chargeCents } },
+    'transport',
+  );
   res.json({ ride: toRideView(updated) });
 });
+
+/**
+ * Brief 1A-3: may this ride be charged now? Under a current signed
+ * authorization the charge is stamped with the signature; without one the
+ * ride is marked but costs nothing, and the record says why.
+ */
+async function chargeUnder(
+  associateId: string,
+  ride: { fareCents: number; noShowFeeCents: number },
+  now: Date,
+): Promise<{ ok: boolean; reason: string | null; data: Prisma.RideUpdateInput }> {
+  const consent = await prisma.rideConsent.findUnique({ where: { associateId }, select: { signatureId: true } });
+  const check = await rideChargeAuthorized(prisma, associateId, ride, now);
+  if (check.ok && consent?.signatureId) {
+    return { ok: true, reason: null, data: { authorizedSignatureId: consent.signatureId } };
+  }
+  return {
+    ok: false,
+    reason: check.reason,
+    data: { authorizedSignatureId: null, waivedAt: now, waiveReason: `Not charged: ${check.reason ?? 'no signed authorization on file.'}`.slice(0, 300) },
+  };
+}
 
 /* ===== The vans live (phase 2) ========================================= */
 
@@ -2885,6 +2961,7 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
   const q = z
     .object({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
     .parse(req.query);
+  const format = typeof req.query.format === 'string' && req.query.format === 'csv' ? 'csv' : 'json';
   const rides = await prisma.ride.findMany({
     where: { serviceDate: { gte: q.from, lte: q.to }, chargeCents: { gt: 0 } },
     select: {
@@ -2892,11 +2969,29 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
       status: true,
       waivedAt: true,
       chargedRunId: true,
+      authorizedSignatureId: true,
       associate: { select: { id: true, firstName: true, lastName: true } },
     },
   });
-  const byAssociate = new Map<string, { associateId: string; name: string; rides: number; noShows: number; owedCents: number; takenCents: number; waivedCents: number }>();
+  // Brief 1A-3: who still has to sign — every rider in the window whose
+  // authorization is not current — and what the guard deferred.
+  const associateIds = [...new Set(rides.map((r) => r.associate.id))];
+  const [consents, rate, deferred] = await Promise.all([
+    prisma.rideConsent.findMany({ where: { associateId: { in: associateIds } } }),
+    rideRateOn(prisma),
+    prisma.payrollItem.groupBy({
+      by: ['associateId'],
+      where: { associateId: { in: associateIds }, rideChargesDeferredCents: { gt: 0 }, status: { in: ['PENDING', 'DISBURSED'] } },
+      _sum: { rideChargesDeferredCents: true },
+    }),
+  ]);
+  const consentOf = new Map(consents.map((c) => [c.associateId, c]));
+  const deferredOf = new Map(deferred.map((d) => [d.associateId, d._sum.rideChargesDeferredCents ?? 0]));
+  type Row = { associateId: string; name: string; rides: number; noShows: number; owedCents: number; takenCents: number; waivedCents: number; unauthorizedCents: number; deferredCents: number; authorization: 'current' | 'none' | 'withdrawn' | 'outdated' };
+  const byAssociate = new Map<string, Row>();
   for (const r of rides) {
+    const c = consentOf.get(r.associate.id) ?? null;
+    const check = authorizationCovers(c, rate, new Date());
     const row = byAssociate.get(r.associate.id) ?? {
       associateId: r.associate.id,
       name: `${r.associate.firstName} ${r.associate.lastName}`,
@@ -2905,34 +3000,104 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
       owedCents: 0,
       takenCents: 0,
       waivedCents: 0,
+      unauthorizedCents: 0,
+      deferredCents: deferredOf.get(r.associate.id) ?? 0,
+      authorization: check.ok ? 'current' : !c?.signatureId ? 'none' : c.withdrawnAt ? 'withdrawn' : 'outdated',
     };
     if (r.status === 'NO_SHOW') row.noShows += 1;
     else row.rides += 1;
     if (r.waivedAt) row.waivedCents += r.chargeCents;
     else if (r.chargedRunId) row.takenCents += r.chargeCents;
+    else if (!r.authorizedSignatureId) row.unauthorizedCents += r.chargeCents;
     else row.owedCents += owedCents(r);
     byAssociate.set(r.associate.id, row);
   }
   const rows = [...byAssociate.values()].sort((a, b) => a.name.localeCompare(b.name));
-  res.json({
-    from: q.from,
-    to: q.to,
-    rows,
-    totals: rows.reduce(
-      (t, r) => ({
-        rides: t.rides + r.rides,
-        noShows: t.noShows + r.noShows,
-        owedCents: t.owedCents + r.owedCents,
-        takenCents: t.takenCents + r.takenCents,
-        waivedCents: t.waivedCents + r.waivedCents,
-      }),
-      { rides: 0, noShows: 0, owedCents: 0, takenCents: 0, waivedCents: 0 },
-    ),
-  });
+  const totals = rows.reduce(
+    (t, r) => ({
+      rides: t.rides + r.rides,
+      noShows: t.noShows + r.noShows,
+      owedCents: t.owedCents + r.owedCents,
+      takenCents: t.takenCents + r.takenCents,
+      waivedCents: t.waivedCents + r.waivedCents,
+      unauthorizedCents: t.unauthorizedCents + r.unauthorizedCents,
+      deferredCents: t.deferredCents + r.deferredCents,
+    }),
+    { rides: 0, noShows: 0, owedCents: 0, takenCents: 0, waivedCents: 0, unauthorizedCents: 0, deferredCents: 0 },
+  );
+  if (format === 'csv') {
+    const esc = (v: string | number) => (typeof v === 'number' ? String(v) : `"${v.replace(/"/g, '""')}"`);
+    const dollars = (c: number) => (c / 100).toFixed(2);
+    const lines = [
+      ['Associate', 'Rides', 'No-shows', 'Owed', 'Taken', 'Deferred by minimum-wage guard', 'Not authorized (not deducted)', 'Waived', 'Authorization'].map(esc).join(','),
+      ...rows.map((r) =>
+        [r.name, r.rides, r.noShows, dollars(r.owedCents), dollars(r.takenCents), dollars(r.deferredCents), dollars(r.unauthorizedCents), dollars(r.waivedCents), r.authorization]
+          .map((v) => (typeof v === 'string' ? esc(v) : esc(v)))
+          .join(','),
+      ),
+      ['Total', totals.rides, totals.noShows, dollars(totals.owedCents), dollars(totals.takenCents), dollars(totals.deferredCents), dollars(totals.unauthorizedCents), dollars(totals.waivedCents), ''].map(esc).join(','),
+    ];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="ride-charges-${q.from}-to-${q.to}.csv"`);
+    res.send(lines.join('\n'));
+    return;
+  }
+  res.json({ from: q.from, to: q.to, rows, totals, rate });
+});
+
+/**
+ * Brief 1A-3: who has signed. Every associate who has ridden or consented,
+ * with the state of their authorization against the rate in force.
+ */
+transportRouter.get('/authorizations', VIEW, async (_req, res) => {
+  const [consents, riderIds, rate] = await Promise.all([
+    prisma.rideConsent.findMany({ include: { associate: { select: { id: true, firstName: true, lastName: true } } } }),
+    prisma.ride.findMany({ distinct: ['associateId'], select: { associateId: true } }),
+    rideRateOn(prisma),
+  ]);
+  const consentOf = new Map(consents.map((c) => [c.associateId, c]));
+  const missing = riderIds.map((r) => r.associateId).filter((id) => !consentOf.has(id));
+  const missingPeople = missing.length
+    ? await prisma.associate.findMany({ where: { id: { in: missing } }, select: { id: true, firstName: true, lastName: true } })
+    : [];
+  const now = new Date();
+  const rows = [
+    ...consents.map((c) => {
+      const check = authorizationCovers(c, rate, now);
+      return {
+        associateId: c.associateId,
+        name: `${c.associate.firstName} ${c.associate.lastName}`,
+        status: check.ok ? ('current' as const) : !c.signatureId ? ('legacy' as const) : c.withdrawnAt ? ('withdrawn' as const) : ('outdated' as const),
+        reason: check.reason,
+        signedAt: c.signatureId ? c.acceptedAt.toISOString() : null,
+        signedName: c.signedName,
+        version: c.signatureId ? c.version : null,
+        fareCents: c.fareCents,
+        noShowFeeCents: c.noShowFeeCents,
+        withdrawnAt: c.withdrawnAt?.toISOString() ?? null,
+        documentId: c.documentId,
+      };
+    }),
+    ...missingPeople.map((p) => ({
+      associateId: p.id,
+      name: `${p.firstName} ${p.lastName}`,
+      status: 'none' as const,
+      reason: 'No signed authorization on file.',
+      signedAt: null,
+      signedName: null,
+      version: null,
+      fareCents: null,
+      noShowFeeCents: null,
+      withdrawnAt: null,
+      documentId: null,
+    })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ rows, rate, version: RIDE_AUTHORIZATION_VERSION });
 });
 
 transportRouter.get('/settings', VIEW, async (_req, res) => {
-  res.json({ settings: await getTransportSettings(), geocoder: activeGeocoder() });
+  const [settings, rates] = await Promise.all([getTransportSettings(), rideRateHistory(prisma)]);
+  res.json({ settings, rates, geocoder: activeGeocoder() });
 });
 
 transportRouter.put('/settings', MANAGE, async (req, res) => {
@@ -2943,15 +3108,28 @@ transportRouter.put('/settings', MANAGE, async (req, res) => {
       cutoffHours: z.number().int().min(0).max(72),
       shortNoticeMinutes: z.number().int().min(0).max(24 * 60).optional(),
       dispatchPhone: z.string().trim().max(40).nullable().optional(),
+      /** Brief 1A-3: the day the fare and fee take effect (today by default;
+       *  never before the rate already in force). A change asks every rider
+       *  to sign again before their next booking. */
+      effectiveFrom: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .optional(),
     })
     .parse(req.body);
+  const { fareCents, noShowFeeCents, effectiveFrom, ...rest } = input;
   await prisma.transportSettings.upsert({
     where: { id: 'default' },
-    create: { id: 'default', ...input, updatedById: req.user!.id },
-    update: { ...input, updatedById: req.user!.id },
+    create: { id: 'default', ...rest, updatedById: req.user!.id },
+    update: { ...rest, updatedById: req.user!.id },
   });
+  const current = await rideRateOn(prisma);
+  if (!current || current.fareCents !== fareCents || current.noShowFeeCents !== noShowFeeCents || effectiveFrom) {
+    await setRideRate(prisma, { fareCents, noShowFeeCents, effectiveFrom }, req.user!.id);
+  }
   enqueueAudit({ actorUserId: req.user!.id, action: 'transport.settings_changed', entityType: 'TransportSettings', entityId: 'default', metadata: input }, 'transport');
-  res.json({ settings: await getTransportSettings() });
+  const [settings, rates] = await Promise.all([getTransportSettings(), rideRateHistory(prisma)]);
+  res.json({ settings, rates });
 });
 
 /* ===== The store supervisors' heads-up ================================== */

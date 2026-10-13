@@ -170,7 +170,7 @@ export async function renderExternalPayrollSheetPdf(
     }
 
     // ---- One card per employee --------------------------------------------
-    const baseCardH = CARD_PAD * 2 + LINE_H * 6 + 6;
+    const baseCardH = CARD_PAD * 2 + LINE_H * 7 + 6;
     const flagsW = pageW - CARD_PAD * 2;
     for (const r of data.rows) {
       doc.font('Helvetica-Bold').fontSize(7.5);
@@ -205,6 +205,7 @@ export async function renderExternalPayrollSheetPdf(
         ['Routing number', r.routingNumber || '— missing'],
         ['Account number', r.accountNumber || '— missing'],
         ['Pay rate', usd(r.payRate)],
+        ['Van ride charges', usd(r.rideCharges)],
         ['Regular hours', r.regularHours.toFixed(2)],
         ['Overtime', r.overtimeHours.toFixed(2)],
         ['Address', r.fullAddress || '—'],

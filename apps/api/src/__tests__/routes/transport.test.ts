@@ -77,6 +77,11 @@ async function book(agent: TestAgent<Test>, body: Record<string, unknown>) {
   return agent.post('/transport/me/rides').send(body);
 }
 
+/** Brief 1A-3: the signed written authorization every charge needs. */
+async function sign(agent: TestAgent<Test>, typedName = 'Kim Nguyen') {
+  return agent.post('/transport/me/authorization').send({ typedName });
+}
+
 describe('picking a pickup, not typing one', () => {
   // Typing was the accuracy hole: an unrecognised address was accepted,
   // stored without coordinates, and only became a problem at 6am when it
@@ -86,7 +91,7 @@ describe('picking a pickup, not typing one', () => {
   // while the rider is looking at the form and can fix it.
   it('refuses an address it cannot place, and says what to do instead', async () => {
     const { kimAgent, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     setGeocoderForTests(async () => null); // nothing typed gets found
 
     const res = await book(kimAgent, {
@@ -103,7 +108,7 @@ describe('picking a pickup, not typing one', () => {
 
   it('takes the point the picker already found, without a lookup of its own', async () => {
     const { kimAgent, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     // A suggestion arrives with coordinates attached, so this must book
     // even when the geocoder is having a bad day.
     setGeocoderForTests(async () => null);
@@ -186,7 +191,7 @@ describe('picking a pickup, not typing one', () => {
 
   it('refuses a pickup at the store being booked to, whichever way it arrived', async () => {
     const { kimAgent, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     await prisma.location.update({ where: { id: store.id }, data: { latitude: 30.3925, longitude: -86.4128 } });
     const ride = { direction: 'TO_WORK', locationId: store.id, targetAt: inHours(20).toISOString() };
 
@@ -210,7 +215,7 @@ describe('picking a pickup, not typing one', () => {
 
   it('never refuses on a store point that was only looked up — it can land mid-road', async () => {
     const { kimAgent, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     // An address and no geofence: the store's point is the geocoder's
     // guess, which this test's geocoder puts right on the rider's door.
     await prisma.location.update({
@@ -233,9 +238,9 @@ describe('the Ride tab — booking a seat', () => {
   it('asks for the charge authorization first, then books at least 10 hours ahead — no shift needed', async () => {
     const { kimAgent, store, stop } = await seed();
     const body = { direction: 'TO_WORK', locationId: store.id, stopId: stop.id, targetAt: inHours(20).toISOString() };
-    expect((await book(kimAgent, body)).body.error.code).toBe('consent_required');
+    expect((await book(kimAgent, body)).body.error.code).toBe('authorization_required');
 
-    expect((await kimAgent.post('/transport/me/consent')).status).toBe(201);
+    expect((await sign(kimAgent)).status).toBe(201);
     // Short notice off: the planning cutoff is the only rule.
     await prisma.transportSettings.upsert({
       where: { id: 'default' },
@@ -274,7 +279,7 @@ describe('the Ride tab — booking a seat', () => {
 
   it('only to their own stores; from a saved home address works too', async () => {
     const { kimAgent, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     const other = await createClient('Target');
     const otherStore = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
     const denied = await book(kimAgent, {
@@ -298,7 +303,7 @@ describe('the Ride tab — booking a seat', () => {
 
   it('a supervisor sees who is arriving by van — and who has no shift — as a heads-up only', async () => {
     const { kimAgent, store, stop, client } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     await book(kimAgent, { direction: 'TO_WORK', locationId: store.id, stopId: stop.id, targetAt: inHours(12).toISOString() });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
     const arrivals = await (await loginAs(sup.email)).get('/transport/arrivals');
@@ -312,7 +317,7 @@ describe('the Ride tab — booking a seat', () => {
 describe('dispatch → the driver → the charge', () => {
   async function bookedAndDispatched() {
     const s = await seed();
-    await s.kimAgent.post('/transport/me/consent');
+    await sign(s.kimAgent);
     const targetAt = inHours(20);
     const ride = (
       await book(s.kimAgent, { direction: 'TO_WORK', locationId: s.store.id, stopId: s.stop.id, targetAt: targetAt.toISOString() })
@@ -442,12 +447,18 @@ describe('dispatch → the driver → the charge', () => {
   });
 });
 
-describe('ride charges come out of the pay period’s paycheck', () => {
-  it('fares and no-show fees in the period are one post-tax deduction; waived and later rides wait', async () => {
+describe('ride charges come out of the pay period’s paycheck (Brief 1A-3)', () => {
+  /** A rider in Florida (minimum wage $15/h) with 4 approved hours, signed. */
+  async function rider(opts: { rate?: number } = {}) {
     const client = await createClient();
     const store = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
-    const associate = await createAssociate();
+    const associate = await createAssociate({ firstName: 'Ana', lastName: 'Reyes' });
+    await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
+    await prisma.application.create({
+      data: { associateId: associate.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' },
+    });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const { user: mine } = await createUser({ role: 'ASSOCIATE', associateId: associate.id });
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,
@@ -457,7 +468,15 @@ describe('ride charges come out of the pay period’s paycheck', () => {
         status: 'APPROVED',
       },
     });
-    const ride = (serviceDate: string, status: 'COMPLETED' | 'NO_SHOW', chargeCents: number, extra: Record<string, unknown> = {}) =>
+    const me = await loginAs(mine.email);
+    expect((await sign(me, 'Ana Reyes')).status).toBe(201);
+    const consent = await prisma.rideConsent.findUniqueOrThrow({ where: { associateId: associate.id } });
+    const ride = (
+      serviceDate: string,
+      status: 'COMPLETED' | 'NO_SHOW',
+      chargeCents: number,
+      extra: Record<string, unknown> = {},
+    ) =>
       prisma.ride.create({
         data: {
           associateId: associate.id,
@@ -471,43 +490,138 @@ describe('ride charges come out of the pay period’s paycheck', () => {
           noShowFeeCents: 100,
           chargeCents,
           createdById: hr.id,
+          authorizedSignatureId: consent.signatureId,
           ...extra,
         },
       });
-    const r1 = await ride('2026-04-14', 'COMPLETED', 500);
-    const r2 = await ride('2026-04-15', 'COMPLETED', 500);
-    const r3 = await ride('2026-04-16', 'NO_SHOW', 100);
-    await ride('2026-04-16', 'COMPLETED', 500, { waivedAt: new Date(), waiveReason: 'Van was late' });
-    const later = await ride('2026-04-25', 'COMPLETED', 500);
+    const hrAgent = await loginAs(hr.email);
+    const run = (rate: number) =>
+      hrAgent.post('/payroll/runs').send({ periodStart: '2026-04-13', periodEnd: '2026-04-19', defaultHourlyRate: rate });
+    return { client, store, associate, hr, hrAgent, me, consent, ride, run, rate: opts.rate ?? 25 };
+  }
 
-    const a = await loginAs(hr.email);
-    const res = await a.post('/payroll/runs').send({ periodStart: '2026-04-13', periodEnd: '2026-04-19', defaultHourlyRate: 25 });
+  it('fares and no-show fees in the period are one post-tax deduction; waived, unsigned and later rides wait', async () => {
+    const r = await rider();
+    const r1 = await r.ride('2026-04-14', 'COMPLETED', 500);
+    const r2 = await r.ride('2026-04-15', 'COMPLETED', 500);
+    const r3 = await r.ride('2026-04-16', 'NO_SHOW', 100);
+    await r.ride('2026-04-16', 'COMPLETED', 500, { waivedAt: new Date(), waiveReason: 'Van was late' });
+    // A charge with no signature behind it (a ride from before the written
+    // authorization) is never deducted — it shows as "not authorized".
+    const legacy = await r.ride('2026-04-17', 'COMPLETED', 500, { authorizedSignatureId: null });
+    const later = await r.ride('2026-04-25', 'COMPLETED', 500);
+
+    // The preview says what the run will take, so the net is the run's net.
+    const preview = await r.hrAgent
+      .post('/payroll/runs/preview')
+      .send({ periodStart: '2026-04-13', periodEnd: '2026-04-19', defaultHourlyRate: 25 });
+    expect(preview.status).toBe(200);
+    expect(preview.body.items[0].rideCharges).toEqual({ amount: 11, deferred: 0, rides: 2, noShows: 1, unauthorized: 5 });
+
+    const res = await r.run(25);
     expect(res.status).toBe(201);
     const item = res.body.items[0];
     expect(item.grossPay).toBe(100);
     expect(item.postTaxDeductions).toBeCloseTo(11, 2);
+    expect(item.netPay).toBeCloseTo(preview.body.items[0].netPay, 2);
     const taxes = item.federalWithholding + item.fica + item.medicare + item.stateWithholding;
     expect(item.netPay).toBeCloseTo(100 - taxes - 11, 2);
 
     const taken = await prisma.ride.findMany({ where: { chargedRunId: res.body.id }, select: { id: true } });
-    expect(taken.map((r) => r.id).sort()).toEqual([r1.id, r2.id, r3.id].sort());
-    expect((await prisma.ride.findUniqueOrThrow({ where: { id: later.id } })).chargedRunId).toBeNull();
+    expect(taken.map((x) => x.id).sort()).toEqual([r1.id, r2.id, r3.id].sort());
+    for (const id of [later.id, legacy.id]) {
+      expect((await prisma.ride.findUniqueOrThrow({ where: { id } })).chargedRunId).toBeNull();
+    }
+    const row = await prisma.payrollItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.rideChargesCents).toBe(1100);
+    expect(row.rideChargesDeferredCents).toBe(0);
+    expect(row.rideChargeGuard).toMatchObject({ state: 'FL', minimumWageCents: 1500, floorCents: 6000, roomCents: 4000, unauthorizedCents: 500 });
 
     // The associate's paystub names it: its own line, and year to date.
     await prisma.payrollItem.update({
       where: { id: item.id },
       data: { status: 'DISBURSED', disbursedAt: new Date('2026-04-24T12:00:00.000Z') },
     });
-    const { user: mine } = await createUser({ role: 'ASSOCIATE', associateId: associate.id });
-    const me = await loginAs(mine.email);
-    const stubs = await me.get('/payroll/me/items');
+    const stubs = await r.me.get('/payroll/me/items');
     expect(stubs.status).toBe(200);
     const stub = (stubs.body.items as Array<{ id: string; transport?: unknown }>).find((i) => i.id === item.id);
-    expect(stub?.transport).toEqual({ amount: 11, rides: 2, noShows: 1 });
-    const ytd = await me.get(`/payroll/me/items/${item.id}/ytd`);
+    expect(stub?.transport).toMatchObject({ amount: 11, rides: 2, noShows: 1, deferred: 0, minimumWage: 15, minimumWageState: 'FL' });
+    const ytd = await r.me.get(`/payroll/me/items/${item.id}/ytd`);
     expect(ytd.status).toBe(200);
     expect(ytd.body.transport).toBeCloseTo(11, 2);
     expect(ytd.body.postTaxDeductions).toBeCloseTo(11, 2);
+
+    // The director's report: taken, not authorized, and the CSV.
+    const { user: director } = await createUser({ role: 'TRANSPORTATION_DIRECTOR' });
+    const d = await loginAs(director.email);
+    const report = await d.get('/transport/charges?from=2026-04-13&to=2026-04-19');
+    expect(report.body.rows[0]).toMatchObject({ takenCents: 1100, unauthorizedCents: 500, waivedCents: 500, owedCents: 0, authorization: 'current' });
+    const csv = await d.get('/transport/charges?from=2026-04-13&to=2026-04-19&format=csv');
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toMatch(/text\/csv/);
+    expect(csv.text).toMatch(/Not authorized \(not deducted\)/);
+    expect(csv.text).toMatch(/"Ana Reyes",4,1,0.00,11.00,0.00,5.00,5.00,"current"/);
+  });
+
+  it('the minimum-wage guard: no pay period falls below the applicable minimum wage after the deduction', async () => {
+    const r = await rider();
+    const r1 = await r.ride('2026-04-14', 'COMPLETED', 500);
+    const r2 = await r.ride('2026-04-15', 'COMPLETED', 500);
+    const r3 = await r.ride('2026-04-16', 'NO_SHOW', 100);
+
+    // At $15/h in Florida the 4 hours are exactly minimum wage: nothing fits.
+    const atFloor = await r.run(15);
+    expect(atFloor.status).toBe(201);
+    const item = atFloor.body.items[0];
+    expect(item.grossPay).toBe(60);
+    expect(item.postTaxDeductions).toBe(0);
+    let row = await prisma.payrollItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(row.rideChargesCents).toBe(0);
+    expect(row.rideChargesDeferredCents).toBe(1100);
+    expect(row.rideChargeGuard).toMatchObject({ floorCents: 6000, grossCents: 6000, roomCents: 0, owedCents: 1100, deferredCents: 1100 });
+    expect(await prisma.ride.count({ where: { chargedRunId: atFloor.body.id } })).toBe(0);
+
+    // Run again at $16/h: there is $4 of room, whole rides oldest first,
+    // so the $5 fares wait and the $1 fee fits. The rest is carried.
+    await prisma.payrollItem.deleteMany({ where: { payrollRunId: atFloor.body.id } });
+    await prisma.payrollRun.delete({ where: { id: atFloor.body.id } });
+    const again = await r.run(16);
+    expect(again.status).toBe(201);
+    const runId = again.body.id;
+    row = await prisma.payrollItem.findFirstOrThrow({ where: { payrollRunId: runId } });
+    expect(Number(row.grossPay)).toBe(64);
+    expect(row.rideChargesCents).toBe(100);
+    expect(row.rideChargesDeferredCents).toBe(1000);
+    expect(row.rideChargeGuard).toMatchObject({ roomCents: 400, appliedCents: 100, deferredCents: 1000 });
+    const stamped = await prisma.ride.findMany({ where: { chargedRunId: runId }, select: { id: true } });
+    expect(stamped.map((x) => x.id)).toEqual([r3.id]);
+    for (const id of [r1.id, r2.id]) {
+      expect((await prisma.ride.findUniqueOrThrow({ where: { id } })).chargedRunId).toBeNull();
+    }
+
+    // The statement says so.
+    await prisma.payrollItem.update({ where: { id: row.id }, data: { status: 'DISBURSED', disbursedAt: new Date('2026-04-24T12:00:00.000Z') } });
+    const stubs = await r.me.get('/payroll/me/items');
+    const stub = (stubs.body.items as Array<{ id: string; transport?: unknown }>).find((i) => i.id === row.id);
+    expect(stub?.transport).toMatchObject({ amount: 1, rides: 0, noShows: 1, deferred: 10, minimumWage: 15, minimumWageState: 'FL' });
+    const { buildPaystubDataFromItem, paystubItemInclude } = await import('../../lib/paystubData.js');
+    const full = await prisma.payrollItem.findUniqueOrThrow({ where: { id: row.id }, include: paystubItemInclude() });
+    const data = await buildPaystubDataFromItem(prisma, full);
+    expect(data.postTaxDeductions[0]?.label).toMatch(/Van rides — \$10\.00 carried to a later check so pay stays at the FL minimum wage of \$15\.00\/h/);
+    expect(data.postTaxDeductions[0]?.current).toBe(1);
+  });
+
+  it('a voided run gives its ride charges back, so the next check takes them', async () => {
+    const r = await rider();
+    const r1 = await r.ride('2026-04-14', 'COMPLETED', 500);
+    const res = await r.run(25);
+    expect(res.status).toBe(201);
+    expect((await prisma.ride.findUniqueOrThrow({ where: { id: r1.id } })).chargedRunId).toBe(res.body.id);
+    await prisma.payrollItem.updateMany({ where: { payrollRunId: res.body.id }, data: { status: 'DISBURSED', disbursedAt: new Date() } });
+    await prisma.payrollRun.update({ where: { id: res.body.id }, data: { status: 'DISBURSED', disbursedAt: new Date() } });
+    const voided = await r.hrAgent.post(`/payroll/runs/${res.body.id}/void`).send({ reason: 'Wrong period' });
+    expect(voided.status).toBe(200);
+    expect((await prisma.ride.findUniqueOrThrow({ where: { id: r1.id } })).chargedRunId).toBeNull();
   });
 });
 
@@ -529,7 +643,7 @@ describe('who rides where', () => {
     });
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: maria.id });
     const agent = await loginAs(user.email);
-    await agent.post('/transport/me/consent');
+    await sign(agent);
     const me = await agent.get('/transport/me');
     expect(me.body.stores.map((s: { id: string }) => s.id)).toEqual([store.id]);
   });
@@ -542,7 +656,7 @@ describe('supervisors ride too', () => {
     const dana = await createAssociate({ firstName: 'Dana', lastName: 'Reyes' });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: dana.id });
     const agent = await loginAs(sup.email);
-    await agent.post('/transport/me/consent');
+    await sign(agent);
     const me = await agent.get('/transport/me');
     expect(me.body.stores.map((s: { id: string }) => s.id)).toContain(store.id);
     const ok = await book(agent, {
@@ -558,7 +672,7 @@ describe('supervisors ride too', () => {
 describe('the pickup handshake and one-tap booking', () => {
   it('the rider tells the driver "I\u2019m outside" or "running late" once the van is on its way', async () => {
     const s = await seed();
-    await s.kimAgent.post('/transport/me/consent');
+    await sign(s.kimAgent);
     const targetAt = inHours(20);
     const ride = (
       await book(s.kimAgent, { direction: 'TO_WORK', locationId: s.store.id, stopId: s.stop.id, targetAt: targetAt.toISOString() })
@@ -588,7 +702,7 @@ describe('the pickup handshake and one-tap booking', () => {
 
   it('remembers where they went last — the pickup and the store — for one-tap booking', async () => {
     const s = await seed();
-    await s.kimAgent.post('/transport/me/consent');
+    await sign(s.kimAgent);
     const before = await s.kimAgent.get('/transport/me');
     expect(before.body.defaultPickup).toBeNull();
     expect(before.body.defaultStoreId).toBe(s.store.id);
@@ -617,7 +731,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
   // a message about suggestions the saved-place path never offered).
   it('inside the planning cutoff a seat can still be requested on short notice — flagged, and the desk hears', async () => {
     const { kimAgent, store, stop, director } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     const res = await book(kimAgent, {
       direction: 'FROM_WORK',
       locationId: store.id,
@@ -639,7 +753,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
 
   it('closer than the short-notice window it is closed — with the earliest time and the dispatch phone', async () => {
     const { kimAgent, store, stop } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     await prisma.transportSettings.upsert({
       where: { id: 'default' },
       create: { id: 'default', dispatchPhone: '(850) 555-0199' },
@@ -660,7 +774,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
 
   it('a saved address with no pin is named, not refused with talk of suggestions — and books once pinned', async () => {
     const { kimAgent, kim, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     setGeocoderForTests(async () => null);
     const place = await prisma.ridePlace.create({
       data: { associateId: kim.id, label: 'Home', address: '12 Pine Grove Lot 4, Freeport FL' },
@@ -714,7 +828,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
 
   it('standing in the store with "Take me to" open: the home address from onboarding is one tap, and a typed address nobody can suggest still gets a pin', async () => {
     const { kimAgent, kim, store } = await seed();
-    await kimAgent.post('/transport/me/consent');
+    await sign(kimAgent);
     await prisma.associate.update({
       where: { id: kim.id },
       data: { addressLine1: '12 Pine Grove', addressLine2: 'Lot 4', city: 'Freeport', state: 'FL', zip: '32439' },
