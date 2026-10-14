@@ -8,6 +8,7 @@ import { notifyUser } from './notify.js';
 import { revokeAllCredentials, type BuiltInAgentKey } from './agents.js';
 import { detectIntent } from './whatsappAssistant.js';
 import { updateWorker } from './workers.js';
+import { capabilityRunnable, catalogFixture, runCapabilityFixture } from './agentCapabilities.js';
 
 /**
  * Agent controls (Brief 1D-3).
@@ -195,10 +196,30 @@ export async function recordScenarioAnswer(db: Db, workerId: string, scenarioId:
   return runSummary(run, await userRef(db, ranById));
 }
 
+/** A scenario seeded from the capability catalog: input { capability, fixture }. */
+function catalogScenario(input: unknown): { capability: string; fixture: string } | null {
+  const i = (input as Record<string, unknown> | null) ?? {};
+  return typeof i.capability === 'string' && typeof i.fixture === 'string' ? { capability: i.capability, fixture: i.fixture } : null;
+}
+
 /** Runs every scenario of a built-in agent in process. */
 export async function runScenarios(db: Db, workerId: string, ranById: string, now: Date = new Date()): Promise<{ ran: number; passed: number }> {
   const profile = await db.agentProfile.findUnique({ where: { workerId }, select: { builtInKey: true } });
   if (!profile) throw new HttpError(404, 'agent_not_found', 'No such agent.');
+  // Agent families step 1: a capability agent's scenarios are catalog fixtures, run in a throwaway tenant.
+  const all = await db.agentScenario.findMany({ where: { workerId }, select: { id: true, input: true } });
+  if (all.length > 0 && all.every((s) => catalogScenario(s.input))) {
+    let passedFx = 0;
+    for (const s of all) {
+      const c = catalogScenario(s.input)!;
+      const fixture = catalogFixture(c.capability, c.fixture);
+      if (!fixture || !capabilityRunnable(c.capability)) throw new HttpError(409, 'capability_not_runnable', `The API cannot run ${c.capability} itself.`);
+      const r = await runCapabilityFixture(c.capability, fixture, now, defaultPrisma);
+      const run = await recordScenarioAnswer(db, workerId, s.id, r.refAnswer ?? r.answer ?? {}, ranById, now);
+      if (run.passed) passedFx += 1;
+    }
+    return { ran: all.length, passed: passedFx };
+  }
   if (runBuiltIn(profile.builtInKey as BuiltInAgentKey | null, {}) === null) {
     throw new HttpError(409, 'agent_answers_itself', 'This agent answers its scenarios through /agent/v1/certification; the API cannot run it.');
   }
@@ -226,7 +247,9 @@ export async function certification(db: Db, workerId: string): Promise<AgentCert
     scenarios: scenarios.length,
     passing,
     ready: scenarios.length > 0 && passing === scenarios.length,
-    runnable: runBuiltIn(profile.builtInKey as BuiltInAgentKey | null, {}) !== null,
+    runnable:
+      runBuiltIn(profile.builtInKey as BuiltInAgentKey | null, {}) !== null ||
+      (scenarios.length > 0 && scenarios.every((s) => { const c = catalogScenario(s.input); return !!c && capabilityRunnable(c.capability); })),
   };
 }
 
@@ -258,7 +281,7 @@ export async function onModelVersionChanged(db: Db, workerId: string, from: stri
 const HUMAN_ACTIONS = new Set(['agent.approval.approved', 'agent.approval.rejected', 'agent.registered', 'agent.updated', 'agent.credential.issued', 'agent.credential.revoked', 'agent.spend.recorded', 'agent.suspended', 'agent.resumed', 'agent.scenario.added', 'agent.scenario.removed', 'agent.certified', 'agent.recertification_required', 'agent.drift_alert']);
 const ESCALATIONS = new Set(['agent.request.filed', 'agent.message.gated', 'agent.export.gated']);
 // Logged beside the call that filed it; counting both would double the task.
-const NOT_TASKS = new Set(['agent.approval.requested']);
+const NOT_TASKS = new Set(['agent.approval.requested', 'agent.proposal_superseded']);
 
 export async function scorecard(db: Db, workerId: string, days = 7, now: Date = new Date()): Promise<AgentScorecard> {
   const since = new Date(now.getTime() - days * DAY);

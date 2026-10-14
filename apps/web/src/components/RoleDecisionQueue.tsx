@@ -43,6 +43,8 @@ interface RoleDecision {
   ageDays: number | null;
   linkUrl: string;
   quickAction?: string;
+  /** The "no" beside the quick action (an agent's proposed fill: Reject). */
+  declineAction?: string;
   claimedBy: { id: string; name: string; photoUrl: string | null } | null;
   claimedByMe: boolean;
   assigned: boolean;
@@ -151,13 +153,13 @@ export function RoleDecisionQueue({
     }
   };
 
-  const quick = async (item: RoleDecision) => {
+  const quick = async (item: RoleDecision, decline = false) => {
     if (busyKey) return;
-    setBusyKey(`${item.key}:quick`);
+    setBusyKey(`${item.key}:${decline ? 'decline' : 'quick'}`);
     try {
       const r = await apiFetch<{ summary: string }>('/me/decisions/quick', {
         method: 'POST',
-        body: { key: item.key },
+        body: decline ? { key: item.key, decline: true } : { key: item.key },
       });
       toast.success(r.summary);
       load();
@@ -321,6 +323,11 @@ export function RoleDecisionQueue({
               >
                 {primaryFor(focus).label}
               </Button>
+              {focus.declineAction && !(focus.claimedBy && !focus.claimedByMe) && (
+                <Button size="sm" variant="outline" disabled={busyKey !== null} onClick={() => void quick(focus, true)}>
+                  {focus.declineAction}
+                </Button>
+              )}
               <Button size="sm" variant="ghost" onClick={() => setRoomKey(focus.key)}>
                 Open room
               </Button>
@@ -396,6 +403,11 @@ export function RoleDecisionQueue({
                   <Button asChild size="xs" variant="ghost" className="shrink-0">
                     <Link to={d.linkUrl}>Open →</Link>
                   </Button>
+                  {d.declineAction && !(d.claimedBy && !d.claimedByMe) && (
+                    <Button size="xs" variant="outline" className="shrink-0" disabled={busyKey !== null} onClick={() => void quick(d, true)}>
+                      {d.declineAction}
+                    </Button>
+                  )}
                   <Button
                     size="xs"
                     variant={d.quickAction && !(d.claimedBy && !d.claimedByMe) ? 'primary' : 'ghost'}

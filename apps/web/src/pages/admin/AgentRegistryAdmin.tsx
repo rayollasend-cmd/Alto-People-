@@ -10,7 +10,9 @@ import {
   AGENT_GATED_ACTION_LABELS,
   AGENT_FAMILIES,
   AGENT_SCOPES,
+  PLATFORM_OPERATOR_TENANT_ID,
   WORKER_STATUS_LABELS,
+  type AgentCapabilitySummary,
   type AgentApprovalStatus,
   type AgentApprovalSummary,
   type AgentCertification,
@@ -26,7 +28,7 @@ import {
   type WorkerStatus,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime, fmtMoney, fmtPercent, fmtRelativeDate } from '@/lib/format';
 import { listAdminUsers } from '@/lib/usersAdminApi';
@@ -39,17 +41,21 @@ import {
   getAgent,
   getAgentControl,
   getAgentScorecard,
+  getCapabilityScorecard,
   issueAgentCredential,
+  listAgentCapabilities,
   listAgentApprovals,
   listAgentScenarios,
   listAgents,
   recordAgentSpend,
   removeAgentScenario,
   resumeAgent,
+  resumeAgentCapability,
   resumeAllAgents,
   revokeAgentCredential,
   runAgentScenarios,
   suspendAgent,
+  suspendAgentCapability,
   suspendAllAgents,
   updateAgent,
   updateAgentDrift,
@@ -223,6 +229,9 @@ export function AgentRegistryAdmin() {
     enabled: registry.data !== undefined && registry.data.control === undefined,
   });
   const control: AgentControlState | undefined = registry.data?.control ?? controlQuery.data;
+  // Agent families: beside this organization's switch, the platform's (the operator's alone).
+  const platform = registry.data?.platformControl;
+  const isOperator = useTenant().id === PLATFORM_OPERATOR_TENANT_ID;
 
   const agents = registry.data?.agents ?? [];
   const counts = registry.data?.counts;
@@ -506,6 +515,18 @@ export function AgentRegistryAdmin() {
             </Button>
           )}
         </div>
+      )}
+
+      {platform && (isOperator || platform.allSuspendedAt) && (
+        <p
+          className={platform.allSuspendedAt ? 'rounded-md border border-alert/40 bg-alert/10 px-4 py-2 text-sm text-white' : 'text-xs2 text-silver/80'}
+          role={platform.allSuspendedAt ? 'alert' : undefined}
+          data-testid="platform-switch"
+        >
+          {platform.allSuspendedAt
+            ? `The platform switch is on since ${fmtDateTime(platform.allSuspendedAt)}${platform.suspendedBy ? ` by ${platform.suspendedBy.name}` : ''}: every organization’s agents are stopped${platform.reason ? ` — ${platform.reason}` : ''}.`
+            : 'Platform switch: off. It stops every organization’s agents at once and is lifted from the operator’s Agents page.'}
+        </p>
       )}
 
       {/* Hero: the approval queue. */}
@@ -1143,6 +1164,7 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="credentials">Credentials ({liveCredentials})</TabsTrigger>
             <TabsTrigger value="certification">Certification{certification ? ` (${certification.passing}/${certification.scenarios})` : ''}</TabsTrigger>
+            <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
             <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
             <TabsTrigger value="requests">Requests ({agent.approvals.length})</TabsTrigger>
             <TabsTrigger value="spend">Spend ({agent.spend.length})</TabsTrigger>
@@ -1177,6 +1199,10 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
 
           <TabsContent value="certification">
             <CertificationSection agent={agent} canManage={canManage} onChanged={onChanged} />
+          </TabsContent>
+
+          <TabsContent value="capabilities">
+            <CapabilitiesSection agent={agent} canManage={canManage} />
           </TabsContent>
 
           <TabsContent value="scorecard">
@@ -1293,6 +1319,150 @@ function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDetail; ca
         </Button>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------- capabilities */
+
+const SCORECARD_DAYS = 7;
+
+/** A capability's own metric keys, in words. */
+const METRIC_LABELS: Record<string, string> = {
+  shiftsSeen: 'Open shifts broadcast',
+  broadcastPickupRate: 'Picked up from the broadcast (%)',
+  proposalsMade: 'Fills proposed',
+  proposalsApproved: 'Approved',
+  filledBeforeStart: 'Filled before the start',
+  medianMinutesToFill: 'Median minutes, proposal to filled',
+};
+
+/**
+ * Agent families: what the agent may do, one capability at a time. Each
+ * has its own switch (any org admin suspends with a reason; the
+ * accountable owner alone resumes) and its own scorecard read from the
+ * proposals it made.
+ */
+function CapabilitiesSection({ agent, canManage }: { agent: AgentDetail; canManage: boolean }) {
+  const caps = useQuery({ queryKey: ['agents', 'capabilities', agent.id], queryFn: () => listAgentCapabilities(agent.id), select: (d) => d.capabilities });
+  if (caps.error) return <QueryError what="capabilities" query={caps} />;
+  if (!caps.data) return <p className="text-sm text-silver">Loading…</p>;
+  if (caps.data.length === 0) {
+    return <p className="text-sm text-silver">This agent holds no catalog capability. Built-in family agents hold theirs; an outside agent acts through its scopes.</p>;
+  }
+  return (
+    <ul className="space-y-3" aria-label="Capabilities">
+      {caps.data.map((c) => (
+        <CapabilityRow key={c.key} agent={agent} cap={c} canManage={canManage} />
+      ))}
+    </ul>
+  );
+}
+
+function capabilityState(c: AgentCapabilitySummary): { text: string; variant: 'success' | 'pending' | 'destructive' | 'outline' } {
+  if (!c.offered) return { text: 'Not offered here', variant: 'outline' };
+  if (c.suspendedAt) return { text: 'Suspended', variant: 'destructive' };
+  if (!c.enabled) return { text: 'Off', variant: 'outline' };
+  return { text: 'On', variant: 'success' };
+}
+
+function CapabilityRow({ agent, cap, canManage }: { agent: AgentDetail; cap: AgentCapabilitySummary; canManage: boolean }) {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const prompt = usePrompt();
+  const [busy, setBusy] = useState(false);
+  const isOwner = Boolean(user?.id && agent.owner?.id && user.id === agent.owner.id);
+  const score = useQuery({
+    queryKey: ['agents', 'capability-scorecard', agent.id, cap.key, SCORECARD_DAYS],
+    queryFn: () => getCapabilityScorecard(agent.id, cap.key, SCORECARD_DAYS),
+  });
+  const state = capabilityState(cap);
+  const refresh = () => qc.invalidateQueries({ queryKey: ['agents', 'capabilities', agent.id] });
+
+  const suspend = async () => {
+    const reason = await prompt({
+      title: `Suspend “${cap.label}”?`,
+      description: 'The agent stops using this capability at once; its other capabilities keep running. Only the accountable owner can resume it.',
+      confirmLabel: 'Suspend',
+      destructive: true,
+      reasonLabel: 'Reason',
+      reasonMaxLength: 300,
+      required: true,
+    });
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      toast.error('Give a reason of at least 3 characters.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await suspendAgentCapability(agent.id, cap.key, reason.trim());
+      toast.success(`${cap.label} suspended.`);
+      await refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not suspend the capability.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resume = async () => {
+    setBusy(true);
+    try {
+      await resumeAgentCapability(agent.id, cap.key);
+      toast.success(`${cap.label} resumed.`);
+      await refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not resume the capability.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const s = score.data;
+  const metrics = s ? Object.entries(s.metrics ?? {}) : [];
+  return (
+    <li className="rounded-md border border-navy-secondary/60 px-3 py-3 text-sm" data-testid={`capability-${cap.key}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-white">{cap.label}</span>
+        <Badge variant={state.variant} size="sm">{state.text}</Badge>
+        {cap.gate && <span className="text-xs2 text-silver/80">asks first: {AGENT_GATED_ACTION_LABELS[cap.gate]}</span>}
+        <span className="ml-auto flex gap-2">
+          {canManage && cap.offered && !cap.suspendedAt && (
+            <Button size="sm" variant="outline" onClick={suspend} disabled={busy}>
+              Suspend
+            </Button>
+          )}
+          {canManage && cap.suspendedAt && (
+            <Button size="sm" variant="secondary" onClick={resume} disabled={busy || !isOwner} title={isOwner ? undefined : 'Only the owner can resume'}>
+              Resume
+            </Button>
+          )}
+        </span>
+      </div>
+      {cap.suspendedAt && (
+        <p className="mt-1 text-xs2 text-silver/80">
+          Suspended {fmtDateTime(cap.suspendedAt)}
+          {cap.suspendedBy ? ` by ${cap.suspendedBy.name}` : ''}
+          {cap.suspendReason ? ` — ${cap.suspendReason}` : ''}
+        </p>
+      )}
+      {score.error ? (
+        <p className="mt-2 text-xs2 text-silver/80">The scorecard could not be read.</p>
+      ) : s ? (
+        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs2 sm:grid-cols-3">
+          <div><dt className="text-silver/70">Proposed ({SCORECARD_DAYS} days)</dt><dd className="text-white">{s.proposed}</dd></div>
+          <div><dt className="text-silver/70">Approved</dt><dd className="text-white">{s.approved}</dd></div>
+          <div><dt className="text-silver/70">Carried out</dt><dd className="text-white">{s.executed}</dd></div>
+          <div><dt className="text-silver/70">Rejected</dt><dd className="text-white">{s.rejected}</dd></div>
+          <div><dt className="text-silver/70">Superseded</dt><dd className="text-white">{s.superseded}</dd></div>
+          <div><dt className="text-silver/70">Outcome rate</dt><dd className="text-white">{s.outcomeRatePct === null ? '—' : `${s.outcomeRatePct}%`}</dd></div>
+          {metrics.map(([k, v]) => (
+            <div key={k}><dt className="text-silver/70">{METRIC_LABELS[k] ?? k}</dt><dd className="text-white">{v === null ? '—' : v}</dd></div>
+          ))}
+        </dl>
+      ) : (
+        <p className="mt-2 text-xs2 text-silver/80">Loading the scorecard…</p>
+      )}
+    </li>
   );
 }
 

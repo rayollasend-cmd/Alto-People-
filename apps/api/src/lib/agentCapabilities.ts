@@ -189,7 +189,16 @@ export async function capabilityScorecard(db: Db, workerId: string, key: string,
     failed,
     superseded: n('SUPERSEDED'),
     outcomeRatePct: decided > 0 ? Math.round((executed * 100) / decided) : null,
+    metrics: METRICS.has(key) ? await METRICS.get(key)!(db, workerId, since, now) : {},
   };
+}
+
+/** A capability's own metric keys (catalog `metrics`), computed from what it did. */
+export type CapabilityMetricsProvider = (db: Db, workerId: string, since: Date, now: Date) => Promise<Record<string, number | null>>;
+const METRICS = new Map<string, CapabilityMetricsProvider>();
+export function registerCapabilityMetrics(key: string, provider: CapabilityMetricsProvider): void {
+  if (!capabilityDef(key)) throw new Error(`No capability ${key} in the catalog.`);
+  METRICS.set(key, provider);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +282,43 @@ export async function createProposal(db: Db, agent: AgentContext, input: AgentPr
   return { proposal: proposalSummary(row), approvalId, created };
 }
 
+/**
+ * Agent families step 1: what an in-process agent does once a person approves
+ * its proposal (the executor). Registered per capability by the agent's module.
+ */
+export type ApprovedProposalHandler = (proposal: ProposalRow, now: Date) => Promise<void>;
+const APPROVED_HANDLERS = new Map<string, ApprovedProposalHandler>();
+export function registerApprovedHandler(key: string, handler: ApprovedProposalHandler): void {
+  if (!capabilityDef(key)) throw new Error(`No capability ${key} in the catalog.`);
+  APPROVED_HANDLERS.set(key, handler);
+}
+
+/** Called by decideApproval after an APPROVED decision. Never throws: the decision stands either way. */
+export async function afterProposalApproved(approvalId: string, now: Date = new Date()): Promise<void> {
+  const proposal = await defaultPrisma.agentProposal.findUnique({ where: { approvalId } });
+  if (!proposal || proposal.status !== 'APPROVED') return;
+  const handler = APPROVED_HANDLERS.get(proposal.capabilityKey);
+  if (!handler) return;
+  try {
+    await handler(proposal, now);
+  } catch (err) {
+    console.error('[alto-people/api] approved proposal handler failed:', err);
+  }
+}
+
+/**
+ * The proposal no longer applies (its shift was filled another way, or
+ * cancelled). A request still waiting on a person leaves the queue: it is
+ * closed as expired with the reason, so nobody approves what is moot.
+ */
+export async function supersedeProposal(db: Db, proposal: { id: string; workerId: string; approvalId: string | null; capabilityKey: string }, reason: string, now: Date = new Date()): Promise<void> {
+  await db.agentProposal.update({ where: { id: proposal.id }, data: { status: 'SUPERSEDED', statusAt: now, outcome: { reason } as Prisma.InputJsonObject, outcomeAt: now } });
+  if (proposal.approvalId) {
+    await db.agentApprovalRequest.updateMany({ where: { id: proposal.approvalId, status: 'PENDING' }, data: { status: 'EXPIRED', decisionNote: `Superseded: ${reason}` } });
+  }
+  enqueueAudit({ actorUserId: null, clientId: null, workerId: proposal.workerId, action: 'agent.proposal_superseded', entityType: 'AgentProposal', entityId: proposal.id, metadata: { capability: proposal.capabilityKey, reason, approvalId: proposal.approvalId } }, 'agentCapabilities');
+}
+
 /** The proposal follows its approval: decided, expired, or carried out. */
 export async function syncProposalWithApproval(db: Db, approvalId: string, status: AgentProposalStatus, now: Date = new Date(), outcome?: Record<string, unknown>): Promise<void> {
   await db.agentProposal.updateMany({
@@ -310,6 +356,25 @@ async function pendingDeskApprovalIds(db: Db, tenantId: string, action: 'SHIFT_A
 /** How many of the desk's agent requests are waiting (the decision item's count). */
 export async function pendingDeskApprovals(db: Db, tenantId: string, action: 'SHIFT_ASSIGN' | 'CASE_OPEN', bounds: DeskBounds = {}): Promise<number> {
   return (await pendingDeskApprovalIds(db, tenantId, action, bounds)).length;
+}
+
+/** The desk's waiting shift fills, one per request, with the shift each names (the decision items). */
+export async function pendingDeskShiftFills(db: Db, tenantId: string, bounds: DeskBounds = {}): Promise<Array<{
+  approvalId: string;
+  summary: string;
+  requestedAt: Date;
+  shift: { id: string; clientId: string | null; locationId: string | null; position: string; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null; name: string | null } | null } | null;
+}>> {
+  const ids = await pendingDeskApprovalIds(db, tenantId, 'SHIFT_ASSIGN', bounds);
+  if (!ids.length) return [];
+  const rows = await db.agentApprovalRequest.findMany({ where: { id: { in: ids } }, select: { id: true, summary: true, requestedAt: true, payload: true }, orderBy: { requestedAt: 'asc' } });
+  const shiftIds = rows.map((r) => (r.payload as Record<string, unknown>)?.subjectId).filter((v): v is string => typeof v === 'string');
+  const shifts = await db.shift.findMany({
+    where: { id: { in: shiftIds }, tenantId },
+    select: { id: true, clientId: true, locationId: true, position: true, startsAt: true, endsAt: true, locationRel: { select: { timezone: true, name: true } } },
+  });
+  const byId = new Map(shifts.map((s) => [s.id, s]));
+  return rows.map((r) => ({ approvalId: r.id, summary: r.summary, requestedAt: r.requestedAt, shift: byId.get(String((r.payload as Record<string, unknown>)?.subjectId)) ?? null }));
 }
 
 /** May this desk account decide that request? (Org admins always may; the route checks that first.) */
@@ -367,7 +432,7 @@ export async function runCapabilityFixture(
   fixture: CapabilityScenarioFixture,
   now: Date,
   db: PrismaClient = defaultPrisma,
-): Promise<{ passed: boolean; reason: string | null; answer: AgentScenarioAnswer | null }> {
+): Promise<{ passed: boolean; reason: string | null; answer: AgentScenarioAnswer | null; refAnswer?: AgentScenarioAnswer }> {
   const runner = RUNNERS.get(key);
   if (!runner) throw new HttpError(409, 'capability_not_runnable', `The API cannot run ${key} itself yet.`);
   const tenantId = randomUUID();
@@ -413,8 +478,9 @@ export async function runCapabilityFixture(
       // An expected output names refs; compare in refs, not ids.
       const byId = new Map(Object.entries(refs).map(([ref, id]) => [id, ref]));
       const output = answer.output ? Object.fromEntries(Object.entries(answer.output).map(([k, v]) => [k, typeof v === 'string' && byId.has(v) ? byId.get(v)! : v])) : undefined;
-      const verdict = evaluateScenario(fixture.expected, { ...answer, ...(output ? { output } : {}) });
-      return { ...verdict, answer };
+      const refAnswer: AgentScenarioAnswer = { ...answer, ...(output ? { output } : {}) };
+      const verdict = evaluateScenario(fixture.expected, refAnswer);
+      return { ...verdict, answer, refAnswer };
     });
   } finally {
     await db.shift.deleteMany({ where: { id: { in: created.shifts } } });
@@ -424,6 +490,25 @@ export async function runCapabilityFixture(
     await db.site.deleteMany({ where: { id: { in: created.sites } } });
     await db.tenant.deleteMany({ where: { id: tenantId } });
   }
+}
+
+/** The catalog fixture an agent's scenario names (input: { capability, fixture }). */
+export function catalogFixture(key: string, name: string): CapabilityScenarioFixture | null {
+  return (capabilityDef(key)?.scenarios ?? []).find((f) => f.name === name) ?? null;
+}
+
+/** A built-in holding a capability carries its catalog fixtures as certification scenarios. Idempotent by name. */
+export async function seedCatalogScenarios(db: Db, workerId: string, key: string, tenantId: string): Promise<number> {
+  let added = 0;
+  for (const f of capabilityDef(key)?.scenarios ?? []) {
+    const have = await db.agentScenario.findFirst({ where: { workerId, name: f.name }, select: { id: true } });
+    if (have) continue;
+    await db.agentScenario.create({
+      data: { workerId, tenantId, name: f.name, input: { capability: key, fixture: f.name } as Prisma.InputJsonObject, expected: f.expected as Prisma.InputJsonObject },
+    });
+    added += 1;
+  }
+  return added;
 }
 
 /** The catalog keys, for the boot sweep and the Agents page. */

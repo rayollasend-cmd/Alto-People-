@@ -19,6 +19,8 @@ import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
 import { computeNoShowRisk } from '../lib/noShowRisk.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
+import { deskMayDecide } from '../lib/agentCapabilities.js';
+import { decideApproval } from '../lib/agents.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from '../lib/timezone.js';
 
 /**
@@ -51,6 +53,7 @@ function queueUser(req: Request) {
     role: u.role as Role,
     clientId: (u as { clientId?: string | null }).clientId ?? null,
     associateId: (u as { associateId?: string | null }).associateId ?? null,
+    locationId: (u as { locationId?: string | null }).locationId ?? null,
   };
 }
 
@@ -641,6 +644,25 @@ roleDecisionsRouter.post('/decisions/quick', requireAuth, async (req: Request, r
       'decisions.quick',
     );
     summary = `${existing.firstName} ${existing.lastName} reactivated — login restored, back in the scheduling pool.`;
+  } else if (key.startsWith('agents:shift-fill:')) {
+    // Agent families step 1: the desk approves or rejects the Workforce agent's proposed fill.
+    const approvalId = z.string().uuid().parse(key.slice('agents:shift-fill:'.length));
+    const decline = req.body?.decline === true;
+    const tenantId = tenantIdForWrite();
+    const orgAdmin = hasCapability(me.role, 'manage:org');
+    if (!orgAdmin && !(await deskMayDecide(prisma, tenantId, approvalId, 'SHIFT_ASSIGN', { clientId: me.clientId, locationId: me.locationId }))) {
+      throw new HttpError(403, 'not_your_desk', 'This shift is not on your desk.');
+    }
+    await decideApproval(prisma, approvalId, decline ? 'REJECTED' : 'APPROVED', req.user!.id, null, new Date(), tenantId);
+    const proposal = await prisma.agentProposal.findUnique({ where: { approvalId }, select: { status: true, outcome: true } });
+    const outcome = (proposal?.outcome as Record<string, unknown> | null) ?? {};
+    summary = decline
+      ? 'Rejected. The agent will not propose that person for this shift again.'
+      : proposal?.status === 'EXECUTED'
+        ? 'Approved and assigned. The person has been told.'
+        : proposal?.status === 'FAILED'
+          ? `Approved, but not assigned: ${String(outcome.message ?? 'the scheduling rules refused it')}`
+          : 'Approved. The agent assigns it when its switches allow.';
   } else {
     throw new HttpError(400, 'unsupported', 'No quick action handler for that item.');
   }

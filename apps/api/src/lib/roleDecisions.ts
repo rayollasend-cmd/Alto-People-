@@ -10,7 +10,8 @@ import type { PrismaClient } from '@prisma/client';
 import { hasCapability, type Role } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
-import { pendingDeskApprovals } from './agentCapabilities.js';
+import { pendingDeskApprovals, pendingDeskShiftFills } from './agentCapabilities.js';
+import { shiftDeepLink } from './workforceAgent.js';
 import { tenantIdForWrite } from './tenant.js';
 
 const DAY_MS = 24 * 3600_000;
@@ -36,6 +37,8 @@ export interface RoleDecision {
   /** One-tap resolution, when a safe bulk fix exists — the button label
    *  shown on the item (POST /me/decisions/quick executes it). */
   quickAction?: string;
+  /** The item's "no" beside its quick action (an agent's proposal: Reject). POST /me/decisions/quick with decline. */
+  declineAction?: string;
 }
 
 const SEVERITY_RANK = { critical: 0, high: 1, normal: 2 } as const;
@@ -71,6 +74,8 @@ interface QueueUser {
   role: Role;
   clientId: string | null;
   associateId: string | null;
+  /** A site-bound account (a direct employer's property manager): its desk is that site. */
+  locationId?: string | null;
 }
 
 export async function computeRoleDecisions(
@@ -476,7 +481,26 @@ export async function computeRoleDecisions(
   // case it proposes to open is HR's. Nothing happens until someone here
   // approves (decision 2). Bounded supervisors count only their own shifts.
   if (can('manage:scheduling')) {
-    const n = await pendingDeskApprovals(prisma, tenantIdForWrite(), 'SHIFT_ASSIGN', { clientId: user.clientId });
+    const bounds = { clientId: user.clientId, locationId: user.locationId ?? null };
+    const fills = await pendingDeskShiftFills(prisma, tenantIdForWrite(), bounds);
+    // A handful: one item each, deep-linked to the shift, with Approve and Reject (agent families step 1).
+    if (fills.length > 0 && fills.length <= 5) {
+      for (const f of fills) {
+        out.push({
+          key: `agents:shift-fill:${f.approvalId}`,
+          domain: 'site-ops',
+          severity: 'high',
+          label: f.summary,
+          detail: 'Proposed by the Workforce agent. Nothing is assigned until you approve; it then assigns under the same rules as the schedule.',
+          stakes: null,
+          ageDays: Math.floor((now.getTime() - f.requestedAt.getTime()) / DAY_MS),
+          linkUrl: f.shift ? shiftDeepLink(f.shift) : '/agents?approvals=SHIFT_ASSIGN',
+          quickAction: 'Approve',
+          declineAction: 'Reject',
+        });
+      }
+    }
+    const n = fills.length > 5 ? fills.length : 0;
     if (n > 0) {
       out.push({
         key: scoped('agents:shift-assign'),

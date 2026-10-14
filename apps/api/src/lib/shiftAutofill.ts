@@ -13,6 +13,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { runShiftFill } from './workforceAgent.js';
 
 const SWEEP_SECONDS = 15 * 60;
 const HORIZON_MS = 48 * 3600_000;
@@ -117,13 +118,19 @@ export async function runShiftAutofillSweep(
 
 let timer: NodeJS.Timeout | null = null;
 
+/** One tick per tenant: the broadcast asks the bench, then the Workforce agent proposes for what is still open (shift.fill). */
+async function autofillTick(): Promise<void> {
+  await runShiftAutofillSweep();
+  await runShiftFill();
+}
+
 export function startShiftAutofillCron(): void {
   if (timer) return;
-  void tenantJob('shiftAutofill', runShiftAutofillSweep)().catch((err) => {
+  void tenantJob('shiftAutofill', autofillTick)().catch((err) => {
     console.error('[alto-people/api] shift autofill sweep failed:', err);
   });
   timer = setInterval(() => {
-    void tenantJob('shiftAutofill', runShiftAutofillSweep)().catch((err) => {
+    void tenantJob('shiftAutofill', autofillTick)().catch((err) => {
       console.error('[alto-people/api] shift autofill sweep failed:', err);
     });
   }, SWEEP_SECONDS * 1000);

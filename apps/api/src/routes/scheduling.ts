@@ -127,8 +127,6 @@ import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnoma
 import {
   DEFAULT_TIMEZONE,
   addDaysInZone,
-  formatDateInZone,
-  formatTimeInZone,
   localDateKey,
   zonedDayOfWeek,
   zonedMinutes,
@@ -147,6 +145,7 @@ import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
 import { assertClientAllowed, clientRestrictionsFor } from '../lib/programRules.js';
+import { REST_GAP_MIN_HOURS, assertEmployed, assignWithinRules, autoFillScore, blockedForWindow, dayKeyInZone, describeClash, findOverlapExcluding } from '../lib/shiftAssign.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 
@@ -280,22 +279,6 @@ const EMPLOYED: Prisma.AssociateWhereInput = {
   deactivatedAt: null,
 };
 
-/** Refuse to put someone who no longer works here on a shift. */
-function assertEmployed(a: {
-  firstName: string;
-  lastName: string;
-  deactivatedAt: Date | null;
-  separatedAt: Date | null;
-}): void {
-  if (a.deactivatedAt || a.separatedAt) {
-    throw new HttpError(
-      409,
-      'associate_inactive',
-      `${a.firstName} ${a.lastName} is ${a.separatedAt ? 'separated' : 'deactivated'} — reactivate them before scheduling.`,
-    );
-  }
-}
-
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   ...EMPLOYED,
   AND: [SCHEDULABLE_USER_FILTER],
@@ -336,42 +319,6 @@ async function associateHasOverlap(
   return hasOverlapExcluding(tx, associateId, startsAt, endsAt, [excludeShiftId]);
 }
 
-/** The conflicting shift itself, with enough context to NAME it in an
- *  error. "Already has an overlapping shift" was undiagnosable in the
- *  two honest collision cases: an overnight shift that renders under the
- *  PREVIOUS day's column, and a shift at another client that a bounded
- *  supervisor cannot see at all. */
-async function findOverlapExcluding(
-  tx: Prisma.TransactionClient | typeof prisma,
-  associateId: string,
-  startsAt: Date,
-  endsAt: Date,
-  excludeShiftIds: string[],
-) {
-  return tx.shift.findFirst({
-    where: {
-      id: { notIn: excludeShiftIds },
-      assignedAssociateId: associateId,
-      status: { notIn: ['CANCELLED'] },
-      startsAt: { lt: endsAt },
-      endsAt: { gt: startsAt },
-    },
-    select: {
-      id: true,
-      startsAt: true,
-      endsAt: true,
-      status: true,
-      position: true,
-      client: { select: { name: true } },
-      locationRel: { select: { timezone: true } },
-    },
-  });
-}
-
-/** Minimum rest between consecutive shifts before we make the manager
- *  confirm — the "clopen" guard. Advisory: overridable, never a wall. */
-const REST_GAP_MIN_HOURS = 10;
-
 /**
  * Hard sanity ceiling on a shift's wall-clock span. The 31-hour-shift
  * corruption (an end time rolled one day too far) silently wrecked
@@ -387,64 +334,6 @@ function assertSaneShiftDuration(startsAt: Date, endsAt: Date): void {
       `A shift can't span ${(minutes / 60).toFixed(1)} hours (max ${MAX_SHIFT_WALL_MIN / 60}h). Check the end date — it's probably rolled a day too far.`,
     );
   }
-}
-
-/**
- * Nearest non-overlapping neighbor shift that would leave this associate
- * under REST_GAP_MIN_HOURS of rest against [startsAt, endsAt]. Overlaps
- * are the hard check's job (findOverlapExcluding); this catches the
- * close-at-11pm-open-at-6am pattern that overlap math waves through.
- */
-async function findRestGapViolation(
-  tx: Prisma.TransactionClient | typeof prisma,
-  associateId: string,
-  startsAt: Date,
-  endsAt: Date,
-  excludeShiftIds: string[],
-): Promise<{ gapHours: number; clash: Parameters<typeof describeClash>[0] } | null> {
-  const restMs = REST_GAP_MIN_HOURS * 60 * 60 * 1000;
-  const neighbor = await tx.shift.findFirst({
-    where: {
-      id: { notIn: excludeShiftIds },
-      assignedAssociateId: associateId,
-      status: { notIn: ['CANCELLED'] },
-      OR: [
-        // Ends within the rest window before this shift starts…
-        { endsAt: { gt: new Date(startsAt.getTime() - restMs), lte: startsAt } },
-        // …or starts within the rest window after it ends.
-        { startsAt: { gte: endsAt, lt: new Date(endsAt.getTime() + restMs) } },
-      ],
-    },
-    select: {
-      id: true,
-      startsAt: true,
-      endsAt: true,
-      status: true,
-      position: true,
-      client: { select: { name: true } },
-      locationRel: { select: { timezone: true } },
-    },
-  });
-  if (!neighbor) return null;
-  const gapMs =
-    neighbor.endsAt <= startsAt
-      ? startsAt.getTime() - neighbor.endsAt.getTime()
-      : neighbor.startsAt.getTime() - endsAt.getTime();
-  return { gapHours: Math.round((gapMs / 3_600_000) * 10) / 10, clash: neighbor };
-}
-
-/** Human-readable identity of a conflicting shift, on the site's clock. */
-function describeClash(clash: {
-  startsAt: Date;
-  endsAt: Date;
-  status: string;
-  position: string;
-  client: { name: string } | null;
-  locationRel: { timezone: string | null } | null;
-}): string {
-  const tz = clash.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-  const overnight = formatDateInZone(clash.startsAt, tz) !== formatDateInZone(clash.endsAt, tz);
-  return `${clash.position}${clash.client ? ` at ${clash.client.name}` : ''}, ${formatDateInZone(clash.startsAt, tz)} ${formatTimeInZone(clash.startsAt, tz)} – ${formatTimeInZone(clash.endsAt, tz)}${overnight ? ' (overnight — it runs into the next day)' : ''}${clash.status === 'DRAFT' ? ' [unpublished draft]' : ''}`;
 }
 
 /** Overlap check excluding SEVERAL shifts — trades hand off two shifts at
@@ -563,60 +452,6 @@ async function withEffectiveRate(row: RawShift): Promise<Shift> {
   // Brief 1A-2: the card in force on the shift's date.
   const card = cardOn(await loadRateCards(prisma, [row.clientId]), row.clientId, row.position, row.startsAt);
   return toShift(row, card ? card.payRate : null);
-}
-
-/** "YYYY-MM-DD" of an instant as seen in `tz` — for comparing a shift's
- *  window against day-granular records (time off, availability exceptions). */
-function dayKeyInZone(d: Date, tz: string): string {
-  // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
-}
-
-/**
- * Which of `associateIds` can't work [startsAt, endsAt) because an APPROVED
- * time-off request or a one-off availability exception covers a store-local
- * day the window touches. Day-granular records live as UTC-midnight dates,
- * so both sides compare as calendar days in the SHIFT's zone.
- */
-async function blockedForWindow(
-  associateIds: string[],
-  startsAt: Date,
-  endsAt: Date,
-  tz: string,
-  // Pass the transaction client to make check+write atomic (assignment
-  // paths); defaults to the pool for advisory reads.
-  db: Prisma.TransactionClient | typeof prisma = prisma,
-): Promise<Set<string>> {
-  if (associateIds.length === 0) return new Set();
-  const startDay = new Date(`${dayKeyInZone(startsAt, tz)}T00:00:00Z`);
-  const endDay = new Date(`${dayKeyInZone(endsAt, tz)}T00:00:00Z`);
-  const [pto, exceptions] = await Promise.all([
-    db.timeOffRequest.findMany({
-      where: {
-        associateId: { in: associateIds },
-        status: 'APPROVED',
-        startDate: { lte: endDay },
-        endDate: { gte: startDay },
-      },
-      select: { associateId: true },
-    }),
-    db.availabilityException.findMany({
-      where: {
-        associateId: { in: associateIds },
-        date: { gte: startDay, lte: endDay },
-      },
-      select: { associateId: true },
-    }),
-  ]);
-  return new Set([
-    ...pto.map((r) => r.associateId),
-    ...exceptions.map((r) => r.associateId),
-  ]);
 }
 
 const SHIFT_INCLUDE = {
@@ -3557,82 +3392,12 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       where: { id: parsed.data.associateId, deletedAt: null },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
-    assertEmployed(associate);
-    // An H-2B worker may only be scheduled at the client on their petition.
-    // The H-2B rule names a client; a client-less shift (a direct employer) is the employer itself, step 4 moves the rule to the employer of record.
-    if (shift.clientId) await assertClientAllowed(prisma, associate, shift.clientId, { actorUserId: req.user!.id, via: 'assign', shiftId: shift.id });
-
-    // Conflict + unavailability checks + write in one transaction so two
-    // managers can't assign the same associate to overlapping shifts at
-    // the same instant, and a day-off/PTO approved between check and write
-    // can't be steamrolled (July review: the unavailability check used to
-    // run outside the transaction).
-    const updated = await prisma.$transaction(async (tx) => {
-      // Approved time off and one-off days off BLOCK assignment by
-      // default — an associate declaring a day unavailable means exactly
-      // that. Admins can push through with overrideUnavailability
-      // (audited below); an explicit per-assignment decision, never silent.
-      if (!parsed.data.overrideUnavailability) {
-        const blocked = await blockedForWindow(
-          [associate.id],
-          shift.startsAt,
-          shift.endsAt,
-          shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
-          tx,
-        );
-        if (blocked.size > 0) {
-          throw new HttpError(
-            409,
-            'associate_unavailable',
-            `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`,
-          );
-        }
-      }
-      // Name the conflict: the two honest collision cases — an overnight
-      // shift living under the PREVIOUS day's column, and a shift at a
-      // client this caller can't see — were undiagnosable from a bare
-      // "already has an overlapping shift".
-      const clash = await findOverlapExcluding(
-        tx,
-        associate.id,
-        shift.startsAt,
-        shift.endsAt,
-        [shift.id],
-      );
-      if (clash) {
-        throw new HttpError(
-          409,
-          'associate_double_booked',
-          `${associate.firstName} ${associate.lastName} already has an overlapping shift: ${describeClash(clash)}.`,
-        );
-      }
-      // Fatigue guard: a legal-but-brutal turnaround (close then open on
-      // <10h rest) needs an explicit manager confirm, not a silent save.
-      if (!parsed.data.overrideRestGap) {
-        const rest = await findRestGapViolation(
-          tx,
-          associate.id,
-          shift.startsAt,
-          shift.endsAt,
-          [shift.id],
-        );
-        if (rest) {
-          throw new HttpError(
-            409,
-            'rest_gap',
-            `${associate.firstName} ${associate.lastName} would get only ${rest.gapHours}h rest next to ${describeClash(rest.clash)}.`,
-          );
-        }
-      }
-      return tx.shift.update({
-        where: { id: shift.id },
-        data: {
-          assignedAssociateId: associate.id,
-          assignedAt: new Date(),
-          status: 'ASSIGNED',
-        },
-        include: SHIFT_INCLUDE,
-      });
+    // The rules live in lib/shiftAssign (shared with the Workforce agent's approved fills).
+    const updated = await assignWithinRules(prisma, shift, associate, {
+      actorUserId: req.user!.id,
+      via: 'assign',
+      overrideUnavailability: parsed.data.overrideUnavailability,
+      overrideRestGap: parsed.data.overrideRestGap,
     });
 
     // Fieldglass handoff for first-time workers (deduped inside).
@@ -4931,13 +4696,8 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
       const wouldExceed40 = weeklyMinutesActual + targetMinutes > 40 * 60;
 
-      let score = 0;
-      if (matchesAvailability) score += 0.5;
-      if (noConflict) score += 0.3;
-      if (!wouldExceed40) score += 0.2;
-      // PTO is a deliberate plan — force these to the bottom of the list
-      // regardless of availability or weekly hours.
-      if (onApprovedTimeOff) score = 0;
+      // The ranking is shared with the Workforce agent (lib/shiftAssign autoFillScore).
+      const score = autoFillScore({ matchesAvailability, noConflict, wouldExceed40, onApprovedTimeOff });
 
       return {
         associateId: a.id,

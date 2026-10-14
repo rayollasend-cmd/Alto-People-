@@ -1,4 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
+// Agent families step 1: the in-process Workforce agent's executor, fixture runner and metrics.
+import '../lib/workforceAgent.js';
 import { z } from 'zod';
 import {
   AgentApprovalStatusSchema,

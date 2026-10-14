@@ -41,11 +41,16 @@ vi.mock('@/lib/agentsApi', () => ({
   certifyAgent: vi.fn(),
   getAgentScorecard: vi.fn(),
   updateAgentDrift: vi.fn(),
+  // Agent families step 1
+  listAgentCapabilities: vi.fn(),
+  getCapabilityScorecard: vi.fn(),
+  suspendAgentCapability: vi.fn(),
+  resumeAgentCapability: vi.fn(),
 }));
 vi.mock('@/lib/usersAdminApi', () => ({ listAdminUsers: vi.fn() }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn().mockResolvedValue('') }));
 
-import { certifyAgent, decideAgentApproval, getAgent, getAgentScorecard, issueAgentCredential, listAgentApprovals, listAgentScenarios, listAgents, resumeAllAgents } from '@/lib/agentsApi';
+import { certifyAgent, decideAgentApproval, getAgent, getAgentScorecard, getCapabilityScorecard, issueAgentCredential, listAgentApprovals, listAgentCapabilities, listAgentScenarios, listAgents, resumeAllAgents, suspendAgentCapability } from '@/lib/agentsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { AgentRegistryAdmin } from '@/pages/admin/AgentRegistryAdmin';
 
@@ -403,5 +408,43 @@ describe('AgentRegistryAdmin', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('tab', { name: /Scorecard/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('tab', { name: /Certification/ })).toBeInTheDocument();
+  });
+
+  it('Agent families step 1: the Capabilities tab lists each capability with its switch and its scorecard', async () => {
+    const user = userEvent.setup();
+    vi.mocked(listAgentCapabilities).mockResolvedValue({
+      capabilities: [
+        { key: 'shift.fill', label: 'Fill open shifts', family: 'workforce', gate: 'SHIFT_ASSIGN', requiresModule: ['scheduling'], offered: true, enabled: true, suspendedAt: null, suspendedBy: null, suspendReason: null, driftErrorRatePct: null },
+        { key: 'document.chase', label: 'Chase expiring documents', family: 'compliance', gate: null, requiresModule: ['compliance'], offered: false, enabled: true, suspendedAt: null, suspendedBy: null, suspendReason: null, driftErrorRatePct: null },
+      ],
+    });
+    vi.mocked(getCapabilityScorecard).mockImplementation(async (_id, key) => ({
+      key, days: 7, proposed: key === 'shift.fill' ? 4 : 0, approved: 3, rejected: 1, expired: 0, executed: 3, failed: 0, superseded: 0, outcomeRatePct: 75,
+      metrics: key === 'shift.fill' ? { proposalsMade: 4, filledBeforeStart: 3, medianMinutesToFill: 42 } : {},
+    }));
+    vi.mocked(suspendAgentCapability).mockResolvedValue({} as never);
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('tab', { name: /Capabilities/ }));
+    const fill = await within(dialog).findByTestId('capability-shift.fill');
+    expect(within(fill).getByText('Fill open shifts')).toBeInTheDocument();
+    expect(within(fill).getByText('On')).toBeInTheDocument();
+    expect(within(fill).getByText(/asks first/)).toBeInTheDocument();
+    expect(await within(fill).findByText('Fills proposed')).toBeInTheDocument();
+    expect(within(fill).getByText('42')).toBeInTheDocument();
+    expect(getCapabilityScorecard).toHaveBeenCalledWith(AGENT_ID, 'shift.fill', 7);
+    // A capability whose module is off is shown as not offered, with no switch.
+    const chase = within(dialog).getByTestId('capability-document.chase');
+    expect(within(chase).getByText('Not offered here')).toBeInTheDocument();
+    expect(within(chase).queryByRole('button', { name: 'Suspend' })).toBeNull();
+  });
+
+  it('Agent families: the platform switch, when on, is shown to every organization', async () => {
+    vi.mocked(listAgents).mockResolvedValue({ ...registry, platformControl: { allSuspendedAt: '2026-10-13T09:00:00.000Z', suspendedBy: { id: OWNER.id, name: OWNER.name }, reason: 'Incident 7' } });
+    renderPage();
+    const line = await screen.findByTestId('platform-switch');
+    expect(line).toHaveTextContent(/platform switch is on/i);
+    expect(line).toHaveTextContent(/Incident 7/);
   });
 });

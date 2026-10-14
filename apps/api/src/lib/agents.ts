@@ -27,7 +27,7 @@ import { notifyUser } from './notify.js';
 import { fanOutMessage, syncStoreChannel } from './messaging.js';
 import { createWorker, getWorker, listWorkers, updateWorker } from './workers.js';
 import { allAgentsSuspended, certification, controlState, onModelVersionChanged, scorecard } from './agentControls.js';
-import { syncProposalWithApproval, tenantAgentsSuspended, tenantControlState } from './agentCapabilities.js';
+import { afterProposalApproved, grantCapability, seedCatalogScenarios, syncProposalWithApproval, tenantAgentsSuspended, tenantControlState } from './agentCapabilities.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
@@ -171,6 +171,23 @@ export const BUILT_IN_AGENTS = [
     capabilities: ['messaging', 'schedule-read'],
     status: 'ACTIVE',
   },
+  {
+    key: 'workforce-agent',
+    name: 'Workforce agent',
+    family: 'workforce',
+    capability: 'Fill open shifts: propose a named person after the open-shift broadcast goes unanswered; a supervisor approves',
+    purpose: 'Proposes one named person for each open shift the open-shift broadcast did not fill, from the people placed there, free and within the scheduling rules. Nothing is assigned until a supervisor approves; it then assigns through the same rules a supervisor does (agent families step 1).',
+    vendor: 'Alto People',
+    model: 'Rule-based agent (lib/workforceAgent)',
+    modelVersion: '1',
+    environment: 'PRODUCTION',
+    scopes: ['view:scheduling', 'view:org', 'manage:scheduling'] as AgentScope[],
+    capabilities: ['shift.fill'],
+    grants: ['shift.fill'],
+    // Agent controls (1D-3): a new agent starts ONBOARDING and goes ACTIVE only by passing
+    // its certification scenarios on the Agents page. Deploying never switches it on.
+    status: 'ONBOARDING',
+  },
 ] as const satisfies readonly {
   key: string;
   name: string;
@@ -183,6 +200,8 @@ export const BUILT_IN_AGENTS = [
   environment: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT';
   scopes: AgentScope[];
   capabilities: readonly string[];
+  /** Agent families: the catalog capabilities the built-in holds (AgentCapability rows). */
+  grants?: readonly string[];
   status: WorkerStatus;
 }[];
 
@@ -246,6 +265,18 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
     });
     created.push(b.key);
   }
+  // Agent families step 1: a built-in holds its catalog capabilities, and its
+  // certification scenarios come from the catalog's fixtures.
+  for (const b of BUILT_IN_AGENTS) {
+    const grants = 'grants' in b ? (b.grants as readonly string[]) : [];
+    if (!grants.length) continue;
+    const p = await db.agentProfile.findFirst({ where: { builtInKey: b.key, tenantId }, select: { workerId: true } });
+    if (!p) continue;
+    for (const key of grants) {
+      await grantCapability(db, p.workerId, key, tenantId);
+      await seedCatalogScenarios(db, p.workerId, key, tenantId);
+    }
+  }
   const bare = await db.worker.findMany({ where: { type: 'AGENT', agent: null, tenantId }, select: { id: true } });
   for (const w of bare) {
     await db.agentProfile.create({
@@ -267,6 +298,33 @@ export async function builtInAgentId(db: Db, key: BuiltInAgentKey, tenantIdArg?:
   const p = await db.agentProfile.findFirst({ where: { builtInKey: key, tenantId }, select: { workerId: true } });
   if (p && process.env.NODE_ENV !== 'test') builtInIds.set(cacheKey, p.workerId);
   return p?.workerId ?? null;
+}
+
+/**
+ * Agent families step 1: an agent that runs inside the API (the Workforce
+ * agent) acts under its registry record exactly as a credentialed one does.
+ * Null when it may not act now: not registered in this tenant, not ACTIVE,
+ * suspended on its own, or stopped by the tenant's or the platform's switch.
+ */
+export async function inProcessAgent(db: Db, key: BuiltInAgentKey, tenantIdArg?: string | null): Promise<AgentContext | null> {
+  const tenantId = registryTenant(tenantIdArg);
+  const p = await db.agentProfile.findFirst({
+    where: { builtInKey: key, tenantId },
+    include: { worker: { select: { name: true, status: true, ownerUserId: true } } },
+  });
+  if (!p || p.worker.status !== 'ACTIVE' || p.suspendedAt) return null;
+  if (await allAgentsSuspended(db)) return null;
+  if (await tenantAgentsSuspended(db, tenantId)) return null;
+  return {
+    workerId: p.workerId,
+    name: p.worker.name,
+    ownerUserId: p.worker.ownerUserId,
+    status: p.worker.status,
+    scopes: p.scopes as AgentScope[],
+    credentialId: 'in-process',
+    rateLimitPerMinute: p.rateLimitPerMinute,
+    tenantId,
+  };
 }
 
 /** An in-process agent (the WhatsApp assistant) logs what it did under its registry record. */
@@ -682,6 +740,8 @@ export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 
     'agents',
   );
   await syncProposalWithApproval(db, id, decision, now);
+  // Agent families step 1: an approved proposal of an in-process agent is carried out now.
+  if (decision === 'APPROVED') await afterProposalApproved(id, now);
   return approvalSummary(updated);
 }
 

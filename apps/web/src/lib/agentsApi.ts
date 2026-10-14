@@ -1,5 +1,7 @@
 import type {
   AgentApprovalStatus,
+  AgentCapabilitySummary,
+  CapabilityScorecard,
   AgentApprovalSummary,
   AgentCertification,
   AgentControlState,
@@ -180,4 +182,29 @@ export type AgentDriftInput = Partial<Pick<AgentDrift, 'driftErrorRatePct' | 'dr
 
 export function updateAgentDrift(id: string, input: AgentDriftInput): Promise<AgentDetail> {
   return apiFetch<AgentDetail>(`/agents/${encodeURIComponent(id)}/drift`, { method: 'PATCH', body: input });
+}
+
+/* ------------------------------------------- agent families: capabilities */
+
+/** The agent's capabilities: on/off, suspension, and whether the tenant offers each (its modules). */
+export function listAgentCapabilities(id: string): Promise<{ capabilities: AgentCapabilitySummary[] }> {
+  return apiFetch<{ capabilities: AgentCapabilitySummary[] }>(`/agents/${encodeURIComponent(id)}/capabilities`);
+}
+
+export function getCapabilityScorecard(id: string, key: string, days: number): Promise<CapabilityScorecard> {
+  return apiFetch<CapabilityScorecard>(
+    `/agents/${encodeURIComponent(id)}/capabilities/${encodeURIComponent(key)}/scorecard?days=${encodeURIComponent(String(days))}`,
+  );
+}
+
+export function suspendAgentCapability(id: string, key: string, reason: string): Promise<AgentCapabilitySummary> {
+  return apiFetch<AgentCapabilitySummary>(`/agents/${encodeURIComponent(id)}/capabilities/${encodeURIComponent(key)}/suspend`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
+/** The accountable owner only (403 `owner_only` for anyone else). */
+export function resumeAgentCapability(id: string, key: string): Promise<AgentCapabilitySummary> {
+  return apiFetch<AgentCapabilitySummary>(`/agents/${encodeURIComponent(id)}/capabilities/${encodeURIComponent(key)}/resume`, { method: 'POST' });
 }
