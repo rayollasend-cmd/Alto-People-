@@ -11,6 +11,8 @@ export const prisma = new PrismaClient();
 // _prisma_migrations.
 const TABLES = [
   'AuditLog',
+  'ComplianceEvidenceSignoff',
+  'ComplianceEvidence',
   // Global (clientId=null) webhooks aren't reached by any CASCADE, so
   // list both tables explicitly or subscriptions leak across tests.
   'WebhookDelivery',
@@ -160,7 +162,12 @@ export async function truncateAll(): Promise<void> {
   const MAX_ATTEMPTS = 5;
   for (let attempt = 1; ; attempt += 1) {
     try {
-      await prisma.$executeRawUnsafe(sql);
+      // Brief 2-3 step 1: AuditLog refuses TRUNCATE (directly or by CASCADE)
+      // unless the session says it is the test harness, in this transaction only.
+      await prisma.$transaction([
+        prisma.$queryRawUnsafe("SELECT set_config('alto.allow_audit_truncate', 'test', true)"),
+        prisma.$executeRawUnsafe(sql),
+      ]);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

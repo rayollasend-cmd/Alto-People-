@@ -4,11 +4,16 @@
  *   railway run --service api -- npx tsx scripts/access-report.ts            counts + flagged accounts
  *   railway run --service api -- npx tsx scripts/access-report.ts --csv > access-report.csv
  *
+ *   railway run --service api -- npx tsx scripts/access-report.ts --persist  also records SOC 2 evidence
+ *
  * Read-only. The same report the Users page shows (GET /admin/users/access-report).
+ * --persist records counts only (no emails) as access-review evidence
+ * (Brief 2-5); a named approver signs it off on the Compliance evidence page.
  * Nobody is deactivated by this script; the owner approves the list first.
  */
 import { PrismaClient } from '@prisma/client';
 import { ACCESS_FLAGS, ACCESS_FLAG_LABEL, accessReportCsv, buildAccessReport } from '../src/lib/accessCleanup.js';
+import { recordEvidence } from '../src/lib/evidence.js';
 
 const prisma = new PrismaClient();
 
@@ -41,6 +46,15 @@ async function main() {
           r.flags.join(', '),
         ].join(' '),
     );
+  }
+
+  if (process.argv.includes('--persist')) {
+    const id = await recordEvidence('access-review', 'scripts/access-report.ts', {
+      status: c.flaggedAccounts === 0 ? 'PASS' : 'WARN',
+      summary: `${c.totalAccounts} accounts, ${c.flaggedAccounts} flagged for review.`,
+      details: { counts: c },
+    }, prisma);
+    console.log(id ? `\nRecorded as evidence ${id}; sign it off on the Compliance evidence page.` : '\nEvidence NOT recorded (see the error above).');
   }
 }
 

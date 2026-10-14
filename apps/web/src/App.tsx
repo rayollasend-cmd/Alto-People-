@@ -202,6 +202,7 @@ const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHom
 const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
 const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
 const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
+const ComplianceEvidenceHome = lazyNamed(() => import('@/pages/admin/ComplianceEvidenceHome'), 'ComplianceEvidenceHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
@@ -456,6 +457,7 @@ const LAYOUT_ROUTES = [
   { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
   { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
   { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
+  { path: 'admin/compliance-evidence', element: <RequireCapability cap="view:org"><ComplianceEvidenceHome /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
   // No dedicated view:benefits capability exists — benefits elections are

@@ -121,7 +121,7 @@ export function Sidebar() {
   const { can, user } = useAuth();
   const tenant = useTenant();
   const term = useTerm();
-  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules }), term, tenant.modules);
+  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules);
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
   // Same key as the phone tab bar's badge, so one request serves both.

@@ -5,7 +5,7 @@ import {
   randomInt,
   timingSafeEqual,
 } from 'node:crypto';
-import { env } from '../config/env.js';
+import { jobSecret } from './jobSecrets.js';
 
 /**
  * Phase 99 — kiosk auth helpers.
@@ -36,7 +36,7 @@ export function tokenLookupPrefix(plaintext: string): string {
 }
 
 function pinSecret(): string {
-  return env.KIOSK_PIN_SECRET ?? env.PAYOUT_ENCRYPTION_KEY;
+  return jobSecret('kioskPin');
 }
 
 export function hmacPin(pin: string): Buffer<ArrayBuffer> {

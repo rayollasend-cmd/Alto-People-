@@ -2,6 +2,7 @@ import { useLocation } from 'react-router-dom';
 
 import type { Capability } from './roles';
 import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/shared';
+import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 
 export type ModuleKey =
   | 'tenant-profile'
@@ -10,6 +11,7 @@ export type ModuleKey =
   | 'sites'
   | 'product-analytics'
   | 'reliability'
+  | 'compliance-evidence'
   | 'emergency'
   | 'programs'
   | 'season-planner'
@@ -138,6 +140,8 @@ export interface ModuleNav {
    *  used where two audiences share a page (e.g. Labor costs is both a
    *  scheduling-ops and an executive surface). */
   requiresAny?: Capability[];
+  /** Brief 2-5: shown only to the tenant that operates the platform (its evidence is the platform's). */
+  platformOnly?: boolean;
   /** Phase 67 — sidebar grouping. */
   group: ModuleGroup;
 }
@@ -501,10 +505,13 @@ export function groupLabel(group: Exclude<ModuleGroup, 'core'>, term: (key: Term
 export function visibleModules(
   role: string | undefined,
   can: (c: Capability) => boolean,
-  scope: { regionId?: string | null; modules?: TenantModules } = {},
+  scope: { regionId?: string | null; modules?: TenantModules; tenantId?: string | null } = {},
 ): ModuleNav[] {
   const base = MODULES.filter(
     (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
+  ).filter(
+    // Brief 2-5: the platform's own pages are the operator tenant's alone.
+    (m) => !m.platformOnly || scope.tenantId === PLATFORM_OPERATOR_TENANT_ID,
   ).filter(
     // Brief 2-1b: a module the tenant has off is not on the nav for anyone.
     (m) => {
@@ -1395,6 +1402,16 @@ export const MODULES: ModuleNav[] = [
       'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
     requires: 'view:product-analytics',
     group: 'platform',
+  },
+  {
+    key: 'compliance-evidence',
+    path: '/admin/compliance-evidence',
+    label: 'Compliance evidence',
+    description:
+      'Every SOC 2 control with its latest evidence and how old it is, and the sign-offs a person owes.',
+    requires: 'view:org',
+    group: 'platform',
+    platformOnly: true,
   },
   {
     key: 'reliability',

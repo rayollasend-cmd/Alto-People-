@@ -9,10 +9,17 @@
  * previous key — the 2026-06-11 rotation — and has not been re-entered
  * since. Counts only, plus the date range of the unreadable rows; never a
  * byte of plaintext.
+ *
+ *   --persist  also records the result as SOC 2 evidence
+ *              (control field-encryption-inventory, Brief 2-5): counts only.
  */
 import { PrismaClient } from '@prisma/client';
 import { tryDecryptString } from '../src/lib/crypto.js';
 import { decryptMfaSecret } from '../src/lib/mfaCrypto.js';
+import { recordEvidence } from '../src/lib/evidence.js';
+
+/** The recorded incident that explains rows written before it (docs/access-cleanup-1a4.md). */
+const KEY_CHANGE_INCIDENT = new Date('2026-06-11T00:00:00.000Z');
 
 const prisma = new PrismaClient();
 
@@ -116,6 +123,26 @@ async function main() {
     console.log('  Kiosk numbers       → Kiosk admin → Rotate (new number issued and emailed).');
     console.log('  QuickBooks tokens   → Reconnect QuickBooks from the client page.');
     console.log('  MFA secrets         → the user re-enrolls two-step sign-in.');
+  }
+
+  if (process.argv.includes('--persist')) {
+    // PASS: every row decrypts. WARN: the only unreadable rows predate the
+    // recorded 2026-06-11 key change. FAIL: a row written since cannot be read.
+    const unexplained = bad.filter((t) => t.newestUnreadable && t.newestUnreadable >= KEY_CHANGE_INCIDENT);
+    const status = bad.length === 0 ? 'PASS' : unexplained.length === 0 ? 'WARN' : 'FAIL';
+    const summary =
+      bad.length === 0
+        ? 'Every encrypted row decrypts under the running key.'
+        : `${bad.reduce((n, t) => n + t.unreadable, 0)} unreadable rows in ${bad.length} column(s)` +
+          (unexplained.length === 0 ? ', all written before the recorded 2026-06-11 key change.' : `; ${unexplained.length} column(s) have rows written since the key change.`);
+    const id = await recordEvidence('field-encryption-inventory', 'scripts/audit-encryption-key.ts', {
+      status,
+      summary,
+      details: {
+        columns: out.map((t) => ({ what: t.what, table: t.table, column: t.column, rows: t.rows, readable: t.readable, unreadable: t.unreadable, oldestUnreadable: t.oldestUnreadable?.toISOString() ?? null, newestUnreadable: t.newestUnreadable?.toISOString() ?? null })),
+      },
+    }, prisma);
+    console.log(id ? `\nRecorded as evidence ${id} (${status}).` : '\nEvidence NOT recorded (see the error above).');
   }
 }
 

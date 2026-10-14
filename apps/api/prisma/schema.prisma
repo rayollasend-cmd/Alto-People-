@@ -10211,3 +10211,50 @@ model ReconciliationSnapshot {
   @@index([periodEnd(sort: Desc)])
   @@index([tenantId])
 }
+
+/// Brief 2-5 — SOC 2 evidence. One row per collection of one control
+/// (lib/evidence.ts; the catalog is COMPLIANCE_CONTROLS in packages/shared).
+/// Platform-level (owner's decision 1): Alto People is the service
+/// organization, so tenantId stays null. Append-only at the database.
+model ComplianceEvidence {
+  id          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: platform-wide (never a tenant's); nullable with no default.
+  tenantId    String?                     @db.Uuid
+  control     String                      @db.VarChar(80)
+  status      EvidenceStatus
+  summary     String                      @db.VarChar(500)
+  details     Json                        @default("{}")
+  /// A stored artifact (a dump manifest, a CSV), when there is one.
+  artifactKey String?                     @db.VarChar(500)
+  /// The job or script name, or the user id for an attestation.
+  collectedBy String                      @db.VarChar(120)
+  collectedAt DateTime                    @default(now()) @db.Timestamptz(6)
+  periodStart DateTime?                   @db.Timestamptz(6)
+  periodEnd   DateTime?                   @db.Timestamptz(6)
+  signoffs    ComplianceEvidenceSignoff[]
+
+  @@index([control, collectedAt(sort: Desc)])
+  @@index([tenantId])
+}
+
+/// Brief 2-5 — a person's sign-off on one evidence row. A separate
+/// append-only row, so signing never edits the evidence.
+model ComplianceEvidenceSignoff {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: platform-wide (never a tenant's); nullable with no default.
+  tenantId      String?            @db.Uuid
+  evidenceId    String             @db.Uuid
+  evidence      ComplianceEvidence @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
+  signedOffById String             @db.Uuid
+  note          String?            @db.VarChar(1000)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@index([evidenceId])
+  @@index([tenantId])
+}
+
+enum EvidenceStatus {
+  PASS
+  FAIL
+  WARN
+}

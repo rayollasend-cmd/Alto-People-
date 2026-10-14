@@ -8,3 +8,4 @@ export * from './shiftWindow.js';
 export * from './uploads.js';
 export * from './contracts.js';
 export * from './tenantProfile.js';
+export * from './complianceEvidence.js';

@@ -31,7 +31,7 @@ export function tenancyMode(): TenancyMode {
 /** Shared reference data: no tenant column at all. */
 export const TENANT_EXEMPT_MODELS: ReadonlySet<string> = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache']);
 /** Platform-wide telemetry (decision 7): a nullable tenant column, never required. */
-export const PLATFORM_WIDE_MODELS: ReadonlySet<string> = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek']);
+export const PLATFORM_WIDE_MODELS: ReadonlySet<string> = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff']);
 
 /** Every model the wall applies to, from the schema itself. */
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set(

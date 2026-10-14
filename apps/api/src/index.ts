@@ -45,6 +45,7 @@ import { startUsageFlusher } from './lib/usageTracker.js';
 import { startVitalsFlusher } from './lib/webVitals.js';
 import { recordApiBoot } from './lib/reliability.js';
 import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
+import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
@@ -131,6 +132,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // Best-effort: a boot must never fail because a bookkeeping row did.
   recordApiBoot(BUILD_VERSION).catch((err) => logger.warn({ err }, 'api boot row not written'));
   startReliabilityDigestCron();
+  startEvidenceCron();
   startProgramDigestCron();
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
   // quarter hour, so an import that bypassed the API still ends up owned.

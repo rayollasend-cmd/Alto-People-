@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { env } from '../config/env.js';
+import { jobSecret } from './jobSecrets.js';
 
 /**
  * AES-256-GCM helpers dedicated to encrypting TOTP secrets at rest. Uses the
@@ -19,7 +19,7 @@ const TAG_LEN = 16;
 let cachedKey: Buffer | null = null;
 function getKey(): Buffer {
   if (cachedKey) return cachedKey;
-  const raw = env.MFA_SECRET_ENCRYPTION_KEY ?? env.PAYOUT_ENCRYPTION_KEY;
+  const raw = jobSecret('mfa');
   const decoded = Buffer.from(raw, 'base64');
   if (decoded.length !== 32) {
     throw new Error(

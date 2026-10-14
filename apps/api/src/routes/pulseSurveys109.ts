@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { atClient } from '../lib/scope.js';
-import { env } from '../config/env.js';
+import { jobSecret } from '../lib/jobSecrets.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 
@@ -34,7 +34,7 @@ const ADMIN_READ = requireAnyCapability('manage:org', 'view:executive');
 const ANY_USER = requireAuth;
 
 function pulseSecret(): string {
-  return env.PULSE_HASH_SECRET ?? env.PAYOUT_ENCRYPTION_KEY;
+  return jobSecret('pulseHash');
 }
 
 function responderHash(userId: string, surveyId: string): Buffer<ArrayBuffer> {

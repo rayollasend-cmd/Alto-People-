@@ -126,6 +126,7 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
 import { orgUnitsRouter } from './routes/orgUnits.js';
+import { complianceEvidenceRouter } from './routes/complianceEvidence.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
 import { transportRouter } from './routes/transport.js';
@@ -140,6 +141,7 @@ import { defaultApiLimiter } from './middleware/rateLimit.js';
 import { usageTracking } from './middleware/usage.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestId } from './middleware/requestId.js';
+import { auditFloor } from './middleware/auditFloor.js';
 
 // In production this Express server also serves the built React SPA, so the
 // browser sends `/api/*` to disambiguate from static assets and SPA routes.
@@ -354,6 +356,8 @@ export function createApp() {
   // Counts finished requests, after auth so req.user is known. Everything
   // it does happens on 'finish' — off the path to a response.
   app.use(usageTracking);
+  // Brief 2-3 step 1: every data change and every export writes one awaited audit row (middleware/auditFloor).
+  app.use(auditFloor);
 
   app.use('/health', healthRouter);
   // Enterprise SSO (OIDC). Mounted at the same root-path convention as
@@ -612,6 +616,7 @@ export function createApp() {
   app.use('/', usersRouter);
   app.use('/', employersRouter);
   app.use('/', orgUnitsRouter);
+  app.use('/', complianceEvidenceRouter);
   app.use('/', shiftWindowsRouter);
   // Floor supervisors' shift supervisor, and shift hand-overs (covers).
   app.use('/', floorTeamRouter);

@@ -19,7 +19,7 @@ afterAll(async () => {
 });
 
 const EXEMPT = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache']);
-const NO_DEFAULT = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek']);
+const NO_DEFAULT = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff']);
 
 describe('the schema', () => {
   it('has the Alto HR tenant and a tenantId on every model but the shared reference data', async () => {

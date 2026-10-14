@@ -376,6 +376,15 @@ const EnvSchema = z.object({
   // Phase 109 — pulse survey responder hash secret. Defaults to
   // PAYOUT_ENCRYPTION_KEY if unset.
   PULSE_HASH_SECRET: z.string().min(32).optional(),
+  // Brief 2-5 step 2 — the bank-account fingerprint's own HMAC secret
+  // (lib/financialChanges.ts). Defaults to PAYOUT_ENCRYPTION_KEY, which it
+  // used until now, so every stored fingerprint still matches; set it to
+  // that same value in production, then the field key can rotate alone.
+  ACCOUNT_FINGERPRINT_SECRET: z.string().min(32).optional(),
+  // Brief 2-5 step 2 — once every per-job secret is set (lib/jobSecrets.ts),
+  // '1' makes boot refuse to start without them. Off by default so a deploy
+  // never fails on a variable Railway does not have yet.
+  REQUIRE_SPLIT_SECRETS: z.enum(['0', '1']).default('0'),
   // HMAC secret used to mint per-associate iCal feed URLs. The token
   // embedded in /scheduling/calendar/:token.ics is HMAC(secret, associateId);
   // rotating this secret revokes every outstanding subscription. Defaults
@@ -545,6 +554,29 @@ if (parsed.data.NODE_ENV === 'production') {
         'would let an attacker forge every existing kiosk PIN HMAC. Generate with `openssl rand -base64 48`.',
     );
     process.exit(1);
+  }
+}
+
+// Brief 2-5 step 2 — one secret per job. Each unset per-job secret falls back
+// to PAYOUT_ENCRYPTION_KEY (today's behaviour); with REQUIRE_SPLIT_SECRETS=1
+// boot refuses instead. Names only, never values. Runbook:
+// docs/runbooks/job-secrets.md.
+{
+  const unset = (['MFA_SECRET_ENCRYPTION_KEY', 'KIOSK_PIN_SECRET', 'PULSE_HASH_SECRET', 'ACCOUNT_FINGERPRINT_SECRET'] as const).filter(
+    (k) => !parsed.data[k],
+  );
+  if (unset.length > 0 && parsed.data.REQUIRE_SPLIT_SECRETS === '1') {
+    console.error(
+      `FATAL: REQUIRE_SPLIT_SECRETS=1 but ${unset.join(', ')} ${unset.length === 1 ? 'is' : 'are'} not set. ` +
+        'Each job needs its own secret before the field-encryption key can rotate. See docs/runbooks/job-secrets.md.',
+    );
+    process.exit(1);
+  }
+  if (unset.length > 0 && parsed.data.NODE_ENV !== 'test') {
+    console.warn(
+      `[alto-people/api] ${unset.join(', ')} not set; falling back to PAYOUT_ENCRYPTION_KEY (unchanged behaviour). ` +
+        'Set each to the payout key value, then REQUIRE_SPLIT_SECRETS=1. See docs/runbooks/job-secrets.md.',
+    );
   }
 }
 

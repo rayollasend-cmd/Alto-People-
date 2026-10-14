@@ -9,7 +9,7 @@ import type {
   UnverifiedPayoutPolicy,
 } from '@prisma/client';
 import { prisma } from '../db.js';
-import { env } from '../config/env.js';
+import { jobSecret } from './jobSecrets.js';
 import { logger } from './logger.js';
 import { EmailSuppressedError, send } from './notifications.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
@@ -158,7 +158,7 @@ export function ssnSummary(digits: string | null | undefined, label = 'SSN'): st
 
 /** Keyed hash of routing + account, for the shared-account check. */
 export function accountFingerprint(routingNumber: string, accountNumber: string): string {
-  return createHmac('sha256', env.PAYOUT_ENCRYPTION_KEY)
+  return createHmac('sha256', jobSecret('accountFingerprint'))
     .update(`${routingNumber.replace(/\D/g, '')}:${accountNumber.replace(/\s/g, '')}`)
     .digest('hex');
 }
