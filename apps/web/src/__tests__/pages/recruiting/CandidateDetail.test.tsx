@@ -57,6 +57,7 @@ vi.mock('@/lib/clientsApi', () => ({
 }));
 vi.mock('@/lib/orgApi', () => ({
   listShiftPositions: vi.fn(async () => ({ shiftPositions: [] })),
+  listSites: vi.fn(async () => ({ sites: [] })),
 }));
 
 vi.mock('@/lib/positionsApi', () => ({

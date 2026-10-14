@@ -41,12 +41,21 @@ vi.mock('@/lib/documentsApi', () => ({
 }));
 // HR_ADMINISTRATOR holds both manage:onboarding (Section 2 verify) and
 // manage:documents (per-document reject).
-vi.mock('@/lib/auth', () => ({
-  useAuth: () => ({
-    user: { role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' },
-    can: () => true,
-  }),
-}));
+vi.mock('@/lib/auth', async () => {
+  const shared = await import('@alto-people/shared');
+  const alto = shared.defaultTenantProfile('WORKFORCE_PROVIDER');
+  const terms = shared.termsIn(alto, 'en');
+  const useTerm = () => (k: keyof typeof terms) => terms[k];
+  const useTenant = () => ({ id: '', ...alto, moduleOn: (m: keyof typeof alto.modules) => alto.modules[m] });
+  return {
+    useAuth: () => ({
+      user: { role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' },
+      can: () => true,
+    }),
+    useTerm,
+    useTenant,
+  };
+});
 
 import {
   getApplication,

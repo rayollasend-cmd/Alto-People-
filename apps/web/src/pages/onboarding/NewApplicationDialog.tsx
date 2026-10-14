@@ -38,6 +38,8 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useTenant, useTerm } from '@/lib/auth';
+import { useOrgSites } from '@/lib/useOrgSites';
 import {
   EMPTY_INVITE_LAST_USED,
   INVITE_LAST_USED_KEY,
@@ -50,6 +52,12 @@ const TRACK_LABEL: Record<string, string> = {
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
 };
+
+/** Brief 2-1b: a tenant without clients has no client-specific track to name. */
+function trackLabel(track: string, clientsOn: boolean): string {
+  if (!clientsOn && track === 'CLIENT_SPECIFIC') return 'Custom';
+  return TRACK_LABEL[track] ?? track;
+}
 
 // Labels for the "Hire as" picker. Order matches HIREABLE_ROLES so the
 // first option (ASSOCIATE) is the default and the management roles follow.
@@ -115,6 +123,11 @@ const NO_LOCATIONS: LocationSummary[] = [];
  * raw `inviteUrl` so HR can copy it into Slack / a manual email.
  */
 export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, prefill }: Props) {
+  // Brief 2-1b: with the client portal off there are no clients — the hire is placed by site.
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const term = useTerm();
+  const workerLc = term('worker').toLowerCase();
+  const orgSites = useOrgSites(open && !clientsOn);
   // Pickers, read when the dialog opens and kept for later opens in the
   // session — clients/templates don't change often. "Load failed" stays
   // distinct from "no clients exist": an empty Select with no explanation
@@ -122,7 +135,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
   const clientsQuery = useQuery({
     queryKey: ['clients', 'summaries'],
     queryFn: () => listClients(),
-    enabled: open,
+    enabled: open && clientsOn,
     staleTime: 5 * 60_000,
   });
   const templatesQuery = useQuery({
@@ -244,7 +257,9 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
     queryFn: () => listClientLocations(clientId),
     enabled: Boolean(clientId),
   });
-  const locations: LocationSummary[] | null = !clientId
+  const locations: LocationSummary[] | null = !clientsOn
+    ? orgSites
+    : !clientId
     ? null
     : locationsQuery.isError
       ? NO_LOCATIONS
@@ -267,14 +282,14 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
   // The client's position catalog feeds the Position field as typeahead
   // suggestions — free text still allowed for one-off titles.
   const positionsQuery = useQuery({
-    queryKey: ['scheduling', 'positions', clientId],
-    queryFn: () => listShiftPositions(clientId),
-    enabled: Boolean(clientId),
+    queryKey: ['scheduling', 'positions', clientsOn ? clientId : null],
+    queryFn: () => listShiftPositions(clientsOn ? clientId : undefined),
+    enabled: clientsOn ? Boolean(clientId) : open,
   });
   const positionNames = useMemo(
     () =>
-      clientId && positionsQuery.data ? positionsQuery.data.shiftPositions.map((sp) => sp.name) : [],
-    [clientId, positionsQuery.data],
+      (!clientsOn || clientId) && positionsQuery.data ? positionsQuery.data.shiftPositions.map((sp) => sp.name) : [],
+    [clientsOn, clientId, positionsQuery.data],
   );
 
   // Filter templates to global + client-specific for the chosen client.
@@ -305,8 +320,12 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
       toast.error('Name and email are required.');
       return;
     }
-    if (!clientId) {
+    if (clientsOn && !clientId) {
       toast.error('Pick a client.');
+      return;
+    }
+    if (!clientsOn && !locationId) {
+      toast.error(`Pick a ${term('site').toLowerCase()}.`);
       return;
     }
     if (!templateId) {
@@ -358,7 +377,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
         associateFirstName: firstName.trim(),
         associateLastName: lastName.trim(),
         associateEmail: email.trim(),
-        clientId,
+        ...(clientsOn ? { clientId } : {}),
         templateId,
         employmentType,
         position: position.trim() || undefined,
@@ -443,12 +462,12 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
           <DialogDescription>
             {hire
               ? `Invites them to onboarding and moves them to Hired. Filled in from their record${hire.offer ? ' and accepted offer' : ''} — check it and send.`
-              : 'Creates the application and sends a magic-link invite to the associate.'}
+              : `Creates the application and sends a magic-link invite to the ${workerLc}.`}
           </DialogDescription>
         </DialogHeader>
 
         {inviteLink ? (
-          <InviteLinkPanel inviteLink={inviteLink} onCopy={copyLink} />
+          <InviteLinkPanel inviteLink={inviteLink} onCopy={copyLink} workerLc={workerLc} />
         ) : (
           <div className="space-y-3">
             {hire ? (
@@ -499,7 +518,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
             <Field
               label="Hire as"
               required
-              hint="Associate is the default. Pick a management role to onboard a new manager via the same invite + checklist flow — they'll land in the correct sidebar on first login."
+              hint={`${term('worker')} is the default. Pick a management role to onboard a new manager via the same invite + checklist flow — they'll land in the correct sidebar on first login.`}
             >
               {(p) => (
                 <Select
@@ -517,13 +536,14 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
                 >
                   {HIREABLE_ROLES.map((r) => (
                     <option key={r} value={r}>
-                      {HIRE_ROLE_LABEL[r]}
+                      {r === 'ASSOCIATE' ? `${term('worker')} (default)` : HIRE_ROLE_LABEL[r]}
                     </option>
                   ))}
                 </Select>
               )}
             </Field>
 
+            {clientsOn && (
             <Field
               label="Client"
               required
@@ -570,20 +590,27 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
                 </>
               )}
             </Field>
+            )}
 
             <Field
-              label={locations && locations.length > 0 ? 'Location (required)' : 'Location'}
-              hint="Sets the associate's starting work site — scheduling and site rosters key off it. Can be changed later via the Transfer button on the profile."
+              label={!clientsOn ? `${term('site')} (required)` : locations && locations.length > 0 ? 'Location (required)' : 'Location'}
+              hint={`Sets the ${workerLc}'s starting work site — scheduling and site rosters key off it. Can be changed later via the Transfer button on the profile.`}
             >
               {(p) => (
                 <Select
                   value={locationId}
                   onChange={(e) => setLocationId(e.target.value)}
-                  disabled={!clientId || locations === null || locations.length === 0}
+                  disabled={(clientsOn && !clientId) || locations === null || locations.length === 0}
                   {...p}
                 >
                   <option value="">
-                    {!clientId
+                    {!clientsOn
+                      ? locations === null
+                        ? 'Loading…'
+                        : locations.length === 0
+                          ? `No ${term('sites').toLowerCase()} yet`
+                          : `Pick a ${term('site').toLowerCase()}…`
+                      : !clientId
                       ? 'Pick a client first'
                       : locations === null
                         ? 'Loading…'
@@ -604,27 +631,27 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
             <Field
               label="Onboarding template"
               required
-              hint="Global templates apply to any client; client-specific ones only show for that client."
+              hint={clientsOn ? 'Global templates apply to any client; client-specific ones only show for that client.' : undefined}
             >
               {(p) => (
                 <Select
                   value={templateId}
                   onChange={(e) => setTemplateId(e.target.value)}
-                  disabled={templates === null || !clientId}
+                  disabled={templates === null || (clientsOn && !clientId)}
                   {...p}
                 >
                   <option value="">
-                    {!clientId
+                    {clientsOn && !clientId
                       ? 'Pick a client first'
                       : templates === null
                         ? 'Loading…'
                         : visibleTemplates.length === 0
-                          ? 'No templates available for this client'
+                          ? clientsOn ? 'No templates available for this client' : 'No templates yet'
                           : 'Pick a template'}
                   </option>
                   {visibleTemplates.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name} · {TRACK_LABEL[t.track] ?? t.track}
+                      {t.name} · {trackLabel(t.track, clientsOn)}
                       {t.clientId === null ? ' (global)' : ''}
                     </option>
                   ))}
@@ -637,7 +664,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
                 label="Position"
                 hint={
                   positionNames.length > 0
-                    ? "Suggestions come from the client's position catalog."
+                    ? clientsOn ? "Suggestions come from the client's position catalog." : 'Suggestions come from the position catalog.'
                     : undefined
                 }
               >
@@ -761,15 +788,17 @@ function HireSummary({ candidate, offer }: { candidate: Candidate; offer: OfferR
 function InviteLinkPanel({
   inviteLink,
   onCopy,
+  workerLc,
 }: {
   inviteLink: string;
   onCopy: () => void;
+  workerLc: string;
 }) {
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-silver/30 bg-silver/[0.06] p-3 text-sm text-silver">
         Email delivery isn't configured. Copy this link and send it to the
-        associate yourself (Slack, manual email, etc.).
+        {workerLc} yourself (Slack, manual email, etc.).
       </div>
       <div className="rounded-md border border-navy-secondary bg-navy/60 p-3 break-all font-mono text-xs text-silver">
         {inviteLink}

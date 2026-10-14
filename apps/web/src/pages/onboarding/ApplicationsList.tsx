@@ -43,7 +43,7 @@ import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -84,6 +84,17 @@ const TRACK_LABEL: Record<string, string> = {
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
 };
+
+/** Brief 2-1b: a tenant without clients has no client-specific track to name. */
+function trackLabel(track: string, clientsOn: boolean): string {
+  if (!clientsOn && track === 'CLIENT_SPECIFIC') return 'Custom';
+  return TRACK_LABEL[track] ?? track;
+}
+
+/** Client and position, whichever are known — a direct employer's hire has no client. */
+function whereLine(a: { clientName: string | null; position: string | null }): string {
+  return [a.clientName, a.position].filter((x): x is string => !!x).join(' · ');
+}
 
 // Phase 145 — APPROVED and REJECTED roll up under "Archived" by default.
 // The chip row exposes the working set + a single click to drill into
@@ -263,6 +274,9 @@ function nudgeContentFor(a: ApplicationSummary): { subject: string; body: string
 
 export function ApplicationsList() {
   const { can } = useAuth();
+  // Brief 2-1b: with the client portal off there is no client to filter, list or name.
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const term = useTerm();
   const canManage = can('manage:onboarding');
   // Superset of canManage (every manage:onboarding role also holds
   // invite:onboarding). Gates the send-and-monitor surface — bulk invite,
@@ -445,6 +459,7 @@ export function ApplicationsList() {
   const clientsQuery = useQuery({
     queryKey: ['ApplicationsList', 'clients'],
     queryFn: () => listClients(),
+    enabled: clientsOn,
   });
   const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
 
@@ -486,7 +501,7 @@ export function ApplicationsList() {
       downloadCsv(`applications-${ymdLocal()}.csv`, [
         [
           'Name',
-          'Client',
+          ...(clientsOn ? ['Client'] : []),
           'Position',
           'Track',
           'Status',
@@ -497,9 +512,9 @@ export function ApplicationsList() {
         ],
         ...all.map((a) => [
           a.associateName,
-          a.clientName,
+          ...(clientsOn ? [a.clientName] : []),
           a.position ?? '',
-          TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack,
+          trackLabel(a.onboardingTrack, clientsOn),
           a.status,
           a.percentComplete,
           a.invitedAt.slice(0, 10),
@@ -900,7 +915,7 @@ export function ApplicationsList() {
               </button>
             )}
           </div>
-          {clients && clients.length > 1 && (
+          {clientsOn && clients && clients.length > 1 && (
             <Select
               size="sm"
               aria-label="Filter by client"
@@ -1013,7 +1028,7 @@ export function ApplicationsList() {
             urlQ || status !== 'ALL'
               ? 'Clear the filter to see all applications.'
               : canManage
-                ? 'Click "New application" to invite the first associate.'
+                ? `Click "New application" to invite the first ${term('worker').toLowerCase()}.`
                 : canInvite
                   ? 'Click "Bulk invite" to send the first onboarding invitation.'
                   : "When HR creates an onboarding application, it'll show up here with live checklist progress."
@@ -1209,8 +1224,8 @@ export function ApplicationsList() {
                   );
                 },
               },
-              { key: 'client', header: 'Client', accessor: (a) => a.clientName, sortable: true, cardMeta: true, className: 'text-silver' },
-              { key: 'track', header: 'Track', accessor: (a) => TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack, sortable: true, className: 'text-silver' },
+              ...(clientsOn ? [{ key: 'client', header: 'Client', accessor: (a: ApplicationSummary) => a.clientName, sortable: true, cardMeta: true, className: 'text-silver' }] : []),
+              { key: 'track', header: 'Track', accessor: (a) => trackLabel(a.onboardingTrack, clientsOn), sortable: true, className: 'text-silver' },
               {
                 key: 'invited',
                 header: 'Invited',
@@ -1430,8 +1445,7 @@ export function ApplicationsList() {
             <DrawerHeader>
               <DrawerTitle>{drawerTarget.associateName}</DrawerTitle>
               <DrawerDescription>
-                {drawerTarget.clientName}
-                {drawerTarget.position ? ` · ${drawerTarget.position}` : ''}
+                {whereLine(drawerTarget)}
               </DrawerDescription>
             </DrawerHeader>
             <DrawerBody>
@@ -1486,6 +1500,7 @@ function ApplicationCard({
   onReopen,
   reopening,
 }: ApplicationCardProps) {
+  const clientsOn = useTenant().moduleOn('clientPortal');
   const bounced = a.lastInviteDelivery?.status === 'FAILED';
   return (
     <div
@@ -1542,8 +1557,7 @@ function ApplicationCard({
             )}
           </div>
           <div className="text-xs text-silver mt-0.5 truncate">
-            {a.clientName}
-            {a.position ? ` · ${a.position}` : ''}
+            {whereLine(a)}
           </div>
         </div>
         <StatusBadge status={a.status} data-status={a.status} className="shrink-0" />
@@ -1569,7 +1583,7 @@ function ApplicationCard({
       </div>
 
       <div className="flex items-center justify-between text-2xs text-silver/80">
-        <span>{TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack} track</span>
+        <span>{trackLabel(a.onboardingTrack, clientsOn)} track</span>
         <span className="tabular-nums">
           Invited {daysSince(a.invitedAt, Date.now())}d ago
         </span>

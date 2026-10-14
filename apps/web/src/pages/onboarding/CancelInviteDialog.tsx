@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTenant, useTerm } from '@/lib/auth';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -64,6 +65,8 @@ export function CancelInviteDialog({
   /** `next`: send nothing more, the same person corrected, or someone else. */
   onCancelled: (result: CancelledInvite, next: AfterCancel) => void;
 }) {
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const term = useTerm();
   const [reason, setReason] = useState<CancelInviteReason>('SENT_IN_ERROR');
   const [note, setNote] = useState('');
   const [redo, setRedo] = useState(true);
@@ -125,7 +128,7 @@ export function CancelInviteDialog({
                 onChange={() => setReason(r)}
                 className="h-4 w-4 accent-gold"
               />
-              {CANCEL_REASON_LABEL[r]}
+              {r === 'WRONG_CLIENT' && !clientsOn ? `Wrong ${term('site').toLowerCase()}` : CANCEL_REASON_LABEL[r]}
             </label>
           ))}
         </fieldset>

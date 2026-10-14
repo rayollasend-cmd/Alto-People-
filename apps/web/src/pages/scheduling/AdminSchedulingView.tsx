@@ -48,7 +48,8 @@ import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { DraftsDialog } from './DraftsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
-import { listShiftPositions, listSites } from '@/lib/orgApi';
+import { listShiftPositions } from '@/lib/orgApi';
+import { useOrgSites } from '@/lib/useOrgSites';
 import {
   addShiftTeamMember,
   removeShiftTeamMember,
@@ -176,47 +177,6 @@ function useShiftPositionNames(clientId: string | null | undefined, orgWide = fa
     if (positions.isError) return [];
     return positions.data ? positions.data.shiftPositions.map((p) => p.name) : null;
   }, [clientId, orgWide, positions.data, positions.isError]);
-}
-
-/**
- * Brief 2-1b: the sites a tenant without clients schedules on. An org-wide
- * scheduler (view:org) reads the tenant's sites; a site-bound account has
- * only its own. null while loading; empty when there are none (or the
- * read failed). `enabled` false → null, and nothing is fetched.
- */
-function useOrgSites(enabled: boolean): LocationSummary[] | null {
-  const { user, can } = useAuth();
-  const orgWide = can('view:org');
-  const sites = useQuery({
-    queryKey: ['org', 'sites'],
-    queryFn: listSites,
-    enabled: enabled && orgWide,
-  });
-  return useMemo(() => {
-    if (!enabled) return null;
-    const summary = (s: { id: string; name: string; state: string | null; timezone: string | null; isActive: boolean }): LocationSummary => ({
-      id: s.id,
-      clientId: null,
-      name: s.name,
-      addressLine1: null,
-      addressLine2: null,
-      city: null,
-      state: s.state,
-      zip: null,
-      latitude: null,
-      longitude: null,
-      geofenceRadiusMeters: null,
-      isActive: s.isActive,
-      timezone: s.timezone ?? browserTimeZone(),
-    });
-    if (!orgWide) {
-      return user?.locationId
-        ? [summary({ id: user.locationId, name: user.locationName ?? 'My site', state: null, timezone: null, isActive: true })]
-        : NO_LOCATIONS;
-    }
-    if (sites.isError) return NO_LOCATIONS;
-    return sites.data ? sites.data.sites.filter((s) => s.isActive).map(summary) : null;
-  }, [enabled, orgWide, user?.locationId, user?.locationName, sites.data, sites.isError]);
 }
 
 // Shared position dropdown for the shift create/edit/template dialogs. Sources

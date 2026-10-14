@@ -203,6 +203,7 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       '/',
       '/people',
       `/people?associateId=${detail.associateId}&tab=employment`,
+      '/onboarding',
       '/scheduling',
       '/time-attendance',
       '/hr-cases',

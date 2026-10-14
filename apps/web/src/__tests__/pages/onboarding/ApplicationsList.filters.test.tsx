@@ -10,7 +10,12 @@ import type { ApplicationStatsResponse, ApplicationSummary } from '@alto-people/
 vi.mock('@/lib/auth', async () => {
   const React = await import('react');
   const auth = { user: { id: 'u1', role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' }, can: () => true };
-  return { AuthContext: React.createContext(auth), useAuth: () => auth };
+  const shared = await import('@alto-people/shared');
+  const alto = shared.defaultTenantProfile('WORKFORCE_PROVIDER');
+  const terms = shared.termsIn(alto, 'en');
+  const useTerm = () => (k: keyof typeof terms) => terms[k];
+  const useTenant = () => ({ id: '', ...alto, moduleOn: (m: keyof typeof alto.modules) => alto.modules[m] });
+  return { AuthContext: React.createContext(auth), useAuth: () => auth, useTerm, useTenant };
 });
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn(), usePrompt: () => vi.fn() }));
 vi.mock('@/lib/onboardingApi', async (importOriginal) => ({

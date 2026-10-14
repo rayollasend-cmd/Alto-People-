@@ -122,7 +122,7 @@ export function BulkApproveDialog({ open, onOpenChange, applications, onApproved
               {applications.map((a) => (
                 <div key={a.id} className="p-2 text-xs flex items-center gap-2">
                   <span className="text-white truncate">{a.associateName}</span>
-                  <span className="text-silver/70 truncate">· {a.clientName}</span>
+                  {a.clientName && <span className="text-silver/70 truncate">· {a.clientName}</span>}
                 </div>
               ))}
             </div>

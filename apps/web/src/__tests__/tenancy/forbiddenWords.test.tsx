@@ -101,6 +101,9 @@ import { DocumentsHome } from '@/pages/documents/DocumentsHome';
 import { ReimbursementsHome } from '@/pages/reimbursements/ReimbursementsHome';
 import { InternalJobsHome } from '@/pages/internalJobs/InternalJobsHome';
 import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
+import { ApplicationsList } from '@/pages/onboarding/ApplicationsList';
+import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
+import { BulkInviteDialog } from '@/pages/onboarding/BulkInviteDialog';
 
 /* ------------------------------------------------------------------ *
  *  A lenient empty value: every property is another empty, every call
@@ -130,7 +133,37 @@ const EMPTY: any = new Proxy(() => undefined, {
 });
 
 /** The dashboard's data, with counts above zero so every hint and tile renders. */
+/** A hotel's hire, mid-onboarding: no client, a property, a position. */
+const HOTEL_APPLICATION = {
+  id: '44444444-4444-4444-8444-444444444444',
+  associateName: 'Tess Member',
+  clientName: '',
+  onboardingTrack: 'STANDARD',
+  status: 'IN_REVIEW',
+  position: 'Housekeeper',
+  startDate: '2026-10-19',
+  invitedAt: '2026-10-10T14:00:00.000Z',
+  submittedAt: null,
+  percentComplete: 60,
+  lastInviteDelivery: null,
+  blockedOnTitle: 'Profile',
+  lastActivityAt: '2026-10-12T14:00:00.000Z',
+};
+
 const DASHBOARD_FIXTURES: Record<string, unknown> = {
+  '/onboarding/applications': { applications: [HOTEL_APPLICATION], total: 1, page: 1, pageSize: 50 },
+  '/onboarding/applications/stats': {
+    total: 1,
+    byStatus: { DRAFT: 0, SUBMITTED: 0, IN_REVIEW: 1, APPROVED: 0, REJECTED: 0 },
+    inFlight: 1,
+    stale: 0,
+    bounced: 0,
+    avgPercent: 60,
+    staleSamples: [],
+    bouncedSamples: [],
+  },
+  '/onboarding/templates': { templates: [{ id: '55555555-5555-4555-8555-555555555555', clientId: null, name: 'Hotel standard', track: 'STANDARD', tasks: [] }] },
+  '/admin/sites': { sites: [{ id: '11111111-1111-4111-8111-111111111111', name: 'The Grand Hotel', type: 'PROPERTY', timezone: 'America/Chicago', state: 'FL', isActive: true, clientId: null, clientName: null, orgUnitId: null, orgUnitName: null, orgUnitType: null }] },
   '/analytics/dashboard': {
     activeAssociates: 42,
     openShiftsNext30d: 7,
@@ -285,6 +318,9 @@ const SURFACES: Surface[] = [
   { name: 'Organizational tree', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
   { name: 'Sites', ui: () => <SitesAdmin />, route: '/admin/sites' },
   { name: 'Settings', ui: () => <Settings />, route: '/settings' },
+  { name: 'Onboarding list', ui: () => <ApplicationsList />, route: '/onboarding' },
+  { name: 'Invite dialog', ui: () => <NewApplicationDialog open onOpenChange={() => undefined} onCreated={() => undefined} />, route: '/onboarding' },
+  { name: 'Bulk invite dialog', ui: () => <BulkInviteDialog open onOpenChange={() => undefined} onCreated={() => undefined} />, route: '/onboarding' },
   // The team member's own screens (the hotel e2e walk's second browser).
   { name: 'Team member: my profile', ui: () => <MeHome />, route: '/me', role: 'ASSOCIATE' },
   { name: 'Team member: time', ui: () => <TimeHome />, route: '/time-attendance', role: 'ASSOCIATE' },

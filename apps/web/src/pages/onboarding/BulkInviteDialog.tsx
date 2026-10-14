@@ -11,7 +11,9 @@ import type {
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { bulkInvite, listClients, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
+import { bulkInvite, createApplication, listClients, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
+import { useTenant, useTerm } from '@/lib/auth';
+import { useOrgSites } from '@/lib/useOrgSites';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -38,6 +40,12 @@ const TRACK_LABEL: Record<string, string> = {
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
 };
+
+/** Brief 2-1b: a tenant without clients has no client-specific track to name. */
+function trackLabel(track: string, clientsOn: boolean): string {
+  if (!clientsOn && track === 'CLIENT_SPECIFIC') return 'Custom';
+  return TRACK_LABEL[track] ?? track;
+}
 
 interface ParsedRow {
   raw: string;
@@ -178,6 +186,10 @@ const NO_TEMPLATES: OnboardingTemplate[] = [];
  * after submit; HR can fix the source list and re-run on just the failed ones.
  */
 export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
+  // Brief 2-1b: with the client portal off there are no clients — the batch is placed by site.
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const term = useTerm();
+  const orgSites = useOrgSites(open && !clientsOn);
   // Last-used picks — shared key with NewApplicationDialog, so whichever
   // dialog HR invited from last seeds this one's defaults.
   const [lastUsed, setLastUsed] = usePersistentState<InviteLastUsed>(
@@ -215,7 +227,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const clientsQuery = useQuery({
     queryKey: ['BulkInviteDialog', 'clients'],
     queryFn: () => listClients(),
-    enabled: open,
+    enabled: open && clientsOn,
   });
   // Failure ≠ "no clients exist" — say so instead of rendering an
   // unsubmittable empty picker.
@@ -253,7 +265,9 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     enabled: open && clientId !== '',
   });
   const locations: LocationSummary[] | null =
-    !clientId || !open
+    !clientsOn
+      ? orgSites
+      : !clientId || !open
       ? null
       : locationsQuery.data?.locations ?? (locationsQuery.isError ? [] : null);
   // Every client change wipes the pick — declared before the seed below so
@@ -275,6 +289,11 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     // One possible answer — don't make them pick it.
     if (r.locations.length === 1) setLocationId(r.locations[0].id);
   }, [locationsQuery.data, clientId, open]);
+
+  // Brief 2-1b: one site is the only answer — don't make them pick it.
+  useEffect(() => {
+    if (!clientsOn && orgSites && orgSites.length === 1) setLocationId((cur) => cur || orgSites[0]!.id);
+  }, [clientsOn, orgSites]);
 
   const visibleTemplates = useMemo(() => {
     if (!templates) return [];
@@ -313,8 +332,12 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const invalidRows = parsed.filter((r) => r.error !== null);
 
   const submit = async () => {
-    if (!clientId) {
+    if (clientsOn && !clientId) {
       toast.error('Pick a client.');
+      return;
+    }
+    if (!clientsOn && !locationId) {
+      toast.error(`Pick a ${term('site').toLowerCase()}.`);
       return;
     }
     if (!templateId) {
@@ -347,13 +370,18 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
             : {}),
         };
       });
-      const res = await bulkInvite({
-        clientId,
-        templateId,
-        employmentType,
-        ...(locationId ? { locationId } : {}),
-        applicants,
-      });
+      // Brief 2-1b: the bulk route still requires a client, so a tenant
+      // without clients sends each row through the single invite, which
+      // takes a site alone, and reads the same result table back.
+      const res = clientsOn
+        ? await bulkInvite({
+            clientId,
+            templateId,
+            employmentType,
+            ...(locationId ? { locationId } : {}),
+            applicants,
+          })
+        : await inviteEachBySite(applicants, { templateId, employmentType, locationId });
       setResults(res.results);
       if (res.succeeded > 0) {
         onCreated();
@@ -394,7 +422,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         <DialogHeader>
           <DialogTitle>Bulk invite applicants</DialogTitle>
           <DialogDescription>
-            Paste a list of emails (one per line). Same client, template, and
+            Paste a list of emails (one per line). Same {clientsOn ? 'client' : term('site').toLowerCase()}, template, and
             employment type apply to every row; position and start date can be
             set per row or once for the whole batch.
           </DialogDescription>
@@ -405,6 +433,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
+              {clientsOn && (
               <Field label="Client" required>
                 {(p) => (
                   <>
@@ -441,16 +470,17 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                   </>
                 )}
               </Field>
+              )}
               <Field label="Template" required>
                 {(p) => (
                   <Select
                     value={templateId}
                     onChange={(e) => setTemplateId(e.target.value)}
-                    disabled={templates === null || !clientId}
+                    disabled={templates === null || (clientsOn && !clientId)}
                     {...p}
                   >
                     <option value="">
-                      {!clientId
+                      {clientsOn && !clientId
                         ? 'Pick client first'
                         : templates === null
                           ? 'Loading…'
@@ -460,7 +490,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                     </option>
                     {visibleTemplates.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name} · {TRACK_LABEL[t.track] ?? t.track}
+                        {t.name} · {trackLabel(t.track, clientsOn)}
                         {t.clientId === null ? ' (global)' : ''}
                       </option>
                     ))}
@@ -468,17 +498,23 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                 )}
               </Field>
               <Field
-                label={locations && locations.length > 0 ? 'Work site (required)' : 'Work site'}
+                label={!clientsOn ? `${term('site')} (required)` : locations && locations.length > 0 ? 'Work site (required)' : 'Work site'}
               >
                 {(p) => (
                   <Select
                     value={locationId}
                     onChange={(e) => setLocationId(e.target.value)}
-                    disabled={!clientId || locations === null || locations.length === 0}
+                    disabled={(clientsOn && !clientId) || locations === null || locations.length === 0}
                     {...p}
                   >
                     <option value="">
-                      {!clientId
+                      {!clientsOn
+                        ? locations === null
+                          ? 'Loading…'
+                          : locations.length === 0
+                            ? `No ${term('sites').toLowerCase()} yet`
+                            : `Pick a ${term('site').toLowerCase()}…`
+                        : !clientId
                         ? 'Pick client first'
                         : locations === null
                           ? 'Loading…'
@@ -616,7 +652,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
               <Button
                 onClick={submit}
                 loading={submitting}
-                disabled={validRows.length === 0 || !clientId || !templateId}
+                disabled={validRows.length === 0 || (clientsOn ? !clientId : !locationId) || !templateId}
               >
                 <Send className="h-4 w-4" />
                 Send {validRows.length} invite{validRows.length === 1 ? '' : 's'}
@@ -678,4 +714,43 @@ function BulkResultsPanel({ results }: { results: BulkInviteResultRow[] }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Brief 2-1b: a tenant without clients invites each pasted row through the
+ * single invite (site, no client) and reads the result back in the bulk
+ * route's shape, so the result table is the same.
+ */
+async function inviteEachBySite(
+  applicants: BulkInviteApplicant[],
+  batch: { templateId: string; employmentType: EmploymentType; locationId: string },
+): Promise<{ succeeded: number; failed: number; results: BulkInviteResultRow[] }> {
+  const results: BulkInviteResultRow[] = [];
+  for (const a of applicants) {
+    try {
+      const res = await createApplication({
+        associateFirstName: a.firstName,
+        associateLastName: a.lastName,
+        associateEmail: a.email,
+        templateId: batch.templateId,
+        employmentType: batch.employmentType,
+        locationId: batch.locationId,
+        ...(a.position ? { position: a.position } : {}),
+        ...(a.startDate ? { startDate: a.startDate } : {}),
+      });
+      results.push({ email: a.email, ok: true, applicationId: res.id, invitedUserId: res.invitedUserId, inviteUrl: res.inviteUrl, errorCode: null, errorMessage: null });
+    } catch (err) {
+      results.push({
+        email: a.email,
+        ok: false,
+        applicationId: null,
+        invitedUserId: null,
+        inviteUrl: null,
+        errorCode: err instanceof ApiError ? err.code : 'error',
+        errorMessage: err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Invite failed.',
+      });
+    }
+  }
+  const succeeded = results.filter((r) => r.ok).length;
+  return { succeeded, failed: results.length - succeeded, results };
 }

@@ -72,7 +72,7 @@ import {
 } from '@/pages/compliance/section2Verification';
 import { RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { statusTone } from '@/lib/status';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
@@ -118,6 +118,12 @@ const TRACK_LABEL: Record<string, string> = {
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
 };
+
+/** Brief 2-1b: a tenant without clients has no client-specific track to name. */
+function trackLabel(track: string, clientsOn: boolean): string {
+  if (!clientsOn && track === 'CLIENT_SPECIFIC') return 'Custom';
+  return TRACK_LABEL[track] ?? track;
+}
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
@@ -200,6 +206,8 @@ interface ApplicationDetailBodyProps {
  */
 export function ApplicationDetailBody({ applicationId, mode, onCancelled }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
+  const term = useTerm();
+  const workerLc = term('worker').toLowerCase();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -339,7 +347,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
     } catch (err) {
       if (err instanceof ApiError && err.code === 'user_already_active') {
         toast.message('Invite already accepted.', {
-          description: 'This associate has already set their password.',
+          description: `This ${workerLc} has already set their password.`,
         });
         return;
       }
@@ -383,7 +391,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         // A multi-store client with no store on the application: the
         // dialog asks for one. The one-click header approve lands here.
         setApproveOpen(true);
-        toast.message('Pick the store first.', { description: err.message });
+        toast.message(`Pick the ${term('site').toLowerCase()} first.`, { description: err.message });
         return;
       }
       const msg =
@@ -489,7 +497,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                   <Link
                     to={`/people?associateId=${detail.associateId}`}
                     className="hover:text-gold transition-colors"
-                    title="Open this associate's profile"
+                    title={`Open this ${workerLc}'s profile`}
                   >
                     {detail.associateName}
                   </Link>
@@ -778,12 +786,15 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
 }
 
 function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  // A direct employer's hire has no client: the line starts with what is known.
+  const lead = !!detail.clientName;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-silver text-sm">
-      <span className="text-white">{detail.clientName}</span>
+      {lead && <span className="text-white">{detail.clientName}</span>}
       {detail.position && (
         <>
-          <span className="text-silver/70">·</span>
+          {lead && <span className="text-silver/70">·</span>}
           <span>{detail.position}</span>
         </>
       )}
@@ -797,7 +808,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
         </>
       )}
       <Badge variant="outline" className="text-2xs">
-        {TRACK_LABEL[detail.onboardingTrack] ?? detail.onboardingTrack} track
+        {trackLabel(detail.onboardingTrack, clientsOn)} track
       </Badge>
       <Badge
         variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
@@ -848,6 +859,7 @@ function DetailActions({
   onDirectApprove: () => void;
   compact?: boolean;
 }) {
+  const term = useTerm();
   // Approve / Reject only shown while the application is still under review.
   // After APPROVED, REJECTED or CANCELLED the buttons disappear — the API
   // also rejects re-decisions with 409, but hiding them avoids a confusing
@@ -891,7 +903,7 @@ function DetailActions({
         <Button asChild variant="secondary" size="sm">
           <Link
             to={`/onboarding/in-person/${detail.id}`}
-            title="Onboard with the associate physically present — scan IDs from the laptop webcam"
+            title={`Onboard with the ${term('worker').toLowerCase()} physically present — scan IDs from the laptop webcam`}
           >
             <UserCheck className="h-4 w-4" />
             {compact ? 'In person' : 'Onboard in person'}
@@ -1029,6 +1041,8 @@ function ApproveDialog({
   locationId: string | null;
   onConfirm: (hireDate: string, acknowledgeWarnings: boolean, locationId?: string) => Promise<void>;
 }) {
+  const term = useTerm();
+  const clientsOn = useTenant().moduleOn('clientPortal');
   // LOCAL today — the UTC slice prefilled tomorrow's date as the official
   // hire date for anyone approving after ~5-8pm west of UTC, and the hire
   // date drives I-9/E-Verify deadlines downstream.
@@ -1075,7 +1089,7 @@ function ApproveDialog({
         <DialogHeader>
           <DialogTitle>Approve onboarding</DialogTitle>
           <DialogDescription>
-            This activates the associate's account and stamps their hire date.
+            This activates the {term('worker').toLowerCase()}'s account and stamps their hire date.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
@@ -1091,13 +1105,13 @@ function ApproveDialog({
           </Field>
           {needsStore && (
             <Field
-              label="Store"
+              label={term('site')}
               required
-              hint="The store's shift supervisors are told when the clock-in number is issued."
+              hint={clientsOn ? "The store's shift supervisors are told when the clock-in number is issued." : `The ${term('site').toLowerCase()}'s ${term('managers').toLowerCase()} are told when the clock-in number is issued.`}
             >
               {(p) => (
                 <Select value={storeId} onChange={(e) => setStoreId(e.target.value)} {...p}>
-                  <option value="">Pick a store…</option>
+                  <option value="">{`Pick a ${term('site').toLowerCase()}…`}</option>
                   {stores.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -2285,6 +2299,7 @@ function I9DocumentGrid({
   onTogglePick?: (id: string) => void;
   onReject?: (doc: I9DocumentListItem) => void;
 }) {
+  const term = useTerm();
   const [viewerAt, setViewerAt] = useState<number | null>(null);
   const pickMode = picked !== undefined && onTogglePick !== undefined;
   return (
@@ -2365,7 +2380,7 @@ function I9DocumentGrid({
                     onReject?.(d);
                   }}
                   className="mt-1 inline-flex items-center gap-1 text-2xs text-alert/80 transition-colors hover:text-alert"
-                  title="Reject this document — the associate is asked to re-upload"
+                  title={`Reject this document — the ${term('worker').toLowerCase()} is asked to re-upload`}
                 >
                   <XCircle className="h-3 w-3" aria-hidden />
                   Reject

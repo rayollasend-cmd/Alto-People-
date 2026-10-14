@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useTenant, useTerm } from '@/lib/auth';
 import { CheckCircle2, Download, FileUp, Upload, X as XIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -45,6 +46,10 @@ interface Props {
  * already exists are skipped, never duplicated.
  */
 export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
+  const term = useTerm();
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const workerLc = term('worker').toLowerCase();
+  const workersLc = term('workers').toLowerCase();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<CsvImportPreviewResponse | null>(null);
@@ -92,8 +97,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
       if (res.summary.skipped === 0) {
         toast.success(
           mode === 'invite'
-            ? `Invited ${res.summary.invited} associate${res.summary.invited === 1 ? '' : 's'}.`
-            : `Created ${res.summary.created} associate${res.summary.created === 1 ? '' : 's'}.`,
+            ? `Invited ${res.summary.invited} ${res.summary.invited === 1 ? workerLc : workersLc}.`
+            : `Created ${res.summary.created} ${res.summary.created === 1 ? workerLc : workersLc}.`,
         );
       } else if (done === 0) {
         toast.error(`All ${res.summary.skipped} rows were skipped.`, {
@@ -125,7 +130,7 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
     >
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Import associates from CSV</DialogTitle>
+          <DialogTitle>{`Import ${workersLc} from CSV`}</DialogTitle>
           <DialogDescription>
             Upload a .csv with columns firstName, lastName, email (required), plus
             optional phone, hireDate (YYYY-MM-DD), clientName or clientId, and
@@ -262,8 +267,8 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
                     <span>
                       <span className="font-medium">Create silently</span>
                       <span className="block text-xs text-silver/70">
-                        Adds associates and their applications only. No user accounts,
-                        no emails — for migrating an existing client&rsquo;s roster.
+                        {`Adds ${workersLc} and their applications only. No user accounts,`}
+                        {' '}no emails — for migrating an existing {clientsOn ? <>client&rsquo;s roster</> : 'roster'}.
                       </span>
                     </span>
                   </label>

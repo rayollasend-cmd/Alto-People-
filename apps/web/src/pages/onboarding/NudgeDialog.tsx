@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTerm } from '@/lib/auth';
 import { Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -52,6 +53,7 @@ export function NudgeDialog({
   suggestedSubject,
   suggestedBody,
 }: Props) {
+  const term = useTerm();
   const [subject, setSubject] = useState(suggestedSubject ?? DEFAULT_SUBJECT);
   const [body, setBody] = useState(suggestedBody ?? DEFAULT_BODY);
   const [submitting, setSubmitting] = useState(false);
@@ -127,7 +129,7 @@ export function NudgeDialog({
           <Field
             label="Body"
             required
-            hint="Plain text. Logged to the application audit and the associate's notification inbox."
+            hint={`Plain text. Logged to the application audit and the ${term('worker').toLowerCase()}'s notification inbox.`}
           >
             {(p) => (
               <Textarea
