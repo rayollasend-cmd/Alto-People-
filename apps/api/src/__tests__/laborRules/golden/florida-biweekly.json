@@ -1,0 +1,240 @@
+{
+  "engine": "aggregatePayrollProjection over splitWeeklyOvertime (pay engine as of 2026-10-13)",
+  "period": {
+    "periodStart": "2026-09-26T00:00:00.000Z",
+    "periodEndExclusive": "2026-10-10T00:00:00.000Z",
+    "defaultRate": 15
+  },
+  "items": {
+    "alabama-44": {
+      "hoursWorked": 44,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 40,
+      "overtimeHours": 4,
+      "earnings": [
+        {
+          "kind": "OVERTIME",
+          "hours": 4,
+          "rate": 22.5,
+          "amount": 90,
+          "note": null
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 40,
+          "rate": 15,
+          "amount": 600,
+          "note": null
+        }
+      ],
+      "grossPay": 690
+    },
+    "breaks-docked": {
+      "hoursWorked": 49.5,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 49.5,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": 49.5,
+          "rate": 15,
+          "amount": 742.5,
+          "note": null
+        }
+      ],
+      "grossPay": 742.5
+    },
+    "central-friday-night": {
+      "hoursWorked": 42,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 40,
+      "overtimeHours": 2,
+      "earnings": [
+        {
+          "kind": "OVERTIME",
+          "hours": 2,
+          "rate": 22.5,
+          "amount": 45,
+          "note": null
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 40,
+          "rate": 15,
+          "amount": 600,
+          "note": null
+        }
+      ],
+      "grossPay": 645
+    },
+    "client-premium": {
+      "hoursWorked": 46,
+      "hourlyRate": 18,
+      "rateSource": "COMP",
+      "regularHours": 46,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "DOUBLE_TIME",
+          "hours": 8,
+          "rate": 9,
+          "amount": 72,
+          "note": "Daily OT past 8h"
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 46,
+          "rate": 18,
+          "amount": 828,
+          "note": null
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 14,
+          "rate": 1.25,
+          "amount": 17.5,
+          "note": "Night differential 22:00-06:00"
+        }
+      ],
+      "grossPay": 917.5
+    },
+    "default-rate": {
+      "hoursWorked": 4,
+      "hourlyRate": 15,
+      "rateSource": "DEFAULT",
+      "regularHours": 4,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": 4,
+          "rate": 15,
+          "amount": 60,
+          "note": null
+        }
+      ],
+      "grossPay": 60
+    },
+    "only-approved-in-period": {
+      "hoursWorked": 2,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 2,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": 2,
+          "rate": 15,
+          "amount": 30,
+          "note": null
+        }
+      ],
+      "grossPay": 30
+    },
+    "ot-42-split-shift": {
+      "hoursWorked": 42,
+      "hourlyRate": 16,
+      "rateSource": "COMP",
+      "regularHours": 40,
+      "overtimeHours": 2,
+      "earnings": [
+        {
+          "kind": "OVERTIME",
+          "hours": 2,
+          "rate": 24,
+          "amount": 48,
+          "note": null
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 40,
+          "rate": 16,
+          "amount": 640,
+          "note": null
+        }
+      ],
+      "grossPay": 688
+    },
+    "overnight-friday": {
+      "hoursWorked": 72,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 64,
+      "overtimeHours": 8,
+      "earnings": [
+        {
+          "kind": "OVERTIME",
+          "hours": 8,
+          "rate": 22.5,
+          "amount": 180,
+          "note": null
+        },
+        {
+          "kind": "REGULAR",
+          "hours": 64,
+          "rate": 15,
+          "amount": 960,
+          "note": null
+        }
+      ],
+      "grossPay": 1140
+    },
+    "rate-change-mid-period": {
+      "hoursWorked": 16,
+      "hourlyRate": 16.5,
+      "rateSource": "COMP",
+      "regularHours": 16,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": 16,
+          "rate": 16.5,
+          "amount": 264,
+          "note": null
+        }
+      ],
+      "grossPay": 264
+    },
+    "salaried": {
+      "hoursWorked": 50,
+      "hourlyRate": 0,
+      "rateSource": "SALARY",
+      "regularHours": 0,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": null,
+          "rate": null,
+          "amount": 2000,
+          "note": null
+        }
+      ],
+      "grossPay": 2000
+    },
+    "straight-40": {
+      "hoursWorked": 40,
+      "hourlyRate": 15,
+      "rateSource": "COMP",
+      "regularHours": 40,
+      "overtimeHours": 0,
+      "earnings": [
+        {
+          "kind": "REGULAR",
+          "hours": 40,
+          "rate": 15,
+          "amount": 600,
+          "note": null
+        }
+      ],
+      "grossPay": 600
+    }
+  },
+  "totalGross": 7777
+}
