@@ -34,8 +34,12 @@ async function rowsOf(actorUserId: string, since: Date) {
 }
 
 async function oneRequest(actorUserId: string, send: () => Promise<{ status: number }>) {
+  // Domain audits are fire-and-forget: let the previous request's land before
+  // this window opens, and this request's land before it closes.
+  await flushPendingAudits();
   const since = new Date(Date.now() - 5);
   const res = await send();
+  await flushPendingAudits();
   const rows = await rowsOf(actorUserId, since);
   const floor = rows.filter((r) => r.action.startsWith('http.'));
   const domain = rows.filter((r) => !r.action.startsWith('http.'));

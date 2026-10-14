@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { createHmac } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { createClient, prisma, truncateAll } from '../../../test/db.js';
+import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import {
   MAX_DELIVERY_ATTEMPTS,
   deliverPendingDeliveries,
@@ -71,7 +72,7 @@ describe('emitWebhookEvent', () => {
     const subscribed = await createHook({ eventTypes: ['associate.hired'] });
     await createHook({ eventTypes: ['payroll.finalized'], name: 'Other' });
 
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
 
     const rows = await prisma.webhookDelivery.findMany();
     expect(rows).toHaveLength(1);
@@ -91,7 +92,7 @@ describe('emitWebhookEvent', () => {
 
   it('treats an empty eventTypes array as subscribed to everything', async () => {
     const catchAll = await createHook({ eventTypes: [] });
-    await emitWebhookEvent('time_off.approved', { requestId: 'r-1' });
+    await emitWebhookEvent('time_off.approved', { requestId: 'r-1' }, { tenantId: ALTO_TENANT_ID });
     const rows = await prisma.webhookDelivery.findMany();
     expect(rows).toHaveLength(1);
     expect(rows[0].webhookId).toBe(catchAll.id);
@@ -104,7 +105,7 @@ describe('emitWebhookEvent', () => {
       where: { id: deleted.id },
       data: { deletedAt: new Date() },
     });
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
     expect(await prisma.webhookDelivery.count()).toBe(0);
   });
 
@@ -118,7 +119,7 @@ describe('emitWebhookEvent', () => {
     await emitWebhookEvent(
       'payroll.finalized',
       { payrollRunId: 'run-1' },
-      { clientId: clientA.id },
+      { clientId: clientA.id, tenantId: ALTO_TENANT_ID },
     );
     const scoped = await prisma.webhookDelivery.findMany();
     expect(scoped.map((d) => d.webhookId).sort()).toEqual(
@@ -127,7 +128,7 @@ describe('emitWebhookEvent', () => {
 
     // No clientId on the emit → global hooks only.
     await prisma.webhookDelivery.deleteMany();
-    await emitWebhookEvent('payroll.finalized', { payrollRunId: 'run-2' });
+    await emitWebhookEvent('payroll.finalized', { payrollRunId: 'run-2' }, { tenantId: ALTO_TENANT_ID });
     const unscoped = await prisma.webhookDelivery.findMany();
     expect(unscoped.map((d) => d.webhookId)).toEqual([globalHook.id]);
   });
@@ -142,7 +143,7 @@ describe('emitWebhookEvent', () => {
       },
     } as unknown as PrismaClient;
     await expect(
-      emitWebhookEvent('associate.hired', {}, { prisma: broken }),
+      emitWebhookEvent('associate.hired', {}, { prisma: broken, tenantId: ALTO_TENANT_ID }),
     ).resolves.toBeUndefined();
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
@@ -152,7 +153,7 @@ describe('emitWebhookEvent', () => {
 describe('deliverPendingDeliveries', () => {
   it('POSTs the stored payload with the HMAC signature and marks DELIVERED', async () => {
     const hook = await createHook();
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
     const { calls } = stubFetch(200);
 
     const result = await deliverPendingDeliveries(prisma);
@@ -186,7 +187,7 @@ describe('deliverPendingDeliveries', () => {
 
   it('schedules exponential backoff on failure and respects nextAttemptAt', async () => {
     await createHook();
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
     stubFetch(500, 'boom');
 
     const t0 = new Date();
@@ -242,7 +243,7 @@ describe('deliverPendingDeliveries', () => {
 
   it('refuses private destinations without attempting the fetch (SSRF guard)', async () => {
     await createHook({ url: 'https://10.0.0.5/internal' });
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
     const { mock } = stubFetch(200);
 
     const result = await deliverPendingDeliveries(prisma);
@@ -258,7 +259,7 @@ describe('deliverPendingDeliveries', () => {
 
   it('fails out rows whose webhook was deactivated after enqueue', async () => {
     const hook = await createHook();
-    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
     await prisma.webhook.update({
       where: { id: hook.id },
       data: { isActive: false },
@@ -287,5 +288,17 @@ describe('deliverPendingDeliveries', () => {
     stubFetch(200);
     const result = await deliverPendingDeliveries(prisma);
     expect(result).toMatchObject({ claimed: 1, delivered: 1 });
+  });
+});
+
+describe('emitWebhookEvent and tenancy (Brief 2-1)', () => {
+  it('an event with no tenant in context reaches no webhook (fail closed); one with a tenant reaches only that tenant\'s', async () => {
+    await createHook({ name: 'Alto global' });
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' });
+    expect(await prisma.webhookDelivery.count()).toBe(0);
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: '22222222-2222-4222-8222-222222222222' });
+    expect(await prisma.webhookDelivery.count()).toBe(0);
+    await emitWebhookEvent('associate.hired', { associateId: 'a-1' }, { tenantId: ALTO_TENANT_ID });
+    expect(await prisma.webhookDelivery.count()).toBe(1);
   });
 });
