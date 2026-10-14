@@ -7,6 +7,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -374,7 +375,7 @@ compensationRouter.get(
   '/cycles/:id/proposals',
   requireCapability('view:comp'),
   async (req, res) => {
-    await assertSameTenant('meritCycle', String(req.params.id));
+    await assertInTenant('meritCycle', String(req.params.id), 'Cycle not found.');
     const cycleId = req.params.id;
     const rows = await prisma.meritProposal.findMany({
       take: 500,

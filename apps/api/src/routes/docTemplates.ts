@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 import {
   ASSOCIATE_CTX_SELECT,
   fileOfferLetterPdf,
@@ -134,7 +135,7 @@ docTemplatesRouter.get(
   VIEW,
   async (req, res) => {
     const templateId = req.params.id;
-    await assertTemplateNotAnotherTenants(templateId);
+    await assertInTenant('documentTemplate', templateId, 'Template not found.');
     const rows = await prisma.documentTemplateVersion.findMany({
       take: 500,
       where: { templateId },
@@ -472,7 +473,7 @@ docTemplatesRouter.get(
   VIEW,
   async (req, res) => {
     const templateId = req.params.id;
-    await assertTemplateNotAnotherTenants(templateId);
+    await assertInTenant('documentTemplate', templateId, 'Template not found.');
     const rows = await prisma.documentRender.findMany({
       where: { templateId },
       include: {

@@ -2,10 +2,10 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 114 — Learning paths.
@@ -302,8 +302,7 @@ learningPaths114Router.get(
   '/learning-paths/:id/enrollments',
   VIEW,
   async (req, res) => {
-    const othersRow = await prisma.learningPath.findFirst({ where: { id: req.params.id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
-    if (othersRow) throw new HttpError(404, 'not_found', 'Learning path not found.');
+    await assertInTenant('learningPath', req.params.id, 'Learning path not found.');
     const enrollments = await prisma.learningPathEnrollment.findMany({
       take: 500,
       where: { pathId: req.params.id, status: { not: 'WITHDRAWN' } },

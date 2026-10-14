@@ -55,6 +55,7 @@ import { renderGarnishmentLetterPdf } from '../lib/garnishmentLetter.js';
 import { renderTaxFormSummaryPdf } from '../lib/taxFormSummaryPdf.js';
 import { send } from '../lib/notifications.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -253,7 +254,7 @@ payrollTax91Router.post('/garnishments/:id/deduct', MANAGE, async (req, res) => 
 });
 
 payrollTax91Router.get('/garnishments/:id/deductions', VIEW, async (req, res) => {
-  await assertSameTenant('garnishment', String(req.params.id));
+  await assertInTenant('garnishment', String(req.params.id), 'Garnishment not found.');
   const rows = await prisma.garnishmentDeduction.findMany({
     where: { garnishmentId: req.params.id },
     orderBy: { deductedOn: 'desc' },

@@ -6,6 +6,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 94 — Learning Management System (LMS).
@@ -114,8 +115,7 @@ lms94Router.delete('/courses/:id', MANAGE, async (req, res) => {
 // ----- Modules ----------------------------------------------------------
 
 lms94Router.get('/courses/:id/modules', VIEW, async (req, res) => {
-  const othersRow = await prisma.course.findFirst({ where: { id: req.params.id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
-  if (othersRow) throw new HttpError(404, 'not_found', 'Course not found.');
+  await assertInTenant('course', req.params.id, 'Course not found.');
   const rows = await prisma.courseModule.findMany({
     take: 500,
     where: { courseId: req.params.id },

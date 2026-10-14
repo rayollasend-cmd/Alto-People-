@@ -7,6 +7,7 @@ import { atClient } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyUser } from '../lib/notify.js';
+import { assertInTenant } from '../lib/sameTenant.js';
 
 /**
  * Phase 87 — Directory + broadcast + surveys.
@@ -295,8 +296,7 @@ directoryAndCommsRouter.post(
   async (req, res) => {
     if (!req.user) throw new HttpError(401, 'unauthenticated', 'Sign in required.');
     const id = req.params.id;
-    const othersBroadcast = await prisma.broadcast.findFirst({ where: { id, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
-    if (othersBroadcast) throw new HttpError(404, 'not_found', 'Broadcast not found.');
+    await assertInTenant('broadcast', id, 'Broadcast not found.');
     await prisma.broadcastReceipt.updateMany({
       where: { broadcastId: id, userId: req.user.id, readAt: null },
       data: { readAt: new Date() },
@@ -378,8 +378,7 @@ directoryAndCommsRouter.get(
   MANAGE_COMMS,
   async (req, res) => {
     const surveyId = req.params.id;
-    const othersRow = await prisma.survey.findFirst({ where: { id: surveyId, NOT: { tenantId: tenantIdForWrite() } }, select: { id: true } });
-    if (othersRow) throw new HttpError(404, 'not_found', 'Survey not found.');
+    await assertInTenant('survey', surveyId, 'Survey not found.');
     const rows = await prisma.surveyQuestion.findMany({
       take: 500,
       where: { surveyId },
