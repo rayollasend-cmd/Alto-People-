@@ -27,6 +27,13 @@ import { notifyUser } from './notify.js';
 import { fanOutMessage, syncStoreChannel } from './messaging.js';
 import { createWorker, getWorker, listWorkers, updateWorker } from './workers.js';
 import { allAgentsSuspended, certification, controlState, onModelVersionChanged, scorecard } from './agentControls.js';
+import { syncProposalWithApproval, tenantAgentsSuspended, tenantControlState } from './agentCapabilities.js';
+import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
+
+/** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
+function registryTenant(tenantId?: string | null): string {
+  return tenantId ?? currentTenantId() ?? ALTO_TENANT_ID;
+}
 
 /**
  * The agent registry (Brief 1D-2).
@@ -182,9 +189,9 @@ export const BUILT_IN_AGENTS = [
 export type BuiltInAgentKey = (typeof BUILT_IN_AGENTS)[number]['key'];
 
 /** The oldest active account that can manage the org — who owns a built-in agent until someone claims it. */
-export async function defaultOrgOwner(db: Db): Promise<string | null> {
+export async function defaultOrgOwner(db: Db, tenantId?: string | null): Promise<string | null> {
   const admin = await db.user.findFirst({
-    where: { status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } },
+    where: { status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') }, ...(tenantId ? { tenantId } : {}) },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
@@ -196,20 +203,23 @@ export async function defaultOrgOwner(db: Db): Promise<string | null> {
  * worker without a profile one, so "every agent appears in the registry"
  * holds whichever way a worker was created. Runs at boot and from the page.
  */
-export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ created: string[]; missing: string[]; profiled: number }> {
-  const existing = await db.agentProfile.findMany({ where: { builtInKey: { not: null } }, select: { builtInKey: true } });
+export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: string | null): Promise<{ created: string[]; missing: string[]; profiled: number }> {
+  // Agent families step 0 (owner's decision 5): built-ins are per tenant, owned by that tenant's oldest admin.
+  const tenantId = registryTenant(tenantIdArg);
+  const existing = await db.agentProfile.findMany({ where: { builtInKey: { not: null }, tenantId }, select: { builtInKey: true } });
   const have = new Set(existing.map((e) => e.builtInKey));
   const created: string[] = [];
   const missing: string[] = [];
   for (const b of BUILT_IN_AGENTS) {
     if (have.has(b.key)) continue;
-    const owner = await defaultOrgOwner(db);
+    const owner = await defaultOrgOwner(db, tenantId);
     if (!owner) {
       missing.push(b.key);
       continue;
     }
     await db.worker.create({
       data: {
+        tenantId,
         type: 'AGENT',
         name: b.name,
         ownerUserId: owner,
@@ -218,6 +228,7 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ cre
         notes: 'Registered by the boot sweep (Brief 1D-2). Owner defaulted to the first org admin; confirm.',
         agent: {
           create: {
+            tenantId,
             purpose: b.purpose,
             vendor: b.vendor,
             model: b.model,
@@ -235,10 +246,10 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ cre
     });
     created.push(b.key);
   }
-  const bare = await db.worker.findMany({ where: { type: 'AGENT', agent: null }, select: { id: true } });
+  const bare = await db.worker.findMany({ where: { type: 'AGENT', agent: null, tenantId }, select: { id: true } });
   for (const w of bare) {
     await db.agentProfile.create({
-      data: { workerId: w.id, purpose: 'Registered through Workers; complete the profile.', vendor: 'unknown', model: 'unknown', modelVersion: 'unknown', scopes: [] },
+      data: { workerId: w.id, tenantId, purpose: 'Registered through Workers; complete the profile.', vendor: 'unknown', model: 'unknown', modelVersion: 'unknown', scopes: [] },
     });
   }
   return { created, missing, profiled: bare.length };
@@ -246,13 +257,15 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma): Promise<{ cre
 
 const builtInIds = new Map<string, string>();
 
-export async function builtInAgentId(db: Db, key: BuiltInAgentKey): Promise<string | null> {
+export async function builtInAgentId(db: Db, key: BuiltInAgentKey, tenantIdArg?: string | null): Promise<string | null> {
+  const tenantId = registryTenant(tenantIdArg);
+  const cacheKey = tenantId + ':' + key;
   if (process.env.NODE_ENV !== 'test') {
-    const hit = builtInIds.get(key);
+    const hit = builtInIds.get(cacheKey);
     if (hit) return hit;
   }
-  const p = await db.agentProfile.findUnique({ where: { builtInKey: key }, select: { workerId: true } });
-  if (p && process.env.NODE_ENV !== 'test') builtInIds.set(key, p.workerId);
+  const p = await db.agentProfile.findFirst({ where: { builtInKey: key, tenantId }, select: { workerId: true } });
+  if (p && process.env.NODE_ENV !== 'test') builtInIds.set(cacheKey, p.workerId);
   return p?.workerId ?? null;
 }
 
@@ -329,13 +342,22 @@ async function decorate(db: Db, workers: WorkerSummary[], profiles: ProfileRow[]
   return out;
 }
 
-export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = new Date()): Promise<AgentRegistryResponse> {
-  const { workers, counts } = await listWorkers(db, { type: 'AGENT' }, now);
-  const profiles = await db.agentProfile.findMany({ where: { workerId: { in: workers.map((w) => w.id) } } });
+export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = new Date(), tenantIdArg?: string | null): Promise<AgentRegistryResponse> {
+  // Agent families step 0: the registry is the caller's tenant's (the 2-6 investigation found it read every tenant).
+  const tenantId = registryTenant(tenantIdArg);
+  const { workers, counts } = await listWorkers(db, { type: 'AGENT', tenantId }, now);
+  const profiles = await db.agentProfile.findMany({ where: { workerId: { in: workers.map((w) => w.id) }, tenantId } });
   const agents = await decorate(db, workers, profiles, now);
-  const pendingApprovals = await db.agentApprovalRequest.count({ where: { status: 'PENDING' } });
+  const pendingApprovals = await db.agentApprovalRequest.count({ where: { status: 'PENDING', agent: { tenantId } } });
   const builtInMissing = BUILT_IN_AGENTS.filter((b) => !profiles.some((p) => p.builtInKey === b.key)).map((b) => b.key);
-  return { agents, counts: counts.AGENT, pendingApprovals, builtInMissing, control: await controlState(db) };
+  return { agents, counts: counts.AGENT, pendingApprovals, builtInMissing, control: await tenantControlState(db, tenantId), platformControl: await controlState(db) };
+}
+
+/** The agent, if it is this tenant's; 404 otherwise (cross-tenant suite). */
+export async function assertTenantAgent(db: Db, workerId: string, tenantIdArg?: string | null): Promise<void> {
+  const tenantId = registryTenant(tenantIdArg);
+  const w = await db.worker.findFirst({ where: { id: workerId, type: 'AGENT', tenantId }, select: { id: true } });
+  if (!w) throw new HttpError(404, 'agent_not_found', 'No such agent.');
 }
 
 function personName(u: { id: string; email: string; associate: { firstName: string; lastName: string } | null } | null): { id: string; name: string } | null {
@@ -542,6 +564,10 @@ export async function authenticateAgent(db: Db, presented: string, now: Date = n
   if (c.expiresAt <= now) return denial(401, 'credential_expired', 'This credential expired; ask the owner for a new one.', workerId, c.id);
   // Brief 1D-3: the global switch is read on every call, so it bites at once.
   if (await allAgentsSuspended(db)) return denial(403, 'agents_suspended', 'All agents are suspended.', workerId, c.id);
+  // Agent families step 0: the agent's organization has its own switch; either one stops it.
+  if (await tenantAgentsSuspended(db, c.agent.tenantId ?? ALTO_TENANT_ID)) {
+    return denial(403, 'agents_suspended', 'All of this organization’s agents are suspended.', workerId, c.id);
+  }
   const w = c.agent.worker;
   const allowed = w.status === 'ACTIVE' || (opts.allowOnboarding === true && w.status === 'ONBOARDING');
   if (!allowed) return denial(403, 'agent_not_active', `This agent is ${w.status.toLowerCase()}; its owner can restore it.`, workerId, c.id);
@@ -628,9 +654,9 @@ export async function createApprovalRequest(
   return { approval: approvalSummary(row), created: true };
 }
 
-export async function listApprovals(db: Db, f: { status?: AgentApprovalSummary['status']; workerId?: string } = {}, limit = 200): Promise<AgentApprovalSummary[]> {
+export async function listApprovals(db: Db, f: { status?: AgentApprovalSummary['status']; workerId?: string; tenantId?: string | null } = {}, limit = 200): Promise<AgentApprovalSummary[]> {
   const rows = await db.agentApprovalRequest.findMany({
-    where: { ...(f.status ? { status: f.status } : {}), ...(f.workerId ? { workerId: f.workerId } : {}) },
+    where: { agent: { tenantId: registryTenant(f.tenantId) }, ...(f.status ? { status: f.status } : {}), ...(f.workerId ? { workerId: f.workerId } : {}) },
     orderBy: { requestedAt: 'desc' },
     take: limit,
     include: APPROVAL_INCLUDE,
@@ -638,15 +664,15 @@ export async function listApprovals(db: Db, f: { status?: AgentApprovalSummary['
   return rows.map(approvalSummary);
 }
 
-export async function getApproval(db: Db, id: string): Promise<AgentApprovalSummary> {
-  const row = await db.agentApprovalRequest.findUnique({ where: { id }, include: APPROVAL_INCLUDE });
+export async function getApproval(db: Db, id: string, tenantIdArg?: string | null): Promise<AgentApprovalSummary> {
+  const row = await db.agentApprovalRequest.findFirst({ where: { id, agent: { tenantId: registryTenant(tenantIdArg) } }, include: APPROVAL_INCLUDE });
   if (!row) throw new HttpError(404, 'approval_not_found', 'No such request.');
   return approvalSummary(row);
 }
 
 /** A person decides. Logged with who, what and the note. */
-export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 'REJECTED', userId: string, note: string | null, now: Date = new Date()): Promise<AgentApprovalSummary> {
-  const row = await db.agentApprovalRequest.findUnique({ where: { id }, select: { status: true, expiresAt: true, workerId: true, action: true } });
+export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 'REJECTED', userId: string, note: string | null, now: Date = new Date(), tenantIdArg?: string | null): Promise<AgentApprovalSummary> {
+  const row = await db.agentApprovalRequest.findFirst({ where: { id, agent: { tenantId: registryTenant(tenantIdArg) } }, select: { status: true, expiresAt: true, workerId: true, action: true } });
   if (!row) throw new HttpError(404, 'approval_not_found', 'No such request.');
   if (row.status !== 'PENDING') throw new HttpError(409, 'approval_decided', `This request is already ${row.status.toLowerCase()}.`);
   if (row.expiresAt <= now) throw new HttpError(409, 'approval_expired', 'This request expired before it was decided.');
@@ -655,7 +681,14 @@ export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 
     { actorUserId: userId, clientId: null, workerId: row.workerId, action: decision === 'APPROVED' ? 'agent.approval.approved' : 'agent.approval.rejected', entityType: 'AgentApprovalRequest', entityId: id, metadata: { gated: row.action, note } },
     'agents',
   );
+  await syncProposalWithApproval(db, id, decision, now);
   return approvalSummary(updated);
+}
+
+/** The approval's action, for deciding who may decide it (the desk for SHIFT_ASSIGN and CASE_OPEN). */
+export async function approvalAction(db: Db, id: string, tenantIdArg?: string | null): Promise<AgentGatedAction | null> {
+  const row = await db.agentApprovalRequest.findFirst({ where: { id, agent: { tenantId: registryTenant(tenantIdArg) } }, select: { action: true } });
+  return row?.action ?? null;
 }
 
 /**
@@ -672,11 +705,17 @@ export async function claimApproval(db: Db, agent: AgentContext, approvalId: str
   if (row.status === 'EXPIRED' || row.expiresAt <= now) throw new HttpError(409, 'approval_expired', 'This approval expired.');
   if (row.action !== action || row.payloadHash !== payloadHash(action, payload)) throw new HttpError(409, 'approval_mismatch', 'This is not what was approved.');
   const updated = await db.agentApprovalRequest.update({ where: { id: approvalId }, data: { status: 'CONSUMED', consumedAt: now }, include: APPROVAL_INCLUDE });
+  await syncProposalWithApproval(db, approvalId, 'EXECUTED', now);
   return approvalSummary(updated);
 }
 
 export async function expireApprovals(db: Db = defaultPrisma, now: Date = new Date()): Promise<number> {
-  const r = await db.agentApprovalRequest.updateMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
+  const due = await db.agentApprovalRequest.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, select: { id: true } });
+  if (!due.length) return 0;
+  const ids = due.map((d) => d.id);
+  const r = await db.agentApprovalRequest.updateMany({ where: { id: { in: ids }, status: 'PENDING' }, data: { status: 'EXPIRED' } });
+  // The proposals waiting on them expire with them.
+  await db.agentProposal.updateMany({ where: { approvalId: { in: ids }, status: 'PROPOSED' }, data: { status: 'EXPIRED', statusAt: now } });
   return r.count;
 }
 

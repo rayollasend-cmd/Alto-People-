@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { AGENT_EXECUTABLE_ACTIONS, AgentMessageInputSchema, AgentRequestInputSchema, AgentScenarioAnswerSchema, AgentSpendInputSchema, type AgentSelf } from '@alto-people/shared';
+import { AGENT_EXECUTABLE_ACTIONS, AgentMessageInputSchema, AgentProposalInputSchema, AgentRequestInputSchema, AgentScenarioAnswerSchema, AgentSpendInputSchema, type AgentSelf } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { recordAgentCalls, requireAgent, requireOnboardingAgent } from '../middleware/agentAuth.js';
 import { claimApproval, createApprovalRequest, getApproval, monthSpendCents, postAgentMessage, recordSpend, rotateCredential, scheduleCsv } from '../lib/agents.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
 import { recordScenarioAnswer } from '../lib/agentControls.js';
+import { createProposal } from '../lib/agentCapabilities.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
@@ -21,6 +22,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
  *   POST /agent/v1/messages                    manage:communications — a thread that reaches a client is gated
  *   GET  /agent/v1/exports/schedule.csv        gated (DATA_EXPORT): names leave the system
  *   POST /agent/v1/requests                    ask for any gated action; PAY_CHANGE and SEPARATION are only ever asked
+ *   POST /agent/v1/proposals                   a capability puts something forward (agent families step 0); a gated one waits for a person
  *   GET  /agent/v1/requests/:id                where it stands
  *   GET  /agent/v1/certification               the scenarios to answer (inputs only) — open to an onboarding agent
  *   POST /agent/v1/certification/:scenarioId   the answer; pass or fail is recorded under the current model version
@@ -184,6 +186,25 @@ agentApiRouter.post('/requests', requireAgent(), async (req, res, next) => {
       executable: AGENT_EXECUTABLE_ACTIONS.includes(input.action),
       message: AGENT_EXECUTABLE_ACTIONS.includes(input.action) ? 'Waiting for a person. Carry it out with the approvalId once approved.' : 'Waiting for a person, who carries it out in the app if they approve. Nothing happens until then.',
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Agent families step 0: a capability puts something forward. Refused when
+ * the capability is not offered here (a module is off), not held, suspended,
+ * or needs a scope the agent lacks. A gated one files an approval request
+ * and waits; nothing happens until a person approves.
+ */
+agentApiRouter.post('/proposals', requireAgent(), async (req, res, next) => {
+  try {
+    const input = AgentProposalInputSchema.parse(req.body);
+    const r = await createProposal(prisma, req.agent!, input);
+    res.locals.agentAction = 'agent.proposal.filed';
+    res.locals.agentTarget = { type: 'AgentProposal', id: r.proposal.id };
+    res.locals.agentApprovalId = r.approvalId;
+    res.status(r.approvalId ? 202 : 201).json({ proposal: r.proposal, approvalId: r.approvalId, created: r.created });
   } catch (err) {
     next(err);
   }

@@ -189,15 +189,17 @@ async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSu
   }));
 }
 
-export async function listWorkers(db: PrismaClient = defaultPrisma, f: { type?: WorkerType; status?: WorkerStatus } = {}, now: Date = new Date()): Promise<WorkersResponse> {
+export async function listWorkers(db: PrismaClient = defaultPrisma, f: { type?: WorkerType; status?: WorkerStatus; tenantId?: string } = {}, now: Date = new Date()): Promise<WorkersResponse> {
+  // Agent families step 0: an optional tenant (the agent registry passes the caller's); without one, as before.
+  const tenantWhere = f.tenantId ? { tenantId: f.tenantId } : {};
   const rows = await db.worker.findMany({
-    where: { ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}) },
+    where: { ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}), ...tenantWhere },
     include: WORKER_INCLUDE,
     orderBy: [{ type: 'asc' }, { name: 'asc' }],
     take: 5000,
   });
   const all = await summarize(db, rows, now);
-  const grouped = await db.worker.groupBy({ by: ['type', 'status'], _count: { _all: true } });
+  const grouped = await db.worker.groupBy({ by: ['type', 'status'], where: tenantWhere, _count: { _all: true } });
   const counts = {} as WorkersResponse['counts'];
   for (const t of Object.keys(WORKER_TYPE_LABELS) as WorkerType[]) {
     counts[t] = {} as Record<WorkerStatus, number>;
@@ -207,7 +209,7 @@ export async function listWorkers(db: PrismaClient = defaultPrisma, f: { type?: 
   // The schema forbids a null owner; a deleted owner account would be the
   // only way to lose one, and Restrict forbids that too. Still asked.
   const withoutOwner = all.filter((w) => !w.owner);
-  const associatesWithoutWorker = await db.associate.count({ where: { deletedAt: null, worker: null } });
+  const associatesWithoutWorker = await db.associate.count({ where: { deletedAt: null, worker: null, ...tenantWhere } });
   return { workers: all, counts, withoutOwner, associatesWithoutWorker };
 }
 

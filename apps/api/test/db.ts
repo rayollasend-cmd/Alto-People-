@@ -46,6 +46,9 @@ const TABLES = [
   'Worker',
   // Brief 1D-3: the global agent switch has no foreign key, so no CASCADE reaches it.
   'AgentControl',
+  // Agent families step 0: nor does the tenant's switch. (AgentCapability and
+  // AgentProposal cascade from AgentProfile through Worker.)
+  'AgentTenantControl',
   'ReleaseNote',
   'TeamDelegation',
   'ReadyToWorkHandoff',

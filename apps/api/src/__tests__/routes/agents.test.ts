@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { authenticateAgent, ensureBuiltInAgents, resetAgentRateLimits, ROTATION_GRACE_MS } from '../../lib/agents.js';
+import { authenticateAgent, claimApproval, ensureBuiltInAgents, expireApprovals, resetAgentRateLimits, ROTATION_GRACE_MS } from '../../lib/agents.js';
+import { grantCapability } from '../../lib/agentCapabilities.js';
+import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { flushPendingAudits } from '../../lib/audit.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
@@ -398,5 +400,133 @@ describe('the trail', () => {
     const rows = await prisma.auditLog.findMany({ where: { workerId: id! } });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.metadata).toMatchObject({ builtIn: 'whatsapp-assistant', intent: 'PAYDAY' });
+  });
+});
+
+describe('capability proposals wait for a person (agent families step 0)', () => {
+  const FAMILY_SCOPES = ['view:scheduling', 'view:org', 'manage:scheduling', 'view:compliance', 'open:hr-case'];
+
+  async function familyAgent(w: Awaited<ReturnType<typeof world>>) {
+    const a = await registerAgent(w.admin, w.hr.id, { name: 'Workforce agent', scopes: FAMILY_SCOPES });
+    await grantCapability(prisma, a.id, 'shift.fill', ALTO_TENANT_ID);
+    await grantCapability(prisma, a.id, 'incident.loop', ALTO_TENANT_ID);
+    const cred = await issue(w.admin, a.id);
+    const auth = await authenticateAgent(prisma, cred.plaintext);
+    if (!auth.ok) throw new Error(`agent did not authenticate: ${auth.code}`);
+    return { id: a.id, cred, ctx: auth.agent, api: () => agent().set(bearer(cred.plaintext)) };
+  }
+
+  async function shiftAt(clientId: string) {
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId } });
+    const startsAt = new Date(Date.now() + 2 * 24 * HOUR);
+    return prisma.shift.create({ data: { clientId, locationId: site.id, position: 'Housekeeper', startsAt, endsAt: new Date(startsAt.getTime() + 8 * HOUR), status: 'OPEN', publishedAt: new Date() } });
+  }
+
+  it('SHIFT_ASSIGN: proposed, pending, approved by a person, carried out exactly once; the proposal follows the approval', async () => {
+    const w = await world();
+    const fa = await familyAgent(w);
+    const shift = await shiftAt(w.client.id);
+    const tess = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a';
+    const ask = { capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, summary: 'Assign Tess to the Saturday housekeeping shift', payload: { associateId: tess } };
+
+    const filed = await fa.api().post('/agent/v1/proposals').send(ask);
+    expect(filed.status, JSON.stringify(filed.body)).toBe(202);
+    expect(filed.body.proposal).toMatchObject({ capabilityKey: 'shift.fill', status: 'PROPOSED', subjectId: shift.id });
+    const approvalId = filed.body.approvalId as string;
+    expect(filed.body.proposal.approvalId).toBe(approvalId);
+    expect((await prisma.agentApprovalRequest.findUniqueOrThrow({ where: { id: approvalId } })).action).toBe('SHIFT_ASSIGN');
+    // Asking twice is the same proposal and the same approval.
+    const again = await fa.api().post('/agent/v1/proposals').send(ask);
+    expect(again.body).toMatchObject({ approvalId, created: false, proposal: { id: filed.body.proposal.id } });
+    expect(await prisma.agentProposal.count()).toBe(1);
+
+    const approved = { capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, associateId: tess };
+    // Nothing before a person says yes.
+    await expect(claimApproval(prisma, fa.ctx, approvalId, 'SHIFT_ASSIGN', approved)).rejects.toMatchObject({ code: 'approval_pending' });
+    expect((await prisma.shift.findUniqueOrThrow({ where: { id: shift.id } })).assignedAssociateId).toBeNull();
+
+    const ok = await w.admin.post(`/agents/approvals/${approvalId}/approve`).send({ note: 'Yes.' });
+    expect(ok.status).toBe(200);
+    expect((await prisma.agentProposal.findFirstOrThrow({ where: { approvalId } })).status).toBe('APPROVED');
+    // Not what was approved.
+    await expect(claimApproval(prisma, fa.ctx, approvalId, 'SHIFT_ASSIGN', { ...approved, associateId: shift.id })).rejects.toMatchObject({ code: 'approval_mismatch' });
+    await expect(claimApproval(prisma, fa.ctx, approvalId, 'CASE_OPEN', approved)).rejects.toMatchObject({ code: 'approval_mismatch' });
+    // Exactly once.
+    const claimed = await claimApproval(prisma, fa.ctx, approvalId, 'SHIFT_ASSIGN', approved);
+    expect(claimed.status).toBe('CONSUMED');
+    expect((await prisma.agentProposal.findFirstOrThrow({ where: { approvalId } })).status).toBe('EXECUTED');
+    await expect(claimApproval(prisma, fa.ctx, approvalId, 'SHIFT_ASSIGN', approved)).rejects.toMatchObject({ code: 'approval_consumed' });
+  });
+
+  it('CASE_OPEN: a rejection stays a rejection; an unanswered request expires, and its proposal with it', async () => {
+    const w = await world();
+    const fa = await familyAgent(w);
+    const caseAsk = { capability: 'incident.loop', subjectType: 'OshaIncident', subjectId: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b', summary: 'Open an HR case for the forklift near miss', payload: { category: 'SAFETY' } };
+    const filed = await fa.api().post('/agent/v1/proposals').send(caseAsk);
+    expect(filed.status, JSON.stringify(filed.body)).toBe(202);
+    expect((await prisma.agentApprovalRequest.findUniqueOrThrow({ where: { id: filed.body.approvalId } })).action).toBe('CASE_OPEN');
+    expect((await w.admin.post(`/agents/approvals/${filed.body.approvalId}/reject`).send({ note: 'Handled by phone.' })).status).toBe(200);
+    expect((await prisma.agentProposal.findFirstOrThrow({ where: { approvalId: filed.body.approvalId } })).status).toBe('REJECTED');
+    const caseApproved = { capability: 'incident.loop', subjectType: 'OshaIncident', subjectId: caseAsk.subjectId, category: 'SAFETY' };
+    await expect(claimApproval(prisma, fa.ctx, filed.body.approvalId, 'CASE_OPEN', caseApproved)).rejects.toMatchObject({ code: 'approval_rejected' });
+
+    const shift = await shiftAt(w.client.id);
+    const someone = '0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c';
+    const late = await fa.api().post('/agent/v1/proposals').send({ capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, summary: 'Assign someone', payload: { associateId: someone } });
+    expect(late.status).toBe(202);
+    expect(await expireApprovals(prisma, new Date(Date.now() + 4 * 24 * HOUR))).toBe(1);
+    expect((await prisma.agentProposal.findFirstOrThrow({ where: { approvalId: late.body.approvalId } })).status).toBe('EXPIRED');
+    await expect(
+      claimApproval(prisma, fa.ctx, late.body.approvalId, 'SHIFT_ASSIGN', { capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, associateId: someone }),
+    ).rejects.toMatchObject({ code: 'approval_expired' });
+  });
+
+  it('the scheduling desk decides a shift fill for its own client only; a case is not its to decide; its queue counts its own', async () => {
+    const w = await world();
+    const fa = await familyAgent(w);
+    const other = await createClient('Inland Mart');
+    const mine = await shiftAt(w.client.id);
+    const theirs = await shiftAt(other.id);
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: w.client.id });
+    const asSup = await loginAs(agent(), sup.email);
+    const fileFor = (shiftId: string) =>
+      fa.api().post('/agent/v1/proposals').send({ capability: 'shift.fill', subjectType: 'Shift', subjectId: shiftId, summary: 'Assign the bench lead', payload: { associateId: '0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d' } });
+    const a = await fileFor(mine.id);
+    const b = await fileFor(theirs.id);
+    expect(a.status).toBe(202);
+    expect(b.status).toBe(202);
+    const { computeRoleDecisions } = await import('../../lib/roleDecisions.js');
+    const items = await computeRoleDecisions(prisma, { id: sup.id, role: 'SHIFT_SUPERVISOR', clientId: w.client.id, associateId: null });
+    expect(items.find((d) => d.key.startsWith('agents:shift-assign'))?.label).toMatch(/^1 shift fill proposed by an agent/);
+    expect((await asSup.post(`/agents/approvals/${b.body.approvalId}/approve`).send({})).status).toBe(403);
+    expect((await asSup.post(`/agents/approvals/${a.body.approvalId}/approve`).send({})).status).toBe(200);
+    // A case is not the scheduling desk's to decide.
+    const c = await fa.api().post('/agent/v1/proposals').send({ capability: 'incident.loop', subjectType: 'OshaIncident', subjectId: null, summary: 'Open a case', payload: {} });
+    expect(c.status).toBe(202);
+    expect((await asSup.post(`/agents/approvals/${c.body.approvalId}/approve`).send({})).status).toBe(403);
+  });
+
+  it('refuses a capability the agent does not hold, one that is suspended, and a scope it lacks', async () => {
+    const w = await world();
+    const fa = await familyAgent(w);
+    const shift = await shiftAt(w.client.id);
+    const ask = { capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, summary: 'Assign someone', payload: {} };
+    const notHeld = await fa.api().post('/agent/v1/proposals').send({ ...ask, capability: 'schedule.repair' });
+    expect(notHeld.status).toBe(403);
+    expect(notHeld.body.error.code).toBe('capability_not_granted');
+    expect((await w.admin.post(`/agents/${fa.id}/capabilities/shift.fill/suspend`).send({ reason: 'Proposing the wrong people.' })).status).toBe(200);
+    const suspended = await fa.api().post('/agent/v1/proposals').send(ask);
+    expect(suspended.status).toBe(403);
+    expect(suspended.body.error.code).toBe('capability_suspended');
+    // The agent's other capability still works.
+    const other = await fa.api().post('/agent/v1/proposals').send({ capability: 'incident.loop', subjectType: 'OshaIncident', subjectId: null, summary: 'Open a case', payload: {} });
+    expect(other.status).toBe(202);
+    // A capability needing a scope the agent was not granted.
+    const narrow = await registerAgent(w.admin, w.hr.id, { name: 'Narrow agent', scopes: ['view:scheduling'] });
+    await grantCapability(prisma, narrow.id, 'shift.fill', ALTO_TENANT_ID);
+    const ncred = await issue(w.admin, narrow.id);
+    const scoped = await agent().post('/agent/v1/proposals').set(bearer(ncred.plaintext)).send(ask);
+    expect(scoped.status).toBe(403);
+    expect(scoped.body.error.code).toBe('agent_scope_missing');
   });
 });

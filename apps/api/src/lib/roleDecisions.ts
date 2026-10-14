@@ -10,6 +10,8 @@ import type { PrismaClient } from '@prisma/client';
 import { hasCapability, type Role } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
+import { pendingDeskApprovals } from './agentCapabilities.js';
+import { tenantIdForWrite } from './tenant.js';
 
 const DAY_MS = 24 * 3600_000;
 
@@ -465,6 +467,41 @@ export async function computeRoleDecisions(
         stakes: amount || null,
         ageDays: days,
         linkUrl: `/clients/statements?statement=${s.id}`, // the statement itself
+      });
+    }
+  }
+
+  /* ----- Agent requests the desk decides (agent families step 0) -------- */
+  // A shift an agent proposes to fill is the scheduling desk's call; an HR
+  // case it proposes to open is HR's. Nothing happens until someone here
+  // approves (decision 2). Bounded supervisors count only their own shifts.
+  if (can('manage:scheduling')) {
+    const n = await pendingDeskApprovals(prisma, tenantIdForWrite(), 'SHIFT_ASSIGN', { clientId: user.clientId });
+    if (n > 0) {
+      out.push({
+        key: scoped('agents:shift-assign'),
+        domain: 'site-ops',
+        severity: 'high',
+        label: `${n} shift fill${n === 1 ? '' : 's'} proposed by an agent, waiting on you`,
+        detail: 'Nothing is assigned until you approve. Each one names the shift and the person.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/agents?approvals=SHIFT_ASSIGN',
+      });
+    }
+  }
+  if (can('manage:onboarding')) {
+    const n = await pendingDeskApprovals(prisma, tenantIdForWrite(), 'CASE_OPEN');
+    if (n > 0) {
+      out.push({
+        key: 'agents:case-open',
+        domain: 'people',
+        severity: 'high',
+        label: `${n} HR case${n === 1 ? '' : 's'} an agent proposes to open`,
+        detail: 'Nothing is opened until you approve.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/agents?approvals=CASE_OPEN',
       });
     }
   }

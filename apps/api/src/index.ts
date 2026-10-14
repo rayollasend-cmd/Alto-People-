@@ -49,6 +49,7 @@ import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
+import { runForEachTenant } from './lib/tenantJobs.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
 import { onPlatformScope } from './lib/tenant.js';
@@ -141,8 +142,9 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   setInterval(sweepWorkers, 15 * 60_000).unref();
   // Brief 1D-2: the agents Alto already runs are registered, and unanswered
   // approval requests expire.
+  // Agent families step 0 (owner's decision 5): built-ins are per tenant.
   const sweepAgents = () =>
-    ensureBuiltInAgents(prisma)
+    runForEachTenant('agents', (tenantId) => ensureBuiltInAgents(prisma, tenantId))
       .then(() => expireApprovals(prisma))
       .catch((err) => logger.warn({ err }, 'agent sweep failed'));
   void sweepAgents();

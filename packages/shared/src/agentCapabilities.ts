@@ -1,0 +1,241 @@
+import { z } from 'zod';
+import type { AgentFamily, AgentGatedAction, AgentScope } from './contracts.js';
+import type { TenantModule, TenantModules } from './tenantProfile.js';
+
+/**
+ * The agent capability catalog (agent families step 0;
+ * docs/agent-families-investigation.md §4.1 and §8.3).
+ *
+ *   The capability is the unit of governance (owner's decision 1, 2026-10-13):
+ *   each one carries its scopes, the gate it files, the scorecard metrics it
+ *   reports and its certification fixtures, and has its own switch on the
+ *   agent (AgentCapability). The catalog ships with the code: certification
+ *   compares against it, Hugo's help text and the Agents page read it, and
+ *   the MCP catalog (Brief 2-7) is generated from it.
+ *
+ *   A capability is offered only where every module it needs is on
+ *   (capabilitiesFor), so a tenant with compliance off never sees a
+ *   Compliance capability anywhere.
+ */
+
+/** A small seeded world for a certification scenario: loaded into a throwaway tenant, run once with `now` fixed. */
+export interface CapabilityScenarioFixture {
+  name: string;
+  /** Minutes from the fixed `now`, so a fixture never depends on the clock. */
+  world: {
+    sites?: Array<{ ref: string; name: string; timezone?: string }>;
+    people?: Array<{ ref: string; firstName: string; lastName: string; placedAt?: string }>;
+    shifts?: Array<{ ref: string; siteRef: string; position: string; startsInMinutes: number; hours: number; assigneeRef?: string | null }>;
+  };
+  input: Record<string, unknown>;
+  expected: { output?: Record<string, unknown>; allowedActions?: string[] };
+}
+
+export interface AgentCapabilityDef {
+  key: string;
+  family: AgentFamily;
+  label: string;
+  /** Every module listed must be on for the capability to be offered. */
+  requiresModule: readonly TenantModule[];
+  /** The scopes the capability uses; an agent holding it needs them. */
+  scopes: readonly AgentScope[];
+  /** The gated action its proposals file, or null when it only reads or notifies. */
+  gate: AgentGatedAction | null;
+  /** Scorecard metric keys (§4.3), on top of the registry's generic counts. */
+  metrics: readonly string[];
+  scenarios: readonly CapabilityScenarioFixture[];
+}
+
+const SHIFT_FILL_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Two open shifts, three on the bench, one already working: the free person is proposed',
+  world: {
+    sites: [{ ref: 'hotel', name: 'The Grand Hotel', timezone: 'America/Chicago' }],
+    people: [
+      { ref: 'tess', firstName: 'Tess', lastName: 'Free', placedAt: 'hotel' },
+      { ref: 'omar', firstName: 'Omar', lastName: 'Busy', placedAt: 'hotel' },
+      { ref: 'ivy', firstName: 'Ivy', lastName: 'Busy', placedAt: 'hotel' },
+    ],
+    shifts: [
+      { ref: 'open1', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 600, hours: 8, assigneeRef: null },
+      { ref: 'open2', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 600, hours: 8, assigneeRef: null },
+      { ref: 'omarShift', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 540, hours: 8, assigneeRef: 'omar' },
+      { ref: 'ivyShift', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 660, hours: 8, assigneeRef: 'ivy' },
+    ],
+  },
+  input: { shiftRef: 'open1' },
+  expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
+};
+
+export const AGENT_CAPABILITIES = [
+  // Workforce
+  {
+    key: 'shift.fill',
+    family: 'workforce',
+    label: 'Fill open shifts',
+    requiresModule: ['scheduling'],
+    scopes: ['view:scheduling', 'view:org', 'manage:scheduling'],
+    gate: 'SHIFT_ASSIGN',
+    metrics: ['shiftsSeen', 'broadcastPickupRate', 'proposalsMade', 'proposalsApproved', 'filledBeforeStart', 'medianMinutesToFill'],
+    scenarios: [SHIFT_FILL_FIXTURE],
+  },
+  {
+    key: 'attendance.confirm',
+    family: 'workforce',
+    label: 'Confirm tomorrow’s attendance',
+    requiresModule: ['scheduling', 'time'],
+    scopes: ['view:scheduling', 'view:time', 'manage:communications', 'manage:scheduling'],
+    gate: 'SHIFT_ASSIGN',
+    metrics: ['textsSent', 'answered', 'noShowsConfirmed', 'noShowsUnconfirmed', 'backupsAccepted'],
+    scenarios: [],
+  },
+  {
+    key: 'schedule.repair',
+    family: 'workforce',
+    label: 'Repair coverage when it breaks',
+    requiresModule: ['scheduling'],
+    scopes: ['view:scheduling', 'view:org', 'manage:scheduling'],
+    gate: 'SHIFT_ASSIGN',
+    metrics: ['shiftsUncovered', 'proposalsMade', 'repairedBeforeStart'],
+    scenarios: [],
+  },
+  {
+    key: 'coverage.forecast',
+    family: 'workforce',
+    label: 'Forecast coverage for the next seven days',
+    requiresModule: ['scheduling'],
+    scopes: ['view:scheduling', 'view:analytics'],
+    gate: null,
+    metrics: ['forecastErrorPct7d', 'forecastErrorPct1d'],
+    scenarios: [],
+  },
+  // Compliance
+  {
+    key: 'document.chase',
+    family: 'compliance',
+    label: 'Chase expiring documents',
+    requiresModule: ['compliance'],
+    scopes: ['view:compliance', 'manage:compliance', 'manage:communications'],
+    gate: null,
+    metrics: ['itemsChased', 'uploadedBeforeExpiry', 'expiredAnyway', 'escalations'],
+    scenarios: [],
+  },
+  {
+    key: 'i9.section2',
+    family: 'compliance',
+    label: 'Keep I-9 Section 2 on time',
+    requiresModule: ['compliance'],
+    scopes: ['view:compliance', 'view:org'],
+    gate: null,
+    metrics: ['hires', 'completedInTime', 'late', 'everifyOpenedInTime'],
+    scenarios: [],
+  },
+  {
+    key: 'incident.loop',
+    family: 'compliance',
+    label: 'Close the loop on incidents',
+    requiresModule: ['compliance', 'hrCases'],
+    scopes: ['view:compliance', 'open:hr-case'],
+    gate: 'CASE_OPEN',
+    metrics: ['openIncidents', 'medianAgeDays', 'closedAfterChase'],
+    scenarios: [],
+  },
+  {
+    key: 'coverage.credentials',
+    family: 'compliance',
+    label: 'Credential coverage per site',
+    requiresModule: ['compliance'],
+    scopes: ['view:compliance', 'view:org'],
+    gate: null,
+    metrics: ['sitesBelowRequirement', 'gapsClosed'],
+    scenarios: [],
+  },
+] as const satisfies readonly AgentCapabilityDef[];
+
+export type AgentCapabilityKey = (typeof AGENT_CAPABILITIES)[number]['key'];
+const capabilityKeys = AGENT_CAPABILITIES.map((c) => c.key) as [AgentCapabilityKey, ...AgentCapabilityKey[]];
+export const AgentCapabilityKeySchema = z.enum(capabilityKeys);
+
+export function capabilityDef(key: string): AgentCapabilityDef | null {
+  return (AGENT_CAPABILITIES as readonly AgentCapabilityDef[]).find((c) => c.key === key) ?? null;
+}
+
+/** True when every module the capability needs is on. A missing module set (no profile known) offers nothing. */
+export function capabilityOffered(def: Pick<AgentCapabilityDef, 'requiresModule'>, modules: TenantModules | null | undefined): boolean {
+  if (!modules) return false;
+  return def.requiresModule.every((m) => modules[m]);
+}
+
+/**
+ * The catalog for a tenant: the one source for Hugo's help text, the
+ * Agents page and the MCP catalog. A capability whose module is off is
+ * simply absent.
+ */
+export function capabilitiesFor(modules: TenantModules | null | undefined): AgentCapabilityDef[] {
+  return (AGENT_CAPABILITIES as readonly AgentCapabilityDef[]).filter((c) => capabilityOffered(c, modules));
+}
+
+/* ---- Views ---------------------------------------------------------------- */
+
+export const AgentProposalStatusSchema = z.enum(['PROPOSED', 'APPROVED', 'REJECTED', 'EXPIRED', 'EXECUTED', 'FAILED', 'SUPERSEDED']);
+export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>;
+
+export interface AgentCapabilitySummary {
+  key: string;
+  label: string;
+  family: AgentFamily;
+  gate: AgentGatedAction | null;
+  requiresModule: TenantModule[];
+  /** False when the tenant has a required module off: the capability is not offered. */
+  offered: boolean;
+  enabled: boolean;
+  suspendedAt: string | null;
+  suspendedBy: { id: string; name: string } | null;
+  suspendReason: string | null;
+  driftErrorRatePct: number | null;
+}
+
+export interface AgentProposalSummary {
+  id: string;
+  workerId: string;
+  capabilityKey: string;
+  subjectType: string;
+  subjectId: string | null;
+  payload: Record<string, unknown>;
+  approvalId: string | null;
+  status: AgentProposalStatus;
+  statusAt: string;
+  outcome: Record<string, unknown> | null;
+  outcomeAt: string | null;
+  createdAt: string;
+}
+
+export interface CapabilityScorecard {
+  key: string;
+  days: number;
+  proposed: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  executed: number;
+  failed: number;
+  superseded: number;
+  /** executed / (executed + failed + rejected + expired), whole percent; null with nothing decided. */
+  outcomeRatePct: number | null;
+}
+
+export interface AgentTenantControlState {
+  /** This organization's switch. */
+  allSuspendedAt: string | null;
+  suspendedBy: { id: string; name: string } | null;
+  reason: string | null;
+}
+
+export const AgentProposalInputSchema = z.object({
+  capability: AgentCapabilityKeySchema,
+  subjectType: z.string().trim().min(2).max(40),
+  subjectId: z.string().uuid().nullable().optional(),
+  /** What a person approves, in words. Required when the capability files a gate. */
+  summary: z.string().trim().min(3).max(500).optional(),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+export type AgentProposalInput = z.infer<typeof AgentProposalInputSchema>;

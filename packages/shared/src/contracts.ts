@@ -8333,6 +8333,14 @@ export const AGENT_SCOPES = [
   { code: 'manage:communications', label: 'Write messages' },
   { code: 'view:transport', label: 'Read rides and routes' },
   { code: 'view:compliance', label: 'Read compliance status' },
+  // Agent families step 0 (owner's decisions 1 and 2, 2026-10-13). Each acts
+  // only through a claimed approval or as an ungated notice, per capability.
+  { code: 'view:org', label: 'Read people and sites' },
+  { code: 'manage:scheduling', label: 'Assign shifts (through an approval)' },
+  { code: 'manage:compliance', label: 'Send compliance reminders' },
+  // Agent-only: HR case routes gate on role, not on a capability, so a
+  // case-opening agent holds this and nothing that reads every case.
+  { code: 'open:hr-case', label: 'Open HR cases (through an approval)' },
 ] as const;
 export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
 const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];
@@ -8367,16 +8375,18 @@ const agentFamilyCodes = AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...A
 export const AgentFamilySchema = z.enum(agentFamilyCodes);
 
 /** High-risk actions an agent may only request; a person approves or rejects from the queue. */
-export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT']);
+export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN']);
 export type AgentGatedAction = z.infer<typeof AgentGatedActionSchema>;
 export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
   PAY_CHANGE: 'Pay change',
   SEPARATION: 'Separation',
   CLIENT_MESSAGE: 'Message to a client',
   DATA_EXPORT: 'Data export',
+  SHIFT_ASSIGN: 'Shift assignment',
+  CASE_OPEN: 'Open an HR case',
 };
-/** The two the agent may carry out itself once approved; the other two are done by the approver. */
-export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT'];
+/** The ones the agent carries out itself once a person approved; pay and separations are done by the approver. */
+export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN'];
 
 export const AgentApprovalStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED']);
 export type AgentApprovalStatus = z.infer<typeof AgentApprovalStatusSchema>;
@@ -8558,8 +8568,10 @@ export interface AgentRegistryResponse {
   pendingApprovals: number;
   /** Built-in agents the boot sweep could not register (no owner account yet). */
   builtInMissing: string[];
-  /** Brief 1D-3: the global switch. */
+  /** Brief 1D-3: the switch. Agent families step 0: this organization's switch. */
   control?: AgentControlState;
+  /** The operator's switch over every tenant; an agent stops when either is set. */
+  platformControl?: AgentControlState;
 }
 
 export interface AgentIssuedCredential {

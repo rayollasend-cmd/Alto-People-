@@ -9843,6 +9843,10 @@ enum AgentGatedAction {
   SEPARATION
   CLIENT_MESSAGE
   DATA_EXPORT
+  /// Agent families step 0: a shift assignment the agent proposes; executable once approved.
+  SHIFT_ASSIGN
+  /// Agent families step 0: an HR case the agent proposes to open; executable once approved.
+  CASE_OPEN
 }
 
 enum AgentApprovalStatus {
@@ -9874,7 +9878,8 @@ model AgentProfile {
   family                String?          @db.VarChar(40)
   capability            String?          @db.VarChar(120)
   /// Set for the agents Alto already runs, so the boot sweep finds them.
-  builtInKey            String?          @unique @db.VarChar(60)
+  /// Agent families step 0: unique per tenant (partial indexes in migration 20261123090000_agent_capabilities).
+  builtInKey            String?          @db.VarChar(60)
   lastActiveAt          DateTime?        @db.Timestamptz(6)
   /// Brief 1D-3. Certified for certifiedModelVersion; a different modelVersion sends the agent back to onboarding.
   certifiedAt           DateTime?        @db.Timestamptz(6)
@@ -9889,11 +9894,13 @@ model AgentProfile {
   createdAt             DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
 
-  worker      Worker                 @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  credentials AgentCredential[]
-  approvals   AgentApprovalRequest[]
-  spend       AgentSpend[]
-  scenarios   AgentScenario[]
+  worker            Worker                 @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  credentials       AgentCredential[]
+  approvals         AgentApprovalRequest[]
+  spend             AgentSpend[]
+  scenarios         AgentScenario[]
+  agentCapabilities AgentCapability[]
+  proposals         AgentProposal[]
 
   @@index([tenantId])
 }
@@ -9940,8 +9947,9 @@ model AgentApprovalRequest {
   decisionNote String?             @db.VarChar(500)
   consumedAt   DateTime?           @db.Timestamptz(6)
 
-  agent     AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
-  decidedBy User?        @relation("AgentApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  agent     AgentProfile   @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+  decidedBy User?          @relation("AgentApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  proposal  AgentProposal?
 
   @@index([status, requestedAt])
   @@index([workerId, requestedAt(sort: Desc)])
@@ -10023,6 +10031,81 @@ model AgentScenarioRun {
   @@index([scenarioId, ranAt(sort: Desc)])
   @@index([workerId, modelVersion])
   @@index([tenantId])
+}
+
+// ===== Agent families step 0 — capabilities, proposals, the tenant's switch =====
+// docs/agent-families-investigation.md §8. The capability is the unit of
+// governance: its own switch and drift threshold on the agent. A proposal
+// is the outcome record a capability's scorecard reads. The tenant's kill
+// switch sits beside the AgentControl singleton, which stays the platform
+// switch (converting it is 2-1 Migration C); an agent stops when either is set.
+
+enum AgentProposalStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXPIRED
+  EXECUTED
+  FAILED
+  SUPERSEDED
+}
+
+model AgentCapability {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId          String    @db.Uuid
+  /// From AGENT_CAPABILITIES in the shared catalog.
+  key               String    @db.VarChar(60)
+  enabled           Boolean   @default(true)
+  suspendedAt       DateTime? @db.Timestamptz(6)
+  suspendedById     String?   @db.Uuid
+  suspendReason     String?   @db.VarChar(300)
+  driftErrorRatePct Int?      @default(25)
+  lastDriftAlertAt  DateTime? @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  agent AgentProfile @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+
+  @@unique([workerId, key])
+  @@index([tenantId])
+}
+
+model AgentProposal {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId      String              @db.Uuid
+  capabilityKey String              @db.VarChar(60)
+  /// What the proposal is about: Shift, HrCase, Document…
+  subjectType   String              @db.VarChar(40)
+  subjectId     String?             @db.Uuid
+  payload       Json
+  approvalId    String?             @unique @db.Uuid
+  status        AgentProposalStatus @default(PROPOSED)
+  statusAt      DateTime            @default(now()) @db.Timestamptz(6)
+  outcome       Json?
+  outcomeAt     DateTime?           @db.Timestamptz(6)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  agent    AgentProfile          @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+  approval AgentApprovalRequest? @relation(fields: [approvalId], references: [id], onDelete: SetNull)
+
+  @@index([workerId, capabilityKey, createdAt(sort: Desc)])
+  @@index([subjectType, subjectId])
+  @@index([tenantId])
+}
+
+/// The tenant's own kill switch; one row per tenant. The AgentControl singleton is the platform's.
+model AgentTenantControl {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration; one row each.
+  tenantId       String?   @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  allSuspendedAt DateTime? @db.Timestamptz(6)
+  suspendedById  String?   @db.Uuid
+  reason         String?   @db.VarChar(300)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
 }
 
 // ===== Brief 2-1 — Tenants ==================================================
