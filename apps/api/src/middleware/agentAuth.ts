@@ -3,6 +3,7 @@ import { ALTO_TENANT_ID, runWithTenant } from '../lib/tenant.js';
 import type { AgentScope } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { markRequestAudited } from '../lib/auditRequestContext.js';
 import { AGENT_TOKEN_PREFIX, authenticateAgent, logAgentAction, takeRateToken, type AgentDenial } from '../lib/agents.js';
 
 /**
@@ -82,6 +83,9 @@ function guard(scopes: AgentScope[], opts: { allowOnboarding?: boolean }) {
 }
 
 export function recordAgentCalls(req: Request, res: Response, next: NextFunction): void {
+  // Every /agent/v1 call is logged under the agent once it finishes, so the
+  // audit floor (Brief 2-3) does not add a second row for it.
+  markRequestAudited();
   res.on('finish', () => {
     const agent = req.agent;
     if (!agent) return;

@@ -4,6 +4,7 @@ import type { AuditSearchEntry, AuditSearchResponse } from '@alto-people/shared'
 import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 export const auditRouter = Router();
 
@@ -29,7 +30,8 @@ const FilterSchema = z.object({
 type Filters = z.infer<typeof FilterSchema>;
 
 function buildWhere(f: Filters) {
-  const where: Record<string, unknown> = {};
+  // Brief 2-3 step 1: the viewer and the CSV read only the caller's tenant (explicit while TENANCY_MODE observes).
+  const where: Record<string, unknown> = { tenantId: tenantIdForWrite() };
   if (f.action) where.action = f.action;
   if (f.entityType) where.entityType = f.entityType;
   if (f.entityId) where.entityId = f.entityId;
