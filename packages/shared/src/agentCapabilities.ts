@@ -57,7 +57,6 @@ export interface AgentCapabilityDef {
   notifies: boolean;
   /** Scorecard metric keys (§4.3), on top of the registry's generic counts. */
   metrics: readonly string[];
-  scenarios: readonly CapabilityScenarioFixture[];
 }
 
 const SHIFT_FILL_FIXTURE: CapabilityScenarioFixture = {
@@ -217,6 +216,27 @@ const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
 };
 
+/**
+ * Each capability's certification fixtures, apart from the catalog itself:
+ * server-only data the web never reads, so the bundler leaves it out of
+ * every page (it rode in the main chunk inside AGENT_CAPABILITIES).
+ */
+export const CAPABILITY_SCENARIOS: Readonly<Record<string, readonly CapabilityScenarioFixture[]>> = {
+  'shift.fill': [SHIFT_FILL_FIXTURE],
+  'attendance.confirm': [ATTENDANCE_CONFIRM_FIXTURE],
+  'schedule.repair': [SCHEDULE_REPAIR_FIXTURE],
+  'coverage.forecast': [COVERAGE_FORECAST_FIXTURE],
+  'document.chase': [DOCUMENT_CHASE_FIXTURE],
+  'i9.section2': [I9_SECTION2_FIXTURE],
+  'incident.loop': [INCIDENT_LOOP_FIXTURE],
+  'coverage.credentials': [COVERAGE_CREDENTIALS_FIXTURE],
+};
+
+/** A capability's catalog fixtures (certification scenarios for a built-in holding it). */
+export function capabilityScenarios(key: string): readonly CapabilityScenarioFixture[] {
+  return CAPABILITY_SCENARIOS[key] ?? [];
+}
+
 export const AGENT_CAPABILITIES = [
   // Workforce
   {
@@ -228,7 +248,6 @@ export const AGENT_CAPABILITIES = [
     gate: 'SHIFT_ASSIGN',
     notifies: false,
     metrics: ['shiftsSeen', 'broadcastPickupRate', 'proposalsMade', 'proposalsApproved', 'filledBeforeStart', 'medianMinutesToFill'],
-    scenarios: [SHIFT_FILL_FIXTURE],
   },
   {
     key: 'attendance.confirm',
@@ -239,7 +258,6 @@ export const AGENT_CAPABILITIES = [
     gate: 'SHIFT_ASSIGN',
     notifies: true,
     metrics: ['textsSent', 'answered', 'noShowsConfirmed', 'noShowsUnconfirmed', 'backupsAccepted'],
-    scenarios: [ATTENDANCE_CONFIRM_FIXTURE],
   },
   {
     key: 'schedule.repair',
@@ -250,7 +268,6 @@ export const AGENT_CAPABILITIES = [
     gate: 'SHIFT_ASSIGN',
     notifies: false,
     metrics: ['shiftsUncovered', 'proposalsMade', 'repairedBeforeStart'],
-    scenarios: [SCHEDULE_REPAIR_FIXTURE],
   },
   {
     key: 'coverage.forecast',
@@ -261,7 +278,6 @@ export const AGENT_CAPABILITIES = [
     gate: null,
     notifies: false,
     metrics: ['forecastErrorPct7d', 'forecastErrorPct1d'],
-    scenarios: [COVERAGE_FORECAST_FIXTURE],
   },
   // Compliance
   {
@@ -273,7 +289,6 @@ export const AGENT_CAPABILITIES = [
     gate: null,
     notifies: true,
     metrics: ['itemsChased', 'uploadedBeforeExpiry', 'expiredAnyway', 'escalations'],
-    scenarios: [DOCUMENT_CHASE_FIXTURE],
   },
   {
     key: 'i9.section2',
@@ -284,7 +299,6 @@ export const AGENT_CAPABILITIES = [
     gate: null,
     notifies: true,
     metrics: ['hires', 'completedInTime', 'late', 'everifyOpenedInTime'],
-    scenarios: [I9_SECTION2_FIXTURE],
   },
   {
     key: 'incident.loop',
@@ -295,7 +309,6 @@ export const AGENT_CAPABILITIES = [
     gate: 'CASE_OPEN',
     notifies: true,
     metrics: ['openIncidents', 'medianAgeDays', 'closedAfterChase'],
-    scenarios: [INCIDENT_LOOP_FIXTURE],
   },
   {
     key: 'coverage.credentials',
@@ -306,7 +319,6 @@ export const AGENT_CAPABILITIES = [
     gate: null,
     notifies: true,
     metrics: ['sitesBelowRequirement', 'gapsClosed'],
-    scenarios: [COVERAGE_CREDENTIALS_FIXTURE],
   },
 ] as const satisfies readonly AgentCapabilityDef[];
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
+  capabilityScenarios,
   AGENT_CAPABILITIES,
   capabilityDef,
   type AgentCapabilityDef,
@@ -541,13 +542,13 @@ export async function runCapabilityFixture(
 
 /** The catalog fixture an agent's scenario names (input: { capability, fixture }). */
 export function catalogFixture(key: string, name: string): CapabilityScenarioFixture | null {
-  return (capabilityDef(key)?.scenarios ?? []).find((f) => f.name === name) ?? null;
+  return capabilityScenarios(key).find((f) => f.name === name) ?? null;
 }
 
 /** A built-in holding a capability carries its catalog fixtures as certification scenarios. Idempotent by name. */
 export async function seedCatalogScenarios(db: Db, workerId: string, key: string, tenantId: string): Promise<number> {
   let added = 0;
-  for (const f of capabilityDef(key)?.scenarios ?? []) {
+  for (const f of capabilityScenarios(key)) {
     const have = await db.agentScenario.findFirst({ where: { workerId, name: f.name }, select: { id: true } });
     if (have) continue;
     await db.agentScenario.create({

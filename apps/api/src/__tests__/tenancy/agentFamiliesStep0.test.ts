@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { AGENT_CAPABILITIES, capabilitiesFor, defaultTenantProfile, type CapabilityScenarioFixture } from '@alto-people/shared';
+import { capabilitiesFor, capabilityScenarios, defaultTenantProfile, type CapabilityScenarioFixture } from '@alto-people/shared';
 import { agent, loginAs } from '../../../test/http.js';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { BUILT_IN_AGENTS, builtInAgentId, ensureBuiltInAgents, resetAgentRateLimits } from '../../lib/agents.js';
@@ -187,8 +187,7 @@ describe('the fixture scenario runner (test 5)', () => {
   }
 
   it('loads the fixture into a throwaway tenant, passes the free person, fails the busy one, and leaves nothing behind', async () => {
-    const def = AGENT_CAPABILITIES.find((c) => c.key === 'shift.fill')!;
-    const fixture = def.scenarios[0] as CapabilityScenarioFixture;
+    const fixture = capabilityScenarios('shift.fill')[0] as CapabilityScenarioFixture;
     registerCapabilityRunner('shift.fill', testShiftFill);
     try {
       const now = new Date('2026-10-14T12:00:00.000Z');
