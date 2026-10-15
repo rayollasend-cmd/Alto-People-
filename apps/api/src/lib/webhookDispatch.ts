@@ -5,6 +5,14 @@ import { prisma as defaultPrisma } from '../db.js';
 import { assertSafeOutboundUrl } from './safeOutboundUrl.js';
 import { env } from '../config/env.js';
 import { currentTenantId } from './tenant.js';
+import { LEGACY_SIGNATURE_UNTIL, openWebhookSecret, sealLegacyWebhookSecrets, signatureV2 } from './webhookSecrets.js';
+
+/** The HTTP sender; a test swaps it for a capture (like setWhatsAppSenderForTests). */
+type Sender = (url: string, init: { method: 'POST'; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ status: number; ok: boolean; text(): Promise<string> }>;
+let sender: Sender = (url, init) => fetch(url, init);
+export function setWebhookSenderForTests(fn: Sender | null): void {
+  sender = fn ?? ((url, init) => fetch(url, init));
+}
 
 /**
  * Phase 93 follow-up — the outbound webhook worker the route header
@@ -186,21 +194,16 @@ export async function deliverOne(
 
   if (!permanentFailure) {
     const body = JSON.stringify(delivery.payload);
-    const signature = createHmac('sha256', webhook.secret)
-      .update(body)
-      .digest('hex');
+    // Brief 2-4: signature v2 (timestamped, replay-proof) beside the legacy header for 90 days.
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Alto-Signature': signatureV2(webhook.secret, body, now),
+      'X-Alto-Event': delivery.eventType,
+      'X-Alto-Delivery': delivery.id,
+    };
+    if (now < LEGACY_SIGNATURE_UNTIL) headers['X-Alto-Signature'] = createHmac('sha256', webhook.secret).update(body).digest('hex');
     try {
-      const r = await fetch(webhook.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Alto-Signature': signature,
-          'X-Alto-Event': delivery.eventType,
-          'X-Alto-Delivery': delivery.id,
-        },
-        body,
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-      });
+      const r = await sender(webhook.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS) });
       responseStatus = r.status;
       // Recorded for the delivery log, never surfaced to API callers —
       // echoing it would turn deliveries into a read primitive against
@@ -269,7 +272,7 @@ export async function deliverPendingDeliveries(
     take: CLAIM_BATCH,
     include: {
       webhook: {
-        select: { url: true, secret: true, isActive: true, deletedAt: true },
+        select: { url: true, secret: true, secretEnc: true, isActive: true, deletedAt: true },
       },
     },
   });
@@ -304,7 +307,7 @@ export async function deliverPendingDeliveries(
         payload: row.payload,
         attemptCount: row.attemptCount,
       },
-      { url: row.webhook.url, secret: row.webhook.secret },
+      { url: row.webhook.url, secret: openWebhookSecret(row.webhook) },
       now,
     );
     if (outcome === 'SKIPPED') continue;
@@ -322,6 +325,8 @@ export function startWebhookDeliveryCron(): void {
   if (timer) return;
   const seconds = env.WEBHOOK_DELIVERY_INTERVAL_SECONDS;
   if (seconds <= 0) return;
+  // Brief 2-4: plain-text secrets still on file are sealed once, before any delivery signs with them.
+  void sealLegacyWebhookSecrets(defaultPrisma).catch((err) => console.error('[alto-people/api] sealing webhook secrets failed:', err));
   const tick = () => {
     void tenantJob('webhookDispatch', deliverPendingDeliveries)().catch((err) => {
       console.error('[alto-people/api] webhook delivery sweep failed:', err);

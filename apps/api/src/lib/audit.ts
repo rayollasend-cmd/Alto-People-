@@ -409,6 +409,8 @@ export async function recordReimbursementEvent(ctx: ReimbursementEventContext) {
 
 interface ShiftEventContext {
   actorUserId: string | null;
+  /** Brief 2-4: the /v1 API client, when one acted. */
+  apiClientId?: string | null;
   action: string; // e.g. 'shift.created'
   shiftId: string;
   /** Null for a direct employer's shift (Brief 2-1b). */
@@ -422,6 +424,7 @@ export async function recordShiftEvent(ctx: ShiftEventContext) {
   enqueueAudit(
     {
       actorUserId: ctx.actorUserId,
+      apiClientId: ctx.apiClientId ?? null,
       clientId: ctx.clientId,
       action: ctx.action,
       entityType: 'Shift',

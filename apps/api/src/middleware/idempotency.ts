@@ -57,7 +57,9 @@ export async function idempotent(
       next();
       return;
     }
-    const user = req.user;
+    // The principal: a signed-in person, or (Brief 2-4) a /v1 API client. Both
+    // ids are UUIDs, so they share the record's key column without colliding.
+    const user = req.user ?? (req.apiClient ? { id: req.apiClient.id } : undefined);
     if (!user) {
       // Applied routes all sit behind attachUser; a keyed request with no
       // user would mean the route is misconfigured — fail loud, not open.

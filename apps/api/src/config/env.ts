@@ -381,6 +381,11 @@ const EnvSchema = z.object({
   // used until now, so every stored fingerprint still matches; set it to
   // that same value in production, then the field key can rotate alone.
   ACCOUNT_FINGERPRINT_SECRET: z.string().min(32).optional(),
+  // Brief 2-4: signs /v1 access tokens (15-minute JWTs for API clients), apart
+  // from session signing. Unset, it falls back like every per-job secret.
+  API_TOKEN_SECRET: z.string().min(32).optional(),
+  // Brief 2-4: encrypts webhook signing secrets at rest (never the payout key's job once set).
+  WEBHOOK_SECRET_KEY: z.string().min(44).optional(),
   // Brief 2-5 step 2 — once every per-job secret is set (lib/jobSecrets.ts),
   // '1' makes boot refuse to start without them. Off by default so a deploy
   // never fails on a variable Railway does not have yet.

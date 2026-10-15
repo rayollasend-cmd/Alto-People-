@@ -15,6 +15,8 @@ import { startOfWeekUTC } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 import { notifyUser } from './notify.js';
 import { currentAlerts } from './programs.js';
+import { emitProgramAlert } from './webhookEvents.js';
+import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 
 export const PROGRAM_DIGEST_CATEGORY = 'program_digest';
 const SEND_AFTER_HOUR = 8;
@@ -81,6 +83,8 @@ export async function runProgramDigestSweep(prisma: PrismaClient = defaultPrisma
   const alerts = await currentAlerts(prisma, {}, now);
   if (alerts.length === 0) return { sent: 0, skipped: 'nothing_due', alerts: 0 };
 
+  // Brief 2-4: each alert as a webhook, once a week with the digest (never a document number).
+  for (const a of alerts) emitProgramAlert(a, currentTenantId() ?? ALTO_TENANT_ID);
   const critical = alerts.filter((a) => a.severity === 'critical').length;
   const subject = `Programs this week: ${alerts.length} date${alerts.length === 1 ? '' : 's'} due${critical ? `, ${critical} urgent` : ''}`;
   const body = programDigestBody(alerts);

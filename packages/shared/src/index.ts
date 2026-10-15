@@ -10,3 +10,4 @@ export * from './contracts.js';
 export * from './tenantProfile.js';
 export * from './complianceEvidence.js';
 export * from './agentCapabilities.js';
+export * from './publicApi.js';

@@ -52,6 +52,7 @@ import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 
 export const orgRouter = Router();
 
@@ -1029,6 +1030,7 @@ orgRouter.post(
     audit(req, 'associate.reactivated', 'Associate', id, {
       enabledLogins: enabledUserIds.length,
     });
+    emitWorkerStatusChanged({ associateId: id }, 'reactivated');
     res.json({ ok: true });
   },
 );

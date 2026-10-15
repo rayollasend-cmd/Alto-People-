@@ -1,3 +1,4 @@
+import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
@@ -51,27 +52,8 @@ import { toast } from 'sonner';
 
 type Tab = 'keys' | 'webhooks';
 
-/**
- * Known outbound webhook event types. The server exposes no registry
- * endpoint — these are the strings domain code passes to
- * emitWebhookEvent (apps/api/src/lib/webhookDispatch.ts), which mirror
- * the workflow trigger enum (apps/api/src/routes/workflows.ts
- * TriggerSchema) in dotted form, plus `test.ping` from the test-fire
- * endpoint. Keep in sync with the emit call sites.
- */
-const WEBHOOK_EVENT_TYPES = [
-  'associate.hired',
-  'associate.terminated',
-  'time_off.requested',
-  'time_off.approved',
-  'time_off.denied',
-  'position.opened',
-  'position.filled',
-  'payroll.finalized',
-  'onboarding.completed',
-  'compliance.expiring',
-  'test.ping',
-] as const;
+/** Every outbound webhook event: the one list in @alto-people/shared (Brief 2-4). */
+const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
 
 export function IntegrationsHome() {
   const { user } = useAuth();

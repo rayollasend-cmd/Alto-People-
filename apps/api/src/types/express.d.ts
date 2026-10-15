@@ -54,10 +54,23 @@ export interface ApiKeyContext {
   name: string;
 }
 
+/** Brief 2-4: the /v1 OAuth client calling, set by requireApiToken. */
+export interface ApiClientContext {
+  id: string;
+  clientId: string;
+  name: string;
+  scopes: import('@alto-people/shared').ApiScope[];
+  /** The accountable person; every write's audit row names them. */
+  ownerUserId: string;
+  tenantId: string;
+}
+
 declare global {
   namespace Express {
     interface Request {
       user?: SessionUser;
+      /** Brief 2-4: set by requireApiToken on /v1. */
+      apiClient?: ApiClientContext;
       /** How this session was established (from the token's amr claim). */
       authMethod?: 'password' | 'mfa' | 'passkey' | 'sso';
       apiKey?: ApiKeyContext;

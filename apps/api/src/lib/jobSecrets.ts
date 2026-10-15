@@ -20,14 +20,21 @@ import { env } from '../config/env.js';
  *   Values are never logged or recorded; only which variables are set.
  */
 
-export const SECRET_JOBS = ['mfa', 'kioskPin', 'pulseHash', 'accountFingerprint'] as const;
+export const SECRET_JOBS = ['mfa', 'kioskPin', 'pulseHash', 'accountFingerprint', 'apiToken', 'webhookSecret'] as const;
 export type SecretJob = (typeof SECRET_JOBS)[number];
 
-export const SECRET_JOB_VARS: Record<SecretJob, 'MFA_SECRET_ENCRYPTION_KEY' | 'KIOSK_PIN_SECRET' | 'PULSE_HASH_SECRET' | 'ACCOUNT_FINGERPRINT_SECRET'> = {
+export const SECRET_JOB_VARS: Record<
+  SecretJob,
+  'MFA_SECRET_ENCRYPTION_KEY' | 'KIOSK_PIN_SECRET' | 'PULSE_HASH_SECRET' | 'ACCOUNT_FINGERPRINT_SECRET' | 'API_TOKEN_SECRET' | 'WEBHOOK_SECRET_KEY'
+> = {
   mfa: 'MFA_SECRET_ENCRYPTION_KEY',
   kioskPin: 'KIOSK_PIN_SECRET',
   pulseHash: 'PULSE_HASH_SECRET',
   accountFingerprint: 'ACCOUNT_FINGERPRINT_SECRET',
+  // Brief 2-4 (2026-10-15). Not in the REQUIRE_SPLIT_SECRETS boot list: a
+  // deploy must never refuse to boot over a variable that did not exist yesterday.
+  apiToken: 'API_TOKEN_SECRET',
+  webhookSecret: 'WEBHOOK_SECRET_KEY',
 };
 
 /** The secret a job uses: its own variable, else the payout key (today's behaviour). */

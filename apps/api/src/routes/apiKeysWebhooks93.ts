@@ -1,3 +1,4 @@
+import { newWebhookSecret, openWebhookSecret, sealWebhookSecret } from '../lib/webhookSecrets.js';
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -166,13 +167,15 @@ apiKeysWebhooks93Router.post('/webhooks', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
   // SSRF guard: https-only, publicly-routable destinations only.
   await assertSafeOutboundUrl(input.url);
-  const secret = randomBytes(32).toString('hex');
+  const secret = newWebhookSecret();
   const created = await prisma.webhook.create({
     data: {
       clientId: input.clientId ?? null,
       name: input.name,
       url: input.url,
-      secret,
+      // Brief 2-4: sealed at rest; the plain text is in this answer only.
+      secret: '',
+      secretEnc: sealWebhookSecret(secret),
       eventTypes: input.eventTypes,
       createdById: req.user!.id,
     },
@@ -274,7 +277,7 @@ apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
   const { outcome, responseStatus } = await deliverOne(
     prisma,
     { id: delivery.id, eventType, payload, attemptCount: 0 },
-    { url: w.url, secret: w.secret },
+    { url: w.url, secret: openWebhookSecret(w) },
   );
 
   // The UI renders responseBody in its failure toast ("Test delivery

@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { invalidateUserCache } from '../middleware/auth.js';
 import { repairSoon } from './scheduleRepair.js';
+import { emitWorkerStatusChanged } from './webhookEvents.js';
 
 /**
  * The one deactivation transaction — shared by the manual "Deactivate"
@@ -115,6 +116,7 @@ export async function executeDeactivation(
     }
   });
   for (const uid of disabledUserIds) invalidateUserCache(uid);
+  emitWorkerStatusChanged({ associateId: opts.associateId }, 'deactivated');
   // The Workforce agent proposes cover for what the release opened (fire-and-forget).
   repairSoon(releasedShiftIds, { kind: 'deactivation', associateId: opts.associateId }, now);
   return { releasedShifts, releasedShiftIds, expiredClaims, disabledUserIds };

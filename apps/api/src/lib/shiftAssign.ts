@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
 import { assertClientAllowed } from './programRules.js';
+import { emitShiftEvent } from './webhookEvents.js';
 
 /**
  * The rules a shift assignment obeys, in one place (agent families step 1).
@@ -210,7 +211,7 @@ export async function assignWithinRules(
   // the same instant, and a day-off/PTO approved between check and write
   // can't be steamrolled (July review: the unavailability check used to
   // run outside the transaction).
-  return db.$transaction(async (tx) => {
+  const assigned = await db.$transaction(async (tx) => {
     // Approved time off and one-off days off BLOCK assignment by
     // default — an associate declaring a day unavailable means exactly
     // that. Admins can push through with overrideUnavailability
@@ -243,6 +244,9 @@ export async function assignWithinRules(
       include: ASSIGN_INCLUDE,
     });
   });
+  // Brief 2-4: shift.changed for every assign, wherever it came from (app, /v1, agents).
+  emitShiftEvent(assigned.id, 'assigned');
+  return assigned;
 }
 
 /**

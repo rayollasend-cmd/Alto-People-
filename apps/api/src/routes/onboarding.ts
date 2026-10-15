@@ -127,6 +127,7 @@ import {
 import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 
 export const onboardingRouter = Router();
 
@@ -1233,6 +1234,7 @@ async function approveOneApplication(
     },
     { clientId: app.clientId },
   );
+  emitWorkerStatusChanged({ associateId: app.associateId }, 'hired');
   void emitWebhookEvent(
     'associate.hired',
     {

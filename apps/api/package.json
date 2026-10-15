@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@alto-people/shared": "*",
+    "@asteasolutions/zod-to-openapi": "^7.3.4",
     "@aws-sdk/client-s3": "^3.1066.0",
     "@aws-sdk/lib-storage": "^3.1066.0",
     "@node-rs/argon2": "^2.2.1",
@@ -51,6 +52,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^10.1.1",
     "@eslint/js": "^10.0.1",
     "@sentry/node": "^11.0.0",
     "@testing-library/jest-dom": "^7.0.1",

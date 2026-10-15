@@ -75,9 +75,11 @@ export function floorRow(req: Request, res: Response, state: AuditRequestState):
     route,
     status,
     requestId: req.id ?? null,
-    via: req.apiKey ? 'api_key' : req.user ? 'session' : 'none',
+    via: req.apiClient ? 'api_client' : req.apiKey ? 'api_key' : req.user ? 'session' : 'none',
   };
   if (req.apiKey) metadata.apiKeyId = req.apiKey.id;
+  // Brief 2-4: a /v1 client acts with a named human owner.
+  if (req.apiClient) metadata.ownerUserId = req.apiClient.ownerUserId;
   if (ids.length > 1) metadata.ids = ids.slice(0, 5);
   if (body) metadata.fields = Object.keys(body).slice(0, MAX_FIELDS);
   if (exporting) {
@@ -86,6 +88,7 @@ export function floorRow(req: Request, res: Response, state: AuditRequestState):
   }
   return {
     actorUserId: req.user?.id ?? null,
+    apiClientId: req.apiClient?.id ?? null,
     clientId: req.user?.clientId ?? null,
     tenantId: tenantIdForWrite(),
     action: exporting ? 'http.export' : `http.${method.toLowerCase()}`,

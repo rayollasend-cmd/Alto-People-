@@ -30,6 +30,14 @@ const ENTRIES: Record<string, () => Promise<unknown>> = {
   relayBoard: () => import('../../lib/relayBoard.js'),
   expirationDigest: () => import('../../lib/expirationDigest.js'),
   hugoRoute: () => import('../../routes/hugo.js'),
+  // Brief 2-4: the public API and the webhook events reach into the same domain modules.
+  webhookEvents: () => import('../../lib/webhookEvents.js'),
+  webhookSecrets: () => import('../../lib/webhookSecrets.js'),
+  shiftCreate: () => import('../../lib/shiftCreate.js'),
+  shiftAssign: () => import('../../lib/shiftAssign.js'),
+  apiClients: () => import('../../lib/apiClients.js'),
+  v1Route: () => import('../../routes/v1.js'),
+  apiClientsRoute: () => import('../../routes/apiClients.js'),
 };
 
 describe('agent modules load in any order', () => {

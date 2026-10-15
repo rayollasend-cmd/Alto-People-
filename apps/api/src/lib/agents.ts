@@ -29,6 +29,7 @@ import { createWorker, getWorker, listWorkers, updateWorker } from './workers.js
 import { allAgentsSuspended, certification, controlState, onModelVersionChanged, scorecard } from './agentControls.js';
 import { afterProposalApproved, grantCapability, seedCatalogScenarios, syncProposalWithApproval, tenantAgentsSuspended, tenantControlState } from './agentCapabilities.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
+import { emitAgentApproval } from './webhookEvents.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
 function registryTenant(tenantId?: string | null): string {
@@ -733,6 +734,7 @@ export async function createApprovalRequest(
     include: APPROVAL_INCLUDE,
   });
   logAgentAction(agent, { action: 'agent.approval.requested', entityType: 'AgentApprovalRequest', entityId: row.id, metadata: { gated: input.action, summary: input.summary } });
+  emitAgentApproval('agent.approval_requested', { id: row.id, action: row.action, status: row.status, summary: row.summary, workerId: row.workerId }, agent.tenantId ?? null);
   await notifyUser(agent.ownerUserId, {
     subject: `${agent.name} is asking for approval`,
     body: `${AGENT_GATED_ACTION_LABELS[input.action]}: ${input.summary}`,
@@ -770,6 +772,7 @@ export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 
     'agents',
   );
   await syncProposalWithApproval(db, id, decision, now);
+  emitAgentApproval('agent.approval_decided', { id, action: row.action, status: decision, summary: updated.summary, workerId: row.workerId }, registryTenant(tenantIdArg));
   // Agent families step 1: an approved proposal of an in-process agent is carried out now.
   if (decision === 'APPROVED') await afterProposalApproved(id, now);
   return approvalSummary(updated);

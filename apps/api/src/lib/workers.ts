@@ -14,6 +14,7 @@ import {
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { emitWorkerStatusChanged } from './webhookEvents.js';
 
 /**
  * WORKERS — the data model stops assuming a person.
@@ -267,6 +268,8 @@ export async function updateWorker(db: Db, id: string, input: WorkerUpdate, now:
     },
     include: WORKER_INCLUDE,
   });
+  // Brief 2-4: an agent's or robot's status change is an event.
+  if (input.status && input.status !== existing.status) emitWorkerStatusChanged({ workerId: id }, 'status_change');
   return (await summarize(db, [row], now))[0]!;
 }
 

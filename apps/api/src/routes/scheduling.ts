@@ -117,6 +117,7 @@ async function clientlessSite(
   return { id: site.id, name: site.name, state: site.state, timezone: site.timezone };
 }
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
+import { assertSaneShiftDuration, cancelShiftWithinRules, createShiftWithinRules } from '../lib/shiftCreate.js';
 import { z } from 'zod';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
@@ -149,6 +150,7 @@ import { REST_GAP_MIN_HOURS, assertEmployed, assignWithinRules, autoFillScore, b
 import { recordConfirmationAnswer } from '../lib/attendanceConfirm.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
+import { emitShiftEvent } from '../lib/webhookEvents.js';
 
 export const schedulingRouter = Router();
 
@@ -320,22 +322,8 @@ async function associateHasOverlap(
   return hasOverlapExcluding(tx, associateId, startsAt, endsAt, [excludeShiftId]);
 }
 
-/**
- * Hard sanity ceiling on a shift's wall-clock span. The 31-hour-shift
- * corruption (an end time rolled one day too far) silently wrecked
- * weekly totals and OT flags — no retail shift exceeds 16h, so anything
- * longer is rejected at every write path, not stored and discovered.
- */
-function assertSaneShiftDuration(startsAt: Date, endsAt: Date): void {
-  const minutes = (endsAt.getTime() - startsAt.getTime()) / 60_000;
-  if (minutes > MAX_SHIFT_WALL_MIN) {
-    throw new HttpError(
-      400,
-      'shift_too_long',
-      `A shift can't span ${(minutes / 60).toFixed(1)} hours (max ${MAX_SHIFT_WALL_MIN / 60}h). Check the end date — it's probably rolled a day too far.`,
-    );
-  }
-}
+// assertSaneShiftDuration (the wall-clock ceiling on a shift's span) lives in
+// lib/shiftCreate, shared with POST /v1/shifts.
 
 /** Overlap check excluding SEVERAL shifts — trades hand off two shifts at
  *  once, so each party's own half must not count against them. */
@@ -2583,101 +2571,19 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
     }
 
-    // Brief 2-1b: with a client, the site is one of the client's; without one
-    // (a direct employer) the shift names its site and carries no client.
-    let client: { id: string; state: string | null } | null = null;
-    let location: { id: string };
-    let noticeState: string | null = null;
-    if (input.clientId) {
-      const found = await prisma.client.findFirst({ where: { id: input.clientId, deletedAt: null }, select: { id: true, state: true } });
-      if (!found) throw new HttpError(404, 'client_not_found', 'Client not found');
-      client = found;
-      noticeState = found.state;
-      if (input.locationId) {
-        const picked = await prisma.site.findFirst({
-          where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
-          select: { id: true },
-        });
-        if (!picked) {
-          throw new HttpError(400, 'location_mismatch', 'Location does not belong to the chosen client.');
-        }
-        location = picked;
-      } else {
-        location = await firstLocationForClient(prisma, client.id);
-      }
-    } else {
-      if (!input.locationId) throw new HttpError(400, 'site_required', 'Name the site for this shift.');
-      const site = await prisma.site.findFirst({ where: { id: input.locationId, deletedAt: null, isActive: true }, select: { id: true, clientId: true, state: true } });
-      if (!site) throw new HttpError(404, 'location_not_found', 'Site not found.');
-      if (site.clientId) throw new HttpError(400, 'client_required', 'This site belongs to a client; name the client.');
-      // A site-only account schedules its own site and nowhere else.
-      if (bounded === null && req.user!.locationId && req.user!.locationId !== site.id) {
-        throw new HttpError(403, 'forbidden', 'You can only manage shifts at your own site.');
-      }
-      location = site;
-      noticeState = site.state;
-    }
-
-    assertSaneShiftDuration(new Date(input.startsAt), new Date(input.endsAt));
-    const status = input.status ?? 'OPEN';
-    const isPublishing = isPublishingTransition(undefined, status);
-    const now = new Date();
-    let lateNoticeReason: string | null = null;
-    let publishedAt: Date | null = null;
-    if (isPublishing) {
-      const evaluation = evaluateShiftNotice({
-        state: noticeState,
-        startsAt: new Date(input.startsAt),
-        publishAt: now,
-      });
-      if (evaluation.requiresReason && !input.lateNoticeReason) {
-        throw new HttpError(
-          400,
-          'late_notice_reason_required',
-          `Publishing a shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`
-        );
-      }
-      lateNoticeReason = input.lateNoticeReason ?? null;
-      publishedAt = now;
-    }
-
-    const created = await prisma.shift.create({
-      data: {
-        clientId: client?.id ?? null,
-        locationId: location.id,
-        position: input.position,
-        startsAt: new Date(input.startsAt),
-        endsAt: new Date(input.endsAt),
-        location: input.location ?? null,
-        hourlyRate: billRateHidden(req.user!.role) ? null : (input.hourlyRate ?? null),
-        payRate: input.payRate ?? null,
-        notes: input.notes ?? null,
-        status,
-        createdById: req.user!.id,
-        publishedAt,
-        lateNoticeReason,
+    // The schedule's rules live in lib/shiftCreate (one copy with POST /v1/shifts).
+    const created = await createShiftWithinRules(
+      prisma,
+      input,
+      {
+        userId: req.user!.id,
+        // A site-only account (bounded to no client) schedules its own site only.
+        ownSiteOnly: bounded === null ? (req.user!.locationId ?? null) : null,
+        hideBillRate: billRateHidden(req.user!.role),
+        req,
       },
-      include: SHIFT_INCLUDE,
-    });
-
-    await recordShiftEvent({
-      actorUserId: req.user!.id,
-      action: 'shift.created',
-      shiftId: created.id,
-      clientId: created.clientId,
-      metadata: {
-        position: created.position,
-        status: created.status,
-        ...(lateNoticeReason ? { lateNoticeReason, lateNotice: true } : {}),
-      },
-      req,
-    });
-
-    // A brand-new hire's FIRST shift may arrive via direct creation —
-    // fire the Fieldglass handoff (deduped, silent unless approved+scheduled).
-    if (created.assignedAssociateId) {
-      void maybeNotifyFinanceNewWorker(created.assignedAssociateId);
-    }
+      SHIFT_INCLUDE,
+    );
 
     res.status(201).json(forViewer(req.user!, await withEffectiveRate(created)));
   } catch (err) {
@@ -3022,6 +2928,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       }
     }
 
+    for (const id of createdIds) emitShiftEvent(id, 'created');
     const payload: BulkCreateShiftsResponse = { created: createdCount, skipped };
     res.status(201).json(BulkCreateShiftsResponseSchema.parse(payload));
   } catch (err) {
@@ -3322,6 +3229,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       });
     }
 
+    emitShiftEvent(updated.id, 'updated');
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
@@ -3498,6 +3406,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       });
     }
 
+    emitShiftEvent(updated.id, 'unassigned');
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
@@ -3518,86 +3427,9 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       throw new HttpError(409, 'shift_completed', 'Cannot cancel a completed shift');
     }
 
-    const updated = await prisma.shift.update({
-      where: { id: shift.id },
-      data: {
-        status: 'CANCELLED',
-        cancelledAt: new Date(),
-        cancellationReason: parsed.data.reason,
-      },
-      include: SHIFT_INCLUDE,
-    });
-
-    await recordShiftEvent({
-      actorUserId: req.user!.id,
-      action: 'shift.cancelled',
-      shiftId: updated.id,
-      clientId: updated.clientId,
-      metadata: { reason: parsed.data.reason },
-      req,
-    });
-
-    // Cancel any in-flight swap requests for this shift — there's nothing
-    // left to swap. Otherwise a PENDING_PEER/PEER_ACCEPTED swap sits in the
-    // queue forever and the counterparty could still "accept" a dead shift.
-    const liveSwaps = await prisma.shiftSwapRequest.findMany({
-      where: {
-        shiftId: shift.id,
-        status: { in: ['PENDING_PEER', 'PEER_ACCEPTED'] },
-      },
-      select: {
-        id: true,
-        requesterAssociateId: true,
-        counterpartyAssociateId: true,
-      },
-    });
-    if (liveSwaps.length > 0) {
-      await prisma.shiftSwapRequest.updateMany({
-        where: { id: { in: liveSwaps.map((s) => s.id) } },
-        data: { status: 'CANCELLED' },
-      });
-      const swapLine = formatShiftLine({
-        position: updated.position,
-        clientName: updated.client?.name ?? null,
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-        timezone: updated.locationRel?.timezone ?? null,
-      });
-      const notified = new Set<string>();
-      for (const sw of liveSwaps) {
-        for (const aid of [sw.requesterAssociateId, sw.counterpartyAssociateId]) {
-          if (aid && !notified.has(aid)) {
-            notified.add(aid);
-            void notifyShift(prisma, {
-              associateId: aid,
-              subject: 'Swap cancelled',
-              body: `A swap you were part of is off — the shift was cancelled. ${swapLine}`,
-              category: 'swap_manager_rejected',
-              senderUserId: req.user!.id,
-            });
-          }
-        }
-      }
-    }
-
-    // Same draft rule as unassign — cancelling a never-published shift
-    // is invisible to the associate, so no notification.
-    if (shift.assignedAssociateId && shift.publishedAt) {
-      void notifyShift(prisma, {
-        associateId: shift.assignedAssociateId,
-        subject: 'Shift cancelled',
-        body: `Cancelled: ${formatShiftLine({
-          position: updated.position,
-          clientName: updated.client?.name ?? null,
-          startsAt: updated.startsAt,
-          endsAt: updated.endsAt,
-          timezone: updated.locationRel?.timezone ?? null,
-        })}\nReason: ${parsed.data.reason}`,
-        category: 'shift_cancelled',
-        senderUserId: req.user!.id,
-        wa: shiftWa('alto_shift_cancelled', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
-      });
-    }
+    // The cancel and everything it closes (live swaps, the person told) live in
+    // lib/shiftCreate, one copy with POST /v1/shifts/:id/cancel.
+    const updated = await cancelShiftWithinRules(prisma, shift, parsed.data.reason, { userId: req.user!.id, req }, SHIFT_INCLUDE);
 
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
@@ -7050,6 +6882,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       skipped,
       ...(truncated ? { truncated: true } : {}),
     };
+    for (const id of [...assignedIds, ...openIds]) emitShiftEvent(id, 'published');
     res.json(PublishWeekResponseSchema.parse(body));
   } catch (err) {
     next(err);

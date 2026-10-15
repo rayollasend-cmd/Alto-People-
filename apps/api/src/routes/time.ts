@@ -84,6 +84,7 @@ import { buildTimesheetHistory, timesheetHistoryCsv, timesheetHistoryFilename } 
 import { parseFieldglassList, workerKey } from '../lib/fieldglassDesk.js';
 import multer from 'multer';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
+import { emitTimeEntryApproved } from '../lib/webhookEvents.js';
 
 export const timeRouter = Router();
 
@@ -1394,6 +1395,7 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
       kind: 'approved',
       minutes: netWorkedMinutes(updated, updated.breaks),
     });
+    emitTimeEntryApproved(updated.id);
 
     res.json(await toEntry(updated));
   } catch (err) {
@@ -2100,6 +2102,7 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
       try {
         const done = await approveOneEntry(user, entryId, req);
         if (done) {
+          emitTimeEntryApproved(entryId);
           const agg = approvedByAssociate.get(done.associateId) ?? { count: 0, minutes: 0 };
           agg.count += 1;
           agg.minutes += done.minutes;

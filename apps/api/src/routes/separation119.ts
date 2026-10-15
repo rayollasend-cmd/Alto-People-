@@ -14,6 +14,7 @@ import {
   assertCanCloseAssignments,
   closeOpenAssignments,
 } from '../lib/assignmentDates.js';
+import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 
 /**
  * Phase 119 â€” Separations + exit interviews.
@@ -342,6 +343,7 @@ separation119Router.post(
       );
       // Outbound webhooks â€” the separation completing IS the termination
       // event (access revoked, biometrics purged). Ids + dates only.
+      emitWorkerStatusChanged({ associateId: existing.associateId }, 'separated');
       void emitWebhookEvent('associate.terminated', {
         associateId: existing.associateId,
         separationId: existing.id,

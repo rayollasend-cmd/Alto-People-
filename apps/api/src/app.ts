@@ -43,6 +43,8 @@ import { seasonPlansRouter } from './routes/seasonPlans.js';
 import { workersRouter } from './routes/workers.js';
 import { agentsRouter } from './routes/agents.js';
 import { hugoRouter } from './routes/hugo.js';
+import { v1Router } from './routes/v1.js';
+import { apiClientsRouter } from './routes/apiClients.js';
 import { agentApiRouter } from './routes/agentApi.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
@@ -376,6 +378,10 @@ export function createApp() {
   app.use('/integrations/v1', requireModule('payrollSync'), integrationsV1Router);
   // Agents call with their own credential, never a session (Brief 1D-2).
   app.use('/agent/v1', agentApiRouter);
+  // Brief 2-4: the public API. OAuth client credentials, scoped tokens, a
+  // generated OpenAPI document at /v1/openapi.json; /integrations/v1 stays for ASN.
+  app.use('/v1', v1Router);
+  app.use('/api-clients', apiClientsRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
   // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
   // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the

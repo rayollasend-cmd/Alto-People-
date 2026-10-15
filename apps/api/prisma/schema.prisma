@@ -380,6 +380,8 @@ enum PositionStatus {
 // =============================================================================
 
 model User {
+  /// Brief 2-4: the /v1 API clients this person is accountable for.
+  ownedApiClients     ApiClient[]      @relation("ApiClientOwner")
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email               String           @unique
   passwordHash        String?          @db.VarChar(255)
@@ -4273,6 +4275,8 @@ model AuditLog {
   /// Brief 1D-1: the Worker that acted or was acted on, when one did —
   /// an agent on its own API credential (1D-2), a robot (3-1).
   workerId    String?  @db.Uuid
+  /// Brief 2-4: the /v1 API client that acted (its owner's user id rides in metadata).
+  apiClientId String?  @db.Uuid
   metadata    Json?
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   actorUser   User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -6413,7 +6417,10 @@ model Webhook {
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name        String
   url         String
+  /// Legacy plain text; empty once sealed. New webhooks store only secretEnc.
   secret      String
+  /// Brief 2-4: the signing secret sealed with the webhookSecret job key (lib/webhookSecrets).
+  secretEnc   Bytes?
   eventTypes  String[]  @default([])
   isActive    Boolean   @default(true)
   createdById String?   @db.Uuid
@@ -10266,6 +10273,35 @@ model CredentialCoverageWeek {
 
   @@unique([requirementId, weekOf])
   @@index([tenantId, weekOf])
+}
+
+/// Brief 2-4 (lib/apiClients): an OAuth 2 client-credentials client of the
+/// public /v1 API. One tenant, named scopes, a named accountable owner (as for
+/// every agent and robot). The secret is shown once and stored hashed; a
+/// rotation keeps the previous secret valid for five minutes.
+model ApiClient {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The public client id: altc_ + 24 characters.
+  clientId           String    @unique @db.VarChar(40)
+  secretHash         String
+  previousSecretHash String?
+  previousValidUntil DateTime? @db.Timestamptz(6)
+  name               String    @db.VarChar(120)
+  scopes             String[]
+  ownerUserId        String    @db.Uuid
+  /// ACTIVE | REVOKED
+  status             String    @default("ACTIVE") @db.VarChar(10)
+  lastUsedAt         DateTime? @db.Timestamptz(6)
+  expiresAt          DateTime? @db.Timestamptz(6)
+  revokedAt          DateTime? @db.Timestamptz(6)
+  createdById        String?   @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId           String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  owner User @relation("ApiClientOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
 }
 
 /// The tenant's own kill switch; one row per tenant. The AgentControl singleton is the platform's.
