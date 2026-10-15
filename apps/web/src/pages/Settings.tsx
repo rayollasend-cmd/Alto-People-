@@ -59,7 +59,7 @@ import {
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
-import { useI18n } from '@/lib/i18n';
+import { isLang, useI18n } from '@/lib/i18n';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -1164,7 +1164,7 @@ function LanguageCard() {
     try {
       await updateLanguage(language === '' ? null : language);
       // The UI follows the choice (Brief 2-1b: Turkish is a UI language too, English where a string is not yet translated).
-      if (language === 'es' || language === 'en' || language === 'tr') setLang(language);
+      if (isLang(language)) setLang(language);
       if (language === '') setLang('en');
       toast.success(language === '' ? 'Language preference cleared.' : 'Language updated.');
       await refreshUser();

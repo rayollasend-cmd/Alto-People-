@@ -208,7 +208,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
 
   return (
     <nav
-      aria-label="Primary"
+      aria-label={t('tabs.primaryAria')}
       className={cn(
         tabBarHiddenFrom(user?.role) === 'lg' ? 'lg:hidden' : 'md:hidden',
         // The bar owns the bottom safe area: its background extends under

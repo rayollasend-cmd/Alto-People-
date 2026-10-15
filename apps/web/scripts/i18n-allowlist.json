@@ -1,0 +1,14 @@
+[
+  "^Alto( People| HR| Etho)?\\b",
+  "^(PIN|PDF|PNG|JPG|JPEG|WEBP|CSV|USD|SSN|SSO|QR|ID|OK|URL|API|FCRA|DHS|ABA|W-2|W-4|W-9|I-9|I-766|I-551|1099|401\\(k\\))\\b",
+  "^(WhatsApp|Google|Apple|Face ID|Touch ID|Chase|Wells Fargo|Branch|Wise|Checkr|Quest Diagnostics)\\b",
+  "^(English|Español|Türkçe|Kreyòl ayisyen|Português|Українська)$",
+  "^[A-Z]{1,4}$",
+  "^[A-Z][a-z]?$",
+  "^(AM|PM|EDT|EST|CDT|CST|UTC)\\b",
+  "^Mon|^Tue|^Wed|^Thu|^Fri|^Sat|^Sun$",
+  "^\\d",
+  "^[A-Z][A-Za-z]+@",
+  "^(http|https)://",
+  "^People$"
+]

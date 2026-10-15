@@ -1372,6 +1372,31 @@ function PinPad({
     onChange(pin.slice(0, -1));
   };
 
+  // A physical keyboard works the pad too (a USB keypad on the kiosk
+  // stand, a screen reader user tabbing in): digits type, Backspace
+  // deletes, Escape cancels, Enter is the explicit retry that the
+  // "Try again" button offers once an error kept the typed PIN.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        press(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        back();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      } else if (e.key === 'Enter' && error && pin.length === 4 && !submitting) {
+        e.preventDefault();
+        onSubmit();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   return (
     <div className="flex flex-col items-center w-full max-w-sm px-4">
       <style>{`@keyframes kiosk-shake {
@@ -1385,6 +1410,7 @@ function PinPad({
       {/* min-h 44px — this pill is the only path into the break flow,
           so it gets a full-size touch target, not a caption-sized one. */}
       <button
+        type="button"
         onClick={() => onIntent(intent === 'BREAK' ? null : 'BREAK')}
         className={`mb-6 min-h-[44px] px-5 py-2.5 rounded-full text-base border transition-colors ${
           intent === 'BREAK'
@@ -1445,6 +1471,7 @@ function PinPad({
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
           <button
             key={d}
+            type="button"
             onClick={() => press(d)}
             disabled={submitting}
             className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
@@ -1453,6 +1480,7 @@ function PinPad({
           </button>
         ))}
         <button
+          type="button"
           onClick={onCancel}
           disabled={submitting}
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-sm text-silver transition-transform active:scale-95"
@@ -1460,6 +1488,7 @@ function PinPad({
           {t.cancel}
         </button>
         <button
+          type="button"
           onClick={() => press('0')}
           disabled={submitting}
           className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
@@ -1467,6 +1496,7 @@ function PinPad({
           0
         </button>
         <button
+          type="button"
           onClick={back}
           disabled={submitting}
           // The only child is an aria-hidden icon, so without this the key

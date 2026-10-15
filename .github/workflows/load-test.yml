@@ -1,0 +1,83 @@
+# Brief 3-6: the load test at enterprise scale — 50,000 workers across
+# 1,000 sites, the top routes under concurrent traffic, p95 under two
+# seconds on every one or the job fails. Run by hand (workflow_dispatch);
+# the report lands in the job summary and as an artifact. A runner's CPU
+# is not production's: read the numbers as a trend between runs and a
+# guard against a regression, not as a capacity promise.
+
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: Workers to seed
+        default: '50000'
+      sites:
+        description: Sites to seed
+        default: '1000'
+
+jobs:
+  load:
+    name: Top routes at scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: alto
+          POSTGRES_PASSWORD: alto_dev
+          POSTGRES_DB: alto_people
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alto -d alto_people"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=public
+      DIRECT_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=public
+      JWT_SECRET: test-jwt-secret-do-not-use-outside-tests-padding-pad-pad
+      JWT_TTL_SECONDS: '3600'
+      PAYOUT_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+      APP_BASE_URL: http://127.0.0.1:5173
+      RESEND_API_KEY: ''
+      RESEND_FROM: ''
+      LOAD_WORKERS: ${{ github.event.inputs.workers || '50000' }}
+      LOAD_SITES: ${{ github.event.inputs.sites || '1000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm -w @alto-people/shared run build
+      - run: npm -w apps/api exec prisma migrate deploy
+      - run: npm -w apps/api exec prisma generate
+      - run: npm -w apps/api run db:seed
+      - name: Seed the scale tenant
+        run: LOAD_SCALE=1 npm -w apps/api exec tsx scripts/load/seed-scale.ts
+      - name: Build and start the API (production build, not the dev watcher)
+        run: |
+          npm -w apps/api run build
+          LOGIN_IP_LIMIT=100000 NODE_ENV=production PORT=3001 npm -w apps/api run start > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3001/health/ready > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3001/health/ready
+      - name: Run the scenarios
+        run: npm -w apps/api exec tsx scripts/load/run.ts
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-report
+          path: |
+            load-report.md
+            load-results.json
+            api.log
+          retention-days: 30

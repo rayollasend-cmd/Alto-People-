@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "size:check": "node scripts/size-budget.mjs",
     "lint:design": "node scripts/design-lint.mjs",
+    "lint:i18n": "node scripts/i18n-check.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
