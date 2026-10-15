@@ -53,6 +53,8 @@ export interface AgentCapabilityDef {
   scopes: readonly AgentScope[];
   /** The gated action its proposals file, or null when it only reads or notifies. */
   gate: AgentGatedAction | null;
+  /** Sends notices to people without a gate (owner's decision 3: one a person a day, logged). */
+  notifies: boolean;
   /** Scorecard metric keys (§4.3), on top of the registry's generic counts. */
   metrics: readonly string[];
   scenarios: readonly CapabilityScenarioFixture[];
@@ -224,6 +226,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['scheduling'],
     scopes: ['view:scheduling', 'view:org', 'manage:scheduling'],
     gate: 'SHIFT_ASSIGN',
+    notifies: false,
     metrics: ['shiftsSeen', 'broadcastPickupRate', 'proposalsMade', 'proposalsApproved', 'filledBeforeStart', 'medianMinutesToFill'],
     scenarios: [SHIFT_FILL_FIXTURE],
   },
@@ -234,6 +237,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['scheduling', 'time'],
     scopes: ['view:scheduling', 'view:time', 'manage:communications', 'manage:scheduling'],
     gate: 'SHIFT_ASSIGN',
+    notifies: true,
     metrics: ['textsSent', 'answered', 'noShowsConfirmed', 'noShowsUnconfirmed', 'backupsAccepted'],
     scenarios: [ATTENDANCE_CONFIRM_FIXTURE],
   },
@@ -244,6 +248,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['scheduling'],
     scopes: ['view:scheduling', 'view:org', 'manage:scheduling'],
     gate: 'SHIFT_ASSIGN',
+    notifies: false,
     metrics: ['shiftsUncovered', 'proposalsMade', 'repairedBeforeStart'],
     scenarios: [SCHEDULE_REPAIR_FIXTURE],
   },
@@ -254,6 +259,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['scheduling'],
     scopes: ['view:scheduling', 'view:analytics'],
     gate: null,
+    notifies: false,
     metrics: ['forecastErrorPct7d', 'forecastErrorPct1d'],
     scenarios: [COVERAGE_FORECAST_FIXTURE],
   },
@@ -265,6 +271,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['compliance'],
     scopes: ['view:compliance', 'manage:compliance', 'manage:communications'],
     gate: null,
+    notifies: true,
     metrics: ['itemsChased', 'uploadedBeforeExpiry', 'expiredAnyway', 'escalations'],
     scenarios: [DOCUMENT_CHASE_FIXTURE],
   },
@@ -275,6 +282,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['compliance'],
     scopes: ['view:compliance', 'view:org'],
     gate: null,
+    notifies: true,
     metrics: ['hires', 'completedInTime', 'late', 'everifyOpenedInTime'],
     scenarios: [I9_SECTION2_FIXTURE],
   },
@@ -285,6 +293,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['compliance', 'hrCases'],
     scopes: ['view:compliance', 'open:hr-case'],
     gate: 'CASE_OPEN',
+    notifies: true,
     metrics: ['openIncidents', 'medianAgeDays', 'closedAfterChase'],
     scenarios: [INCIDENT_LOOP_FIXTURE],
   },
@@ -295,6 +304,7 @@ export const AGENT_CAPABILITIES = [
     requiresModule: ['compliance'],
     scopes: ['view:compliance', 'view:org'],
     gate: null,
+    notifies: true,
     metrics: ['sitesBelowRequirement', 'gapsClosed'],
     scenarios: [COVERAGE_CREDENTIALS_FIXTURE],
   },

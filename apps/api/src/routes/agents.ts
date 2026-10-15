@@ -24,6 +24,8 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { loadTenantProfile } from '../lib/tenantProfile.js';
+import { mcpCatalogFor } from '../lib/mcpCatalog.js';
 import { approvalAction, assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
 import { addScenario, certifyAgent, controlState, listScenarios, removeScenario, resumeAgent, resumeAllAgents, runScenarios, scorecard, suspendAgent, suspendAllAgents } from '../lib/agentControls.js';
 import { capabilityScorecard, deskMayDecide, listAgentCapabilities, listProposals, resumeCapability, resumeTenantAgents, suspendCapability, suspendTenantAgents, tenantControlState } from '../lib/agentCapabilities.js';
@@ -180,6 +182,18 @@ agentsRouter.get('/proposals', VIEW, async (req, res, next) => {
 });
 
 // ---- The organization's switch, and the platform's --------------------------
+
+// ---- The MCP tool catalog, read-only preview (agent families step 6; Brief 2-7) ----
+// Generated from the capability catalog for this tenant's modules: what an MCP
+// server would expose. Nothing here calls anything. Before /:id so the literal wins.
+agentsRouter.get('/mcp-catalog', VIEW, async (_req, res, next) => {
+  try {
+    const profile = await loadTenantProfile(tenantIdForWrite());
+    res.json({ preview: true, tools: mcpCatalogFor(profile.modules) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 agentsRouter.get('/control', VIEW, async (_req, res, next) => {
   try {
