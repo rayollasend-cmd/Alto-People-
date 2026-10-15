@@ -474,6 +474,12 @@ export async function runCapabilityFixture(
         refs[sh.ref] = row.id;
         created.shifts.push(row.id);
       }
+      // The attendance record the risk score reads; removed with its person (cascade).
+      for (const a of fixture.world.attendance ?? []) {
+        await db.attendanceEvent.create({
+          data: { associateId: refs[a.personRef]!, kind: a.kind, points: a.kind === 'NO_CALL_NO_SHOW' ? 2 : a.kind === 'CALL_OUT' ? 1 : 0.5, occurredOn: new Date(now.getTime() - a.daysAgo * DAY), source: 'MANUAL', tenantId },
+        });
+      }
       const answer = await runner({ db, tenantId, now, refs, input: fixture.input });
       // An expected output names refs; compare in refs, not ids.
       const byId = new Map(Object.entries(refs).map(([ref, id]) => [id, ref]));

@@ -10,6 +10,7 @@ import { sendWhatsApp } from './whatsapp.js';
 import { logBuiltInAgentAction } from './agents.js';
 import { getBrandingSync } from './branding.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
+import { answerFromWhatsApp } from './attendanceConfirm.js';
 
 /**
  * THE ASSISTANT — three questions, answered from the associate's own data.
@@ -37,7 +38,7 @@ export interface InboundMessage {
   timestamp?: Date;
 }
 
-export type Intent = 'OPT_OUT' | 'OPT_IN' | 'LANGUAGE' | 'WHO' | 'PAYDAY' | 'RIDE' | 'SCHEDULE' | 'HANDOFF';
+export type Intent = 'OPT_OUT' | 'OPT_IN' | 'LANGUAGE' | 'WHO' | 'PAYDAY' | 'RIDE' | 'SCHEDULE' | 'HANDOFF' | 'CONFIRM_YES' | 'CONFIRM_NO';
 
 const norm = (s: string) =>
   s
@@ -58,6 +59,18 @@ const LANGS: Array<[RegExp, WaLang]> = [
 const WHO = /\b(who are you|what are you|are you (a |an )?(bot|robot|ai|human|real person|person)|is this a (bot|robot|person)|quien eres|que eres|eres (un|una) (bot|robot|persona|humano|ia)|kimsin|nesin|sen kimsin|bot musun|robot musun|insan misin)\b/;
 const PAYDAY = /\b(pay ?day|paid|pay\b|paycheck|paystub|cobr\w*|pago|pagan|sueldo|nomina|maas|odeme|para)\b/;
 const RIDE = /\b(ride|van|pick ?up|bus|shuttle|viaje|camioneta|recog\w*|transporte|servis|arac|minibus|ulasim)\b/;
+/** A one-word answer to the Workforce agent's "are you coming?" (attendance.confirm), in three languages. */
+const YES = /^(yes|y|yeah|yep|si|claro|evet|tamam|ok|okay)[.!s]*$/;
+const NO = /^(no|n|nope|hayir|olmaz|yok)[.!s]*$/;
+
+/** YES or NO when the whole message is one; null otherwise (the other intents apply). */
+export function detectConfirmAnswer(text: string): 'YES' | 'NO' | null {
+  const t = norm(text);
+  if (YES.test(t)) return 'YES';
+  if (NO.test(t)) return 'NO';
+  return null;
+}
+
 const SCHEDULE = /\b(schedule|shift|shifts|work|working|hours|horario|turno|turnos|trabajo|vardiya|calis\w*|program|mesai)\b/;
 
 export function detectIntent(text: string): { intent: Intent; lang?: WaLang } {
@@ -196,6 +209,18 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
     await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId } });
     return text;
   };
+
+  // A bare YES/NO answers the Workforce agent's open ask, when there is one; otherwise it falls through.
+  const yn = detectConfirmAnswer(msg.text);
+  if (yn) {
+    const answered = await answerFromWhatsApp(db, associateId, yn, now);
+    if (answered) {
+      const tz = answered.shift.timezone ?? DEFAULT_TIMEZONE;
+      const when = `${answered.shift.position}, ${formatDateInZone(answered.shift.startsAt, tz)} ${formatTimeInZone(answered.shift.startsAt, tz)}`;
+      const intentYn: Intent = yn === 'YES' ? 'CONFIRM_YES' : 'CONFIRM_NO';
+      return { intent: intentYn, reply: await say(yn === 'YES' ? WA_REPLY.confirmedYes(lang, when) : WA_REPLY.confirmedNo(lang, when), 'SYSTEM'), associateId };
+    }
+  }
 
   // Brief 2-1b: a capability that depends on a disabled module is not offered.
   const effective: Intent = intent === 'RIDE' && !(await moduleOn('transportation')) ? 'HANDOFF' : intent;

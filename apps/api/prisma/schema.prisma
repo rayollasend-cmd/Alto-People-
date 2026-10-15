@@ -1760,99 +1760,101 @@ model AssociateAssignment {
 }
 
 model Associate {
-  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Agent families step 2: the attendance.confirm asks this person received.
+  attendanceConfirmations AttendanceConfirmation[]
+  id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId            String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  firstName           String
-  lastName            String
+  tenantId                String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  firstName               String
+  lastName                String
   // E-Verify / Form I-9 Section 1 identity fields. Both are optional on the
   // federal form but asked for, and without them the verifier hand-types
   // them into the portal every time. otherLastNames is a Postgres text
   // array — E-Verify collects prior surnames as a repeatable list, and an
   // array matches that without a join table for what is usually 0-2 values.
-  middleInitial       String?            @db.VarChar(1)
-  otherLastNames      String[]           @default([])
-  dob                 DateTime?          @db.Date
-  email               String             @unique
-  phone               String?
-  ssnLast4            String?            @db.VarChar(4)
+  middleInitial           String?                  @db.VarChar(1)
+  otherLastNames          String[]                 @default([])
+  dob                     DateTime?                @db.Date
+  email                   String                   @unique
+  phone                   String?
+  ssnLast4                String?                  @db.VarChar(4)
   /// Last 4 of a passport / travel document number — the Fieldglass
   /// Security ID's fallback for a worker with no SSN.
-  travelDocLast4      String?            @db.VarChar(4)
-  addressLine1        String?
-  addressLine2        String?
-  city                String?
-  state               String?            @db.VarChar(2)
-  zip                 String?            @db.VarChar(10)
-  j1Status            Boolean            @default(false)
+  travelDocLast4          String?                  @db.VarChar(4)
+  addressLine1            String?
+  addressLine2            String?
+  city                    String?
+  state                   String?                  @db.VarChar(2)
+  zip                     String?                  @db.VarChar(10)
+  j1Status                Boolean                  @default(false)
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
-  employmentType      EmploymentType     @default(W2_EMPLOYEE)
+  employmentType          EmploymentType           @default(W2_EMPLOYEE)
   // Gap 11 — Recipient TIN for Form 1099-NEC. SSN for
   // CONTRACTOR_1099_INDIVIDUAL, EIN for CONTRACTOR_1099_BUSINESS.
   // Encrypted at rest with the same PAYOUT_ENCRYPTION_KEY scheme as
   // W4Submission.ssnEncrypted. Null for W-2 employees (their SSN
   // lives on W4Submission). Surfaces as `missing_tin` 400 in the
   // 1099-NEC PDF + IRS-FIRE routes when null.
-  tinEncrypted        Bytes?
+  tinEncrypted            Bytes?
   // Phase 76 — org hierarchy. All four are nullable: existing rows
   // continue to work with NULLs and HR fills them in over time. The
   // managerId self-reference enables direct-reports queries.
-  managerId           String?            @db.Uuid
-  departmentId        String?            @db.Uuid
-  costCenterId        String?            @db.Uuid
+  managerId               String?                  @db.Uuid
+  departmentId            String?                  @db.Uuid
+  costCenterId            String?                  @db.Uuid
   /// Brief 2-1b step 5: the home unit (the cost center folded into the tree).
-  orgUnitId           String?            @db.Uuid
-  jobProfileId        String?            @db.Uuid
+  orgUnitId               String?                  @db.Uuid
+  jobProfileId            String?                  @db.Uuid
   // Wave 1.1 — pay schedule assignment. Drives the payroll run wizard's
   // "next period to run" calculation and determines pay frequency for
   // tax annualization. NULL = legacy associates that haven't been
   // assigned to a schedule yet (treated as biweekly default until set).
-  payrollScheduleId   String?            @db.Uuid
+  payrollScheduleId       String?                  @db.Uuid
   // Wave 3.2 — QBO Employee.Id (W2) or Vendor.Id (1099) cache. Set the
   // first time we sync this associate to QuickBooks. Used as the dedup
   // key so we never create duplicate QBO records, and (future) as the
   // EmployeeRef on per-associate journal entries.
-  qboEmployeeId       String?
-  qboVendorId         String?
-  qboSyncedAt         DateTime?          @db.Timestamptz(6)
+  qboEmployeeId           String?
+  qboVendorId             String?
+  qboSyncedAt             DateTime?                @db.Timestamptz(6)
   // Stamped when HR approves the associate's onboarding application
   // (POST /onboarding/applications/:id/approve). The date HR enters in
   // the approve dialog — distinct from Application.startDate (the
   // *planned* start at invitation time, which can differ if HR changes
   // their mind during review).
-  hireDate            DateTime?          @db.Date
+  hireDate                DateTime?                @db.Date
   // Tier-1 — when this hire was reported to the state new-hire directory
   // (federally required within ~20 days of hire). Null = not yet
   // reported; the new-hire report endpoints surface and stamp this.
-  newHireReportedAt   DateTime?          @db.Timestamptz(6)
+  newHireReportedAt       DateTime?                @db.Timestamptz(6)
   // Tier-2 — city/county withholding rule for this associate (null =
   // no local tax). Withheld into PayrollItem.localWithholding.
-  localTaxRuleId      String?            @db.Uuid
-  localTaxRule        LocalTaxRule?      @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
+  localTaxRuleId          String?                  @db.Uuid
+  localTaxRule            LocalTaxRule?            @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
   // Tier-3 — workers-comp classification for the premium accrual report.
-  wcClassCodeId       String?            @db.Uuid
-  wcClassCode         WcClassCode?       @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
+  wcClassCodeId           String?                  @db.Uuid
+  wcClassCode             WcClassCode?             @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
   // Avatar then falls back to initials.
-  photoS3Key          String?
-  photoUpdatedAt      DateTime?          @db.Timestamptz(6)
+  photoS3Key              String?
+  photoUpdatedAt          DateTime?                @db.Timestamptz(6)
   // Kiosk face-verification consent (BIPA-style biometric laws require
   // affirmative consent BEFORE collecting face geometry). NULL = never
   // asked — the kiosk shows a one-time consent screen after the first
   // successful PIN entry. DECLINED associates punch PIN-only: no
   // selfie, no descriptor, ever.
-  faceConsentStatus   FaceConsentStatus?
-  faceConsentAt       DateTime?          @db.Timestamptz(6)
+  faceConsentStatus       FaceConsentStatus?
+  faceConsentAt           DateTime?                @db.Timestamptz(6)
   // iCal feed revocation. The feed token is HMAC(secret, associateId
   // [+ ":v" + version]), so bumping this number invalidates ONE
   // associate's leaked calendar URL without rotating the global
   // CALENDAR_FEED_SECRET (which would break every subscription).
   // 1 = the original pre-version token format, so URLs minted before
   // this column existed keep verifying.
-  calendarFeedVersion Int                @default(1)
+  calendarFeedVersion     Int                      @default(1)
   // Privacy erasure (admin-initiated, lib/erasure.ts). Set exactly once —
   // identity fields are anonymized in place while payroll/tax history rows
   // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
@@ -1862,7 +1864,7 @@ model Associate {
   // Drives the directory's INACTIVE status — without it, "Active" derived
   // purely from "has an approved application" and separated associates
   // stayed active forever.
-  separatedAt         DateTime?          @db.Timestamptz(6)
+  separatedAt             DateTime?                @db.Timestamptz(6)
   // Manual pause — "Deactivate" on the People profile. Distinct from a
   // completed Separation (formal offboarding): a deactivated associate is
   // expected back, and Reactivate restores them in one click with their
@@ -1870,20 +1872,20 @@ model Associate {
   // While set: login DISABLED (same transaction), kiosk punches that
   // would open a new entry rejected, excluded from the schedulable pool,
   // directory shows INACTIVE.
-  deactivatedAt       DateTime?          @db.Timestamptz(6)
-  deactivatedById     String?            @db.Uuid
-  deactivatedBy       User?              @relation("AssociateDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
-  deactivationReason  String?
-  erasedAt            DateTime?          @db.Timestamptz(6)
-  erasedById          String?            @db.Uuid
-  erasedBy            User?              @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
+  deactivatedAt           DateTime?                @db.Timestamptz(6)
+  deactivatedById         String?                  @db.Uuid
+  deactivatedBy           User?                    @relation("AssociateDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
+  deactivationReason      String?
+  erasedAt                DateTime?                @db.Timestamptz(6)
+  erasedById              String?                  @db.Uuid
+  erasedBy                User?                    @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
   // Onboarding purge final notice (lib/onboardingPurge.ts). Stamped when
   // the "your onboarding will be removed in 48 hours" email goes out to an
   // accepted-but-abandoned onboarder; any later onboarding activity makes
   // the stamp stale (activity > stamp), which re-arms a fresh warning
   // before any purge. Never set for people with work history — the sweep's
   // guards exclude them entirely.
-  purgeWarnedAt       DateTime?          @db.Timestamptz(6)
+  purgeWarnedAt           DateTime?                @db.Timestamptz(6)
   // Dormancy sweep (lib/dormancySweep.ts). dormancyWarnedAt stamps the
   // admin heads-up ("inactive, auto-deactivation in ~7 days"); any later
   // activity makes the stamp stale (activity > stamp), which re-arms a
@@ -1891,11 +1893,11 @@ model Associate {
   // un-warned. reactivatedAt stamps each Reactivate so a just-restored
   // associate gets a full fresh dormancy window instead of being swept
   // again the same night (their last clock-in may be months old).
-  dormancyWarnedAt    DateTime?          @db.Timestamptz(6)
-  reactivatedAt       DateTime?          @db.Timestamptz(6)
-  createdAt           DateTime           @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime           @updatedAt @db.Timestamptz(6)
-  deletedAt           DateTime?          @db.Timestamptz(6)
+  dormancyWarnedAt        DateTime?                @db.Timestamptz(6)
+  reactivatedAt           DateTime?                @db.Timestamptz(6)
+  createdAt               DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                 @updatedAt @db.Timestamptz(6)
+  deletedAt               DateTime?                @db.Timestamptz(6)
 
   user                     User?
   j1Profile                J1Profile?
@@ -3001,84 +3003,86 @@ model TimeEntry {
 }
 
 model Shift {
-  id                   String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String?                         @db.Uuid
+  id                     String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId               String?                         @db.Uuid
   // Phase 131 — physical work site for this shift. Still nullable
   // until the legacy free-text `location` column below is migrated
   // out; a follow-up PR will make this required after updating the
   // 17 writers/readers in one pass.
-  locationId           String?                         @db.Uuid
+  locationId             String?                         @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId             String?                         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  position             String
-  startsAt             DateTime                        @db.Timestamptz(6)
-  endsAt               DateTime                        @db.Timestamptz(6)
-  location             String?
+  tenantId               String?                         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  position               String
+  startsAt               DateTime                        @db.Timestamptz(6)
+  endsAt                 DateTime                        @db.Timestamptz(6)
+  location               String?
   // What the client is billed (revenue side).
-  hourlyRate           Decimal?                        @db.Decimal(8, 2)
+  hourlyRate             Decimal?                        @db.Decimal(8, 2)
   // What the associate is paid (cost side). null = use Job.payRate or default.
-  payRate              Decimal?                        @db.Decimal(8, 2)
-  status               ShiftStatus                     @default(DRAFT)
-  notes                String?
-  assignedAssociateId  String?                         @db.Uuid
-  assignedAt           DateTime?                       @db.Timestamptz(6)
-  createdById          String?                         @db.Uuid
-  cancelledAt          DateTime?                       @db.Timestamptz(6)
-  cancellationReason   String?
+  payRate                Decimal?                        @db.Decimal(8, 2)
+  status                 ShiftStatus                     @default(DRAFT)
+  notes                  String?
+  assignedAssociateId    String?                         @db.Uuid
+  assignedAt             DateTime?                       @db.Timestamptz(6)
+  createdById            String?                         @db.Uuid
+  cancelledAt            DateTime?                       @db.Timestamptz(6)
+  cancellationReason     String?
   // Phase 25 — stamped the first time the shift transitions out of DRAFT
   // (= "schedule was published"). Combined with startsAt, this is the
   // notice window every fair-workweek law audits against.
-  publishedAt          DateTime?                       @db.Timestamptz(6)
+  publishedAt            DateTime?                       @db.Timestamptz(6)
   // Documented justification when a shift in a fair-workweek state was
   // published inside the 14-day notice window (mutual agreement,
   // emergency call-out cover, etc.). Required by the API for those cases.
-  lateNoticeReason     String?
+  lateNoticeReason       String?
   // Associate tapped "I'll be there" on this published shift. Null = not
   // yet acknowledged; admins can chase unconfirmed shifts before the day.
-  acknowledgedAt       DateTime?                       @db.Timestamptz(6)
+  acknowledgedAt         DateTime?                       @db.Timestamptz(6)
   // "Please confirm" chase (manual nudge-all button + hourly auto-nudge).
   // Stamped when a confirm reminder went out so neither path re-pesters;
   // distinct from reminderSentAt (the day-before "shift tomorrow" note).
-  confirmNudgedAt      DateTime?                       @db.Timestamptz(6)
+  confirmNudgedAt        DateTime?                       @db.Timestamptz(6)
   // Day-before reminder dedupe stamp — the reminder cron claims a shift by
   // setting this (guarded update), so overlapping sweeps can't double-send.
-  reminderSentAt       DateTime?                       @db.Timestamptz(6)
+  reminderSentAt         DateTime?                       @db.Timestamptz(6)
   // No-show alert dedupe stamp — the sweep claims a shift whose start
   // passed with no linked punch by setting this (guarded update) before
   // notifying admins, so each shift alerts at most once.
-  noShowNotifiedAt     DateTime?                       @db.Timestamptz(6)
+  noShowNotifiedAt       DateTime?                       @db.Timestamptz(6)
   // Attendance-record stamp, deliberately separate from the alert above.
   // The 15-minute alert asks a supervisor to go look; the attendance
   // event is only written once the shift has ENDED with no punch, so a
   // late arrival is never filed as a no-call no-show.
-  noShowRecordedAt     DateTime?                       @db.Timestamptz(6)
+  noShowRecordedAt       DateTime?                       @db.Timestamptz(6)
   // Emergency Mode (Brief 1C-1): a declared emergency suspends the shift —
   // status CANCELLED with reason EMERGENCY, which every sweep and roster
   // already treats as "not a shift" (no attendance penalty, no reminder,
   // no pay). The status it had is kept so stand-down can put it back.
-  emergencyId          String?                         @db.Uuid
-  emergencyPriorStatus ShiftStatus?
+  emergencyId            String?                         @db.Uuid
+  emergencyPriorStatus   ShiftStatus?
   // Brief 1D-1: the Worker on this shift — a person (kept in step with
   // assignedAssociateId by the client extension in db.ts), an agent, or a
   // robot. Scheduling reads this from now on; the associate column stays
   // for every screen that already knows it.
-  workerId             String?                         @db.Uuid
-  client               Client?                         @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  emergency            Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
-  worker               Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
-  locationRel          Site?                           @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  assignedAssociate    Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
-  createdBy            User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  swapRequests         ShiftSwapRequest[]
+  workerId               String?                         @db.Uuid
+  client                 Client?                         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  emergency              Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
+  worker                 Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  locationRel            Site?                           @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  assignedAssociate      Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
+  createdBy              User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  swapRequests           ShiftSwapRequest[]
   // Time entries auto-matched to this shift at punch time.
-  timeEntries          TimeEntry[]                     @relation("ShiftTimeEntries")
+  timeEntries            TimeEntry[]                     @relation("ShiftTimeEntries")
+  /// Agent families step 2: the Workforce agent's attendance.confirm ask for this shift.
+  attendanceConfirmation AttendanceConfirmation?
   // Trades: swaps where THIS shift is what the requester takes in exchange.
-  tradeSwapRequests    ShiftSwapRequest[]              @relation("SwapCounterpartShift")
+  tradeSwapRequests      ShiftSwapRequest[]              @relation("SwapCounterpartShift")
   // Phase 85 — qualification gates + open-shift claims.
-  qualReqs             ShiftQualificationRequirement[]
-  claims               OpenShiftClaim[]
-  createdAt            DateTime                        @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime                        @updatedAt @db.Timestamptz(6)
+  qualReqs               ShiftQualificationRequirement[]
+  claims                 OpenShiftClaim[]
+  createdAt              DateTime                        @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                        @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, startsAt])
   @@index([locationId, startsAt])
@@ -10094,6 +10098,38 @@ model AgentProposal {
 
   @@index([workerId, capabilityKey, createdAt(sort: Desc)])
   @@index([subjectType, subjectId])
+  @@index([tenantId])
+}
+
+/// Agent families step 2 (lib/attendanceConfirm): the Workforce agent asked the
+/// shift's holder, the day before, whether they are coming. One per shift. A NO,
+/// or silence past cutoffAt, files a backup proposal (SHIFT_ASSIGN).
+model AttendanceConfirmation {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shiftId          String    @unique @db.Uuid
+  associateId      String    @db.Uuid
+  /// The agent that asked (AgentProfile.workerId).
+  workerId         String    @db.Uuid
+  /// WHATSAPP (opted in) or IN_APP.
+  channel          String    @db.VarChar(20)
+  sentAt           DateTime  @db.Timestamptz(6)
+  /// Twelve hours before the shift starts (owner, 2026-10-15): silence past it files a backup.
+  cutoffAt         DateTime  @db.Timestamptz(6)
+  /// YES | NO; null until they answer.
+  answer           String?   @db.VarChar(10)
+  answeredAt       DateTime? @db.Timestamptz(6)
+  /// APP | WHATSAPP
+  answeredVia      String?   @db.VarChar(20)
+  /// The backup proposal filed for a NO or for silence.
+  backupProposalId String?   @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  shift     Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, sentAt])
   @@index([tenantId])
 }
 

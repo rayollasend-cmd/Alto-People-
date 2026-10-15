@@ -145,6 +145,13 @@ export function acknowledgeMyShift(id: string): Promise<Shift> {
   });
 }
 
+/** "I can't make it": the answer to the Workforce agent's ask (409 not_asked on any other shift). */
+export function declineMyShift(id: string): Promise<Shift> {
+  return apiFetch<Shift>(`/scheduling/me/shifts/${id}/decline`, {
+    method: 'POST',
+  });
+}
+
 /** Open shifts I'm eligible to pick up (conflict/PTO-filtered server-side). */
 export function listMyOpenShifts(): Promise<OpenShiftsResponse> {
   return apiFetch<OpenShiftsResponse>('/scheduling/me/open-shifts');

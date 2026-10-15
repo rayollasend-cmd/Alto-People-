@@ -9,10 +9,11 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
-import { acknowledgeMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
+import { acknowledgeMyShift, declineMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { useMyEarnings, useTickSeconds } from '@/components/EarningsCard';
@@ -90,6 +91,8 @@ export function MyShiftHero({
   const now = useNow();
   const queryClient = useQueryClient();
   const [acking, setAcking] = useState(false);
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declining, setDeclining] = useState(false);
   const next = shifts ? pickNextShift(shifts, now) : null;
   const detail = useQuery({
     queryKey: ['me', 'shiftDetail', next?.id],
@@ -123,9 +126,28 @@ export function MyShiftHero({
 
   const needsConfirm = !!next && next.status === 'ASSIGNED' && !next.acknowledgedAt && !started;
   const confirmed = !!next && next.status === 'ASSIGNED' && !!next.acknowledgedAt && !started;
+  // The Workforce agent asked (attendance.confirm): "I can't make it" is the other answer.
+  const ask = next?.confirmationAsk ?? null;
+  const canDecline = !!next && next.status === 'ASSIGNED' && !!ask && ask.answer !== 'NO' && !started;
+  const declined = !!next && next.status === 'ASSIGNED' && ask?.answer === 'NO' && !started;
   const place = next ? [next.locationName, next.location].filter(Boolean).join(' · ') : '';
   const supervisors = detail.data?.supervisors ?? [];
   const teammates = detail.data?.teammates ?? [];
+
+  const decline = async () => {
+    if (!next || declining) return;
+    setDeclining(true);
+    try {
+      await declineMyShift(next.id);
+      toast.success(t('shift.declinedToast'));
+      setDeclineOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('shift.declineFailed'));
+    } finally {
+      setDeclining(false);
+    }
+  };
 
   const acknowledge = async () => {
     if (!next || acking) return;
@@ -302,12 +324,18 @@ export function MyShiftHero({
               {t('shift.illBeThere')}
             </Button>
           )}
+          {canDecline && (
+            <Button size="sm" variant="secondary" onClick={() => setDeclineOpen(true)} disabled={declining}>
+              {t('shift.cantMakeIt')}
+            </Button>
+          )}
           {confirmed && (
             <span className="inline-flex items-center gap-1 text-xs text-success">
               <Check className="h-3.5 w-3.5" aria-hidden="true" />
               {t('shift.youConfirmed')}
             </span>
           )}
+          {declined && <span className="text-xs text-silver">{t('shift.declinedNote')}</span>}
           {state === 'none' && openShiftCount !== null && openShiftCount > 0 ? (
             <Button size="sm" asChild>
               <Link to="/marketplace">{t('hero.pickUp')}</Link>
@@ -325,6 +353,15 @@ export function MyShiftHero({
         </div>
         {state !== 'on' && footer?.(state)}
       </div>
+      <ConfirmDialog
+        open={declineOpen}
+        onOpenChange={setDeclineOpen}
+        title={t('shift.cantMakeItTitle')}
+        description={t('shift.cantMakeItBody')}
+        confirmLabel={t('shift.cantMakeItConfirm')}
+        busy={declining}
+        onConfirm={decline}
+      />
     </section>
   );
 }

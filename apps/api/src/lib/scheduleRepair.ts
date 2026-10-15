@@ -228,7 +228,7 @@ export async function runScheduleRepair(db: Db = defaultPrisma, now: Date = new 
   const inflight = await db.agentProposal.findMany({ where: { tenantId, workerId: agent.workerId, capabilityKey: SCHEDULE_REPAIR, status: { in: ['PROPOSED', 'APPROVED'] } } });
   for (const pr of inflight) {
     const shift = pr.subjectId ? await db.shift.findFirst({ where: { id: pr.subjectId, tenantId }, select: SHIFT_SELECT }) : null;
-    const moot = await assignProposalMoot(db, shift, replacesOf(pr.payload));
+    const moot = await assignProposalMoot(db, shift, replacesOf(pr.payload), pr.capabilityKey);
     if (moot) {
       await supersedeProposal(db, pr, moot, now);
       out.superseded += 1;

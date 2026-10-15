@@ -16,7 +16,8 @@ import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 
 const DAY_MS = 24 * 3600_000;
-const RISK_THRESHOLD = 2.5;
+/** A holder at this many unexcused points in 90 days is high-risk (the radar and attendance.confirm). */
+export const RISK_THRESHOLD = 2.5;
 const CATEGORY = 'noshow_risk';
 const SEND_AFTER_HOUR = 17;
 const SWEEP_SECONDS = 60 * 60;
@@ -70,21 +71,7 @@ export async function computeNoShowRisk(
   if (shifts.length === 0) return [];
 
   const holderIds = [...new Set(shifts.map((s) => s.assignedAssociate!.id))];
-  const events = await prisma.attendanceEvent.findMany({
-    where: {
-      associateId: { in: holderIds },
-      excusedAt: null,
-      occurredOn: { gte: new Date(now.getTime() - 90 * DAY_MS) },
-    },
-    select: { associateId: true, kind: true },
-    take: 5_000,
-  });
-  const points = new Map<string, number>();
-  for (const e of events) {
-    const p =
-      e.kind === 'NO_CALL_NO_SHOW' ? 2 : e.kind === 'CALL_OUT' ? 1 : e.kind === 'LATE' ? 0.5 : 0.5;
-    points.set(e.associateId, (points.get(e.associateId) ?? 0) + p);
-  }
+  const points = await attendancePoints(prisma, holderIds, now);
   return shifts
     .filter((s) => (points.get(s.assignedAssociate!.id) ?? 0) >= RISK_THRESHOLD)
     .map((s) => ({
@@ -97,6 +84,35 @@ export async function computeNoShowRisk(
       holderName: `${s.assignedAssociate!.firstName} ${s.assignedAssociate!.lastName}`,
       points: Math.round((points.get(s.assignedAssociate!.id) ?? 0) * 10) / 10,
     }));
+}
+
+/**
+ * Each person's unexcused attendance points over the trailing 90 days:
+ * no-call no-show 2, call-out 1, late (and anything else) 0.5. The one
+ * scoring rule for the radar and the Workforce agent's attendance.confirm.
+ */
+export async function attendancePoints(
+  prisma: Pick<PrismaClient, 'attendanceEvent'>,
+  associateIds: readonly string[],
+  now: Date,
+): Promise<Map<string, number>> {
+  const points = new Map<string, number>();
+  if (!associateIds.length) return points;
+  const events = await prisma.attendanceEvent.findMany({
+    where: {
+      associateId: { in: [...associateIds] },
+      excusedAt: null,
+      occurredOn: { gte: new Date(now.getTime() - 90 * DAY_MS) },
+    },
+    select: { associateId: true, kind: true },
+    take: 5_000,
+  });
+  for (const e of events) {
+    const p =
+      e.kind === 'NO_CALL_NO_SHOW' ? 2 : e.kind === 'CALL_OUT' ? 1 : e.kind === 'LATE' ? 0.5 : 0.5;
+    points.set(e.associateId, (points.get(e.associateId) ?? 0) + p);
+  }
+  return points;
 }
 
 /** Bench suggestions for a desk: active-approved, on the shift's bench

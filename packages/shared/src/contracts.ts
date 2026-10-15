@@ -1899,6 +1899,19 @@ export const ShiftSchema = z.object({
   lateNoticeReason: z.string().nullable(),
   /** When the assigned associate tapped "I'll be there". Null = unconfirmed. */
   acknowledgedAt: z.string().datetime().nullable(),
+  /**
+   * Agent families step 2: the Workforce agent asked the holder whether they
+   * are coming (attendance.confirm). Null when nobody asked. The associate app
+   * offers "I can't make it" only on an asked shift still unanswered.
+   */
+  confirmationAsk: z
+    .object({
+      askedAt: z.string().datetime(),
+      cutoffAt: z.string().datetime(),
+      answer: z.enum(['YES', 'NO']).nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type Shift = z.infer<typeof ShiftSchema>;
 

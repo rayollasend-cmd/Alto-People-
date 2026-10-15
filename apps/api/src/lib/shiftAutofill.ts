@@ -15,6 +15,7 @@ import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 import { runShiftFill } from './workforceAgent.js';
 import { runScheduleRepair } from './scheduleRepair.js';
+import { runAttendanceConfirm } from './attendanceConfirm.js';
 
 const SWEEP_SECONDS = 15 * 60;
 const HORIZON_MS = 48 * 3600_000;
@@ -121,13 +122,15 @@ let timer: NodeJS.Timeout | null = null;
 
 /**
  * One tick per tenant: the broadcast asks the bench, then the Workforce agent
- * proposes for what is still open (shift.fill) and runs the repair backstop
- * (schedule.repair: leave no event reached, held approvals, moot proposals).
+ * proposes for what is still open (shift.fill), runs the repair backstop
+ * (schedule.repair: leave no event reached, held approvals, moot proposals)
+ * and asks tomorrow's high-risk holders (attendance.confirm).
  */
 async function autofillTick(): Promise<void> {
   await runShiftAutofillSweep();
   await runShiftFill();
   await runScheduleRepair();
+  await runAttendanceConfirm();
 }
 
 export function startShiftAutofillCron(): void {

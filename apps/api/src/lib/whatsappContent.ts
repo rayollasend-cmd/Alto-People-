@@ -24,6 +24,7 @@ export type WaTemplateKey =
   | 'alto_shift_cancelled'
   | 'alto_shift_reminder'
   | 'alto_shift_reminder_plain'
+  | 'alto_shift_confirm'
   | 'alto_ride_pickup'
   | 'alto_ride_near'
   | 'alto_payday'
@@ -122,6 +123,18 @@ export const WA_TEMPLATES: readonly WaTemplateDef[] = [
       en: 'Reminder: {{1}} at {{2}} tomorrow, {{3}}.',
       es: 'Recordatorio: {{1}} en {{2}} mañana, {{3}}.',
       tr: 'Hatırlatma: yarın {{1}}, {{2}}, {{3}}.',
+    },
+  },
+  {
+    key: 'alto_shift_confirm',
+    metaName: 'alto_shift_confirm',
+    metaCategory: 'UTILITY',
+    params: ['position', 'site', 'when', 'cut-off'],
+    description: 'The Workforce agent asks a holder the day before whether they are coming (attendance.confirm). YES or NO by the cut-off; silence may move the shift.',
+    body: {
+      en: 'Are you coming to {{1}} at {{2}}, {{3}}? Reply YES or NO by {{4}}. If we do not hear from you, the shift may go to someone else.',
+      es: '¿Vienes a {{1}} en {{2}}, {{3}}? Responde SÍ o NO antes de {{4}}. Si no sabemos de ti, el turno podría pasar a otra persona.',
+      tr: '{{1}}, {{2}}, {{3}} vardiyana geliyor musun? {{4}} saatine kadar EVET ya da HAYIR yaz. Senden haber alamazsak vardiya başka birine verilebilir.',
     },
   },
   {
@@ -309,6 +322,26 @@ export const WA_REPLY = {
         en: who ? `I have passed this to ${who}, who will answer in the ${app()} app messages.` : `I have passed this to your ${manager('en')}, who will answer in the ${app()} app messages.`,
         es: who ? `Se lo pasé a ${who}, que te responderá en los mensajes de la app de ${app()}.` : `Se lo pasé a tu ${manager('es')}, que te responderá en los mensajes de la app de ${app()}.`,
         tr: who ? `Bunu ${who} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.` : `Bunu ${manager('tr')} adlı kişiye ilettim; ${app()} uygulamasındaki mesajlardan yanıt verecek.`,
+      },
+      lang,
+    ),
+  /** attendance.confirm: they said YES. */
+  confirmedYes: (lang: WaLang, when: string) =>
+    say(
+      {
+        en: `Thank you. You are confirmed for ${when}.`,
+        es: `Gracias. Quedas confirmado para ${when}.`,
+        tr: `Teşekkürler. ${when} için onaylandın.`,
+      },
+      lang,
+    ),
+  /** attendance.confirm: they said NO. */
+  confirmedNo: (lang: WaLang, when: string) =>
+    say(
+      {
+        en: `Thank you for telling us. We will look for cover for ${when}; you will hear when it is off your schedule.`,
+        es: `Gracias por avisarnos. Buscaremos a alguien para ${when}; te avisaremos cuando salga de tu horario.`,
+        tr: `Haber verdiğin için teşekkürler. ${when} için yerine birini arayacağız; programından çıkınca haber vereceğiz.`,
       },
       lang,
     ),

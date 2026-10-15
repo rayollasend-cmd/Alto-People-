@@ -359,6 +359,12 @@ export async function recordNoShowAttendance(
       take: 5,
     });
     if (requests.some((r) => r.status === 'APPROVED')) return; // excused
+    // They answered the Workforce agent's "are you coming?" with NO: they
+    // called, as surely as a pending request (agent families step 2).
+    const declined = await db.attendanceConfirmation.findFirst({
+      where: { shiftId: shift.id, associateId: shift.assignedAssociateId, answer: 'NO' },
+      select: { id: true },
+    });
     const associate = await db.associate.findUnique({
       where: { id: shift.assignedAssociateId },
       select: { firstName: true, lastName: true },
@@ -368,7 +374,7 @@ export async function recordNoShowAttendance(
       associateId: shift.assignedAssociateId,
       shiftId: shift.id,
       clientId: shift.clientId,
-      kind: requests.length > 0 ? 'CALL_OUT' : 'NO_CALL_NO_SHOW',
+      kind: requests.length > 0 || declined ? 'CALL_OUT' : 'NO_CALL_NO_SHOW',
       occurredOn: shift.startsAt,
       associateName: `${associate.firstName} ${associate.lastName}`,
     });

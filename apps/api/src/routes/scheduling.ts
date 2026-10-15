@@ -146,6 +146,7 @@ import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
 import { assertClientAllowed, clientRestrictionsFor } from '../lib/programRules.js';
 import { REST_GAP_MIN_HOURS, assertEmployed, assignWithinRules, autoFillScore, blockedForWindow, dayKeyInZone, describeClash, findOverlapExcluding } from '../lib/shiftAssign.js';
+import { recordConfirmationAnswer } from '../lib/attendanceConfirm.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 
@@ -3614,9 +3615,21 @@ const MY_SHIFTS_CAP = 100;
  * staffing margin, so neither belongs in an associate-facing response.
  * Nulled rather than omitted so the shared ShiftSchema still parses.
  */
-function toAssociateShift(row: Parameters<typeof toShift>[0]): Shift {
+/** The associate's own shift reads also carry the Workforce agent's ask (attendance.confirm). */
+const MY_SHIFT_INCLUDE = {
+  ...SHIFT_INCLUDE,
+  attendanceConfirmation: { select: { sentAt: true, cutoffAt: true, answer: true } },
+} as const;
+
+function toAssociateShift(
+  row: Parameters<typeof toShift>[0] & { attendanceConfirmation?: { sentAt: Date; cutoffAt: Date; answer: string | null } | null },
+): Shift {
+  const ask = row.attendanceConfirmation ?? null;
   return {
     ...toShift(row),
+    confirmationAsk: ask
+      ? { askedAt: ask.sentAt.toISOString(), cutoffAt: ask.cutoffAt.toISOString(), answer: ask.answer === 'YES' || ask.answer === 'NO' ? ask.answer : null }
+      : null,
     hourlyRate: null,
     payRate: null,
     // Resolved-from-default rate is money-side too — same redaction.
@@ -3661,7 +3674,7 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
       // means the FURTHEST-FUTURE shifts are the ones that fall off, which
       // must never read as "no more shifts".
       take: MY_SHIFTS_CAP + 1,
-      include: SHIFT_INCLUDE,
+      include: MY_SHIFT_INCLUDE,
     });
     const truncated = rows.length > MY_SHIFTS_CAP;
     res.json({
@@ -3957,10 +3970,47 @@ schedulingRouter.post('/me/shifts/:id/acknowledge', async (req, res, next) => {
       where: { id: owned.id, acknowledgedAt: null },
       data: { acknowledgedAt: new Date() },
     });
+    // The Workforce agent asked about this shift: "I'll be there" is its YES.
+    await recordConfirmationAnswer(prisma, { shiftId: owned.id, associateId: user.associateId, answer: 'YES', via: 'APP', actorUserId: user.id });
     const fresh = await prisma.shift.findUniqueOrThrow({
       where: { id: owned.id },
-      include: SHIFT_INCLUDE,
+      include: MY_SHIFT_INCLUDE,
     });
+    res.json(toAssociateShift(fresh));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/me/shifts/:id/decline
+ *
+ * "I can't make it": the answer to the Workforce agent's ask
+ * (attendance.confirm). Offered only on a shift the agent asked about; the
+ * agent files a backup for the desk to approve, and the shift stays theirs
+ * until someone approves it. For any other shift the person talks to their
+ * supervisor (or asks for time off), as before.
+ */
+schedulingRouter.post('/me/shifts/:id/decline', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    const owned = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: 'ASSIGNED',
+        startsAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+    if (!owned) throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    const answered = await recordConfirmationAnswer(prisma, { shiftId: owned.id, associateId: user.associateId, answer: 'NO', via: 'APP', actorUserId: user.id });
+    if (!answered) {
+      throw new HttpError(409, 'not_asked', 'This shift was not part of a confirmation. Talk to your supervisor, or ask for the day off.');
+    }
+    const fresh = await prisma.shift.findUniqueOrThrow({ where: { id: owned.id }, include: MY_SHIFT_INCLUDE });
     res.json(toAssociateShift(fresh));
   } catch (err) {
     next(err);

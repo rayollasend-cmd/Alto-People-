@@ -48,8 +48,10 @@ type Db = Prisma.TransactionClient | PrismaClient;
 export const SHIFT_FILL = 'shift.fill';
 /** Agent families step 2 (lib/scheduleRepair): the same assign, proposed the moment an event un-covers a shift. */
 export const SCHEDULE_REPAIR = 'schedule.repair';
+/** Agent families step 2 (lib/attendanceConfirm): a backup for a holder who said no, or went silent past the cut-off. */
+export const ATTENDANCE_CONFIRM = 'attendance.confirm';
 /** The capabilities whose proposals assign a shift: one live proposal per shift across them, one executor. */
-export const ASSIGN_CAPABILITIES: readonly string[] = [SHIFT_FILL, SCHEDULE_REPAIR];
+export const ASSIGN_CAPABILITIES: readonly string[] = [SHIFT_FILL, SCHEDULE_REPAIR, ATTENDANCE_CONFIRM];
 export const WORKFORCE_AGENT_KEY = 'workforce-agent' as const;
 const BROADCAST_CATEGORY = 'shift_autofill';
 const CLOSURE_CATEGORY = 'agent_shift_fill';
@@ -83,6 +85,7 @@ export const SHIFT_SELECT = {
   status: true,
   publishedAt: true,
   assignedAssociateId: true,
+  acknowledgedAt: true,
   location: true,
   client: { select: { name: true } },
   locationRel: { select: { name: true, timezone: true } },
@@ -216,18 +219,26 @@ export async function holderCannotWork(db: Db, shift: { startsAt: Date; endsAt: 
 /**
  * Does an assign proposal still apply? The reason it does not, or null.
  * A fill (no `replaces`) needs the shift open; a repair needs it open or
- * still held by the person it covers for, who still cannot work it.
+ * still held by the person it covers for, who still cannot work it; a
+ * confirmation backup needs the holder still unconfirmed.
  */
 export async function assignProposalMoot(
   db: Db,
-  shift: { status: string; assignedAssociateId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null } | null,
+  shift: { status: string; assignedAssociateId: string | null; acknowledgedAt?: Date | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null } | null,
   replaces: string | null,
+  capabilityKey: string,
 ): Promise<string | null> {
   if (!shift) return 'the shift no longer exists';
   if (shift.status === 'CANCELLED') return 'the shift was cancelled';
   if (shift.status !== 'OPEN' && shift.status !== 'ASSIGNED') return 'the shift is no longer open';
   if (shift.assignedAssociateId && shift.assignedAssociateId !== replaces) return 'the shift was filled another way';
-  if (shift.assignedAssociateId && !(await holderCannotWork(db, shift, shift.assignedAssociateId))) return 'the person it covered for can work it again';
+  if (shift.assignedAssociateId) {
+    if (capabilityKey === ATTENDANCE_CONFIRM) {
+      if (shift.acknowledgedAt) return 'the holder confirmed they will be there';
+    } else if (!(await holderCannotWork(db, shift, shift.assignedAssociateId))) {
+      return 'the person it covered for can work it again';
+    }
+  }
   return null;
 }
 
@@ -281,7 +292,7 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
   const inflight = await db.agentProposal.findMany({ where: { tenantId, workerId: agent.workerId, capabilityKey: SHIFT_FILL, status: { in: ['PROPOSED', 'APPROVED'] } } });
   for (const pr of inflight) {
     const shift = pr.subjectId ? await db.shift.findFirst({ where: { id: pr.subjectId, tenantId }, select: SHIFT_SELECT }) : null;
-    const moot = await assignProposalMoot(db, shift, replacesOf(pr.payload));
+    const moot = await assignProposalMoot(db, shift, replacesOf(pr.payload), pr.capabilityKey);
     if (moot) {
       await supersedeProposal(db, pr, moot, now);
       out.superseded += 1;
@@ -349,7 +360,7 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
   const shift = proposal.subjectId
     ? await db.shift.findFirst({ where: { id: proposal.subjectId, tenantId }, select: SHIFT_SELECT })
     : null;
-  const moot = await assignProposalMoot(db, shift, replaces);
+  const moot = await assignProposalMoot(db, shift, replaces, key);
   if (moot || !shift) {
     await supersedeProposal(db, proposal, moot ?? 'the shift no longer exists', now);
     return false;
@@ -357,7 +368,9 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
   const associate = associateId ? await db.associate.findFirst({ where: { id: associateId, tenantId, deletedAt: null } }) : null;
   const holder = shift.assignedAssociateId ? await db.associate.findUnique({ where: { id: shift.assignedAssociateId }, select: { id: true, firstName: true, lastName: true, separatedAt: true, deactivatedAt: true, deletedAt: true } }) : null;
   const repair = key === SCHEDULE_REPAIR;
-  const via = repair ? 'agent_schedule_repair' : 'agent_shift_fill';
+  const backup = key === ATTENDANCE_CONFIRM;
+  const via = repair ? 'agent_schedule_repair' : backup ? 'agent_attendance_confirm' : 'agent_shift_fill';
+  const said = backup ? (await db.attendanceConfirmation.findUnique({ where: { shiftId: shift.id }, select: { answer: true } }))?.answer ?? null : null;
 
   // Carried out exactly once, as approved.
   await claimApproval(db, agent, approval.id, 'SHIFT_ASSIGN', payload, now);
@@ -371,10 +384,10 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
     const code = err instanceof HttpError ? err.code : 'assign_failed';
     const message = err instanceof Error ? err.message : String(err);
     await syncProposalWithApproval(db, approval.id, 'FAILED', now, { code, message, shiftId: shift.id, associateId });
-    logAgentAction(agent, { action: repair ? 'agent.schedule_repair_failed' : 'agent.shift_fill_failed', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId, replacesAssociateId: replaces, code, message, status: 409 } });
+    logAgentAction(agent, { action: repair ? 'agent.schedule_repair_failed' : backup ? 'agent.attendance_backup_failed' : 'agent.shift_fill_failed', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId, replacesAssociateId: replaces, code, message, status: 409 } });
     if (approval.decidedById) {
       await notifyUser(approval.decidedById, {
-        subject: `${repair ? 'Cover' : 'Shift fill'} not carried out: ${shift.position} at ${siteName(shift)}`,
+        subject: `${repair ? 'Cover' : backup ? 'Backup' : 'Shift fill'} not carried out: ${shift.position} at ${siteName(shift)}`,
         body: `${message} ${holder ? 'The shift is still uncovered' : 'The shift is still open'}; assign it from the schedule.`,
         category: CLOSURE_CATEGORY,
         linkUrl: link,
@@ -398,19 +411,23 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
       wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
     });
   }
-  // The person it covers for, still on the books (time off), hears it is off their schedule.
+  // The person it covers for, still on the books, hears it is off their schedule.
   if (holder && !holder.separatedAt && !holder.deactivatedAt && !holder.deletedAt) {
     void notifyShift(db, {
       associateId: holder.id,
-      subject: 'Your shift is covered',
-      body: `${line} is covered while you are away. It is off your schedule.`,
+      subject: backup && said !== 'NO' ? 'Your shift was reassigned' : 'Your shift is covered',
+      body: !backup
+        ? `${line} is covered while you are away. It is off your schedule.`
+        : said === 'NO'
+          ? `You told us you can't make ${line}. It is covered and off your schedule.`
+          : `You did not confirm ${line}, so it was given to someone else. It is off your schedule. If this is a mistake, talk to your supervisor.`,
       category: 'shift_unassigned',
     });
   }
   // Closure to the desk that approved (handoff spine).
   if (approval.decidedById) {
     await notifyUser(approval.decidedById, {
-      subject: holder ? `Shift covered: ${associate.firstName} ${associate.lastName} for ${holder.firstName} ${holder.lastName}` : `Shift filled: ${associate.firstName} ${associate.lastName}`,
+      subject: holder ? `${backup ? 'Backup assigned' : 'Shift covered'}: ${associate.firstName} ${associate.lastName} for ${holder.firstName} ${holder.lastName}` : `Shift filled: ${associate.firstName} ${associate.lastName}`,
       body: `${shift.position} at ${siteName(shift)}, ${shiftWhen(shift)}. Assigned by the Workforce agent on your approval.`,
       category: CLOSURE_CATEGORY,
       linkUrl: link,

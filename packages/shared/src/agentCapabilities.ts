@@ -26,6 +26,8 @@ export interface CapabilityScenarioFixture {
     sites?: Array<{ ref: string; name: string; timezone?: string }>;
     people?: Array<{ ref: string; firstName: string; lastName: string; placedAt?: string }>;
     shifts?: Array<{ ref: string; siteRef: string; position: string; startsInMinutes: number; hours: number; assigneeRef?: string | null }>;
+    /** Unexcused attendance on record, days before `now` (the no-show risk score reads it). */
+    attendance?: Array<{ personRef: string; kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE'; daysAgo: number }>;
   };
   input: Record<string, unknown>;
   expected: { output?: Record<string, unknown>; allowedActions?: string[] };
@@ -66,6 +68,28 @@ const SHIFT_FILL_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
 };
 
+const ATTENDANCE_CONFIRM_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Two shifts tomorrow, one holder with two no-call no-shows: only that holder is asked',
+  world: {
+    sites: [{ ref: 'hotel', name: 'The Grand Hotel', timezone: 'America/Chicago' }],
+    people: [
+      { ref: 'rhea', firstName: 'Rhea', lastName: 'Risky', placedAt: 'hotel' },
+      { ref: 'sam', firstName: 'Sam', lastName: 'Steady', placedAt: 'hotel' },
+    ],
+    shifts: [
+      { ref: 'rheaShift', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1500, hours: 8, assigneeRef: 'rhea' },
+      { ref: 'samShift', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1500, hours: 8, assigneeRef: 'sam' },
+    ],
+    attendance: [
+      { personRef: 'rhea', kind: 'NO_CALL_NO_SHOW', daysAgo: 10 },
+      { personRef: 'rhea', kind: 'NO_CALL_NO_SHOW', daysAgo: 40 },
+      { personRef: 'sam', kind: 'LATE', daysAgo: 5 },
+    ],
+  },
+  input: {},
+  expected: { output: { askedRef: 'rheaShift', asked: 1 }, allowedActions: ['ask'] },
+};
+
 const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
   world: {
@@ -104,7 +128,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:scheduling', 'view:time', 'manage:communications', 'manage:scheduling'],
     gate: 'SHIFT_ASSIGN',
     metrics: ['textsSent', 'answered', 'noShowsConfirmed', 'noShowsUnconfirmed', 'backupsAccepted'],
-    scenarios: [],
+    scenarios: [ATTENDANCE_CONFIRM_FIXTURE],
   },
   {
     key: 'schedule.repair',
