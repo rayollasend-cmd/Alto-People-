@@ -218,6 +218,7 @@ const WorkflowsHome = lazyNamed(() => import('@/pages/workflows/WorkflowsHome'),
 const MarketplaceHome = lazyNamed(() => import('@/pages/marketplace/MarketplaceHome'), 'MarketplaceHome');
 const TemplatesHome = lazyNamed(() => import('@/pages/templates/TemplatesHome'), 'TemplatesHome');
 const IntegrationsHome = lazyNamed(() => import('@/pages/integrations/IntegrationsHome'), 'IntegrationsHome');
+const DevelopersPage = lazyNamed(() => import('@/pages/integrations/DevelopersPage'), 'DevelopersPage');
 const WorktagsHome = lazyNamed(() => import('@/pages/worktags/WorktagsHome'), 'WorktagsHome');
 const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'ReportsHome');
 
@@ -518,6 +519,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
   { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
+  { path: 'developers', element: <RequireCapability cap="view:integrations"><DevelopersPage /></RequireCapability> },
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
   { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
   { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },

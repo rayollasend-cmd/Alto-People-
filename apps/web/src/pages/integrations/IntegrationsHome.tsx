@@ -1,7 +1,8 @@
 import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
+import { Copy, Download, Key, Plus, ShieldCheck, Webhook } from 'lucide-react';
+import { ApiClientsTab } from './ApiClientsTab';
 import { ApiError } from '@/lib/api';
 import {
   createApiKey,
@@ -50,7 +51,7 @@ import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { toast } from 'sonner';
 
-type Tab = 'keys' | 'webhooks';
+type Tab = 'clients' | 'keys' | 'webhooks';
 
 /** Every outbound webhook event: the one list in @alto-people/shared (Brief 2-4). */
 const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
@@ -58,17 +59,20 @@ const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
 export function IntegrationsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:integrations') : false;
-  const [tab, setTab] = useState<Tab>('keys');
+  const [tab, setTab] = useState<Tab>('clients');
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Integrations"
-        subtitle="Public API keys for programmatic access and outbound webhooks for event delivery."
+        subtitle="OAuth clients for the public API, legacy API keys, and outbound webhooks for event delivery."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations' }]}
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
+          <TabsTrigger value="clients">
+            <ShieldCheck className="mr-2 h-4 w-4" /> API clients
+          </TabsTrigger>
           <TabsTrigger value="keys">
             <Key className="mr-2 h-4 w-4" /> API keys
           </TabsTrigger>
@@ -76,6 +80,7 @@ export function IntegrationsHome() {
             <Webhook className="mr-2 h-4 w-4" /> Webhooks
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="clients"><ApiClientsTab canManage={canManage} /></TabsContent>
         <TabsContent value="keys"><KeysTab canManage={canManage} /></TabsContent>
         <TabsContent value="webhooks"><WebhooksTab canManage={canManage} /></TabsContent>
       </Tabs>

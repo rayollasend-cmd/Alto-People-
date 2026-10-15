@@ -35,6 +35,10 @@ vi.mock('@/lib/apiKeysWebhooks93Api', async (importOriginal) => ({
   listApiKeys: vi.fn(async () => ({ keys: [] })),
   listWebhooks: vi.fn(async () => ({ webhooks: [] })),
 }));
+vi.mock('@/lib/apiClientsApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/apiClientsApi')>()),
+  listApiClients: vi.fn(async () => ({ clients: [] })),
+}));
 
 vi.mock('@/lib/clientsApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/clientsApi')>()),
@@ -225,7 +229,7 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<IntegrationsHome> has no axe violations', async () => {
     const { container } = renderPage(<IntegrationsHome />);
-    await screen.findByText('No API keys');
+    await screen.findByText('No API clients');
     await expectNoViolations(container);
   });
 
