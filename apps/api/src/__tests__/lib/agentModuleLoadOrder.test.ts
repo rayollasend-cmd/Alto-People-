@@ -38,6 +38,9 @@ const ENTRIES: Record<string, () => Promise<unknown>> = {
   apiClients: () => import('../../lib/apiClients.js'),
   v1Route: () => import('../../routes/v1.js'),
   apiClientsRoute: () => import('../../routes/apiClients.js'),
+  // Brief 2-7.
+  mcpServer: () => import('../../lib/mcpServer.js'),
+  mcpRoute: () => import('../../routes/mcp.js'),
 };
 
 describe('agent modules load in any order', () => {

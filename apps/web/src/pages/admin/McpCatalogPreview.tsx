@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/Badge';
 import { QueryError } from '@/components/ui/QueryError';
 
 /**
- * The MCP tool catalog, read-only preview (agent families step 6; Brief
- * 2-7): what an MCP server would expose for this organization, generated
- * from the capability catalog. Collapsed by default; nothing here calls a tool.
+ * The MCP tool catalog (agent families step 6; Brief 2-7): every tool the
+ * MCP server at /api/mcp offers this organization, generated from the
+ * capability catalog. Each agent sees only the ones it holds, plus whoami and
+ * approval_status. Collapsed by default; nothing here calls a tool.
  */
 
 interface McpToolPreview {
@@ -34,8 +35,8 @@ export function McpCatalogPreview() {
   });
   return (
     <details className="rounded-md border border-navy-secondary px-4 py-3" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="cursor-pointer text-sm text-white">MCP tools (preview)</summary>
-      <p className="mt-2 text-xs2 text-silver">What an MCP server would expose for this organization, generated from the agents&rsquo; capabilities. A tool that needs approval returns an approval id and does nothing else.</p>
+      <summary className="cursor-pointer text-sm text-white">MCP tools</summary>
+      <p className="mt-2 text-xs2 text-silver">What the MCP server at <code className="text-white">/api/mcp</code> offers, generated from the agents&rsquo; capabilities. An agent connects with its own credential and sees only the tools it holds. A tool that needs approval returns an approval id and does nothing else.</p>
       {catalog.error ? (
         <QueryError what="the MCP catalog" query={catalog} />
       ) : (

@@ -46,6 +46,7 @@ import { hugoRouter } from './routes/hugo.js';
 import { v1Router } from './routes/v1.js';
 import { apiClientsRouter } from './routes/apiClients.js';
 import { agentApiRouter } from './routes/agentApi.js';
+import { mcpRouter } from './routes/mcp.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -378,6 +379,8 @@ export function createApp() {
   app.use('/integrations/v1', requireModule('payrollSync'), integrationsV1Router);
   // Agents call with their own credential, never a session (Brief 1D-2).
   app.use('/agent/v1', agentApiRouter);
+  // Brief 2-7: the MCP server over the agent API, agent credentials only.
+  app.use('/mcp', mcpRouter);
   // Brief 2-4: the public API. OAuth client credentials, scoped tokens, a
   // generated OpenAPI document at /v1/openapi.json; /integrations/v1 stays for ASN.
   app.use('/v1', v1Router);

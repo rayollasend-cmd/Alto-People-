@@ -1,0 +1,24 @@
+{
+  "name": "@alto-people/mcp-stdio",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Forwards an MCP client's stdio to the Alto People MCP server over HTTPS, with an agent credential.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./forwarder.mjs",
+  "types": "./forwarder.d.mts",
+  "exports": {
+    ".": "./forwarder.mjs"
+  },
+  "bin": {
+    "alto-mcp": "./bin.mjs"
+  },
+  "files": [
+    "forwarder.mjs",
+    "forwarder.d.mts",
+    "bin.mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
