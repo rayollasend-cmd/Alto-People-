@@ -48,6 +48,9 @@ jobs:
       - run: npm -w apps/api exec prisma generate
       - run: npm -w apps/api run db:seed
       - run: npm -w apps/api exec tsx scripts/seed-demo-shifts.ts
+      # The populated demo tenant: a year of history so every screen shows a
+      # real customer, not zeros. Opt-in (DEMO_DATA=1); the E2E job never runs it.
+      - run: DEMO_DATA=1 npm -w apps/api run seed:demo
       - run: npm -w apps/web exec playwright install --with-deps chromium
       - name: Start API + web dev servers
         run: |
