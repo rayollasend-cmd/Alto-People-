@@ -200,6 +200,7 @@ const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPa
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
+const SignInSettings = lazyNamed(() => import('@/pages/admin/SignInSettings'), 'SignInSettings');
 const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
 const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
 const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
@@ -456,6 +457,7 @@ const LAYOUT_ROUTES = [
   { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
+  { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },
   { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
   { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
   { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
@@ -548,6 +550,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
+  // Brief 2-3: an organization's sign-in by its slug, for shared email domains.
+  { path: '/login/:slug', element: <Login />, errorElement: <RouterErrorPage /> },
   // Self-serve password reset — public, two-step flow. /forgot-password
   // takes an email and emails a magic link; /reset-password/:token
   // accepts the new password.

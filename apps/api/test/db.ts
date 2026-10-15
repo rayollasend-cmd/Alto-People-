@@ -129,6 +129,10 @@ const TABLES = [
   'WebAuthnChallenge',
   'Worktag',
   'WorktagCategory',
+  // Brief 2-3: a tenant's sign-in rows reference no truncated table (tenantId is not a key).
+  'IdentityConnection',
+  'TenantDomain',
+  'ScimToken',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

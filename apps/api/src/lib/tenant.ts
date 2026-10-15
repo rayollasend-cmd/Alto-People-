@@ -20,7 +20,7 @@ import type { NextFunction, Request, Response } from 'express';
 /** Alto HR, tenant 1. Fixed so every environment agrees; the migration seeds it. */
 export const ALTO_TENANT_ID = '00000000-0000-4000-8000-000000000001';
 
-export type TenantSource = 'session' | 'api-key' | 'api-client' | 'agent' | 'kiosk' | 'job' | 'script' | 'default' | 'platform';
+export type TenantSource = 'session' | 'api-key' | 'api-client' | 'agent' | 'kiosk' | 'scim' | 'job' | 'script' | 'default' | 'platform';
 
 export interface TenantContext {
   tenantId: string;

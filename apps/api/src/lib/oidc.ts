@@ -87,11 +87,8 @@ export interface DiscoveryDoc {
   jwks_uri: string;
 }
 
-let discoveryCache: {
-  issuerUrl: string;
-  doc: DiscoveryDoc;
-  fetchedAt: number;
-} | null = null;
+// Brief 2-3: one entry per issuer, so several tenants' IdPs never evict each other.
+const discoveryCache = new Map<string, { doc: DiscoveryDoc; fetchedAt: number }>();
 
 async function fetchJson(url: string, failReason: string): Promise<unknown> {
   let res: Response;
@@ -127,12 +124,9 @@ function normalizeIssuer(iss: string): string {
  * IdP on every login adds latency and a dependency we don't need.
  */
 export async function getDiscovery(settings: OidcSettings): Promise<DiscoveryDoc> {
-  if (
-    discoveryCache &&
-    discoveryCache.issuerUrl === settings.issuerUrl &&
-    Date.now() - discoveryCache.fetchedAt < CACHE_TTL_MS
-  ) {
-    return discoveryCache.doc;
+  const cached = discoveryCache.get(settings.issuerUrl);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.doc;
   }
   const base = settings.issuerUrl.replace(/\/+$/, '');
   const raw = (await fetchJson(
@@ -162,7 +156,7 @@ export async function getDiscovery(settings: OidcSettings): Promise<DiscoveryDoc
     );
   }
   const doc: DiscoveryDoc = { issuer, authorization_endpoint, token_endpoint, jwks_uri };
-  discoveryCache = { issuerUrl: settings.issuerUrl, doc, fetchedAt: Date.now() };
+  discoveryCache.set(settings.issuerUrl, { doc, fetchedAt: Date.now() });
   return doc;
 }
 
@@ -177,23 +171,19 @@ interface Jwk {
   e?: string;
 }
 
-let jwksCache: { uri: string; keys: Jwk[]; fetchedAt: number } | null = null;
+const jwksCache = new Map<string, { keys: Jwk[]; fetchedAt: number }>();
 
 async function loadJwks(uri: string, force: boolean): Promise<Jwk[]> {
-  if (
-    !force &&
-    jwksCache &&
-    jwksCache.uri === uri &&
-    Date.now() - jwksCache.fetchedAt < CACHE_TTL_MS
-  ) {
-    return jwksCache.keys;
+  const cached = jwksCache.get(uri);
+  if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.keys;
   }
   const raw = (await fetchJson(uri, 'jwks_failed')) as { keys?: unknown };
   if (!Array.isArray(raw?.keys)) {
     throw new OidcError('jwks_invalid', 'JWKS document has no keys array');
   }
   const keys = raw.keys as Jwk[];
-  jwksCache = { uri, keys, fetchedAt: Date.now() };
+  jwksCache.set(uri, { keys, fetchedAt: Date.now() });
   return keys;
 }
 
@@ -415,6 +405,8 @@ export interface OidcFlowState {
   state: string;
   nonce: string;
   verifier: string;
+  /** Brief 2-3: the tenant connection the flow was started for; the callback uses its IdP only. */
+  connectionId: string;
   /** Where to land after sign-in — the page a notification link pointed at. */
   next?: string;
 }
@@ -438,16 +430,18 @@ function flowSignature(body: string): string {
 
 /**
  * Compact HMAC-signed cookie value carrying the per-flow secrets between
- * /start and /callback: `ts.state.nonce.verifier[.next].sig`. Every payload
- * part is dot-free (base36 timestamp, hex, hex, base64url, and the return
- * path base64url-encoded) so splitting on '.' is unambiguous. The return
- * path is optional — a cookie minted before it existed has five parts. Signed with JWT_SECRET — same trust root as the
+ * /start and /callback: `ts.state.nonce.verifier.connection[.next].sig`.
+ * Every payload part is dot-free (base36 timestamp, hex, hex, base64url, a
+ * UUID, and the return path base64url-encoded) so splitting on '.' is
+ * unambiguous. The return path is optional. (Brief 2-3 added the connection:
+ * an older cookie no longer verifies, and within its ten minutes the person
+ * simply starts the sign-in again.) Signed with JWT_SECRET — same trust root as the
  * session itself; a party who can forge this can already mint sessions.
  * The embedded timestamp gives a server-side 10-minute expiry that a
  * captured cookie can't sidestep by ignoring the browser Max-Age.
  */
 export function signFlowCookie(flow: OidcFlowState): string {
-  const parts = [Date.now().toString(36), flow.state, flow.nonce, flow.verifier];
+  const parts = [Date.now().toString(36), flow.state, flow.nonce, flow.verifier, flow.connectionId];
   const next = safeReturnPath(flow.next);
   if (next) parts.push(Buffer.from(next, 'utf8').toString('base64url'));
   const body = parts.join('.');
@@ -457,9 +451,9 @@ export function signFlowCookie(flow: OidcFlowState): string {
 export function verifyFlowCookie(raw: string): OidcFlowState | null {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 1024) return null;
   const parts = raw.split('.');
-  if (parts.length !== 5 && parts.length !== 6) return null;
+  if (parts.length !== 6 && parts.length !== 7) return null;
   const sig = parts.pop()!;
-  const [ts, state, nonce, verifier, nextEnc] = parts;
+  const [ts, state, nonce, verifier, connectionId, nextEnc] = parts;
   const expected = flowSignature(parts.join('.'));
   const a = Buffer.from(sig, 'utf8');
   const b = Buffer.from(expected, 'utf8');
@@ -472,9 +466,9 @@ export function verifyFlowCookie(raw: string): OidcFlowState | null {
   ) {
     return null;
   }
-  if (!state || !nonce || !verifier) return null;
+  if (!state || !nonce || !verifier || !connectionId || !/^[0-9a-f-]{36}$/.test(connectionId)) return null;
   const next = nextEnc ? safeReturnPath(Buffer.from(nextEnc, 'base64url').toString('utf8')) : null;
-  return next ? { state, nonce, verifier, next } : { state, nonce, verifier };
+  return next ? { state, nonce, verifier, connectionId, next } : { state, nonce, verifier, connectionId };
 }
 
 /**
@@ -503,7 +497,7 @@ export function consumeFlowState(state: string): boolean {
 
 /** Test-only: drop discovery/JWKS caches and the consumed-state set. */
 export function __resetOidcCachesForTests(): void {
-  discoveryCache = null;
-  jwksCache = null;
+  discoveryCache.clear();
+  jwksCache.clear();
   consumedStates.clear();
 }

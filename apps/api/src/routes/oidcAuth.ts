@@ -19,12 +19,14 @@ import {
   exchangeCode,
   generatePkce,
   getDiscovery,
-  getOidcSettings,
   safeReturnPath,
   signFlowCookie,
   verifyFlowCookie,
   verifyIdToken,
 } from '../lib/oidc.js';
+import { connectionSettings, discoverByEmail, discoverBySlug, ensureEnvIdentity, matchSsoUser } from '../lib/identity.js';
+import type { IdentityConnection } from '@prisma/client';
+import { z } from 'zod';
 
 /* ============================================================================
  * Enterprise SSO — OIDC authorization-code + PKCE login.
@@ -160,13 +162,41 @@ async function failToLogin(
  * Public, secret-free feature probe for the login page. `enabled` drives
  * whether the SSO button renders at all; buttonLabel is admin-set copy.
  */
-oidcAuthRouter.get('/config', (_req, res) => {
-  const settings = getOidcSettings();
+oidcAuthRouter.get('/config', async (_req, res) => {
+  // Brief 2-3: the environment IdP is Alto HR's connection row; the probe reads that row.
+  const conn = await ensureEnvIdentity(prisma);
+  const on = !!conn?.enabled;
   res.json({
-    enabled: settings !== null,
-    buttonLabel: settings?.buttonLabel ?? null,
+    enabled: on,
+    buttonLabel: on ? (conn!.buttonLabel ?? null) : null,
   });
 });
+
+/**
+ * Brief 2-3 step 2 — tenant discovery (decision 1). The login page asks for
+ * an email first; a verified domain names a tenant and its enabled sign-ins.
+ * Every other case answers the same empty list: no account, no tenant, no
+ * customer list is revealed. /tenant/:slug is the fallback for shared
+ * domains (the /login/<slug> page).
+ */
+oidcAuthRouter.get('/discover', loginIpLimiter, async (req, res) => {
+  const email = z.string().trim().max(254).safeParse(req.query.email);
+  res.json({ connections: email.success ? await discoverByEmail(prisma, email.data) : [] });
+});
+
+oidcAuthRouter.get('/tenant/:slug', loginIpLimiter, async (req, res) => {
+  const slug = z.string().trim().regex(/^[a-z0-9-]{1,60}$/i).safeParse(req.params.slug);
+  res.json({ connections: slug.success ? await discoverBySlug(prisma, slug.data) : [] });
+});
+
+/** The connection a flow is for: the one named, else (the legacy button) Alto HR's environment connection. */
+async function connectionFor(id: unknown): Promise<IdentityConnection | null> {
+  if (typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)) {
+    return prisma.identityConnection.findFirst({ where: { id, enabled: true, kind: 'OIDC' } });
+  }
+  const env = await ensureEnvIdentity(prisma);
+  return env?.enabled ? env : null;
+}
 
 /**
  * GET /auth/oidc/start
@@ -179,12 +209,13 @@ oidcAuthRouter.get('/config', (_req, res) => {
  */
 oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
   try {
-    const settings = getOidcSettings();
-    if (!settings) {
-      // Feature off: a plain 404 (not a login-page redirect) — nothing
-      // links here when config says disabled, so a hit is a probe or typo.
+    const conn = await connectionFor(req.query.connection);
+    if (!conn) {
+      // Feature off (or no such sign-in): a plain 404 (not a login-page
+      // redirect) — nothing links here then, so a hit is a probe or typo.
       throw new HttpError(404, 'sso_not_configured', 'SSO is not configured');
     }
+    const settings = connectionSettings(conn);
 
     let discovery;
     try {
@@ -205,7 +236,7 @@ oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
     const next = safeReturnPath(req.query.next) ?? undefined;
     res.cookie(
       OIDC_FLOW_COOKIE,
-      signFlowCookie({ state, nonce, verifier, next }),
+      signFlowCookie({ state, nonce, verifier, connectionId: conn.id, next }),
       flowCookieOptions(),
     );
 
@@ -234,8 +265,9 @@ oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
  * activation / MFA exemption / lockout non-interaction).
  */
 oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
-  const settings = getOidcSettings();
-  if (!settings) {
+  // Brief 2-3: no sign-in configured anywhere → the same 404 as before; otherwise the
+  // flow cookie names the connection and only that IdP's tokens are accepted.
+  if (!(await prisma.identityConnection.count({ where: { enabled: true } })) && !(await ensureEnvIdentity(prisma))) {
     next(new HttpError(404, 'sso_not_configured', 'SSO is not configured'));
     return;
   }
@@ -277,6 +309,12 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       await failToLogin(req, res, 'replayed_state');
       return;
     }
+    const conn = await prisma.identityConnection.findFirst({ where: { id: flow.connectionId, enabled: true } });
+    if (!conn) {
+      await failToLogin(req, res, 'connection_unavailable');
+      return;
+    }
+    const settings = connectionSettings(conn);
 
     let claims;
     try {
@@ -299,13 +337,18 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       return;
     }
 
+    // Brief 2-3 (decision 2): by the IdP subject once linked, by email inside the connection's tenant the first time.
     const email = claims.email.trim().toLowerCase();
-    const user = await prisma.user.findFirst({
-      where: { email, deletedAt: null },
-    });
-
-    if (!user) {
-      await failToLogin(req, res, 'unknown_email', { email, page: 'sso_no_account' });
+    const match = await matchSsoUser(prisma, conn, { sub: claims.sub, email });
+    if (!match.ok) {
+      // Unknown, another tenant's, or a changed subject: the same page; the audit row keeps which.
+      await failToLogin(req, res, match.reason, { email, page: 'sso_no_account' });
+      return;
+    }
+    const user = match.user;
+    if (user.status === 'INVITED' && conn.jitPolicy === 'NONE') {
+      // This sign-in never activates anyone; an invite or SCIM does.
+      await failToLogin(req, res, 'not_activated', { email, page: 'sso_no_account' });
       return;
     }
     if (!HUMAN_ROLES.includes(user.role)) {

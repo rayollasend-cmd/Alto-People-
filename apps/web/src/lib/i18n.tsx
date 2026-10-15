@@ -2470,6 +2470,7 @@ const en = {
   'login.or': 'or',
   'login.usePasskey': 'Use a passkey',
   'login.ssoButton': 'Sign in with SSO',
+  'login.ssoRequired': 'Your organization signs in with its own sign-in. Use the button for your organization below.',
   'login.errSsoNoAccount':
     'No Alto account matches your SSO identity — ask your admin to invite you.',
   'login.errSsoFailed': 'SSO sign-in failed — try again or use your password.',
@@ -5300,6 +5301,7 @@ const es: Record<MessageKey, string> = {
   'login.or': 'o',
   'login.usePasskey': 'Usar una llave de acceso',
   'login.ssoButton': 'Iniciar sesión con SSO',
+  'login.ssoRequired': 'Su organización inicia sesión con su propio acceso. Use el botón de su organización abajo.',
   'login.errSsoNoAccount':
     'Ninguna cuenta de Alto coincide con tu identidad de SSO — pide a tu administrador que te invite.',
   'login.errSsoFailed':

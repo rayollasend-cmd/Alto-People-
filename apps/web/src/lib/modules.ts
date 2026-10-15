@@ -6,6 +6,7 @@ import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 
 export type ModuleKey =
   | 'tenant-profile'
+  | 'sign-in'
   | 'employers'
   | 'org-units'
   | 'sites'
@@ -1309,6 +1310,14 @@ export const MODULES: ModuleNav[] = [
     description:
       'List every account, change a role or status, and force a password reset (revokes active sessions).',
     requires: 'view:hr-admin',
+    group: 'platform',
+  },
+  {
+    key: 'sign-in',
+    path: '/admin/sign-in',
+    label: 'Sign-in',
+    description: 'Your identity provider, the email domains that lead to it, and SCIM provisioning.',
+    requires: 'manage:org',
     group: 'platform',
   },
   {

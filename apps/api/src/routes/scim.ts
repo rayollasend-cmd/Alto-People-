@@ -5,11 +5,12 @@ import {
   type Response,
   type NextFunction,
 } from 'express';
-import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { ROLES, type Role } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
+import { ensureEnvScimToken, scimTenantFor } from '../lib/identity.js';
+import { runWithTenant, tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache } from '../middleware/auth.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
 import { recordCriticalAudit } from '../lib/audit.js';
@@ -105,32 +106,30 @@ function scimError(
 // Auth
 // ---------------------------------------------------------------------------
 
-/** Constant-time equality over variable-length strings: compare SHA-256
- * digests so neither length nor prefix leaks through timing. */
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = createHash('sha256').update(presented, 'utf8').digest();
-  const b = createHash('sha256').update(expected, 'utf8').digest();
-  return timingSafeEqual(a, b);
-}
-
-function requireScimToken(req: Request, res: Response, next: NextFunction): void {
-  // Read env.SCIM_TOKEN per-request (not captured at module load) so the
-  // unset→503 behavior is testable and a future hot-reload of config works.
-  const expected = env.SCIM_TOKEN;
-  if (!expected || expected.trim() === '') {
-    scimError(
-      res,
-      503,
-      'SCIM provisioning is not configured on this deployment (SCIM_TOKEN is unset).',
-    );
-    return;
+/**
+ * Brief 2-3 step 2 (§4.2): a bearer is one of a tenant's SCIM tokens (hashed
+ * rows), and the token decides the tenant every request runs in and every
+ * created account lands in. The environment SCIM_TOKEN is Alto HR's first
+ * row (ensureEnvScimToken; read per request, so the unset→503 behaviour
+ * still holds when no token exists at all).
+ */
+async function requireScimToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await ensureEnvScimToken(prisma);
+    const match = /^Bearer\s+(\S+)$/i.exec(req.header('authorization') ?? '');
+    const tenantId = match ? await scimTenantFor(prisma, match[1]!) : null;
+    if (!tenantId) {
+      if (!(await prisma.scimToken.count({ where: { revokedAt: null } })) && !env.SCIM_TOKEN?.trim()) {
+        scimError(res, 503, 'SCIM provisioning is not configured on this deployment (no SCIM token is issued).');
+        return;
+      }
+      scimError(res, 401, 'Invalid or missing bearer token.');
+      return;
+    }
+    await runWithTenant(tenantId, 'scim', () => next());
+  } catch (err) {
+    next(err);
   }
-  const match = /^Bearer\s+(\S+)$/i.exec(req.header('authorization') ?? '');
-  if (!match || !tokenMatches(match[1], expected)) {
-    scimError(res, 401, 'Invalid or missing bearer token.');
-    return;
-  }
-  next();
 }
 
 // Accept both application/scim+json (what Entra sends) and application/json.
@@ -251,7 +250,8 @@ function scimAuditMeta(req: Request, extra: Record<string, unknown>) {
 async function loadUser(id: string): Promise<ScimDbUserAdmin | null> {
   if (!UUID_RE.test(id)) return null;
   return prisma.user.findFirst({
-    where: { id, deletedAt: null },
+    // Brief 2-3: only the token's tenant's accounts exist for it.
+    where: { id, deletedAt: null, tenantId: tenantIdForWrite() },
     select: SCIM_USER_ADMIN_SELECT,
   });
 }
@@ -418,6 +418,7 @@ scimRouter.get('/Users', async (req, res) => {
 
   const where = {
     deletedAt: null,
+    tenantId: tenantIdForWrite(),
     ...(emailEq !== undefined
       ? { email: { equals: emailEq, mode: 'insensitive' as const } }
       : {}),
@@ -532,7 +533,7 @@ scimRouter.post('/Users', async (req, res) => {
   let created: ScimDbUser;
   try {
     created = await prisma.user.create({
-      data: { email: userName, role, status, scimExternalId: externalId },
+      data: { email: userName, role, status, scimExternalId: externalId, tenantId: tenantIdForWrite() },
       select: SCIM_USER_SELECT,
     });
     // Point the new login at its employment record when the email matches

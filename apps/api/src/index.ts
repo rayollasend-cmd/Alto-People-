@@ -49,6 +49,7 @@ import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
 import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { startLaborShadowCron } from './lib/laborRules/shadow.js';
+import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
@@ -141,6 +142,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startProgramDigestCron();
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
+  // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
+  void Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)]).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
   // quarter hour, so an import that bypassed the API still ends up owned.
   const sweepWorkers = () => ensurePersonWorkers(prisma).catch((err) => logger.warn({ err }, 'worker sweep failed'));

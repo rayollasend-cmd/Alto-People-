@@ -676,6 +676,7 @@ model User {
   decisionComments                  DecisionComment[]             @relation("DecisionCommenter")
   nextStepsOwned                    DecisionNextStep[]            @relation("NextStepOwner")
   laborRuleSetsApproved             LaborRuleSet[]                @relation("LaborRuleSetApprover")
+  identities                        UserIdentity[]                @relation("UserIdentities")
 
   @@index([role])
   @@index([clientId])
@@ -10635,4 +10636,88 @@ model LaborShadowDiff {
 
   @@index([shadowRunId])
   @@index([associateId])
+}
+
+/// Brief 2-3 step 2 — a tenant's own sign-in (docs/identity-rbac-audit-investigation.md §4.1).
+/// OIDC today; SAML fields arrive with step 5. The client secret is sealed with the
+/// payout key machinery (lib/crypto), never stored or returned in clear. The
+/// environment IdP became Alto HR's first row at boot (lib/identity.ensureEnvIdentity).
+model IdentityConnection {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// OIDC | SAML
+  kind                String   @default("OIDC") @db.VarChar(10)
+  displayName         String   @db.VarChar(120)
+  /// The sign-in button's words ("Continue with Okta").
+  buttonLabel         String?  @db.VarChar(80)
+  issuerUrl           String   @db.VarChar(500)
+  clientId            String   @db.VarChar(300)
+  clientSecretEnc     Bytes
+  /// NONE: SSO never activates anyone; INVITED_ONLY: an invited account becomes active on first SSO (today's rule).
+  jitPolicy           String   @default("INVITED_ONLY") @db.VarChar(20)
+  /// Password sign-in is refused for this tenant's staff (non-associate roles); passkeys still work (decision 4).
+  ssoRequiredForStaff Boolean  @default(false)
+  enabled             Boolean  @default(true)
+  /// The connection made from the environment variables at boot.
+  fromEnvironment     Boolean  @default(false)
+  createdById         String?  @db.Uuid
+  createdAt           DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(6)
+
+  identities UserIdentity[]
+
+  @@index([tenantId, enabled])
+}
+
+/// A tenant's email domain, proven by a DNS TXT record; the login page discovers a
+/// tenant's sign-in from a verified domain only (decision 1). One tenant per domain.
+model TenantDomain {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  domain            String    @unique @db.VarChar(253)
+  verificationToken String    @db.VarChar(80)
+  verifiedAt        DateTime? @db.Timestamptz(6)
+  lastCheckedAt     DateTime? @db.Timestamptz(6)
+  createdById       String?   @db.Uuid
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
+}
+
+/// A person bound to their IdP subject (decision 2): the first SSO sign-in links by
+/// email inside the tenant; every later one matches the subject, never the email.
+model UserIdentity {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId       String    @db.Uuid
+  connectionId String    @db.Uuid
+  subject      String    @db.VarChar(255)
+  emailAtLink  String    @db.VarChar(254)
+  linkedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  lastLoginAt  DateTime? @db.Timestamptz(6)
+
+  user       User               @relation("UserIdentities", fields: [userId], references: [id], onDelete: Cascade)
+  connection IdentityConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, subject])
+  @@unique([userId, connectionId])
+  @@index([tenantId])
+}
+
+/// A tenant's SCIM bearer (§4.2): stored hashed, shown once; the token decides the
+/// tenant every provisioned account lands in. The environment SCIM_TOKEN became
+/// Alto HR's first row at boot.
+model ScimToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name         String    @db.VarChar(120)
+  /// SHA-256 of the token, hex.
+  hashedSecret String    @unique @db.VarChar(64)
+  last4        String    @db.VarChar(4)
+  lastUsedAt   DateTime? @db.Timestamptz(6)
+  createdById  String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  revokedAt    DateTime? @db.Timestamptz(6)
+
+  @@index([tenantId])
 }

@@ -22,6 +22,7 @@ import {
   type NotificationPreferenceEntry,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { ssoRequiredFor } from '../lib/identity.js';
 import { env } from '../config/env.js';
 import {
   MFA_ENROLL_TTL_SECONDS,
@@ -453,6 +454,14 @@ authRouter.post(
       if (!HUMAN_ROLES.includes(user.role)) {
         await recordLoginFailure({ email, req, reason: 'non_human_role' });
         res.status(401).json(GENERIC_LOGIN_ERROR);
+        return;
+      }
+      // Brief 2-3 (decision 4): a tenant that requires its SSO for staff refuses their password
+      // (after the password proved itself, so nothing leaks to a guesser); passkeys still work,
+      // and associates keep passwords.
+      if (await ssoRequiredFor(prisma, user)) {
+        await recordLoginFailure({ email, req, reason: 'sso_required' });
+        res.status(403).json({ error: { code: 'sso_required', message: 'Your organization signs in with its company sign-in. Use the sign-in button for your organization.' } });
         return;
       }
 

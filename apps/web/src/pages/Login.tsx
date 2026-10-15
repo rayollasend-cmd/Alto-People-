@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
 import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
@@ -17,6 +17,9 @@ import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Logo } from '@/components/Logo';
 import { Skeleton } from '@/components/ui/Skeleton';
+
+// Brief 2-3: an organization's own sign-in, found from the email's domain; lazy, off the first paint.
+const SsoDiscovery = lazy(() => import('./SsoDiscovery'));
 
 interface LocationState {
   from?: string;
@@ -53,6 +56,7 @@ export function Login() {
   const { signIn, submitMfaChallenge, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { slug = null } = useParams<{ slug?: string }>();
   const [email, setEmail] = useState(DEFAULT_DEV_EMAIL);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -107,6 +111,8 @@ export function Login() {
     } catch (err) {
       if (err instanceof NetworkError) {
         setError(t('login.errNetwork'));
+      } else if (err instanceof ApiError && err.code === 'sso_required') {
+        setError(t('login.ssoRequired'));
       } else if (err instanceof ApiError && err.status === 429) {
         setError(t('login.errRateLimited'));
       } else if (err instanceof ApiError && err.status >= 500) {
@@ -410,6 +416,12 @@ export function Login() {
                 </div>
               </>
             )}
+
+            <Suspense fallback={null}>
+              <div className="mt-3">
+                <SsoDiscovery email={email} slug={slug} from={from} disabled={submitting} />
+              </div>
+            </Suspense>
 
             <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
