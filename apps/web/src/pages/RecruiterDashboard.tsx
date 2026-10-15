@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { greetingFor, greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -29,7 +32,6 @@ import { resendInvite } from '@/lib/onboardingApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -216,20 +218,30 @@ function NewApplicants({ home }: { home: RecruiterHome }) {
   );
 }
 
-function WaitingOnYou({ home }: { home: RecruiterHome }) {
+/** Everything in the recruiter's own queue: the count the home's "Waiting on you" carries. */
+function waitingOnYouTotal(home: RecruiterHome): number {
   const w = home.waitingOnYou;
-  const total =
+  return (
     w.toScore.total +
     w.clientApproved.length +
     w.readyToHire.length +
     w.offersToApprove.length +
     w.stuck.total +
-    w.closingSoon.total;
+    w.closingSoon.total
+  );
+}
+
+/** `headless`: the home's template titles the section and carries the count. */
+function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headless?: boolean }) {
+  const w = home.waitingOnYou;
+  const total = waitingOnYouTotal(home);
   return (
-    <section aria-labelledby="waiting-on-you">
-      <SectionTitle count={total}>
-        <span id="waiting-on-you">Waiting on you</span>
-      </SectionTitle>
+    <section aria-labelledby={headless ? 'home-decisions' : 'waiting-on-you'}>
+      {!headless && (
+        <SectionTitle count={total}>
+          <span id="waiting-on-you">Waiting on you</span>
+        </SectionTitle>
+      )}
       {total === 0 ? (
         <Card>
           <CardContent className="p-4 text-sm text-silver">
@@ -637,84 +649,107 @@ export function RecruiterDashboard() {
     refetchOnWindowFocus: true,
   });
   const home = q.data;
+  const greet = useGreeting();
   const name = greetingName(user);
 
+  const retry = (
+    <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
+      Retry
+    </Button>
+  );
+
   return (
-    <div className="mx-auto space-y-8">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-silver">
+      {/* Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+          Today's interviews are the hero, the recruiter's own queue "Waiting
+          on you" (counted), the pipeline's doors as ways in. */}
+      <HomeTemplate
+        title={
+          <>
+            <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{name}</span>.
+          </>
+        }
+        topbarTitle="Home"
+        subtitle="Your pipeline today — what's new, and what's waiting."
+        meta={
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
               <Calendar className="h-3 w-3" aria-hidden="true" />
               <LiveNow render={(now) => fmtDate(now)} />
-            </div>
+            </span>
             {role && (
-              <Badge variant="accent" className="uppercase tracking-widest">
+              <Badge variant="accent" className="uppercase tracking-[0.18em]">
                 {roleLabel(role)}
               </Badge>
             )}
           </div>
-          <h1 className="mt-2 font-display text-3xl leading-tight text-white md:text-4xl">
-            <LiveNow render={(now) => greetingFor(now.getHours())} />, <span className="text-gold">{name}</span>.
-          </h1>
-          <p className="mt-2 text-sm text-silver md:text-base">Your pipeline today — what&rsquo;s new, and what&rsquo;s waiting.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to="/recruiting">Open pipeline</Link>
-          </Button>
-          {can('manage:recruiting') && (
+        }
+        actions={
+          can('manage:recruiting') ? (
             <Button asChild size="sm">
               <Link to="/recruiting?new=1">
                 <Plus className="h-4 w-4" />
                 New candidate
               </Link>
             </Button>
-          )}
-        </div>
-      </header>
-
-      {q.isError && !home ? (
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
-              Retry
+          ) : (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/recruiting">Open pipeline</Link>
             </Button>
-          }
-        >
-          {q.error instanceof ApiError ? q.error.message : 'Could not load your recruiting day.'}
-        </ErrorBanner>
-      ) : !home ? (
-        <div className="space-y-4" aria-label="Loading">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <Skeleton className="h-56 lg:col-span-2" />
+          )
+        }
+        hero={
+          home ? (
+            <Today home={home} />
+          ) : q.isError ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="Today's interviews"
+              description={q.error instanceof ApiError ? q.error.message : 'Could not load your recruiting day.'}
+              action={retry}
+            />
+          ) : (
             <Skeleton className="h-56" />
+          )
+        }
+        decisions={home ? { title: 'Waiting on you', count: waitingOnYouTotal(home), content: <WaitingOnYou home={home} headless /> } : undefined}
+        assistant={<HugoSeat />}
+        waysIn={
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link to="/recruiting">Open pipeline</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/recruiting?view=list&stage=INTERVIEW">Interviewing</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/onboarding">Onboarding</Link>
+            </Button>
           </div>
-          <Skeleton className="h-40" />
-          <Skeleton className="h-40" />
-        </div>
-      ) : (
-        <>
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <Today home={home} />
-            </div>
+        }
+      >
+        {!home && !q.isError && (
+          <div className="space-y-4" aria-label="Loading">
+            <Skeleton className="h-40" />
+            <Skeleton className="h-40" />
+          </div>
+        )}
+        {home && (
+          <>
             <NewApplicants home={home} />
-          </div>
-          <WaitingOnYou home={home} />
-          <WaitingOnOthers home={home} />
-          <PipelineAndPostings home={home} />
-          <Numbers home={home} />
-          <Activity home={home} />
-        </>
-      )}
-
-      {/* Approvals from outside recruiting (time off and the like) — only
-          when there are any; "nothing needs your decision" would contradict
-          the waiting list above. */}
-      <RoleDecisionQueue title="Other approvals" hideWhenEmpty />
-      <MyPlanCard />
-    </div>
+            <WaitingOnOthers home={home} />
+            <PipelineAndPostings home={home} />
+            <Numbers home={home} />
+            <Activity home={home} />
+          </>
+        )}
+        {/* Approvals from outside recruiting (time off and the like) — only
+            when there are any; "nothing needs your decision" would contradict
+            the waiting list above. */}
+        <RoleDecisionQueue title="Other approvals" hideWhenEmpty />
+        <MyPlanCard />
+      </HomeTemplate>
+    </>
   );
 }

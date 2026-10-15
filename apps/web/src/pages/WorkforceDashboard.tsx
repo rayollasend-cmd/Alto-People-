@@ -1,5 +1,10 @@
 import { Link } from 'react-router-dom';
-import { greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { LiveNow } from '@/components/ui/LiveNow';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -26,7 +31,6 @@ import { ClockStrip } from '@/components/ClockStrip';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -151,12 +155,6 @@ const STATUS_DOT: Record<StoreTile['status'], string> = {
   green: 'bg-success/80',
 };
 
-function greetKey(hour: number): MessageKey {
-  if (hour < 12) return 'fin.morning';
-  if (hour < 17) return 'fin.afternoon';
-  return 'fin.evening';
-}
-
 export function WorkforceDashboard() {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -179,37 +177,75 @@ export function WorkforceDashboard() {
     list.push(s);
     supsByClient.set(s.clientId, list);
   }
-  const firstName = greetingName(user, '');
+  const greet = useGreeting();
+  const greeting = (
+    <>
+      <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+    </>
+  );
 
   if (query.isError) {
     return (
-      <div className="mx-auto">
-        <h1 className="font-display text-3xl text-white">{t('wf.title')}</h1>
-        <ErrorBanner
-          className="mt-4"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('common.wentWrong')}
-        </ErrorBanner>
-      </div>
+      <HomeTemplate
+        title={greeting}
+        topbarTitle={t('wf.title')}
+        subtitle={t('wf.subtitle')}
+        hero={
+          <EmptyState
+            title={t('wf.title')}
+            description={t('common.wentWrong')}
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                {t('common.retry')}
+              </Button>
+            }
+          />
+        }
+      />
     );
   }
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-28" />
+      <HomeTemplate title={greeting} topbarTitle={t('wf.title')} subtitle={t('wf.subtitle')} hero={<Skeleton className="h-28" />}>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Skeleton className="h-72 lg:col-span-2" />
           <Skeleton className="h-72" />
         </div>
-      </div>
+      </HomeTemplate>
     );
   }
+
+  // Ways in (§4.1): the six doors.
+  const doors = (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6 md:gap-3">
+      {(
+        [
+          ['/scheduling', 'wf.goScheduling', CalendarDays],
+          ['/approvals', 'wf.goApprovals', Inbox],
+          ['/time-attendance', 'wf.goLive', Radio],
+          ['/ops', 'wf.goOps', ClipboardList],
+          ['/marketplace', 'wf.goMarketplace', Store],
+          ['/compliance', 'wf.goIncidents', ShieldAlert],
+        ] as const
+      ).map(([to, key, Icon]) => (
+        <Link
+          key={to}
+          to={to}
+          className="group flex min-h-12 items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-3 text-sm text-white transition-colors hover:border-gold/50 hover:bg-navy/80 active:border-gold/50 active:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <Icon
+            className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
+            aria-hidden="true"
+          />
+          <span className="flex-1 truncate">{t(key)}</span>
+          <ArrowRight
+            className="h-3.5 w-3.5 text-silver/70 transition-colors group-hover:text-gold"
+            aria-hidden="true"
+          />
+        </Link>
+      ))}
+    </div>
+  );
 
   const instruments: Array<{
     value: string;
@@ -254,72 +290,75 @@ export function WorkforceDashboard() {
   ];
 
   return (
-    <div className="mx-auto space-y-5">
-      {/* ---- Greeting ------------------------------------------------- */}
-      <div className="animate-enter">
-        <h1 className="font-display text-3xl md:text-4xl text-white">
-          {t(greetKey(new Date().getHours()))}
-          {firstName ? `, ${firstName}` : ''}
-        </h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-silver">
-          {t('wf.subtitle')}
-          <span className="flex items-center gap-1.5 text-xs text-silver/60">
+    // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+    // The instrument row is the hero, the decision queue "Needs you", the
+    // board beneath, the six doors as ways in.
+    <HomeTemplate
+      title={greeting}
+      topbarTitle={t('wf.title')}
+      subtitle={t('wf.subtitle')}
+      meta={
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
             <span className="relative flex h-2 w-2" aria-hidden="true">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
             {t('portal.live')}
           </span>
-        </p>
-        <ClockStrip className="mt-1.5" />
-      </div>
-
-      {/* ---- Command strip: the instrument row -------------------------- */}
-      <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
-        />
-        <CardContent className="relative p-5">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
-            <Link to="/time-attendance" className="group shrink-0">
-              <div className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white group-hover:text-gold-bright transition-colors">
-                {data.now.onFloor}
-                <span className="ml-2 align-middle text-base font-normal text-silver">
-                  / {data.now.scheduledNow}
-                </span>
+          <ClockStrip />
+        </div>
+      }
+      hero={
+        <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
+          />
+          <CardContent className="relative p-5">
+            <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+              <Link to="/time-attendance" className="group shrink-0">
+                <div className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white group-hover:text-gold-bright transition-colors">
+                  {data.now.onFloor}
+                  <span className="ml-2 align-middle text-base font-normal text-silver">
+                    / {data.now.scheduledNow}
+                  </span>
+                </div>
+                <div className="mt-1 text-sm text-silver">{t('wf.instrFloor')}</div>
+              </Link>
+              <div
+                aria-hidden="true"
+                className="hidden h-12 w-px bg-navy-secondary sm:block"
+              />
+              <div className="grid flex-1 grid-cols-3 gap-x-6 gap-y-3 sm:grid-cols-6">
+                {instruments.map((ins) => (
+                  <Link key={ins.label} to={ins.to} className="group min-w-0">
+                    <div
+                      className={cn(
+                        'text-2xl font-bold tracking-tight tabular-nums transition-colors',
+                        ins.tone === 'alert'
+                          ? 'text-alert'
+                          : ins.tone === 'warning'
+                            ? 'text-warning'
+                            : 'text-white group-hover:text-gold-bright',
+                      )}
+                    >
+                      {ins.value}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-silver/70">
+                      {ins.label}
+                    </div>
+                  </Link>
+                ))}
               </div>
-              <div className="mt-1 text-sm text-silver">{t('wf.instrFloor')}</div>
-            </Link>
-            <div
-              aria-hidden="true"
-              className="hidden h-12 w-px bg-navy-secondary sm:block"
-            />
-            <div className="grid flex-1 grid-cols-3 gap-x-6 gap-y-3 sm:grid-cols-6">
-              {instruments.map((ins) => (
-                <Link key={ins.label} to={ins.to} className="group min-w-0">
-                  <div
-                    className={cn(
-                      'text-2xl font-bold tracking-tight tabular-nums transition-colors',
-                      ins.tone === 'alert'
-                        ? 'text-alert'
-                        : ins.tone === 'warning'
-                          ? 'text-warning'
-                          : 'text-white group-hover:text-gold-bright',
-                    )}
-                  >
-                    {ins.value}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs text-silver/70">
-                    {ins.label}
-                  </div>
-                </Link>
-              ))}
             </div>
-          </div>
-        </CardContent>
-      </Card>
-
+          </CardContent>
+        </Card>
+      }
+      decisions={{ title: t('home.needsYou'), content: <RoleDecisionQueue title={null} /> }}
+      assistant={<HugoSeat />}
+      waysIn={doors}
+    >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* ---- THE BOARD ---------------------------------------------- */}
         <div className="lg:col-span-2">
@@ -693,36 +732,6 @@ export function WorkforceDashboard() {
           </Card>
         </div>
       </div>
-
-      {/* ---- The six doors --------------------------------------------- */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6 md:gap-3">
-        {(
-          [
-            ['/scheduling', 'wf.goScheduling', CalendarDays],
-            ['/approvals', 'wf.goApprovals', Inbox],
-            ['/time-attendance', 'wf.goLive', Radio],
-            ['/ops', 'wf.goOps', ClipboardList],
-            ['/marketplace', 'wf.goMarketplace', Store],
-            ['/compliance', 'wf.goIncidents', ShieldAlert],
-          ] as const
-        ).map(([to, key, Icon]) => (
-          <Link
-            key={to}
-            to={to}
-            className="group flex min-h-12 items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-3 text-sm text-white transition-colors hover:border-gold/50 hover:bg-navy/80 active:border-gold/50 active:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-          >
-            <Icon
-              className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
-              aria-hidden="true"
-            />
-            <span className="flex-1 truncate">{t(key)}</span>
-            <ArrowRight
-              className="h-3.5 w-3.5 text-silver/70 transition-colors group-hover:text-gold"
-              aria-hidden="true"
-            />
-          </Link>
-        ))}
-      </div>
-    </div>
+    </HomeTemplate>
   );
 }

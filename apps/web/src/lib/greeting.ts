@@ -1,3 +1,5 @@
+import { useI18n, type MessageKey } from '@/lib/i18n';
+
 /**
  * The name a home greets someone by (design system §6, voice): their first
  * name when the account has one; otherwise the first word of the email's
@@ -14,13 +16,20 @@ export function greetingName(user: { firstName?: string | null; email?: string |
 }
 
 /**
- * The greeting word for an hour of the day. Four homes carried their own
- * copy (two of them with a different afternoon boundary); this is the one.
+ * The greeting for an hour of the day, as a message key: six homes carried
+ * their own copy (two with a different afternoon boundary, two in English
+ * only on surfaces a Spanish- or Turkish-speaking person opens).
  */
-export function greetingFor(hour: number): string {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 22) return 'Good evening';
-  return 'Burning the midnight oil';
+export function greetingKey(hour: number): MessageKey {
+  if (hour < 5) return 'home.greetLate';
+  if (hour < 12) return 'home.greetMorning';
+  if (hour < 17) return 'home.greetAfternoon';
+  if (hour < 22) return 'home.greetEvening';
+  return 'home.greetNight';
+}
+
+/** The greeting word in the person's language: `const greet = useGreeting(); greet(hour)`. */
+export function useGreeting(): (hour: number) => string {
+  const { t } = useI18n();
+  return (hour) => t(greetingKey(hour));
 }

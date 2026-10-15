@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { greetingFor, greetingName as greetingNameOf } from '@/lib/greeting';
+import { useGreeting, greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -199,6 +199,7 @@ export function AdminDashboard() {
       : 'Failed to load dashboard data.'
     : null;
 
+  const greet = useGreeting();
   const greetingName = greetingNameOf(user);
 
   return (
@@ -210,7 +211,7 @@ export function AdminDashboard() {
       <HomeTemplate
         title={
           <>
-            <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+            <LiveNow render={(now) => greet(now.getHours())} />,{' '}
             <span className="text-accent">{greetingName}</span>.
           </>
         }
@@ -622,7 +623,9 @@ function KpiSection({
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
       <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* Two across in the home's main column until xl: four tiles at lg
+          clipped their sparkline captions (second design walk). */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {kpis ? (
           buildKpis(kpis, role, term).map((kpi) => (
             <KpiTile key={kpi.label} kpi={kpi} />
@@ -746,7 +749,7 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
           <CountUpValue value={kpi.value} />
         </div>
         {kpi.trend && (
-          <div className="mt-2 flex items-center gap-2 text-silver">
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-silver">
             <Sparkline series={kpi.trend.series} />
             <DeltaChip
               delta={kpi.trend.delta}

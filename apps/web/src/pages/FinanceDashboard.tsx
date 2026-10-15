@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { LiveNow } from '@/components/ui/LiveNow';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -19,9 +23,9 @@ import {
 import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
-import { BillingWeekCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList } from './finance/FinanceCockpit';
+import { BillingWeekCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
 import { useAuth } from '@/lib/auth';
-import { useI18n, type MessageKey } from '@/lib/i18n';
+import { useI18n } from '@/lib/i18n';
 import { fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
@@ -30,7 +34,6 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { ClockStrip } from '@/components/ClockStrip';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -43,12 +46,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
  *   paired bars → one row of the four actions the day actually needs.
  */
 
-
-function greetKey(hour: number): MessageKey {
-  if (hour < 12) return 'fin.morning';
-  if (hour < 17) return 'fin.afternoon';
-  return 'fin.evening';
-}
 
 export function FinanceDashboard() {
   const { t } = useI18n();
@@ -87,37 +84,43 @@ export function FinanceDashboard() {
     }
   };
 
-  const firstName = greetingName(user, '');
+  const greet = useGreeting();
+  const greeting = (
+    <>
+      <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+    </>
+  );
 
   if (query.isError) {
     return (
-      <div className="mx-auto">
-        <h1 className="font-display text-3xl text-white">{t('fin.title')}</h1>
-        <ErrorBanner
-          className="mt-4"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('common.wentWrong')}
-        </ErrorBanner>
-      </div>
+      <HomeTemplate
+        title={greeting}
+        topbarTitle={t('fin.title')}
+        subtitle={t('fin.subtitle')}
+        hero={
+          <EmptyState
+            title={t('fin.title')}
+            description={t('common.wentWrong')}
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                {t('common.retry')}
+              </Button>
+            }
+          />
+        }
+      />
     );
   }
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-40" />
+      <HomeTemplate title={greeting} topbarTitle={t('fin.title')} subtitle={t('fin.subtitle')} hero={<Skeleton className="h-40" />}>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
           <Skeleton className="h-28 hidden lg:block" />
           <Skeleton className="h-28 hidden lg:block" />
         </div>
-      </div>
+      </HomeTemplate>
     );
   }
 
@@ -127,36 +130,32 @@ export function FinanceDashboard() {
   const atRisk = (data.billing?.money.atRisk ?? 0) + (data.billing?.rejectedOpen.amount ?? 0);
   const aging = data.receivables.aging;
   const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
+  const tasksToday = financeTasks(data, t, Date.now()).length;
 
   return (
-    <div className="mx-auto space-y-5">
-      {/* ---- Greeting ------------------------------------------------- */}
-      <div className="animate-enter">
-        <h1 className="font-display text-3xl md:text-4xl text-white">
-          {t(greetKey(new Date().getHours()))}
-          {firstName ? `, ${firstName}` : ''}
-        </h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-silver">
-          {t('fin.subtitle')}
-          <span className="flex items-center gap-1.5 text-xs text-silver/60">
+    // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+    // Payday is the hero, what needs finance today "Needs you" (counted),
+    // the four numbers and the rest beneath.
+    <HomeTemplate
+      title={greeting}
+      topbarTitle={t('fin.title')}
+      subtitle={t('fin.subtitle')}
+      meta={
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
             <span className="relative flex h-2 w-2" aria-hidden="true">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
             {t('fin.live')}
           </span>
-        </p>
-        <ClockStrip className="mt-1.5" />
-      </div>
-
-      {/* ---- Payday — sacred — and what needs finance today ----------- */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <PayCycleHero data={data} />
+          <ClockStrip />
         </div>
-        <TodayList data={data} />
-      </div>
-
+      }
+      hero={<PayCycleHero data={data} />}
+      decisions={{ title: t('fin.today'), count: tasksToday, content: <TodayList data={data} headless /> }}
+      assistant={<HugoSeat />}
+    >
       {/* ---- The four numbers that matter ----------------------------- */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <FinKpi
@@ -384,7 +383,7 @@ export function FinanceDashboard() {
           />
         </Link>
       </div>
-    </div>
+    </HomeTemplate>
   );
 }
 

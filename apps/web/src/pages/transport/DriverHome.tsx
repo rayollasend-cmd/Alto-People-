@@ -59,7 +59,7 @@ import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { useAuth } from '@/lib/auth';
-import { greetingFor, greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -197,6 +197,7 @@ function tripOfRun(run: RideRun): TripKey | null {
 
 export function DriverHome() {
   const { t } = useI18n();
+  const greet = useGreeting();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const runs = useQuery({ queryKey: ['transport', 'driver'], queryFn: getDriverRuns, refetchInterval: 30_000 });
@@ -266,7 +267,7 @@ export function DriverHome() {
         className="mx-auto max-w-2xl"
         title={
           <>
-            <LiveNow render={(now) => greetingFor(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+            <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
           </>
         }
         topbarTitle={t('drive.title')}

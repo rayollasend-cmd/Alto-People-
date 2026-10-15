@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { greetingFor, greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -725,6 +725,7 @@ interface PortalEngagement {
 
 
 export function ExecutiveDashboard() {
+  const greet = useGreeting();
   const { user } = useAuth();
   const [packBusy, setPackBusy] = useState(false);
 
@@ -939,7 +940,7 @@ export function ExecutiveDashboard() {
     <HomeTemplate
       title={
         <>
-          <LiveNow render={(now) => greetingFor(now.getHours())} />, <span className="text-accent">{greetingName(user, '')}</span>
+          <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user, '')}</span>
         </>
       }
       topbarTitle="Home"

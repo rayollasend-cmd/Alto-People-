@@ -357,24 +357,27 @@ const TONE: Record<FinanceTask['tone'], string> = {
   silver: 'text-silver',
 };
 
-export function TodayList({ data }: { data: FinanceOverview }) {
+/** `headless`: the home titles the section ("Needs you"); the card keeps only its list. */
+export function TodayList({ data, headless = false }: { data: FinanceOverview; headless?: boolean }) {
   const { t } = useI18n();
   const now = useNow();
   const tasks = financeTasks(data, t, now);
   return (
     <Card className="h-full animate-enter" style={enterStagger(1)}>
       <CardContent className="p-5">
-        <h2 className="flex items-baseline justify-between gap-2 text-sm font-medium text-white">
-          {t('fin.today')}
-          <span className="text-xs font-normal text-silver/60">{tasks.length > 0 ? t('fin.todaySub') : null}</span>
-        </h2>
+        {!headless && (
+          <h2 className="flex items-baseline justify-between gap-2 text-sm font-medium text-white">
+            {t('fin.today')}
+            <span className="text-xs font-normal text-silver/60">{tasks.length > 0 ? t('fin.todaySub') : null}</span>
+          </h2>
+        )}
         {tasks.length === 0 ? (
-          <p className="mt-4 flex items-center gap-2 text-sm text-success">
+          <p className={headless ? 'flex items-center gap-2 text-sm text-success' : 'mt-4 flex items-center gap-2 text-sm text-success'}>
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             {t('fin.todayClear')}
           </p>
         ) : (
-          <ul className="mt-3 divide-y divide-navy-secondary/60" aria-label={t('fin.today')}>
+          <ul className={headless ? 'divide-y divide-navy-secondary/60' : 'mt-3 divide-y divide-navy-secondary/60'} aria-label={t('fin.today')}>
             {tasks.map((task) => {
               const Icon = task.icon;
               return (

@@ -30,7 +30,7 @@ import { HugoSeat } from '@/components/home/HugoSeat';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { greetingFor, greetingName } from '@/lib/greeting';
+import { useGreeting, greetingName } from '@/lib/greeting';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -119,6 +119,7 @@ function plural(n: number, one: string, many: string): string {
 
 export function SupervisorDashboard() {
   const { t } = useI18n();
+  const greet = useGreeting();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
@@ -257,7 +258,7 @@ export function SupervisorDashboard() {
   // subtitle; the live "as of" is the meta line; the floor is the hero.
   const greeting = (
     <>
-      <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+      <LiveNow render={(now) => greet(now.getHours())} />,{' '}
       <span className="text-accent">{greetingName(user)}</span>.
     </>
   );
@@ -658,7 +659,7 @@ export function SupervisorDashboard() {
             </Card>
           </div>
         }
-        decisions={watchOnly ? undefined : { title: 'Needs you', content: <RoleDecisionQueue title={null} /> }}
+        decisions={watchOnly ? undefined : { title: t('home.needsYou'), content: <RoleDecisionQueue title={null} /> }}
         assistant={<HugoSeat />}
         waysIn={waysIn}
       >

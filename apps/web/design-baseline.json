@@ -1,8 +1,8 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1585,
-    "raw-heading": 152,
+    "brand-text": 1580,
+    "raw-heading": 147,
     "loading-text": 4,
     "empty-text": 39,
     "hex": 58,
@@ -268,9 +268,9 @@
       "raw-heading": 4
     },
     "src/pages/FinanceDashboard.tsx": {
-      "brand-text": 7,
+      "brand-text": 5,
       "pill": 1,
-      "raw-heading": 4
+      "raw-heading": 2
     },
     "src/pages/ForgotPassword.tsx": {
       "brand-text": 4,
@@ -625,9 +625,9 @@
       "empty-text": 1
     },
     "src/pages/RecruiterDashboard.tsx": {
-      "brand-text": 11,
+      "brand-text": 10,
       "empty-text": 1,
-      "raw-heading": 2
+      "raw-heading": 1
     },
     "src/pages/recruiting/CandidateBoard.tsx": {
       "brand-text": 2
@@ -904,9 +904,9 @@
       "empty-text": 1
     },
     "src/pages/WorkforceDashboard.tsx": {
-      "brand-text": 16,
+      "brand-text": 14,
       "pill": 1,
-      "raw-heading": 8
+      "raw-heading": 6
     },
     "src/pages/worktags/WorktagsHome.tsx": {
       "brand-text": 2

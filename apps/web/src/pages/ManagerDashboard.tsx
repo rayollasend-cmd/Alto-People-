@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { greetingFor, greetingName as greetingNameOf } from '@/lib/greeting';
+import { useGreeting, greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -117,6 +117,7 @@ export function ManagerDashboard() {
     if (pendingPtoQuery.error) void pendingPtoQuery.refetch();
   };
 
+  const greet = useGreeting();
   const greetingName = greetingNameOf(user);
 
   // Index of associateId → active time entry (so we can mark "on the
@@ -134,7 +135,7 @@ export function ManagerDashboard() {
       <HomeTemplate
         title={
           <>
-            <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+            <LiveNow render={(now) => greet(now.getHours())} />,{' '}
             <span className="text-accent">{greetingName}</span>.
           </>
         }
