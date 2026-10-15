@@ -12,6 +12,7 @@ export * from './complianceEvidence.js';
 export * from './trust.js';
 export * from './status.js';
 export * from './integrations.js';
+export * from './robots.js';
 export * from './agentCapabilities.js';
 export * from './publicApi.js';
 export * from './forecast.js';

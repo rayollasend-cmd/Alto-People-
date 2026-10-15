@@ -38,6 +38,7 @@ import { orgDateKey, utcInstantOfLocalMidnight } from '../src/lib/timeAnomalies.
 import { ATTENDANCE_POINTS } from '../src/lib/attendance.js';
 import { ATTESTATION_CONFIGS, periodForNow } from '../src/lib/manualAttestation.js';
 import { ALTO_TENANT_ID } from '../src/lib/tenant.js';
+import { registerSimulatedRobot, simulatedStatus } from '../src/lib/fleet/index.js';
 import {
   BILL_RATE,
   DEMO_CAST,
@@ -913,6 +914,125 @@ async function main() {
   ];
   await prisma.notification.createMany({ data: notes });
   count('notifications', notes.length);
+
+
+  // ---- Brief 3-1: two robots on the Front Beach floor ------------------------------
+  // The robotics module goes on for the demo tenant; two simulated Bear/Pudu
+  // robots are commissioned at Front Beach 218 with a checklist, two safety
+  // zones, a day of fleet readings, maintenance, an emergency stop that was
+  // resumed, and one near miss with its evidence.
+  {
+    const tenantRow = await prisma.tenant.findUniqueOrThrow({ where: { id: ALTO_TENANT_ID }, select: { modules: true } });
+    const modules = { ...((tenantRow.modules as Record<string, boolean> | null) ?? {}), robotics: true };
+    await prisma.tenant.update({ where: { id: ALTO_TENANT_ID }, data: { modules } });
+    const robotSpecs = [
+      { name: 'Servi 01', externalId: 'sim-servi-01', manufacturer: 'Bear Robotics', model: 'Servi Plus', serial: 'BR-SV-2026-0417', firmware: '4.2.1', capabilities: ['food-service', 'room-delivery'] },
+      { name: 'Scrubber 02', externalId: 'sim-cc1-02', manufacturer: 'Pudu Robotics', model: 'CC1', serial: 'PD-CC1-2026-0088', firmware: '2.9.0', capabilities: ['floor-care'] },
+    ];
+    const checklist = await prisma.robotChecklistTemplate.create({
+      data: {
+        tenantId: ALTO_TENANT_ID,
+        locationId: frontBeach.id,
+        name: 'Front Beach pre-shift',
+        items: [
+          { key: 'estop', label: 'Emergency stop button tested', required: true },
+          { key: 'sensors', label: 'Bump and cliff sensors clear', required: true },
+          { key: 'trays', label: 'Trays or tank clean and locked', required: true },
+          { key: 'route', label: 'Route free of cables and mats', required: false },
+        ],
+      },
+    });
+    await prisma.siteSafetyZone.createMany({
+      data: [
+        { tenantId: ALTO_TENANT_ID, locationId: frontBeach.id, name: 'Lobby bar', shape: { type: 'rect', x: 0, y: 0, w: 20, h: 15 } },
+        { tenantId: ALTO_TENANT_ID, locationId: frontBeach.id, name: 'Pool deck', shape: { type: 'rect', x: 30, y: 30, w: 25, h: 20 }, robotsAllowedWhenOccupied: true },
+      ],
+    });
+    count('safetyZones', 2);
+    const peopleThen = await prisma.shift.findMany({
+      where: { locationId: frontBeach.id, startsAt: { lte: daysAgo(3) }, endsAt: { gte: minutes(daysAgo(3), -60) }, assignedAssociateId: { not: null } },
+      select: { id: true, assignedAssociateId: true, assignedAssociate: { select: { firstName: true, lastName: true } } },
+      take: 20,
+    });
+    for (const spec of robotSpecs) {
+      registerSimulatedRobot(spec.externalId);
+      const robot = await prisma.worker.create({
+        data: { tenantId: ALTO_TENANT_ID, type: 'ROBOT', name: spec.name, ownerUserId: admin.id, status: 'ACTIVE', capabilities: spec.capabilities, createdAt: daysAgo(70) },
+      });
+      await prisma.robotProfile.create({
+        data: { workerId: robot.id, tenantId: ALTO_TENANT_ID, manufacturer: spec.manufacturer, model: spec.model, serial: spec.serial, firmware: spec.firmware, connectorProvider: 'SIMULATED', connectorExternalId: spec.externalId, certifications: [{ name: 'UL 3300 service robot safety', issuedOn: '2026-02-10', expiresOn: '2028-02-10' }] },
+      });
+      await prisma.workerAssignment.create({ data: { workerId: robot.id, locationId: frontBeach.id, startedAt: daysAgo(60) } });
+      await prisma.robotCommissioning.create({
+        data: { workerId: robot.id, tenantId: ALTO_TENANT_ID, locationId: frontBeach.id, mapNotes: 'Ground floor: lobby, bar, pool deck entrance. Service elevator at the north core.', chargingStations: [{ label: 'Dock A · back of house', x: 2, y: 48 }, { label: 'Dock B · service corridor', x: 58, y: 2 }], safetyLeadUserId: dana.id, signedOffAt: daysAgo(50), createdAt: daysAgo(55) },
+      });
+      // A day of readings, every five minutes, from the simulated fleet.
+      const samples = [];
+      for (let m = 24 * 60; m >= 0; m -= 5) {
+        const at = minutes(now, -m);
+        const s = simulatedStatus(spec.externalId, at);
+        samples.push({ workerId: robot.id, tenantId: ALTO_TENANT_ID, at, status: s.status, batteryPct: s.batteryPct, x: s.x, y: s.y, currentTask: s.currentTask, errorCode: s.errorCode });
+      }
+      await prisma.robotStatusSample.createMany({ data: samples });
+      count('robotSamples', samples.length);
+      // Checklist: yesterday and this morning, by the shift supervisor.
+      for (const d of [1, 0]) {
+        const completedAt = new Date(dateOf(todayKey).getTime() - d * DAY + 11 * HOUR);
+        await prisma.robotChecklistRun.create({
+          data: { workerId: robot.id, tenantId: ALTO_TENANT_ID, templateId: checklist.id, completedByUserId: dana.id, completedAt, allPassed: true, answers: [{ key: 'estop', ok: true }, { key: 'sensors', ok: true }, { key: 'trays', ok: true }, { key: 'route', ok: true }] },
+        });
+        await prisma.robotEvent.create({ data: { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'CHECKLIST_COMPLETED', at: completedAt, byUserId: dana.id, note: 'Front Beach pre-shift: all clear' } });
+        await prisma.robotEvent.create({ data: { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'SHIFT_STARTED', at: minutes(completedAt, 20), byUserId: dana.id } });
+      }
+      await prisma.robotEvent.createMany({
+        data: [
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'COMMISSIONED', at: daysAgo(50), byUserId: dana.id, note: 'Commissioned at Front Beach 218' },
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'E_STOP', at: minutes(daysAgo(9), 40), byUserId: dana.id, note: 'Spilled drinks on the lobby floor' },
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'RESUME', at: minutes(daysAgo(9), 62), byUserId: dana.id, note: 'Floor dry, route clear' },
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, kind: 'MAINTENANCE', at: daysAgo(20), byUserId: admin.id, note: 'Firmware update' },
+        ],
+      });
+      await prisma.robotMaintenance.createMany({
+        data: [
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, performedOn: daysAgo(20), kind: 'Firmware update', description: `Updated to ${spec.firmware}; recalibrated the lidar after the update.`, performedBy: 'Vendor field tech', nextDueOn: new Date(now.getTime() + 70 * DAY) },
+          { workerId: robot.id, tenantId: ALTO_TENANT_ID, performedOn: daysAgo(45), kind: 'Wheel service', description: 'Replaced both drive wheels; cleaned the bumper sensors.', performedBy: 'Vendor field tech', costCents: 18_500 },
+        ],
+      });
+      // Tomorrow's shift, waiting on its checklist.
+      const shiftStart = new Date(dateOf(todayKey).getTime() + DAY + 15 * HOUR);
+      await prisma.shift.create({
+        data: { clientId: frontBeach.clientId, locationId: frontBeach.id, position: spec.capabilities.includes('floor-care') ? 'Floor care' : 'Room delivery', startsAt: shiftStart, endsAt: new Date(shiftStart.getTime() + 8 * HOUR), status: 'ASSIGNED', workerId: robot.id, publishedAt: daysAgo(2), tenantId: ALTO_TENANT_ID },
+      });
+      if (spec.name === 'Servi 01') {
+        const occurredAt = minutes(daysAgo(3), 0);
+        const hour = [];
+        for (let m = 60; m >= 0; m -= 5) {
+          const at = minutes(occurredAt, -m);
+          const s = simulatedStatus(spec.externalId, at);
+          hour.push({ at: at.toISOString(), status: s.status, batteryPct: s.batteryPct, x: s.x, y: s.y, currentTask: s.currentTask, errorCode: s.errorCode });
+        }
+        const retainUntil = new Date(occurredAt);
+        retainUntil.setUTCFullYear(retainUntil.getUTCFullYear() + 5);
+        await prisma.robotIncident.create({
+          data: {
+            workerId: robot.id,
+            tenantId: ALTO_TENANT_ID,
+            locationId: frontBeach.id,
+            kind: 'NEAR_MISS',
+            occurredAt,
+            description: 'Servi stopped short of a guest stepping back from the bar; bump sensor fired, no contact. Route through the bar corridor narrowed to one lane.',
+            reportedByUserId: dana.id,
+            peopleOnShift: peopleThen.map((p) => ({ associateId: p.assignedAssociateId!, name: p.assignedAssociate ? `${p.assignedAssociate.firstName} ${p.assignedAssociate.lastName}` : 'Associate', shiftId: p.id })),
+            samples: hour,
+            events: [],
+            retainUntil,
+          },
+        });
+        count('robotIncidents', 1);
+      }
+      count('robots', 1);
+    }
+  }
 
   // ---- Done: the marker, then the receipt ----------------------------------------
   await prisma.auditLog.create({ data: { action: MARKER_ACTION, entityType: 'Tenant', entityId: ALTO_TENANT_ID, actorUserId: admin.id, metadata: { seed: SEED, today: todayKey, counts } } });

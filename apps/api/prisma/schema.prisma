@@ -649,6 +649,10 @@ model User {
   emergenciesDeclared               Emergency[]                   @relation("EmergencyDeclarer")
   emergenciesStoodDown              Emergency[]                   @relation("EmergencyStandDown")
   ownedWorkers                      Worker[]                      @relation("WorkerOwner")
+  robotSafetyLeadOf                 RobotCommissioning[]          @relation("RobotSafetyLead")
+  robotChecklistRuns                RobotChecklistRun[]           @relation("RobotChecklistCompletedBy")
+  robotEvents                       RobotEvent[]                  @relation("RobotEventBy")
+  robotIncidentsReported            RobotIncident[]               @relation("RobotIncidentReporter")
   agentCredentialsIssued            AgentCredential[]             @relation("AgentCredentialIssuer")
   agentDecisions                    AgentApprovalRequest[]        @relation("AgentApprovalDecider")
   relayClaims                       RelayClaim[]                  @relation("RelayClaimHolder")
@@ -884,33 +888,37 @@ model Site {
   updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
   deletedAt              DateTime?               @db.Timestamptz(6)
 
-  client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  employments            Employment[]            @relation("EmploymentSite")
-  assignments            AssociateAssignment[]
-  applications           Application[]
-  shifts                 Shift[]
-  supervisorShiftWindows SupervisorShiftWindow[]
-  emergencySites         EmergencySite[]
-  seasonPlanSites        SeasonPlanSite[]
-  workerAssignments      WorkerAssignment[]
-  emergencyDestinations  Emergency[]             @relation("EmergencyDestination")
-  opsShifts              OpsShift[]
-  oshaIncidents          OshaIncident[]
-  storeShiftSops         StoreShiftSop[]
-  kioskDevices           KioskDevice[]
-  timeEntries            TimeEntry[]
-  shiftTeams             ShiftTeam[]
-  staffingTargets        StaffingTarget[]
-  portalUsers            User[]                  @relation("UserStoreScope")
-  clientRequests         ClientRequest[]         @relation("ClientRequestStore")
-  conversations          Conversation[]
-  region                 Region?                 @relation(fields: [regionId], references: [id], onDelete: SetNull)
-  orgUnit                OrgUnit?                @relation("OrgUnitSites", fields: [orgUnitId], references: [id], onDelete: SetNull)
-  candidateSubmittals    CandidateSubmittal[]
-  rides                  Ride[]
-  readyToWorkHandoffs    ReadyToWorkHandoff[]
-  laborRuleSets          LaborRuleSet[]
-  workTasks              WorkTask[]
+  client                  Client?                  @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  employments             Employment[]             @relation("EmploymentSite")
+  assignments             AssociateAssignment[]
+  applications            Application[]
+  shifts                  Shift[]
+  supervisorShiftWindows  SupervisorShiftWindow[]
+  emergencySites          EmergencySite[]
+  seasonPlanSites         SeasonPlanSite[]
+  workerAssignments       WorkerAssignment[]
+  emergencyDestinations   Emergency[]              @relation("EmergencyDestination")
+  opsShifts               OpsShift[]
+  oshaIncidents           OshaIncident[]
+  robotCommissionings     RobotCommissioning[]
+  safetyZones             SiteSafetyZone[]
+  robotChecklistTemplates RobotChecklistTemplate[]
+  robotIncidents          RobotIncident[]
+  storeShiftSops          StoreShiftSop[]
+  kioskDevices            KioskDevice[]
+  timeEntries             TimeEntry[]
+  shiftTeams              ShiftTeam[]
+  staffingTargets         StaffingTarget[]
+  portalUsers             User[]                   @relation("UserStoreScope")
+  clientRequests          ClientRequest[]          @relation("ClientRequestStore")
+  conversations           Conversation[]
+  region                  Region?                  @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  orgUnit                 OrgUnit?                 @relation("OrgUnitSites", fields: [orgUnitId], references: [id], onDelete: SetNull)
+  candidateSubmittals     CandidateSubmittal[]
+  rides                   Ride[]
+  readyToWorkHandoffs     ReadyToWorkHandoff[]
+  laborRuleSets           LaborRuleSet[]
+  workTasks               WorkTask[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -3091,6 +3099,8 @@ model Shift {
   client                 Client?                         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   emergency              Emergency?                      @relation(fields: [emergencyId], references: [id], onDelete: SetNull)
   worker                 Worker?                         @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  robotChecklistRuns     RobotChecklistRun[]
+  robotEvents            RobotEvent[]
   locationRel            Site?                           @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate      Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy              User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -5760,11 +5770,12 @@ model OshaIncident {
   chaseStage     Int                  @default(0)
   lastChasedAt   DateTime?            @db.Timestamptz(6)
 
-  client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  hrCase     HrCase?    @relation(fields: [hrCaseId], references: [id], onDelete: SetNull)
-  store      Site?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  reportedBy User?      @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
+  client         Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  hrCase         HrCase?         @relation(fields: [hrCaseId], references: [id], onDelete: SetNull)
+  store          Site?           @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  associate      Associate?      @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  reportedBy     User?           @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
+  robotIncidents RobotIncident[]
 
   @@index([clientId, occurredAt(sort: Desc)])
   @@index([locationId, occurredAt(sort: Desc)])
@@ -9847,6 +9858,13 @@ model Worker {
   shifts              Shift[]
   agent               AgentProfile?
   workTaskAssignments WorkTaskAssignment[]
+  robot               RobotProfile?
+  robotCommissionings RobotCommissioning[]
+  robotChecklistRuns  RobotChecklistRun[]
+  robotSamples        RobotStatusSample[]
+  robotEvents         RobotEvent[]
+  robotMaintenance    RobotMaintenance[]
+  robotIncidents      RobotIncident[]
 
   @@index([type, status])
   @@index([ownerUserId])
@@ -11519,6 +11537,260 @@ model WorkTaskPolicy {
   updatedByUserId       String?                @db.Uuid
   createdAt             DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+  /**
+   * ---------------------------------------------------------------------------
+   * Brief 3-1 — Robot registry and fleet connectors.
+   * A robot is a Worker of type ROBOT (Brief 1D-1: owner required, status,
+   * capabilities). The profile carries what a fleet needs beyond the worker
+   * row; the connector writes a status time series; the site holds the
+   * commissioning record and its safety zones; a crew lead completes the
+   * pre-shift checklist before a robot's shift starts; incidents keep the
+   * hour's samples as evidence. tenantId on every row (Brief 2-1).
+   * -------------------------------------------------------------------------
+   */
 
   @@index([tenantId, locationId])
+}
+
+enum RobotOwnership {
+  OWNED
+  LEASED
+}
+
+/// What the fleet connector reports. STOPPED = an emergency stop is in force.
+enum RobotConnectorStatus {
+  IDLE
+  WORKING
+  CHARGING
+  ERROR
+  OFFLINE
+  STOPPED
+}
+
+enum RobotEventKind {
+  E_STOP
+  RESUME
+  ERROR
+  SHIFT_STARTED
+  SHIFT_ENDED
+  CHECKLIST_COMPLETED
+  COMMISSIONED
+  MAINTENANCE
+}
+
+enum RobotIncidentKind {
+  NEAR_MISS
+  INJURY
+  PROPERTY_DAMAGE
+  MALFUNCTION
+}
+
+model RobotProfile {
+  workerId            String         @id @db.Uuid
+  tenantId            String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  manufacturer        String         @db.VarChar(80)
+  model               String         @db.VarChar(80)
+  serial              String         @db.VarChar(120)
+  firmware            String?        @db.VarChar(60)
+  ownership           RobotOwnership @default(OWNED)
+  leaseEndsOn         DateTime?      @db.Date
+  /// Which FleetConnector answers for this robot (SIMULATED, BEAR, PUDU) and its id on that side.
+  connectorProvider   String         @default("SIMULATED") @db.VarChar(40)
+  connectorExternalId String?        @db.VarChar(120)
+  /// [{ name, issuedOn, expiresOn }]
+  certifications      Json           @default("[]")
+  notes               String?        @db.VarChar(2000)
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([serial])
+}
+
+/// A robot is commissioned at a site: the map, the charging stations and
+/// the named safety lead's sign-off. Without a sign-off the robot cannot
+/// start a shift there.
+model RobotCommissioning {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId         String    @db.Uuid
+  locationId       String    @db.Uuid
+  mapUrl           String?   @db.VarChar(500)
+  mapNotes         String?   @db.VarChar(2000)
+  /// [{ label, x, y }] in the site's own map units.
+  chargingStations Json      @default("[]")
+  safetyLeadUserId String?   @db.Uuid
+  signedOffAt      DateTime? @db.Timestamptz(6)
+  notes            String?   @db.VarChar(2000)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  worker     Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  site       Site   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  safetyLead User?  @relation("RobotSafetyLead", fields: [safetyLeadUserId], references: [id], onDelete: SetNull)
+
+  @@unique([workerId, locationId])
+  @@index([locationId])
+  @@index([tenantId])
+}
+
+/// A geofenced zone on a site's map. While `guestOccupied` is on, no robot
+/// operates inside it unless the zone says robots may.
+model SiteSafetyZone {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId                String    @db.Uuid
+  name                      String    @db.VarChar(120)
+  /// { type: 'rect', x, y, w, h } | { type: 'polygon', points: [[x, y], …] }
+  shape                     Json
+  guestOccupied             Boolean   @default(false)
+  robotsAllowedWhenOccupied Boolean   @default(false)
+  occupiedSince             DateTime? @db.Timestamptz(6)
+  occupiedByUserId          String?   @db.Uuid
+  createdAt                 DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime  @updatedAt @db.Timestamptz(6)
+
+  site Site @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+  @@index([tenantId])
+}
+
+/// The pre-shift checklist a crew lead completes before a robot's shift.
+/// locationId null = the tenant's default template.
+model RobotChecklistTemplate {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId String?  @db.Uuid
+  name       String   @db.VarChar(120)
+  /// [{ key, label, required }]
+  items      Json
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  site Site?               @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  runs RobotChecklistRun[]
+
+  @@index([locationId])
+  @@index([tenantId])
+}
+
+model RobotChecklistRun {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId          String   @db.Uuid
+  shiftId           String?  @db.Uuid
+  templateId        String   @db.Uuid
+  completedByUserId String   @db.Uuid
+  completedAt       DateTime @default(now()) @db.Timestamptz(6)
+  /// [{ key, ok, note }]
+  answers           Json
+  allPassed         Boolean
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  worker      Worker                 @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  shift       Shift?                 @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  template    RobotChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  completedBy User                   @relation("RobotChecklistCompletedBy", fields: [completedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([workerId, completedAt(sort: Desc)])
+  @@index([shiftId])
+  @@index([tenantId])
+}
+
+/// One reading from the fleet connector. Sampled every minute; kept 90
+/// days (an incident copies its hour into evidence before that).
+model RobotStatusSample {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?              @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId    String               @db.Uuid
+  at          DateTime             @db.Timestamptz(6)
+  status      RobotConnectorStatus
+  batteryPct  Int?
+  x           Float?
+  y           Float?
+  currentTask String?              @db.VarChar(200)
+  errorCode   String?              @db.VarChar(80)
+  raw         Json?
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, at(sort: Desc)])
+  @@index([tenantId])
+}
+
+/// The emergency-stop log and the rest of a robot's life: who stopped it,
+/// who resumed it, every error, every shift start, every checklist.
+model RobotEvent {
+  id       String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId String         @db.Uuid
+  kind     RobotEventKind
+  at       DateTime       @default(now()) @db.Timestamptz(6)
+  byUserId String?        @db.Uuid
+  shiftId  String?        @db.Uuid
+  note     String?        @db.VarChar(500)
+  metadata Json?
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  by     User?  @relation("RobotEventBy", fields: [byUserId], references: [id], onDelete: SetNull)
+  shift  Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([workerId, at(sort: Desc)])
+  @@index([kind, at(sort: Desc)])
+  @@index([tenantId])
+}
+
+model RobotMaintenance {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId    String    @db.Uuid
+  performedOn DateTime  @db.Date
+  kind        String    @db.VarChar(80)
+  description String    @db.VarChar(2000)
+  performedBy String?   @db.VarChar(120)
+  costCents   Int?
+  nextDueOn   DateTime? @db.Date
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, performedOn(sort: Desc)])
+  @@index([tenantId])
+}
+
+/// An incident or near miss involving a robot, with the evidence that
+/// hour: the status samples, the events and the people on shift at the
+/// site. An injury or damage at a client site also opens an OshaIncident.
+model RobotIncident {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId         String            @db.Uuid
+  locationId       String?           @db.Uuid
+  kind             RobotIncidentKind
+  occurredAt       DateTime          @db.Timestamptz(6)
+  description      String            @db.VarChar(4000)
+  reportedByUserId String?           @db.Uuid
+  oshaIncidentId   String?           @db.Uuid
+  /// [{ associateId, name, shiftId }] — who was on shift at the site that hour.
+  peopleOnShift    Json              @default("[]")
+  /// The robot's samples for the hour before the incident, copied at report time.
+  samples          Json              @default("[]")
+  /// The robot's events for that hour, copied at report time.
+  events           Json              @default("[]")
+  /// Evidence retention: kept at least until this date.
+  retainUntil      DateTime          @db.Date
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+
+  worker       Worker        @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  site         Site?         @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  reportedBy   User?         @relation("RobotIncidentReporter", fields: [reportedByUserId], references: [id], onDelete: SetNull)
+  oshaIncident OshaIncident? @relation(fields: [oshaIncidentId], references: [id], onDelete: SetNull)
+
+  @@index([workerId, occurredAt(sort: Desc)])
+  @@index([locationId])
+  @@index([tenantId])
 }

@@ -4,6 +4,7 @@ import { Building2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { Link } from 'react-router-dom';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { ORG_UNIT_TYPE_LABEL, SITE_TYPE_LABEL, createSite, listOrgUnits, listSites, unitDepth, updateSite, type OrgUnitRow, type SiteRow, type SiteUpdateInput } from '@/lib/orgApi';
 import { Badge } from '@/components/ui/Badge';
@@ -112,6 +113,7 @@ export function SitesAdmin() {
 
 /** Add a site, or edit one: the same fields, prefilled, and only what changed is sent. */
 function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) {
+  const { moduleOn } = useTenant();
   const qc = useQueryClient();
   const term = useTerm();
   const siteNoun = term('site');
@@ -239,6 +241,11 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
           )}
         </div>
         <DialogFooter>
+          {site && moduleOn('robotics') && (
+            <Button asChild variant="ghost" className="mr-auto">
+              <Link to={`/robots/sites/${site.id}/zones`}>Safety zones</Link>
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose} disabled={save.isPending}>
             Cancel
           </Button>

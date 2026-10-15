@@ -62,6 +62,15 @@ const TABLES = [
   // Worker.associateId is SET NULL and its owner is RESTRICT: a PERSON
   // worker outlives its associate row, so list it.
   'Worker',
+  'RobotProfile',
+  'RobotCommissioning',
+  'SiteSafetyZone',
+  'RobotChecklistTemplate',
+  'RobotChecklistRun',
+  'RobotStatusSample',
+  'RobotEvent',
+  'RobotMaintenance',
+  'RobotIncident',
   // Brief 1D-3: the global agent switch has no foreign key, so no CASCADE reaches it.
   'AgentControl',
   // Agent families step 0: nor does the tenant's switch. (AgentCapability and

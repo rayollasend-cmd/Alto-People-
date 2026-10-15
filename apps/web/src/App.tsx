@@ -222,6 +222,9 @@ const PublicTrustPage = lazyNamed(() => import('@/pages/trust/PublicTrustPage'),
 const PublicStatusPage = lazyNamed(() => import('@/pages/status/PublicStatusPage'), 'PublicStatusPage');
 const AccessibilityPage = lazyNamed(() => import('@/pages/trust/AccessibilityPage'), 'AccessibilityPage');
 const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHome'), 'ReliabilityHome');
+const RobotsHome = lazyNamed(() => import('@/pages/robots/RobotsHome'), 'RobotsHome');
+const RobotRecord = lazyNamed(() => import('@/pages/robots/RobotRecord'), 'RobotRecord');
+const SiteSafetyZones = lazyNamed(() => import('@/pages/robots/SiteSafetyZones'), 'SiteSafetyZones');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
@@ -273,6 +276,7 @@ registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
 registerPrefetch('/product-analytics', () => import('@/pages/analytics/ProductAnalytics'));
 registerPrefetch('/reliability', () => import('@/pages/analytics/ReliabilityHome'));
+registerPrefetch('/robots', () => import('@/pages/robots/RobotsHome'));
 registerPrefetch('/audit', () => import('@/pages/audit/AuditHome'));
 registerPrefetch('/me', () => import('@/pages/me/MeHome'));
 registerPrefetch('/settings', () => import('@/pages/Settings'));
@@ -471,6 +475,10 @@ const LAYOUT_ROUTES = [
     { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
     { path: 'design-system', element: <RequireCapability cap="view:product-analytics"><DesignSystemPage /></RequireCapability> },
     { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><ReliabilityHome /></RequireCapability> },
+    // Brief 3-1: the robot fleet, one robot's record, a site's safety zones.
+    { path: 'robots', element: <RequireCapability cap="view:org"><RobotsHome /></RequireCapability> },
+    { path: 'robots/sites/:locationId/zones', element: <RequireCapability cap="view:org"><SiteSafetyZones /></RequireCapability> },
+    { path: 'robots/:id', element: <RequireCapability cap="view:org"><RobotRecord /></RequireCapability> },
     { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
     { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
     { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },

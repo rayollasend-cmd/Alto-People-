@@ -46,6 +46,7 @@ export type ModuleKey =
   | 'transport'
   | 'scheduling'
   | 'ops'
+  | 'robots'
   | 'labor-costs'
   | 'approvals'
   | 'payroll'
@@ -409,6 +410,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   integrations: 'payrollSync',
   rides: 'transportation',
   transport: 'transportation',
+  robots: 'robotics',
   programs: 'programs',
   'season-planner': 'programs',
   forecast: 'scheduling',
@@ -1106,6 +1108,15 @@ export const MODULES: ModuleNav[] = [
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
     group: 'workforce-management',
+  },
+  {
+    key: 'robots',
+    path: '/robots',
+    label: 'Robots',
+    description:
+      'The robot fleet: every robot with its live reading, its site commissioning, the pre-shift checklist, safety zones, incidents and maintenance.',
+    requires: 'view:org',
+    group: 'operations',
   },
   {
     key: 'ops',
