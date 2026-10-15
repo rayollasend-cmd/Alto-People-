@@ -16,7 +16,7 @@ import { z } from 'zod';
 
 export const BUSINESS_MODELS = ['DIRECT_EMPLOYER', 'WORKFORCE_PROVIDER', 'MANAGED_PROGRAM', 'HYBRID'] as const;
 export type BusinessModel = (typeof BUSINESS_MODELS)[number];
-export const BusinessModelSchema = z.enum(BUSINESS_MODELS);
+export const BusinessModelSchema = /* @__PURE__ */ (() => z.enum(BUSINESS_MODELS))();
 
 export const BUSINESS_MODEL_LABEL: Record<BusinessModel, string> = {
   DIRECT_EMPLOYER: 'Direct employer',
@@ -40,7 +40,7 @@ export const TENANT_MODULES = [
   'agentBuilder',
 ] as const;
 export type TenantModule = (typeof TENANT_MODULES)[number];
-export const TenantModuleSchema = z.enum(TENANT_MODULES);
+export const TenantModuleSchema = /* @__PURE__ */ (() => z.enum(TENANT_MODULES))();
 
 export const TENANT_MODULE_LABEL: Record<TenantModule, string> = {
   scheduling: 'Scheduling',
@@ -57,7 +57,7 @@ export const TENANT_MODULE_LABEL: Record<TenantModule, string> = {
   agentBuilder: 'Agent builder',
 };
 
-export const TenantModulesSchema = z.object({
+export const TenantModulesSchema = /* @__PURE__ */ (() => z.object({
   scheduling: z.boolean(),
   time: z.boolean(),
   hrCases: z.boolean(),
@@ -70,7 +70,7 @@ export const TenantModulesSchema = z.object({
   clientPortal: z.boolean(),
   robotics: z.boolean(),
   agentBuilder: z.boolean(),
-});
+}))();
 export type TenantModules = z.infer<typeof TenantModulesSchema>;
 
 const ALL_ON: TenantModules = {
@@ -104,11 +104,11 @@ export function defaultModulesFor(model: BusinessModel): TenantModules {
 export const TERM_LANGS = ['en', 'es', 'tr'] as const;
 export type TermLang = (typeof TERM_LANGS)[number];
 
-export const TermTextSchema = z.object({
+export const TermTextSchema = /* @__PURE__ */ (() => z.object({
   en: z.string().trim().min(1).max(60),
   es: z.string().trim().min(1).max(60),
   tr: z.string().trim().min(1).max(60),
-});
+}))();
 export type TermText = z.infer<typeof TermTextSchema>;
 
 /** The nouns and the labels the profile names. Keys are stable; the UI reads them through useTerm(). */
@@ -149,7 +149,7 @@ export const TERM_KEYS = [
   'label.stores',
 ] as const;
 export type TermKey = (typeof TERM_KEYS)[number];
-export const TermKeySchema = z.enum(TERM_KEYS);
+export const TermKeySchema = /* @__PURE__ */ (() => z.enum(TERM_KEYS))();
 
 export type Terminology = Record<TermKey, TermText>;
 export const TerminologySchema = z
@@ -220,21 +220,21 @@ export function defaultTerminologyFor(model: BusinessModel): Terminology {
   return model === 'DIRECT_EMPLOYER' ? { ...DIRECT_EMPLOYER_TERMS } : { ...WORKFORCE_TERMS };
 }
 
-export const TenantProfileSchema = z.object({
+export const TenantProfileSchema = /* @__PURE__ */ (() => z.object({
   businessModel: BusinessModelSchema,
   modules: TenantModulesSchema,
   terminology: TerminologySchema,
-});
+}))();
 export type TenantProfile = z.infer<typeof TenantProfileSchema>;
 
 /** A partial update: switches and terms given replace the stored ones; the rest keep their value. */
-export const UpdateTenantProfileInputSchema = z.object({
+export const UpdateTenantProfileInputSchema = /* @__PURE__ */ (() => z.object({
   businessModel: BusinessModelSchema.optional(),
   modules: TenantModulesSchema.partial().strict().optional(),
   terminology: z.record(TermKeySchema, TermTextSchema.partial()).optional(),
   /** Reset modules and terminology to the business model's defaults before applying the rest. */
   resetToDefaults: z.boolean().optional(),
-});
+}))();
 export type UpdateTenantProfileInput = z.infer<typeof UpdateTenantProfileInputSchema>;
 
 /** The whole profile for a business model, before any override. */

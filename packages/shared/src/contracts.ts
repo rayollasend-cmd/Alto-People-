@@ -6,16 +6,16 @@ import { httpUrl } from './safeUrl.js';
  *  Common
  * -------------------------------------------------------------------------- */
 
-export const UuidSchema = z.string().uuid();
+export const UuidSchema = /* @__PURE__ */ (() => z.string().uuid())();
 export type Uuid = z.infer<typeof UuidSchema>;
 
-export const ApiErrorSchema = z.object({
+export const ApiErrorSchema = /* @__PURE__ */ (() => z.object({
   error: z.object({
     code: z.string(),
     message: z.string(),
     details: z.unknown().optional(),
   }),
-});
+}))();
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -23,17 +23,17 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
  *  Kept as Zod literals so the wire contract stays string-based.
  * -------------------------------------------------------------------------- */
 
-export const ClientStatusSchema = z.enum(['ACTIVE', 'INACTIVE', 'PROSPECT']);
+export const ClientStatusSchema = /* @__PURE__ */ (() => z.enum(['ACTIVE', 'INACTIVE', 'PROSPECT']))();
 export type ClientStatus = z.infer<typeof ClientStatusSchema>;
 
-export const OnboardingTrackSchema = z.enum([
+export const OnboardingTrackSchema = /* @__PURE__ */ (() => z.enum([
   'STANDARD',
   'J1',
   'CLIENT_SPECIFIC',
-]);
+]))();
 export type OnboardingTrack = z.infer<typeof OnboardingTrackSchema>;
 
-export const ApplicationStatusSchema = z.enum([
+export const ApplicationStatusSchema = /* @__PURE__ */ (() => z.enum([
   'DRAFT',
   'SUBMITTED',
   'IN_REVIEW',
@@ -41,12 +41,12 @@ export const ApplicationStatusSchema = z.enum([
   'REJECTED',
   // Called off by us — sent by mistake, a hire undone, an invite expired.
   'CANCELLED',
-]);
+]))();
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
 /** Every status value — for seeding total Record<ApplicationStatus, T> maps. */
 export const APPLICATION_STATUSES = ApplicationStatusSchema.options;
 
-export const TaskKindSchema = z.enum([
+export const TaskKindSchema = /* @__PURE__ */ (() => z.enum([
   'PROFILE_INFO',
   'DOCUMENT_UPLOAD',
   'E_SIGN',
@@ -58,22 +58,22 @@ export const TaskKindSchema = z.enum([
   'I9_VERIFICATION',
   // Live headshot taken during onboarding (camera-only in the associate flow).
   'PROFILE_PHOTO',
-]);
+]))();
 export type TaskKind = z.infer<typeof TaskKindSchema>;
 
-export const TaskStatusSchema = z.enum([
+export const TaskStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING',
   'IN_PROGRESS',
   'DONE',
   'SKIPPED',
-]);
+]))();
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Clients
  * -------------------------------------------------------------------------- */
 
-export const ClientSummarySchema = z.object({
+export const ClientSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   name: z.string(),
   industry: z.string().nullable(),
@@ -92,7 +92,7 @@ export const ClientSummarySchema = z.object({
   /** Fieldglass client bill rate ($/hr) — the "Rate" on the timesheet
    *  accounting block (Amount = rate × hours). Not the associate pay rate. */
   fieldglassBillRate: z.number().nullable().optional(),
-});
+}))();
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
 // Phase 47 — richer shape returned only by the list endpoint. Detail /
@@ -107,16 +107,16 @@ export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 // assignment there, else (none open) their approved application there;
 // separated / deactivated people excluded. A cross-client transfer moves
 // them (lib/associateClients.activeAssociateCountsByClient).
-export const ClientListItemSchema = ClientSummarySchema.extend({
+export const ClientListItemSchema = /* @__PURE__ */ (() => ClientSummarySchema.extend({
   openApplications: z.number().int().nonnegative(),
   activeAssociateCount: z.number().int().nonnegative(),
   lastPayrollDisbursedAt: z.string().datetime().nullable(),
-});
+}))();
 export type ClientListItem = z.infer<typeof ClientListItemSchema>;
 
-export const ClientStateInputSchema = z.object({
+export const ClientStateInputSchema = /* @__PURE__ */ (() => z.object({
   state: z.string().length(2).nullable(),
-});
+}))();
 export type ClientStateInput = z.infer<typeof ClientStateInputSchema>;
 
 // Phase 46 — HR-managed client CRUD. `name` is required and unique-ish at
@@ -124,7 +124,7 @@ export type ClientStateInput = z.infer<typeof ClientStateInputSchema>;
 // "Acme" are legal because of distinct UUIDs). Industry / contact email
 // stay optional. Status defaults to PROSPECT for new records so the
 // roster doesn't auto-populate active counts before HR confirms.
-export const ClientCreateInputSchema = z.object({
+export const ClientCreateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(120),
   industry: z.string().trim().max(80).nullable().optional(),
   status: ClientStatusSchema.optional(),
@@ -132,13 +132,13 @@ export const ClientCreateInputSchema = z.object({
   state: z.string().length(2).nullable().optional(),
   fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
   fieldglassBillRate: z.number().nonnegative().max(100000).nullable().optional(),
-});
+}))();
 export type ClientCreateInput = z.infer<typeof ClientCreateInputSchema>;
 
 // Partial update — every field is optional; sending null clears the
 // nullable ones. Use the dedicated /:id/state and /:id/geofence routes
 // for state and geofence (they have side-effects on policy enforcement).
-export const ClientUpdateInputSchema = z.object({
+export const ClientUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(120).optional(),
   industry: z.string().trim().max(80).nullable().optional(),
   status: ClientStatusSchema.optional(),
@@ -146,24 +146,24 @@ export const ClientUpdateInputSchema = z.object({
   weekStartsOn: z.number().int().min(0).max(6).optional(),
   fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
   fieldglassBillRate: z.number().nonnegative().max(100000).nullable().optional(),
-});
+}))();
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
-export const ClientListResponseSchema = z.object({
+export const ClientListResponseSchema = /* @__PURE__ */ (() => z.object({
   clients: z.array(ClientListItemSchema),
   // When pagination is in use, the id of the last item in this page so
   // the caller can request the next page via ?cursor=<id>. Null means
   // there are no more rows. Optional for backwards compatibility with
   // callers that haven't adopted cursor pagination yet.
   nextCursor: z.string().uuid().nullable().optional(),
-});
+}))();
 export type ClientListResponse = z.infer<typeof ClientListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Onboarding
  * -------------------------------------------------------------------------- */
 
-export const ChecklistTaskSchema = z.object({
+export const ChecklistTaskSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: TaskKindSchema,
   status: TaskStatusSchema,
@@ -174,26 +174,26 @@ export const ChecklistTaskSchema = z.object({
   completedAt: z.string().datetime().nullable(),
   /** Days before the application's start date this task is due. */
   dueOffsetDays: z.number().int().nullable().optional(),
-});
+}))();
 export type ChecklistTask = z.infer<typeof ChecklistTaskSchema>;
 
 // Phase 41 — drives W-4 onboarding task inclusion + payroll tax math.
 // W2_EMPLOYEE is the default for back-compat with every prior application.
-export const EmploymentTypeSchema = z.enum([
+export const EmploymentTypeSchema = /* @__PURE__ */ (() => z.enum([
   'W2_EMPLOYEE',
   'CONTRACTOR_1099_INDIVIDUAL',
   'CONTRACTOR_1099_BUSINESS',
-]);
+]))();
 export type EmploymentType = z.infer<typeof EmploymentTypeSchema>;
 
 // Phase 60 — last invite/nudge email delivery status, surfaced on the
 // inbox + detail page so HR sees bounces before the associate fails to
 // log in. null = no email ever attempted (shouldn't happen in practice
 // after Phase 16, but legacy rows + tests can produce it).
-export const InviteDeliveryStatusSchema = z.enum(['QUEUED', 'SENT', 'FAILED']);
+export const InviteDeliveryStatusSchema = /* @__PURE__ */ (() => z.enum(['QUEUED', 'SENT', 'FAILED']))();
 export type InviteDeliveryStatus = z.infer<typeof InviteDeliveryStatusSchema>;
 
-export const InviteDeliveryInfoSchema = z.object({
+export const InviteDeliveryInfoSchema = /* @__PURE__ */ (() => z.object({
   status: InviteDeliveryStatusSchema,
   // ISO when the row was created (≈ when the send was attempted).
   attemptedAt: z.string().datetime(),
@@ -203,10 +203,10 @@ export const InviteDeliveryInfoSchema = z.object({
   failureReason: z.string().nullable(),
   // What triggered this row: "onboarding.invite" or "onboarding.nudge".
   category: z.string(),
-});
+}))();
 export type InviteDeliveryInfo = z.infer<typeof InviteDeliveryInfoSchema>;
 
-export const ApplicationSummarySchema = z.object({
+export const ApplicationSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateName: z.string(),
   clientName: z.string(),
@@ -231,10 +231,10 @@ export const ApplicationSummarySchema = z.object({
   blockedOnTitle: z.string().nullable().optional(),
   /** Most recent movement: latest task completion, else the invite. */
   lastActivityAt: z.string().datetime().nullable().optional(),
-});
+}))();
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 
-export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
+export const ApplicationDetailSchema = /* @__PURE__ */ (() => ApplicationSummarySchema.extend({
   associateId: UuidSchema,
   clientId: UuidSchema,
   tasks: z.array(ChecklistTaskSchema),
@@ -257,13 +257,13 @@ export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
    *  this is null and the client has several). */
   locationId: UuidSchema.nullable().optional(),
   locationName: z.string().nullable().optional(),
-});
+}))();
 export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 
 // HR review actions — used by /onboarding/applications/:id/approve and
 // /reject. hireDate is a YYYY-MM-DD date string the HR user picks in the
 // approve dialog.
-export const ApproveApplicationInputSchema = z.object({
+export const ApproveApplicationInputSchema = /* @__PURE__ */ (() => z.object({
   hireDate: z.string().date(),
   /** The store the hire will work at. Required (409 `store_required`) when
    *  the application names none and the client has more than one store —
@@ -274,24 +274,24 @@ export const ApproveApplicationInputSchema = z.object({
    *  pass true to approve anyway. Forces a human to SEE what was never
    *  verified instead of activating a hire on a skipped checklist. */
   acknowledgeWarnings: z.boolean().optional(),
-});
+}))();
 export type ApproveApplicationInput = z.infer<
   typeof ApproveApplicationInputSchema
 >;
 
-export const RejectApplicationInputSchema = z.object({
+export const RejectApplicationInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().trim().min(1).max(500),
-});
+}))();
 export type RejectApplicationInput = z.infer<
   typeof RejectApplicationInputSchema
 >;
 
-export const ApplicationListResponseSchema = z.object({
+export const ApplicationListResponseSchema = /* @__PURE__ */ (() => z.object({
   applications: z.array(ApplicationSummarySchema),
   total: z.number().int().nonnegative(),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive(),
-});
+}))();
 export type ApplicationListResponse = z.infer<
   typeof ApplicationListResponseSchema
 >;
@@ -299,7 +299,7 @@ export type ApplicationListResponse = z.infer<
 // Roll-up counts + sample rows for the Onboarding sidebar tiles. Decouples
 // the stats panel from the paginated list so the client doesn't have to
 // pull every row just to count statuses.
-export const ApplicationStatsResponseSchema = z.object({
+export const ApplicationStatsResponseSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
   byStatus: z.record(ApplicationStatusSchema, z.number().int().nonnegative()),
   inFlight: z.number().int().nonnegative(),
@@ -308,12 +308,12 @@ export const ApplicationStatsResponseSchema = z.object({
   avgPercent: z.number().min(0).max(100),
   staleSamples: z.array(ApplicationSummarySchema),
   bouncedSamples: z.array(ApplicationSummarySchema),
-});
+}))();
 export type ApplicationStatsResponse = z.infer<
   typeof ApplicationStatsResponseSchema
 >;
 
-export const TemplateTaskSchema = z.object({
+export const TemplateTaskSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: TaskKindSchema,
   title: z.string(),
@@ -322,21 +322,21 @@ export const TemplateTaskSchema = z.object({
   /** Days before the application's start date this task should be done
    *  (0 = by the start date; null = no deadline). */
   dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
-});
+}))();
 export type TemplateTask = z.infer<typeof TemplateTaskSchema>;
 
-export const OnboardingTemplateSchema = z.object({
+export const OnboardingTemplateSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema.nullable(),
   track: OnboardingTrackSchema,
   name: z.string(),
   tasks: z.array(TemplateTaskSchema),
-});
+}))();
 export type OnboardingTemplate = z.infer<typeof OnboardingTemplateSchema>;
 
-export const TemplateListResponseSchema = z.object({
+export const TemplateListResponseSchema = /* @__PURE__ */ (() => z.object({
   templates: z.array(OnboardingTemplateSchema),
-});
+}))();
 export type TemplateListResponse = z.infer<typeof TemplateListResponseSchema>;
 
 /* ===== Phase 61 — template editor (HR CRUD) ============================ */
@@ -344,16 +344,16 @@ export type TemplateListResponse = z.infer<typeof TemplateListResponseSchema>;
 // Tasks come without ids (server generates) and the order field is
 // optional — server normalizes by array index so HR can just reorder
 // in the array and let the API assign 0..N-1.
-export const TemplateTaskInputSchema = z.object({
+export const TemplateTaskInputSchema = /* @__PURE__ */ (() => z.object({
   kind: TaskKindSchema,
   title: z.string().min(1).max(120),
   description: z.string().max(500).nullable().optional(),
   order: z.number().int().nonnegative().optional(),
   dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
-});
+}))();
 export type TemplateTaskInput = z.infer<typeof TemplateTaskInputSchema>;
 
-export const TemplateUpsertInputSchema = z.object({
+export const TemplateUpsertInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().min(1).max(80),
   track: OnboardingTrackSchema,
   // null = global template (applies to any client). UUID = client-scoped.
@@ -361,7 +361,7 @@ export const TemplateUpsertInputSchema = z.object({
   // Full-replace semantics: this list IS the new task list. Empty
   // arrays are rejected (a checklist with no tasks is meaningless).
   tasks: z.array(TemplateTaskInputSchema).min(1).max(30),
-});
+}))();
 export type TemplateUpsertInput = z.infer<typeof TemplateUpsertInputSchema>;
 
 /* ===== Phase 62 — onboarding analytics ================================= */
@@ -370,43 +370,43 @@ export type TemplateUpsertInput = z.infer<typeof TemplateUpsertInputSchema>;
 // one client, one track). Days are floats since hours matter at the low end
 // of the curve. `sample` = how many completed applications fed the math
 // (medianDays/p90Days are null when sample = 0).
-export const OnboardingCompletionStatsSchema = z.object({
+export const OnboardingCompletionStatsSchema = /* @__PURE__ */ (() => z.object({
   medianDays: z.number().nullable(),
   p90Days: z.number().nullable(),
   sample: z.number().int().nonnegative(),
-});
+}))();
 export type OnboardingCompletionStats = z.infer<
   typeof OnboardingCompletionStatsSchema
 >;
 
-export const OnboardingTrackBreakdownSchema = z.object({
+export const OnboardingTrackBreakdownSchema = /* @__PURE__ */ (() => z.object({
   track: OnboardingTrackSchema,
   count: z.number().int().nonnegative(),
   medianDays: z.number().nullable(),
-});
+}))();
 export type OnboardingTrackBreakdown = z.infer<
   typeof OnboardingTrackBreakdownSchema
 >;
 
-export const OnboardingClientBreakdownSchema = z.object({
+export const OnboardingClientBreakdownSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   clientName: z.string(),
   count: z.number().int().nonnegative(),
   medianDays: z.number().nullable(),
-});
+}))();
 export type OnboardingClientBreakdown = z.infer<
   typeof OnboardingClientBreakdownSchema
 >;
 
-export const OnboardingMonthlyPointSchema = z.object({
+export const OnboardingMonthlyPointSchema = /* @__PURE__ */ (() => z.object({
   // YYYY-MM (UTC, inclusive of the whole month)
   month: z.string(),
   invited: z.number().int().nonnegative(),
   completed: z.number().int().nonnegative(),
-});
+}))();
 export type OnboardingMonthlyPoint = z.infer<typeof OnboardingMonthlyPointSchema>;
 
-export const OnboardingAnalyticsResponseSchema = z.object({
+export const OnboardingAnalyticsResponseSchema = /* @__PURE__ */ (() => z.object({
   // Lookback window in days for medianDays / p90Days / breakdown stats.
   windowDays: z.number().int().positive(),
   // Snapshot of all non-deleted applications by status.
@@ -418,7 +418,7 @@ export const OnboardingAnalyticsResponseSchema = z.object({
   byClient: z.array(OnboardingClientBreakdownSchema),
   // Last 6 months of invited vs completed counts, oldest-first.
   monthly: z.array(OnboardingMonthlyPointSchema),
-});
+}))();
 export type OnboardingAnalyticsResponse = z.infer<
   typeof OnboardingAnalyticsResponseSchema
 >;
@@ -427,10 +427,10 @@ export type OnboardingAnalyticsResponse = z.infer<
  *  Health
  * -------------------------------------------------------------------------- */
 
-export const HealthResponseSchema = z.object({
+export const HealthResponseSchema = /* @__PURE__ */ (() => z.object({
   ok: z.boolean(),
   ts: z.string().datetime(),
-});
+}))();
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -439,7 +439,7 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
 // Keep in lockstep with ROLES in roles.ts — AuthUserSchema.role validates
 // every /auth/me and login response against this enum.
-export const RoleSchema = z.enum([
+export const RoleSchema = /* @__PURE__ */ (() => z.enum([
   'EXECUTIVE_CHAIRMAN',
   'HR_ADMINISTRATOR',
   'OPERATIONS_MANAGER',
@@ -455,12 +455,12 @@ export const RoleSchema = z.enum([
   'FLOOR_SUPERVISOR',
   'TRANSPORTATION_DIRECTOR',
   'DRIVER',
-]);
+]))();
 
-export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
+export const UserStatusSchema = /* @__PURE__ */ (() => z.enum(['ACTIVE', 'DISABLED', 'INVITED']))();
 
 export const EMAIL_LANGUAGES = ['en', 'es', 'tr'] as const;
-export const EmailLanguageSchema = z.enum(EMAIL_LANGUAGES);
+export const EmailLanguageSchema = /* @__PURE__ */ (() => z.enum(EMAIL_LANGUAGES))();
 export type EmailLanguage = z.infer<typeof EmailLanguageSchema>;
 export const EMAIL_LANGUAGE_LABELS: Record<EmailLanguage, string> = {
   en: 'English',
@@ -468,7 +468,7 @@ export const EMAIL_LANGUAGE_LABELS: Record<EmailLanguage, string> = {
   tr: 'Türkçe',
 };
 
-export const AuthUserSchema = z.object({
+export const AuthUserSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   email: z.string().email(),
   /** The role this account is WEARING right now. Everything downstream —
@@ -510,13 +510,13 @@ export const AuthUserSchema = z.object({
   /** Brief 2-3 step 3: a custom role's capabilities (null = the built-in role's). */
   capabilities: z.array(z.string()).nullable().optional(),
   tenantRoleName: z.string().nullable().optional(),
-});
+}))();
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 
-export const LoginRequestSchema = z.object({
+export const LoginRequestSchema = /* @__PURE__ */ (() => z.object({
   email: z.string().email(),
   password: z.string().min(12),
-});
+}))();
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
 /**
@@ -524,15 +524,15 @@ export type LoginRequest = z.infer<typeof LoginRequestSchema>;
  * through optional fields. The MFA path returns no user — completing
  * sign-in requires a follow-up POST /auth/mfa-challenge with a code.
  */
-export const LoginSuccessResponseSchema = z.object({
+export const LoginSuccessResponseSchema = /* @__PURE__ */ (() => z.object({
   mfaRequired: z.literal(false).optional(),
   user: AuthUserSchema,
-});
+}))();
 export type LoginSuccessResponse = z.infer<typeof LoginSuccessResponseSchema>;
 
-export const LoginMfaRequiredResponseSchema = z.object({
+export const LoginMfaRequiredResponseSchema = /* @__PURE__ */ (() => z.object({
   mfaRequired: z.literal(true),
-});
+}))();
 export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSchema>;
 
 /**
@@ -541,18 +541,18 @@ export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSc
  * cookie accepted ONLY by the /auth/me/mfa/enroll/* endpoints; the client
  * drives the QR + confirm flow and receives a real session on confirm.
  */
-export const LoginMfaEnrollRequiredResponseSchema = z.object({
+export const LoginMfaEnrollRequiredResponseSchema = /* @__PURE__ */ (() => z.object({
   mfaEnrollmentRequired: z.literal(true),
-});
+}))();
 export type LoginMfaEnrollRequiredResponse = z.infer<
   typeof LoginMfaEnrollRequiredResponseSchema
 >;
 
-export const LoginResponseSchema = z.union([
+export const LoginResponseSchema = /* @__PURE__ */ (() => z.union([
   LoginSuccessResponseSchema,
   LoginMfaRequiredResponseSchema,
   LoginMfaEnrollRequiredResponseSchema,
-]);
+]))();
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
 /**
@@ -561,17 +561,17 @@ export type LoginResponse = z.infer<typeof LoginResponseSchema>;
  * new associates with an open onboarding application, this is their
  * checklist URL so they don't dead-end on the dashboard.
  */
-export const AcceptInviteResponseSchema = z.object({
+export const AcceptInviteResponseSchema = /* @__PURE__ */ (() => z.object({
   user: AuthUserSchema,
   nextPath: z.string(),
-});
+}))();
 export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
 
-export const MeResponseSchema = z.object({
+export const MeResponseSchema = /* @__PURE__ */ (() => z.object({
   user: AuthUserSchema.nullable(),
   /** Brief 2-1b: the signed-in user's tenant profile (modules, terminology); null when anonymous. */
   tenant: TenantProfileSchema.extend({ id: UuidSchema }).nullable().optional(),
-});
+}))();
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -592,10 +592,10 @@ export const HIREABLE_ROLES = [
   'MARKETING_MANAGER',
   'FINANCE_ACCOUNTANT',
 ] as const;
-export const HireableRoleSchema = z.enum(HIREABLE_ROLES);
+export const HireableRoleSchema = /* @__PURE__ */ (() => z.enum(HIREABLE_ROLES))();
 export type HireableRole = z.infer<typeof HireableRoleSchema>;
 
-export const ApplicationCreateInputSchema = z.object({
+export const ApplicationCreateInputSchema = /* @__PURE__ */ (() => z.object({
   associateEmail: z.string().email(),
   associateFirstName: z.string().min(1).max(80),
   associateLastName: z.string().min(1).max(80),
@@ -615,7 +615,7 @@ export const ApplicationCreateInputSchema = z.object({
   // invite + checklist pipeline. Their User row is created with this role
   // so on first login they land in the correct sidebar / capability set.
   hireRole: HireableRoleSchema.optional(),
-});
+}))();
 export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema>;
 
 /* ===== Phase 58 — bulk invite, bulk resend, nudge ====================== */
@@ -623,16 +623,16 @@ export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema
 // One row in a bulk-invite batch. firstName/lastName fall back to email if HR
 // pasted only addresses (parser will split on the local-part). The shared
 // clientId/templateId/employmentType apply to every row in the batch.
-export const BulkInviteApplicantSchema = z.object({
+export const BulkInviteApplicantSchema = /* @__PURE__ */ (() => z.object({
   email: z.string().email(),
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
   position: z.string().min(1).max(120).optional(),
   startDate: z.string().datetime().optional(),
-});
+}))();
 export type BulkInviteApplicant = z.infer<typeof BulkInviteApplicantSchema>;
 
-export const BulkInviteInputSchema = z.object({
+export const BulkInviteInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   templateId: UuidSchema,
   employmentType: EmploymentTypeSchema.optional(),
@@ -641,12 +641,12 @@ export const BulkInviteInputSchema = z.object({
    *  leaves the associate's site unrecorded forever. */
   locationId: UuidSchema.optional(),
   applicants: z.array(BulkInviteApplicantSchema).min(1).max(200),
-});
+}))();
 export type BulkInviteInput = z.infer<typeof BulkInviteInputSchema>;
 
 // Per-applicant outcome — succeeded rows include an applicationId; failed
 // rows include a stable error code + message so the UI can show why.
-export const BulkInviteResultRowSchema = z.object({
+export const BulkInviteResultRowSchema = /* @__PURE__ */ (() => z.object({
   email: z.string().email(),
   ok: z.boolean(),
   applicationId: UuidSchema.nullable(),
@@ -654,80 +654,80 @@ export const BulkInviteResultRowSchema = z.object({
   inviteUrl: z.string().nullable(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
-});
+}))();
 export type BulkInviteResultRow = z.infer<typeof BulkInviteResultRowSchema>;
 
-export const BulkInviteResponseSchema = z.object({
+export const BulkInviteResponseSchema = /* @__PURE__ */ (() => z.object({
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
   results: z.array(BulkInviteResultRowSchema),
-});
+}))();
 export type BulkInviteResponse = z.infer<typeof BulkInviteResponseSchema>;
 
-export const BulkResendInputSchema = z.object({
+export const BulkResendInputSchema = /* @__PURE__ */ (() => z.object({
   applicationIds: z.array(UuidSchema).min(1).max(200),
-});
+}))();
 export type BulkResendInput = z.infer<typeof BulkResendInputSchema>;
 
-export const BulkResendResultRowSchema = z.object({
+export const BulkResendResultRowSchema = /* @__PURE__ */ (() => z.object({
   applicationId: UuidSchema,
   ok: z.boolean(),
   invitedUserId: UuidSchema.nullable(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
-});
+}))();
 export type BulkResendResultRow = z.infer<typeof BulkResendResultRowSchema>;
 
-export const BulkResendResponseSchema = z.object({
+export const BulkResendResponseSchema = /* @__PURE__ */ (() => z.object({
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
   results: z.array(BulkResendResultRowSchema),
-});
+}))();
 export type BulkResendResponse = z.infer<typeof BulkResendResponseSchema>;
 
 // Bulk approve — one shared hireDate for the whole batch. Deliberately NO
 // acknowledgeWarnings passthrough: rows with verification gaps fail with
 // `approval_warnings` so a human reviews each one individually — a bulk
 // action must never blanket-acknowledge unverified hires.
-export const BulkApproveInputSchema = z.object({
+export const BulkApproveInputSchema = /* @__PURE__ */ (() => z.object({
   applicationIds: z.array(UuidSchema).min(1).max(200),
   /** YYYY-MM-DD — same shape as the single-approve hireDate. */
   hireDate: z.string().date(),
-});
+}))();
 export type BulkApproveInput = z.infer<typeof BulkApproveInputSchema>;
 
-export const BulkApproveResultRowSchema = z.object({
+export const BulkApproveResultRowSchema = /* @__PURE__ */ (() => z.object({
   applicationId: UuidSchema,
   ok: z.boolean(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
-});
+}))();
 export type BulkApproveResultRow = z.infer<typeof BulkApproveResultRowSchema>;
 
-export const BulkApproveResponseSchema = z.object({
+export const BulkApproveResponseSchema = /* @__PURE__ */ (() => z.object({
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
   results: z.array(BulkApproveResultRowSchema),
-});
+}))();
 export type BulkApproveResponse = z.infer<typeof BulkApproveResponseSchema>;
 
 // HR-composed nudge email. Sent through the same Notification pipe as
 // invites, but flagged with category = "onboarding.nudge" for filtering.
-export const NudgeInputSchema = z.object({
+export const NudgeInputSchema = /* @__PURE__ */ (() => z.object({
   subject: z.string().min(1).max(200),
   body: z.string().min(1).max(4000),
-});
+}))();
 export type NudgeInput = z.infer<typeof NudgeInputSchema>;
 
-export const NudgeResponseSchema = z.object({
+export const NudgeResponseSchema = /* @__PURE__ */ (() => z.object({
   ok: z.literal(true),
   recipientEmail: z.string().email(),
   notificationId: UuidSchema,
   emailSent: z.boolean(),
-});
+}))();
 export type NudgeResponse = z.infer<typeof NudgeResponseSchema>;
 
-export const ProfileSubmissionSchema = z.object({
+export const ProfileSubmissionSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
   // Both optional on Form I-9 but asked for by E-Verify. Collected here so
@@ -742,16 +742,16 @@ export const ProfileSubmissionSchema = z.object({
   city: z.string().max(80).nullable().optional(),
   state: z.string().length(2).nullable().optional(),
   zip: z.string().max(10).nullable().optional(),
-});
+}))();
 export type ProfileSubmission = z.infer<typeof ProfileSubmissionSchema>;
 
-export const W4FilingStatusSchema = z.enum([
+export const W4FilingStatusSchema = /* @__PURE__ */ (() => z.enum([
   'SINGLE',
   'MARRIED_FILING_JOINTLY',
   'HEAD_OF_HOUSEHOLD',
-]);
+]))();
 
-export const W4SubmissionInputSchema = z.object({
+export const W4SubmissionInputSchema = /* @__PURE__ */ (() => z.object({
   filingStatus: W4FilingStatusSchema,
   multipleJobs: z.boolean().default(false),
   dependentsAmount: z.number().nonnegative().default(0),
@@ -762,10 +762,10 @@ export const W4SubmissionInputSchema = z.object({
     .string()
     .regex(/^\d{3}-?\d{2}-?\d{4}$/, 'SSN must be 9 digits (formatted ###-##-#### accepted)')
     .optional(),
-});
+}))();
 export type W4SubmissionInput = z.infer<typeof W4SubmissionInputSchema>;
 
-export const DirectDepositInputSchema = z.discriminatedUnion('type', [
+export const DirectDepositInputSchema = /* @__PURE__ */ (() => z.discriminatedUnion('type', [
   z.object({
     type: z.literal('BANK_ACCOUNT'),
     routingNumber: z.string().regex(/^\d{9}$/, 'Routing number must be 9 digits'),
@@ -780,12 +780,12 @@ export const DirectDepositInputSchema = z.discriminatedUnion('type', [
     type: z.literal('BRANCH_CARD'),
     branchCardId: z.string().min(1).max(80),
   }),
-]);
+]))();
 export type DirectDepositInput = z.infer<typeof DirectDepositInputSchema>;
 
-export const PolicyAckInputSchema = z.object({
+export const PolicyAckInputSchema = /* @__PURE__ */ (() => z.object({
   policyId: UuidSchema,
-});
+}))();
 export type PolicyAckInput = z.infer<typeof PolicyAckInputSchema>;
 
 /* ===== Phase 63 — DOCUMENT_UPLOAD / BACKGROUND_CHECK / J1_DOCS ========= */
@@ -794,10 +794,10 @@ export type PolicyAckInput = z.infer<typeof PolicyAckInputSchema>;
 // one DocumentRecord exists for the associate in an ID-class kind, then
 // marks the DOCUMENT_UPLOAD checklist task DONE. The actual file uploads
 // go through the existing /documents/me/upload endpoint.
-export const DocumentUploadCompleteResponseSchema = z.object({
+export const DocumentUploadCompleteResponseSchema = /* @__PURE__ */ (() => z.object({
   ok: z.literal(true),
   documentCount: z.number().int().nonnegative(),
-});
+}))();
 export type DocumentUploadCompleteResponse = z.infer<
   typeof DocumentUploadCompleteResponseSchema
 >;
@@ -806,10 +806,10 @@ export type DocumentUploadCompleteResponse = z.infer<
 // name (acts as a wet-signature equivalent). Provider stays "stub" until
 // Phase 64+ wires Checkr; status flips to PASSED immediately so the
 // checklist can flow without a real third-party round-trip.
-export const BackgroundCheckAuthorizeInputSchema = z.object({
+export const BackgroundCheckAuthorizeInputSchema = /* @__PURE__ */ (() => z.object({
   typedName: z.string().min(1).max(120),
   authorize: z.literal(true),
-});
+}))();
 export type BackgroundCheckAuthorizeInput = z.infer<
   typeof BackgroundCheckAuthorizeInputSchema
 >;
@@ -819,14 +819,14 @@ export type BackgroundCheckAuthorizeInput = z.infer<
 // flipping the task DONE. The profile upsert itself reuses the existing
 // J1UpsertInputSchema (Phase 10 compliance route) so HR + associate
 // write the same shape.
-export const J1DocsCompleteResponseSchema = z.object({
+export const J1DocsCompleteResponseSchema = /* @__PURE__ */ (() => z.object({
   ok: z.literal(true),
   hasProfile: z.boolean(),
   documentCount: z.number().int().nonnegative(),
-});
+}))();
 export type J1DocsCompleteResponse = z.infer<typeof J1DocsCompleteResponseSchema>;
 
-export const PolicyForApplicationSchema = z.object({
+export const PolicyForApplicationSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   title: z.string(),
   version: z.string(),
@@ -837,37 +837,37 @@ export const PolicyForApplicationSchema = z.object({
   body: z.string().nullable(),
   acknowledged: z.boolean(),
   acknowledgedAt: z.string().datetime().nullable(),
-});
+}))();
 export type PolicyForApplication = z.infer<typeof PolicyForApplicationSchema>;
 
-export const ApplicationPoliciesResponseSchema = z.object({
+export const ApplicationPoliciesResponseSchema = /* @__PURE__ */ (() => z.object({
   policies: z.array(PolicyForApplicationSchema),
-});
+}))();
 export type ApplicationPoliciesResponse = z.infer<typeof ApplicationPoliciesResponseSchema>;
 
-export const AuditLogEntrySchema = z.object({
+export const AuditLogEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   action: z.string(),
   actorUserId: UuidSchema.nullable(),
   actorEmail: z.string().email().nullable(),
   createdAt: z.string().datetime(),
   metadata: z.record(z.unknown()).nullable(),
-});
+}))();
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
-export const AuditLogListResponseSchema = z.object({
+export const AuditLogListResponseSchema = /* @__PURE__ */ (() => z.object({
   entries: z.array(AuditLogEntrySchema),
-});
+}))();
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 44 — QuickBooks Online integration (per-client OAuth + JE sync)
  * -------------------------------------------------------------------------- */
 
-export const QboJeModeSchema = z.enum(['AGGREGATE', 'PER_EMPLOYEE']);
+export const QboJeModeSchema = /* @__PURE__ */ (() => z.enum(['AGGREGATE', 'PER_EMPLOYEE']))();
 export type QboJeMode = z.infer<typeof QboJeModeSchema>;
 
-export const QboStatusSchema = z.object({
+export const QboStatusSchema = /* @__PURE__ */ (() => z.object({
   connected: z.boolean(),
   // The stored tokens can't be read under the current key (or Intuit
   // refused the refresh): the connection row exists but is unusable until
@@ -891,16 +891,16 @@ export const QboStatusSchema = z.object({
   // Wave 5.2 — JE granularity. AGGREGATE = one JE per run (default);
   // PER_EMPLOYEE = one JE per associate, with EmployeeRef.
   jeMode: QboJeModeSchema,
-});
+}))();
 export type QboStatus = z.infer<typeof QboStatusSchema>;
 
-export const QboAuthorizeStartResponseSchema = z.object({
+export const QboAuthorizeStartResponseSchema = /* @__PURE__ */ (() => z.object({
   authorizeUrl: z.string().url(),
   state: z.string(),
-});
+}))();
 export type QboAuthorizeStartResponse = z.infer<typeof QboAuthorizeStartResponseSchema>;
 
-export const QboAccountConfigInputSchema = z.object({
+export const QboAccountConfigInputSchema = /* @__PURE__ */ (() => z.object({
   accountSalariesExpense: z.string().trim().min(1).max(64).nullable().optional(),
   accountFederalTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
   accountStateTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
@@ -910,32 +910,32 @@ export const QboAccountConfigInputSchema = z.object({
   accountNetPayPayable: z.string().trim().min(1).max(64).nullable().optional(),
   // Wave 5.2 — when omitted, jeMode is left unchanged.
   jeMode: QboJeModeSchema.optional(),
-});
+}))();
 export type QboAccountConfigInput = z.infer<typeof QboAccountConfigInputSchema>;
 
-export const QboSyncResponseSchema = z.object({
+export const QboSyncResponseSchema = /* @__PURE__ */ (() => z.object({
   journalEntryId: z.string(),
   syncedAt: z.string().datetime(),
-});
+}))();
 export type QboSyncResponse = z.infer<typeof QboSyncResponseSchema>;
 
 // Wave 3.1 — Chart-of-accounts discovery
-export const QboAccountSchema = z.object({
+export const QboAccountSchema = /* @__PURE__ */ (() => z.object({
   id: z.string(),
   name: z.string(),
   classification: z.string(),
   accountType: z.string(),
   isSubAccount: z.boolean(),
-});
+}))();
 export type QboAccount = z.infer<typeof QboAccountSchema>;
 
-export const QboAccountListResponseSchema = z.object({
+export const QboAccountListResponseSchema = /* @__PURE__ */ (() => z.object({
   accounts: z.array(QboAccountSchema),
-});
+}))();
 export type QboAccountListResponse = z.infer<typeof QboAccountListResponseSchema>;
 
 // Wave 3.2 — Batch associate sync
-export const QboSyncAssociatesResponseSchema = z.object({
+export const QboSyncAssociatesResponseSchema = /* @__PURE__ */ (() => z.object({
   scanned: z.number().int().nonnegative(),
   synced: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
@@ -946,14 +946,14 @@ export const QboSyncAssociatesResponseSchema = z.object({
       reason: z.string(),
     })
   ),
-});
+}))();
 export type QboSyncAssociatesResponse = z.infer<typeof QboSyncAssociatesResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 43 — Time-off entitlements (annual lump-sum + carryover cap)
  * -------------------------------------------------------------------------- */
 
-export const TimeOffEntitlementSchema = z.object({
+export const TimeOffEntitlementSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -963,22 +963,22 @@ export const TimeOffEntitlementSchema = z.object({
   policyAnchorMonth: z.number().int().min(1).max(12),
   policyAnchorDay: z.number().int().min(1).max(31),
   lastGrantedAt: z.string().datetime().nullable(),
-});
+}))();
 export type TimeOffEntitlement = z.infer<typeof TimeOffEntitlementSchema>;
 
-export const TimeOffEntitlementListResponseSchema = z.object({
+export const TimeOffEntitlementListResponseSchema = /* @__PURE__ */ (() => z.object({
   entitlements: z.array(TimeOffEntitlementSchema),
-});
+}))();
 export type TimeOffEntitlementListResponse = z.infer<typeof TimeOffEntitlementListResponseSchema>;
 
-export const TimeOffEntitlementUpsertInputSchema = z.object({
+export const TimeOffEntitlementUpsertInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   category: z.enum(['SICK', 'VACATION', 'PTO', 'BEREAVEMENT', 'JURY_DUTY', 'OTHER']),
   annualMinutes: z.number().int().nonnegative(),
   carryoverMaxMinutes: z.number().int().nonnegative(),
   policyAnchorMonth: z.number().int().min(1).max(12).default(1),
   policyAnchorDay: z.number().int().min(1).max(31).default(1),
-});
+}))();
 export type TimeOffEntitlementUpsertInput = z.infer<typeof TimeOffEntitlementUpsertInputSchema>;
 
 /**
@@ -990,7 +990,7 @@ export type TimeOffEntitlementUpsertInput = z.infer<typeof TimeOffEntitlementUps
  * someone made all of them, those associates' time off could be
  * requested but never approved.
  */
-export const TimeOffEntitlementBulkInputSchema = TimeOffEntitlementUpsertInputSchema.omit({
+export const TimeOffEntitlementBulkInputSchema = /* @__PURE__ */ (() => TimeOffEntitlementUpsertInputSchema.omit({
   associateId: true,
 }).extend({
   associateIds: z.array(UuidSchema).min(1).max(500),
@@ -1000,14 +1000,14 @@ export const TimeOffEntitlementBulkInputSchema = TimeOffEntitlementUpsertInputSc
    * negotiated exception someone set up for one person.
    */
   skipExisting: z.boolean().default(true),
-});
+}))();
 export type TimeOffEntitlementBulkInput = z.infer<typeof TimeOffEntitlementBulkInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 42 — Benefits enrollment
  * -------------------------------------------------------------------------- */
 
-export const BenefitsPlanKindSchema = z.enum([
+export const BenefitsPlanKindSchema = /* @__PURE__ */ (() => z.enum([
   'HEALTH_MEDICAL',
   'DENTAL',
   'VISION',
@@ -1018,10 +1018,10 @@ export const BenefitsPlanKindSchema = z.enum([
   'RETIREMENT_403B',
   'LIFE_INSURANCE',
   'DISABILITY',
-]);
+]))();
 export type BenefitsPlanKind = z.infer<typeof BenefitsPlanKindSchema>;
 
-export const BenefitsPlanSchema = z.object({
+export const BenefitsPlanSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   kind: BenefitsPlanKindSchema,
@@ -1030,34 +1030,34 @@ export const BenefitsPlanSchema = z.object({
   employerContributionCentsPerPeriod: z.number().int().nonnegative(),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative(),
   isActive: z.boolean(),
-});
+}))();
 export type BenefitsPlan = z.infer<typeof BenefitsPlanSchema>;
 
-export const BenefitsPlanListResponseSchema = z.object({
+export const BenefitsPlanListResponseSchema = /* @__PURE__ */ (() => z.object({
   plans: z.array(BenefitsPlanSchema),
-});
+}))();
 export type BenefitsPlanListResponse = z.infer<typeof BenefitsPlanListResponseSchema>;
 
-export const BenefitsPlanCreateInputSchema = z.object({
+export const BenefitsPlanCreateInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   kind: BenefitsPlanKindSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2000).optional(),
   employerContributionCentsPerPeriod: z.number().int().nonnegative().default(0),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().default(0),
-});
+}))();
 export type BenefitsPlanCreateInput = z.infer<typeof BenefitsPlanCreateInputSchema>;
 
-export const BenefitsPlanUpdateInputSchema = z.object({
+export const BenefitsPlanUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   employerContributionCentsPerPeriod: z.number().int().nonnegative().optional(),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().optional(),
   isActive: z.boolean().optional(),
-});
+}))();
 export type BenefitsPlanUpdateInput = z.infer<typeof BenefitsPlanUpdateInputSchema>;
 
-export const BenefitsEnrollmentSchema = z.object({
+export const BenefitsEnrollmentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   planId: UuidSchema,
@@ -1067,29 +1067,29 @@ export const BenefitsEnrollmentSchema = z.object({
   // Joined plan summary so the UI can render without a second fetch.
   planKind: BenefitsPlanKindSchema,
   planName: z.string(),
-});
+}))();
 export type BenefitsEnrollment = z.infer<typeof BenefitsEnrollmentSchema>;
 
-export const BenefitsEnrollmentListResponseSchema = z.object({
+export const BenefitsEnrollmentListResponseSchema = /* @__PURE__ */ (() => z.object({
   enrollments: z.array(BenefitsEnrollmentSchema),
-});
+}))();
 export type BenefitsEnrollmentListResponse = z.infer<typeof BenefitsEnrollmentListResponseSchema>;
 
-export const BenefitsEnrollInputSchema = z.object({
+export const BenefitsEnrollInputSchema = /* @__PURE__ */ (() => z.object({
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
   effectiveDate: z.string().date(),
-});
+}))();
 export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
 
-export const BenefitsTerminateInputSchema = z.object({
+export const BenefitsTerminateInputSchema = /* @__PURE__ */ (() => z.object({
   terminationDate: z.string().date(),
-});
+}))();
 export type BenefitsTerminateInput = z.infer<typeof BenefitsTerminateInputSchema>;
 
 /* ----- Phase 40 — global audit search (with entity context) ------------ */
 
-export const AuditSearchEntrySchema = z.object({
+export const AuditSearchEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   action: z.string(),
   actorUserId: UuidSchema.nullable(),
@@ -1099,29 +1099,29 @@ export const AuditSearchEntrySchema = z.object({
   clientId: UuidSchema.nullable(),
   metadata: z.record(z.unknown()).nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type AuditSearchEntry = z.infer<typeof AuditSearchEntrySchema>;
 
-export const AuditSearchResponseSchema = z.object({
+export const AuditSearchResponseSchema = /* @__PURE__ */ (() => z.object({
   entries: z.array(AuditSearchEntrySchema),
   /** Cursor — pass back via `before` to fetch the next page. Null = end. */
   nextBefore: z.string().datetime().nullable(),
-});
+}))();
 export type AuditSearchResponse = z.infer<typeof AuditSearchResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Time & Attendance — Phase 6
  * -------------------------------------------------------------------------- */
 
-export const TimeEntryStatusSchema = z.enum([
+export const TimeEntryStatusSchema = /* @__PURE__ */ (() => z.enum([
   'ACTIVE',
   'COMPLETED',
   'APPROVED',
   'REJECTED',
-]);
+]))();
 export type TimeEntryStatus = z.infer<typeof TimeEntryStatusSchema>;
 
-export const TimeEntrySchema = z.object({
+export const TimeEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
@@ -1183,15 +1183,15 @@ export const TimeEntrySchema = z.object({
   shiftStartsAt: z.string().datetime().nullable().optional(),
   shiftEndsAt: z.string().datetime().nullable().optional(),
   shiftPosition: z.string().nullable().optional(),
-});
+}))();
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 
-export const TimeEntryListResponseSchema = z.object({
+export const TimeEntryListResponseSchema = /* @__PURE__ */ (() => z.object({
   entries: z.array(TimeEntrySchema),
   /** True when the server's row cap cut the result — the UI should say so
    *  instead of letting a partial list masquerade as the whole window. */
   truncated: z.boolean().optional(),
-});
+}))();
 export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -1199,10 +1199,10 @@ export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
  *  parked for a supervisor to approve (backdated ACTIVE entry) or deny.
  * -------------------------------------------------------------------------- */
 
-export const ClockInRequestStatusSchema = z.enum(['PENDING', 'APPROVED', 'DENIED']);
+export const ClockInRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'DENIED']))();
 export type ClockInRequestStatus = z.infer<typeof ClockInRequestStatusSchema>;
 
-export const ClockInRequestRowSchema = z.object({
+export const ClockInRequestRowSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -1216,19 +1216,19 @@ export const ClockInRequestRowSchema = z.object({
   decidedAt: z.string().datetime().nullable(),
   deciderEmail: z.string().nullable(),
   denyReason: z.string().nullable(),
-});
+}))();
 export type ClockInRequestRow = z.infer<typeof ClockInRequestRowSchema>;
 
-export const ClockInRequestListResponseSchema = z.object({
+export const ClockInRequestListResponseSchema = /* @__PURE__ */ (() => z.object({
   requests: z.array(ClockInRequestRowSchema),
-});
+}))();
 export type ClockInRequestListResponse = z.infer<
   typeof ClockInRequestListResponseSchema
 >;
 
-export const ClockInRequestDenyInputSchema = z.object({
+export const ClockInRequestDenyInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().trim().max(300).optional(),
-});
+}))();
 export type ClockInRequestDenyInput = z.infer<typeof ClockInRequestDenyInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -1236,15 +1236,15 @@ export type ClockInRequestDenyInput = z.infer<typeof ClockInRequestDenyInputSche
  *  no-show signals. Excused events stay visible but score zero.
  * -------------------------------------------------------------------------- */
 
-export const AttendanceKindSchema = z.enum([
+export const AttendanceKindSchema = /* @__PURE__ */ (() => z.enum([
   'LATE',
   'EARLY_OUT',
   'CALL_OUT',
   'NO_CALL_NO_SHOW',
-]);
+]))();
 export type AttendanceKind = z.infer<typeof AttendanceKindSchema>;
 
-export const AttendanceEventSchema = z.object({
+export const AttendanceEventSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   shiftId: UuidSchema.nullable(),
@@ -1255,37 +1255,37 @@ export const AttendanceEventSchema = z.object({
   note: z.string().nullable(),
   excused: z.boolean(),
   excusedByEmail: z.string().nullable(),
-});
+}))();
 export type AttendanceEvent = z.infer<typeof AttendanceEventSchema>;
 
-export const AttendanceListResponseSchema = z.object({
+export const AttendanceListResponseSchema = /* @__PURE__ */ (() => z.object({
   events: z.array(AttendanceEventSchema),
   /** Unexcused points inside the rolling 90-day window. */
   score: z.number(),
   windowDays: z.number().int(),
-});
+}))();
 export type AttendanceListResponse = z.infer<typeof AttendanceListResponseSchema>;
 
-export const ClockInInputSchema = z.object({
+export const ClockInInputSchema = /* @__PURE__ */ (() => z.object({
   notes: z.string().max(500).optional(),
-});
+}))();
 export type ClockInInput = z.infer<typeof ClockInInputSchema>;
 
-export const ClockOutInputSchema = z.object({
+export const ClockOutInputSchema = /* @__PURE__ */ (() => z.object({
   notes: z.string().max(500).optional(),
-});
+}))();
 export type ClockOutInput = z.infer<typeof ClockOutInputSchema>;
 
-export const TimeApproveInputSchema = z.object({
+export const TimeApproveInputSchema = /* @__PURE__ */ (() => z.object({
   /** Optional override of clockInAt/clockOutAt during approval (e.g., HR fixes a forgotten clock-out). */
   clockInAt: z.string().datetime().optional(),
   clockOutAt: z.string().datetime().optional(),
-});
+}))();
 export type TimeApproveInput = z.infer<typeof TimeApproveInputSchema>;
 
-export const TimeRejectInputSchema = z.object({
+export const TimeRejectInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().min(1).max(500),
-});
+}))();
 export type TimeRejectInput = z.infer<typeof TimeRejectInputSchema>;
 
 /* ===== Admin clock-in/out + edit on behalf of an associate ============== */
@@ -1295,7 +1295,7 @@ export type TimeRejectInput = z.infer<typeof TimeRejectInputSchema>;
  * logs a shift after the fact). Omit clockOutAt to "clock them in" — an
  * ACTIVE entry; supply it to log a completed shift. Admin-only.
  */
-export const AdminCreateTimeEntryInputSchema = z.object({
+export const AdminCreateTimeEntryInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   jobId: UuidSchema.nullable().optional(),
   clockInAt: z.string().datetime(),
@@ -1305,7 +1305,7 @@ export const AdminCreateTimeEntryInputSchema = z.object({
    *  the scheduled shift / compensation record. */
   payRate: z.number().nonnegative().max(100000).nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
-});
+}))();
 export type AdminCreateTimeEntryInput = z.infer<
   typeof AdminCreateTimeEntryInputSchema
 >;
@@ -1315,7 +1315,7 @@ export type AdminCreateTimeEntryInput = z.infer<
  * re-tag a job, or clock someone out by supplying clockOutAt on an ACTIVE
  * entry). Rejected once the entry is APPROVED. Admin-only.
  */
-export const AdminEditTimeEntryInputSchema = z
+export const AdminEditTimeEntryInputSchema = /* @__PURE__ */ (() => z
   .object({
     clockInAt: z.string().datetime().optional(),
     clockOutAt: z.string().datetime().nullable().optional(),
@@ -1327,49 +1327,49 @@ export const AdminEditTimeEntryInputSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: 'Provide at least one field to change.',
-  });
+  }))();
 export type AdminEditTimeEntryInput = z.infer<
   typeof AdminEditTimeEntryInputSchema
 >;
 
-export const ActiveTimeEntryResponseSchema = z.object({
+export const ActiveTimeEntryResponseSchema = /* @__PURE__ */ (() => z.object({
   active: TimeEntrySchema.nullable(),
-});
+}))();
 export type ActiveTimeEntryResponse = z.infer<typeof ActiveTimeEntryResponseSchema>;
 
 /* ===== Phase 64 — bulk approve/reject for time entries ================= */
 
-export const BulkTimeApproveInputSchema = z.object({
+export const BulkTimeApproveInputSchema = /* @__PURE__ */ (() => z.object({
   entryIds: z.array(UuidSchema).min(1).max(200),
-});
+}))();
 export type BulkTimeApproveInput = z.infer<typeof BulkTimeApproveInputSchema>;
 
-export const BulkTimeRejectInputSchema = z.object({
+export const BulkTimeRejectInputSchema = /* @__PURE__ */ (() => z.object({
   entryIds: z.array(UuidSchema).min(1).max(200),
   reason: z.string().min(1).max(500),
-});
+}))();
 export type BulkTimeRejectInput = z.infer<typeof BulkTimeRejectInputSchema>;
 
-export const BulkTimeResultRowSchema = z.object({
+export const BulkTimeResultRowSchema = /* @__PURE__ */ (() => z.object({
   entryId: UuidSchema,
   ok: z.boolean(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
-});
+}))();
 export type BulkTimeResultRow = z.infer<typeof BulkTimeResultRowSchema>;
 
-export const BulkTimeResponseSchema = z.object({
+export const BulkTimeResponseSchema = /* @__PURE__ */ (() => z.object({
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
   results: z.array(BulkTimeResultRowSchema),
-});
+}))();
 export type BulkTimeResponse = z.infer<typeof BulkTimeResponseSchema>;
 
 /* Phase 65 — time entry exports (CSV + PDF) ================================ */
 // Mirrors ScheduleExportInputSchema. `to` is end-EXCLUSIVE so the same range
 // helpers can be reused on the front end.
 
-export const TimeExportInputSchema = z.object({
+export const TimeExportInputSchema = /* @__PURE__ */ (() => z.object({
   from: z.string().datetime(),
   to: z.string().datetime(),
   status: TimeEntryStatusSchema.optional(),
@@ -1400,7 +1400,7 @@ export const TimeExportInputSchema = z.object({
     .string()
     .regex(/^(none|\d{1,4}-\d{1,4})$/)
     .optional(),
-});
+}))();
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -1413,7 +1413,7 @@ export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
  *  location / associate only.
  * -------------------------------------------------------------------------- */
 
-export const ExternalPayrollSheetInputSchema = z.object({
+export const ExternalPayrollSheetInputSchema = /* @__PURE__ */ (() => z.object({
   from: z.string().datetime(),
   to: z.string().datetime(),
   clientId: UuidSchema.optional(),
@@ -1423,13 +1423,13 @@ export const ExternalPayrollSheetInputSchema = z.object({
   // downloading it acknowledges each one by id; the acknowledgment is
   // recorded on the change and on the download.
   acknowledgeChangeIds: z.array(UuidSchema).max(500).optional(),
-});
+}))();
 
 /* -------------------------------------------------------------------------- *
  *  Financial changes — the Finance queue.
  * -------------------------------------------------------------------------- */
 
-export const FinancialChangeKindSchema = z.enum([
+export const FinancialChangeKindSchema = /* @__PURE__ */ (() => z.enum([
   'BANK_ACCOUNT',
   'PAY_CARD',
   'PAY_METHOD',
@@ -1437,12 +1437,12 @@ export const FinancialChangeKindSchema = z.enum([
   'LEGAL_NAME',
   'SSN',
   'HOME_ADDRESS',
-]);
+]))();
 export type FinancialChangeKind = z.infer<typeof FinancialChangeKindSchema>;
-export const FinancialChangeStatusSchema = z.enum(['PENDING', 'VERIFIED', 'REJECTED', 'HELD']);
+export const FinancialChangeStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'VERIFIED', 'REJECTED', 'HELD']))();
 export type FinancialChangeStatus = z.infer<typeof FinancialChangeStatusSchema>;
 
-export const FinancialChangeRowSchema = z.object({
+export const FinancialChangeRowSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associate: z.object({ id: UuidSchema, name: z.string() }),
   kind: FinancialChangeKindSchema,
@@ -1470,17 +1470,17 @@ export const FinancialChangeRowSchema = z.object({
   priorContactNotifiedAt: z.string().nullable(),
   acknowledgedAt: z.string().nullable(),
   createdAt: z.string(),
-});
+}))();
 export type FinancialChangeRow = z.infer<typeof FinancialChangeRowSchema>;
 
-export const VerifyFinancialChangeInputSchema = z.object({
+export const VerifyFinancialChangeInputSchema = /* @__PURE__ */ (() => z.object({
   via: z.enum(['PHONE_CALL', 'IN_PERSON', 'OTHER']),
   note: z.string().trim().max(1000).optional().nullable(),
   reachedOnNumberOnFile: z.literal(true),
-});
+}))();
 export type VerifyFinancialChangeInput = z.infer<typeof VerifyFinancialChangeInputSchema>;
 
-export const UnverifiedPayoutPolicySchema = z.enum(['PREVIOUS_VERIFIED', 'HOLD']);
+export const UnverifiedPayoutPolicySchema = /* @__PURE__ */ (() => z.enum(['PREVIOUS_VERIFIED', 'HOLD']))();
 export type UnverifiedPayoutPolicy = z.infer<typeof UnverifiedPayoutPolicySchema>;
 export const UNVERIFIED_PAYOUT_POLICY_LABELS: Record<UnverifiedPayoutPolicy, string> = {
   PREVIOUS_VERIFIED: 'Pay the previous verified account',
@@ -1496,7 +1496,7 @@ export type ExternalPayrollSheetInput = z.infer<
  * number in a payroll file is a rejected submission or an unpaid worker, and
  * the failure is invisible in a spreadsheet with hundreds of rows.
  */
-export const ExternalPayrollSheetGapsSchema = z.object({
+export const ExternalPayrollSheetGapsSchema = /* @__PURE__ */ (() => z.object({
   /** Rows with no W-4 on file at all. */
   missingW4: z.number().int().nonnegative(),
   /** W-4 exists but the SSN ciphertext won't decrypt under the current key. */
@@ -1505,7 +1505,7 @@ export const ExternalPayrollSheetGapsSchema = z.object({
   missingBankDetails: z.number().int().nonnegative(),
   /** No current compensation record — pay rate is blank. */
   missingPayRate: z.number().int().nonnegative(),
-});
+}))();
 export type ExternalPayrollSheetGaps = z.infer<
   typeof ExternalPayrollSheetGapsSchema
 >;
@@ -1520,22 +1520,22 @@ export type ExternalPayrollSheetGaps = z.infer<
  *  are NET of unpaid breaks and approved-only.
  * -------------------------------------------------------------------------- */
 
-export const TimesheetWeekInputSchema = z.object({
+export const TimesheetWeekInputSchema = /* @__PURE__ */ (() => z.object({
   /** Any ISO instant inside the desired Sat–Fri week; the server snaps to it. */
   weekStart: z.string().datetime(),
   /** Restrict to one client for per-Fieldglass filing. Omit for all clients. */
   clientId: UuidSchema.optional(),
-});
+}))();
 export type TimesheetWeekInput = z.infer<typeof TimesheetWeekInputSchema>;
 
-export const TimesheetRowStatusSchema = z.enum(['READY', 'PENDING']);
+export const TimesheetRowStatusSchema = /* @__PURE__ */ (() => z.enum(['READY', 'PENDING']))();
 export type TimesheetRowStatus = z.infer<typeof TimesheetRowStatusSchema>;
 
 /** A worker's timesheet as Fieldglass has it — the desk's tracking. */
-export const FieldglassStatusSchema = z.enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'INVOICED']);
+export const FieldglassStatusSchema = /* @__PURE__ */ (() => z.enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'INVOICED']))();
 export type FieldglassStatus = z.infer<typeof FieldglassStatusSchema>;
 
-export const TimesheetFieldglassSchema = z.object({
+export const TimesheetFieldglassSchema = /* @__PURE__ */ (() => z.object({
   /** Registered in Fieldglass under this row's client. */
   registered: z.boolean(),
   /** The Fieldglass Worker ID, when finance recorded it. */
@@ -1556,10 +1556,10 @@ export const TimesheetFieldglassSchema = z.object({
   resubmittedAt: z.string().nullable().optional(),
   /** Finance's own note on this week. */
   note: z.string().nullable().optional(),
-});
+}))();
 export type TimesheetFieldglass = z.infer<typeof TimesheetFieldglassSchema>;
 
-export const TimesheetRowSchema = z.object({
+export const TimesheetRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   /** The client (Fieldglass SOW) this row bills to; null for client-less time. */
   clientId: UuidSchema.nullable().optional(),
@@ -1577,22 +1577,22 @@ export const TimesheetRowSchema = z.object({
   status: TimesheetRowStatusSchema,
   /** Where this worker's week stands in Fieldglass (null: no client). */
   fieldglass: TimesheetFieldglassSchema.nullable().optional(),
-});
+}))();
 export type TimesheetRow = z.infer<typeof TimesheetRowSchema>;
 
 /* Per-associate day detail — the "Time in / time out" grid a Fieldglass
  * individual timesheet shows when you click a worker: one column per day
  * (Sat→Fri) with the clock-in, meal breaks, clock-out, and net total. */
-export const TimesheetAssociateDetailInputSchema = z.object({
+export const TimesheetAssociateDetailInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   weekStart: z.string().datetime(),
   clientId: UuidSchema.optional(),
-});
+}))();
 export type TimesheetAssociateDetailInput = z.infer<
   typeof TimesheetAssociateDetailInputSchema
 >;
 
-export const TimesheetDaySchema = z.object({
+export const TimesheetDaySchema = /* @__PURE__ */ (() => z.object({
   /** YYYY-MM-DD (store-local). */
   date: z.string(),
   /** "Sat", "Sun", … */
@@ -1613,10 +1613,10 @@ export const TimesheetDaySchema = z.object({
   /** True when any entry crossed midnight — the "in Fri 10 PM, out Sat
    *  7 AM under Friday" convention, made explicit for reviewers. */
   overnight: z.boolean().optional(),
-});
+}))();
 export type TimesheetDay = z.infer<typeof TimesheetDaySchema>;
 
-export const TimesheetAssociateDetailResponseSchema = z.object({
+export const TimesheetAssociateDetailResponseSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   worker: z.string(),
   site: z.string(),
@@ -1642,54 +1642,54 @@ export const TimesheetAssociateDetailResponseSchema = z.object({
   amount: z.number().nonnegative().nullable(),
   timeZone: z.string(),
   generatedAt: z.string(),
-});
+}))();
 export type TimesheetAssociateDetailResponse = z.infer<
   typeof TimesheetAssociateDetailResponseSchema
 >;
 
 /* Pre-file validation — problems worth fixing before a week is filed into
  * Fieldglass. Surfaced on the grid so bad/incomplete data never ships. */
-export const TimesheetIssueKindSchema = z.enum([
+export const TimesheetIssueKindSchema = /* @__PURE__ */ (() => z.enum([
   'MISSING_CLOCKOUT', // an entry never clocked out (still ACTIVE)
   'PENDING_APPROVAL', // approved-only hours ship; these await approval
   'OVER_HOURS', // implausibly high weekly total — review before filing
   'NOT_IN_FIELDGLASS', // hours for a worker not registered under that client — unbillable until added
-]);
+]))();
 export type TimesheetIssueKind = z.infer<typeof TimesheetIssueKindSchema>;
 
-export const TimesheetIssueSchema = z.object({
+export const TimesheetIssueSchema = /* @__PURE__ */ (() => z.object({
   kind: TimesheetIssueKindSchema,
   associateId: z.string().nullable(),
   worker: z.string(),
   detail: z.string(),
-});
+}))();
 export type TimesheetIssue = z.infer<typeof TimesheetIssueSchema>;
 
 /* Scheduled-vs-actual — published assigned-shift hours next to hours actually
  * worked, so no-shows and big overages surface before they hit the bill. */
-export const TimesheetScheduleRowSchema = z.object({
+export const TimesheetScheduleRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: z.string(),
   worker: z.string(),
   scheduledHours: z.number().nonnegative(),
   actualHours: z.number().nonnegative(),
   /** actualHours − scheduledHours (negative = under-worked / no-show). */
   delta: z.number(),
-});
+}))();
 export type TimesheetScheduleRow = z.infer<typeof TimesheetScheduleRowSchema>;
 
 /* Lock + drift — a recorded filing snapshots per-worker hours; if the
  * underlying time changes afterward, the difference surfaces as drift. */
-export const TimesheetDriftRowSchema = z.object({
+export const TimesheetDriftRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: z.string(),
   worker: z.string(),
   filedHours: z.number().nonnegative(),
   currentHours: z.number().nonnegative(),
   /** currentHours − filedHours. */
   delta: z.number(),
-});
+}))();
 export type TimesheetDriftRow = z.infer<typeof TimesheetDriftRowSchema>;
 
-export const TimesheetFilingInfoSchema = z.object({
+export const TimesheetFilingInfoSchema = /* @__PURE__ */ (() => z.object({
   filedAt: z.string(),
   /** Who filed it (email/name); null if the user record is gone. */
   filedBy: z.string().nullable(),
@@ -1697,10 +1697,10 @@ export const TimesheetFilingInfoSchema = z.object({
   filedTotalHours: z.number().nonnegative(),
   /** Workers whose hours changed since filing (empty = still in sync). */
   drift: z.array(TimesheetDriftRowSchema),
-});
+}))();
 export type TimesheetFilingInfo = z.infer<typeof TimesheetFilingInfoSchema>;
 
-export const TimesheetWeekResponseSchema = z.object({
+export const TimesheetWeekResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Saturday that starts the week, YYYY-MM-DD (store-local). */
   weekStart: z.string(),
   /** Friday that ends the week, YYYY-MM-DD (store-local) — the Fieldglass "End". */
@@ -1752,13 +1752,13 @@ export const TimesheetWeekResponseSchema = z.object({
     .optional(),
   timeZone: z.string(),
   generatedAt: z.string(),
-});
+}))();
 export type TimesheetWeekResponse = z.infer<typeof TimesheetWeekResponseSchema>;
 
 /* One associate's whole timesheet, across pay periods — every Sat→Fri week
  * they worked, grouped into the pay periods that paid them, each with its
  * day grid and where it stands in Fieldglass. */
-export const TimesheetHistoryWeekSchema = z.object({
+export const TimesheetHistoryWeekSchema = /* @__PURE__ */ (() => z.object({
   /** Saturday, YYYY-MM-DD (store-local). */
   weekStart: z.string(),
   /** Friday, YYYY-MM-DD. */
@@ -1781,10 +1781,10 @@ export const TimesheetHistoryWeekSchema = z.object({
   fieldglass: TimesheetFieldglassSchema.nullable(),
   /** total × bill rate; null for a store-bound viewer or no rate. */
   amount: z.number().nonnegative().nullable(),
-});
+}))();
 export type TimesheetHistoryWeek = z.infer<typeof TimesheetHistoryWeekSchema>;
 
-export const TimesheetHistoryPeriodSchema = z.object({
+export const TimesheetHistoryPeriodSchema = /* @__PURE__ */ (() => z.object({
   periodStart: z.string(),
   periodEnd: z.string(),
   /** Null when no pay schedule is set up (the period is then the week). */
@@ -1793,10 +1793,10 @@ export const TimesheetHistoryPeriodSchema = z.object({
   total: z.number().nonnegative(),
   pendingHours: z.number().nonnegative(),
   amount: z.number().nonnegative().nullable(),
-});
+}))();
 export type TimesheetHistoryPeriod = z.infer<typeof TimesheetHistoryPeriodSchema>;
 
-export const TimesheetHistoryResponseSchema = z.object({
+export const TimesheetHistoryResponseSchema = /* @__PURE__ */ (() => z.object({
   associate: z.object({
     id: UuidSchema,
     name: z.string(),
@@ -1842,23 +1842,23 @@ export const TimesheetHistoryResponseSchema = z.object({
   truncated: z.boolean(),
   from: z.string().nullable(),
   generatedAt: z.string(),
-});
+}))();
 export type TimesheetHistoryResponse = z.infer<typeof TimesheetHistoryResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Scheduling — Phase 7
  * -------------------------------------------------------------------------- */
 
-export const ShiftStatusSchema = z.enum([
+export const ShiftStatusSchema = /* @__PURE__ */ (() => z.enum([
   'DRAFT',
   'OPEN',
   'ASSIGNED',
   'COMPLETED',
   'CANCELLED',
-]);
+]))();
 export type ShiftStatus = z.infer<typeof ShiftStatusSchema>;
 
-export const ShiftSchema = z.object({
+export const ShiftSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   clientName: z.string().nullable(),
@@ -1915,10 +1915,10 @@ export const ShiftSchema = z.object({
     })
     .nullable()
     .optional(),
-});
+}))();
 export type Shift = z.infer<typeof ShiftSchema>;
 
-export const ShiftListResponseSchema = z.object({
+export const ShiftListResponseSchema = /* @__PURE__ */ (() => z.object({
   shifts: z.array(ShiftSchema),
   // True when the result hit the server's row cap and more shifts match the
   // filter than were returned. The UI surfaces a "narrow your range" banner so
@@ -1929,7 +1929,7 @@ export const ShiftListResponseSchema = z.object({
   // shifts". The UI must say so instead of showing the ordinary empty state
   // (which reads as "nothing scheduled" and hides the real fault from HR).
   unlinked: z.boolean().optional(),
-});
+}))();
 export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 
 /* Associate-facing shift detail — the tap-to-expand card on My Schedule. */
@@ -1938,7 +1938,7 @@ export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
  *  Names are already associate-visible via /directory; times/position let
  *  the associate see who they're working with, Sling-style. Deliberately
  *  NO rates, contact info, or notes — those stay on each person's own shift. */
-export const ShiftTeammateSchema = z.object({
+export const ShiftTeammateSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   name: z.string(),
   position: z.string(),
@@ -1946,68 +1946,68 @@ export const ShiftTeammateSchema = z.object({
   endsAt: z.string().datetime(),
   /** Their shift's free-text sub-zone ("Bar", "Produce"), if any. */
   location: z.string().nullable(),
-});
+}))();
 export type ShiftTeammate = z.infer<typeof ShiftTeammateSchema>;
 
 /** The shift supervisor who leads the store shift window a shift starts in
  *  — "your shift supervisor" on the associate's shift. */
-export const ShiftSupervisorSchema = z.object({
+export const ShiftSupervisorSchema = /* @__PURE__ */ (() => z.object({
   userId: UuidSchema,
   name: z.string(),
   associateId: UuidSchema.nullable(),
-});
+}))();
 export type ShiftSupervisor = z.infer<typeof ShiftSupervisorSchema>;
 
-export const MyShiftDetailResponseSchema = z.object({
+export const MyShiftDetailResponseSchema = /* @__PURE__ */ (() => z.object({
   shift: ShiftSchema,
   teammates: z.array(ShiftTeammateSchema),
   /** Who leads the store shift it starts in (empty when nobody does). */
   supervisors: z.array(ShiftSupervisorSchema).default([]),
-});
+}))();
 export type MyShiftDetailResponse = z.infer<typeof MyShiftDetailResponseSchema>;
 
 /** Older shifts, newest-first. `nextBefore` = cursor for the next page;
  *  null when history is exhausted. */
-export const MyShiftHistoryResponseSchema = z.object({
+export const MyShiftHistoryResponseSchema = /* @__PURE__ */ (() => z.object({
   shifts: z.array(ShiftSchema),
   nextBefore: z.string().datetime().nullable(),
-});
+}))();
 export type MyShiftHistoryResponse = z.infer<typeof MyShiftHistoryResponseSchema>;
 
 /* Open-shift pickup (Phase 85 claims table, finally wired) */
 
-export const OpenShiftClaimStatusSchema = z.enum([
+export const OpenShiftClaimStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING',
   'APPROVED',
   'REJECTED',
   'WITHDRAWN',
   'EXPIRED',
-]);
+]))();
 export type OpenShiftClaimStatus = z.infer<typeof OpenShiftClaimStatusSchema>;
 
 /** Open shifts the caller is eligible to pick up, each carrying the
  *  caller's own claim state so the UI can show "Requested" instead of a
  *  second button. */
-export const OpenShiftsResponseSchema = z.object({
+export const OpenShiftsResponseSchema = /* @__PURE__ */ (() => z.object({
   shifts: z.array(
     ShiftSchema.extend({
       myClaimStatus: OpenShiftClaimStatusSchema.nullable(),
       myClaimId: UuidSchema.nullable(),
     }),
   ),
-});
+}))();
 export type OpenShiftsResponse = z.infer<typeof OpenShiftsResponseSchema>;
 
-export const OpenShiftClaimSchema = z.object({
+export const OpenShiftClaimSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   shiftId: UuidSchema,
   status: OpenShiftClaimStatusSchema,
   createdAt: z.string().datetime(),
-});
+}))();
 export type OpenShiftClaim = z.infer<typeof OpenShiftClaimSchema>;
 
 /** Admin review row — who wants which open shift. */
-export const AdminOpenShiftClaimSchema = z.object({
+export const AdminOpenShiftClaimSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   status: OpenShiftClaimStatusSchema,
   associateId: UuidSchema,
@@ -2025,73 +2025,73 @@ export const AdminOpenShiftClaimSchema = z.object({
    *  signal for "approve best" (fewest hours first). */
   weeklyMinutes: z.number().int().nonnegative().optional(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type AdminOpenShiftClaim = z.infer<typeof AdminOpenShiftClaimSchema>;
 
-export const AdminOpenShiftClaimListResponseSchema = z.object({
+export const AdminOpenShiftClaimListResponseSchema = /* @__PURE__ */ (() => z.object({
   claims: z.array(AdminOpenShiftClaimSchema),
-});
+}))();
 export type AdminOpenShiftClaimListResponse = z.infer<
   typeof AdminOpenShiftClaimListResponseSchema
 >;
 
 /* One-off availability exceptions ("can't work July 15") */
 
-export const AvailabilityExceptionSchema = z.object({
+export const AvailabilityExceptionSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   /** Calendar date, YYYY-MM-DD. Day-granular by design, like time off. */
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().nullable(),
-});
+}))();
 export type AvailabilityException = z.infer<typeof AvailabilityExceptionSchema>;
 
-export const AvailabilityExceptionListResponseSchema = z.object({
+export const AvailabilityExceptionListResponseSchema = /* @__PURE__ */ (() => z.object({
   exceptions: z.array(AvailabilityExceptionSchema),
-});
+}))();
 export type AvailabilityExceptionListResponse = z.infer<
   typeof AvailabilityExceptionListResponseSchema
 >;
 
-export const AvailabilityExceptionCreateInputSchema = z.object({
+export const AvailabilityExceptionCreateInputSchema = /* @__PURE__ */ (() => z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().trim().max(200).optional(),
-});
+}))();
 export type AvailabilityExceptionCreateInput = z.infer<
   typeof AvailabilityExceptionCreateInputSchema
 >;
 
 /** A counterparty shift the requester could take in exchange (trades). */
-export const TradeOptionSchema = z.object({
+export const TradeOptionSchema = /* @__PURE__ */ (() => z.object({
   shiftId: UuidSchema,
   position: z.string(),
   clientName: z.string().nullable(),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
   timezone: z.string(),
-});
+}))();
 export type TradeOption = z.infer<typeof TradeOptionSchema>;
 
-export const TradeOptionsResponseSchema = z.object({
+export const TradeOptionsResponseSchema = /* @__PURE__ */ (() => z.object({
   options: z.array(TradeOptionSchema),
-});
+}))();
 export type TradeOptionsResponse = z.infer<typeof TradeOptionsResponseSchema>;
 
 /** Someone the associate can offer a shift to. `busy` flags an overlapping
  *  assignment so the picker can steer away from people who can't take it —
  *  advisory only; the swap POST and manager approval stay the real gates. */
-export const SwapCandidateSchema = z.object({
+export const SwapCandidateSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   name: z.string(),
   busy: z.boolean(),
-});
+}))();
 export type SwapCandidate = z.infer<typeof SwapCandidateSchema>;
 
-export const SwapCandidateListResponseSchema = z.object({
+export const SwapCandidateListResponseSchema = /* @__PURE__ */ (() => z.object({
   candidates: z.array(SwapCandidateSchema),
-});
+}))();
 export type SwapCandidateListResponse = z.infer<typeof SwapCandidateListResponseSchema>;
 
-export const ShiftCreateInputSchema = z
+export const ShiftCreateInputSchema = /* @__PURE__ */ (() => z
   .object({
     /** Brief 2-1b: optional — a direct employer's shift names its site instead. */
     clientId: UuidSchema.optional(),
@@ -2117,7 +2117,7 @@ export const ShiftCreateInputSchema = z
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: 'endsAt must be after startsAt',
     path: ['endsAt'],
-  });
+  }))();
 export type ShiftCreateInput = z.infer<typeof ShiftCreateInputSchema>;
 
 /**
@@ -2128,7 +2128,7 @@ export type ShiftCreateInput = z.infer<typeof ShiftCreateInputSchema>;
  * manager can post "need 3 more" open slots alongside the named ones.
  * At least one assignee OR one open slot is required.
  */
-export const BulkCreateShiftsInputSchema = z
+export const BulkCreateShiftsInputSchema = /* @__PURE__ */ (() => z
   .object({
     /** Brief 2-1b: optional — a direct employer names the site alone (`locationId`). */
     clientId: UuidSchema.optional(),
@@ -2174,10 +2174,10 @@ export const BulkCreateShiftsInputSchema = z
   .refine((v) => v.associateIds.length + (v.openCount ?? 0) >= 1, {
     message: 'Select at least one employee or add an open slot.',
     path: ['associateIds'],
-  });
+  }))();
 export type BulkCreateShiftsInput = z.infer<typeof BulkCreateShiftsInputSchema>;
 
-export const BulkCreateShiftsResponseSchema = z.object({
+export const BulkCreateShiftsResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Total shift rows created (assigned + open). */
   created: z.number().int().nonnegative(),
   /** Employees skipped because the shift overlaps one they already have. */
@@ -2191,12 +2191,12 @@ export const BulkCreateShiftsResponseSchema = z.object({
       startsAt: z.string().datetime().optional(),
     }),
   ),
-});
+}))();
 export type BulkCreateShiftsResponse = z.infer<typeof BulkCreateShiftsResponseSchema>;
 
 /* ----- Pay-rate defaults per (client, position) -------------------------- */
 
-export const ShiftRateDefaultSchema = z.object({
+export const ShiftRateDefaultSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   position: z.string(),
@@ -2205,32 +2205,32 @@ export const ShiftRateDefaultSchema = z.object({
   /** Brief 1A-2: in force from this date to effectiveTo (inclusive); null = open-ended. */
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-});
+}))();
 export type ShiftRateDefault = z.infer<typeof ShiftRateDefaultSchema>;
 
 /** List response also carries the client's position catalog so the rate
  *  editor can offer a row per known position without a second capability-
  *  gated fetch. */
-export const ShiftRateDefaultListResponseSchema = z.object({
+export const ShiftRateDefaultListResponseSchema = /* @__PURE__ */ (() => z.object({
   rateDefaults: z.array(ShiftRateDefaultSchema),
   positions: z.array(z.string()),
-});
+}))();
 export type ShiftRateDefaultListResponse = z.infer<
   typeof ShiftRateDefaultListResponseSchema
 >;
 
 /** Upsert a default rate for a (client, position). */
-export const ShiftRateDefaultInputSchema = z.object({
+export const ShiftRateDefaultInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   position: z.string().min(1).max(120),
   payRate: z.number().nonnegative().max(100000),
   billRate: z.number().nonnegative().max(100000).nullable().optional(),
   /** Brief 1A-2: the date the new rate takes effect (today when absent). History is never rewritten. */
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-});
+}))();
 export type ShiftRateDefaultInput = z.infer<typeof ShiftRateDefaultInputSchema>;
 
-export const ShiftUpdateInputSchema = z
+export const ShiftUpdateInputSchema = /* @__PURE__ */ (() => z
   .object({
     position: z.string().min(1).max(120).optional(),
     startsAt: z.string().datetime().optional(),
@@ -2248,10 +2248,10 @@ export const ShiftUpdateInputSchema = z
       v.endsAt === undefined ||
       new Date(v.endsAt) > new Date(v.startsAt),
     { message: 'endsAt must be after startsAt', path: ['endsAt'] }
-  );
+  ))();
 export type ShiftUpdateInput = z.infer<typeof ShiftUpdateInputSchema>;
 
-export const ShiftAssignInputSchema = z.object({
+export const ShiftAssignInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   /** Assign even though the associate has approved time off or a declared
    *  day off covering the shift. Without it, /assign 409s with
@@ -2261,14 +2261,14 @@ export const ShiftAssignInputSchema = z.object({
    *  shift (a "clopen"). Without it, /assign 409s with `rest_gap`.
    *  Advisory guard — the override is audit-logged, never silent. */
   overrideRestGap: z.boolean().optional(),
-});
+}))();
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
 /* ----- Publish preflight -------------------------------------------------- */
 
 /** Pre-publish health report for a week window: what a manager is about
  *  to ship, with the problems named BEFORE the notifications go out. */
-export const PublishPreflightResponseSchema = z.object({
+export const PublishPreflightResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Draft shifts in the window (what publish would flip live). */
   drafts: z.number().int().nonnegative(),
   /** Drafts inside a fair-workweek 14-day notice window that still lack a
@@ -2290,19 +2290,19 @@ export const PublishPreflightResponseSchema = z.object({
       startsAt: z.string().datetime(),
     }),
   ),
-});
+}))();
 export type PublishPreflightResponse = z.infer<typeof PublishPreflightResponseSchema>;
 
-export const ShiftCancelInputSchema = z.object({
+export const ShiftCancelInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().min(1).max(500),
-});
+}))();
 export type ShiftCancelInput = z.infer<typeof ShiftCancelInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 51 — shift templates + copy-week
  * -------------------------------------------------------------------------- */
 
-export const ShiftTemplateSchema = z.object({
+export const ShiftTemplateSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
@@ -2316,15 +2316,15 @@ export const ShiftTemplateSchema = z.object({
   payRate: z.number().nullable(),
   notes: z.string().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type ShiftTemplate = z.infer<typeof ShiftTemplateSchema>;
 
-export const ShiftTemplateListResponseSchema = z.object({
+export const ShiftTemplateListResponseSchema = /* @__PURE__ */ (() => z.object({
   templates: z.array(ShiftTemplateSchema),
-});
+}))();
 export type ShiftTemplateListResponse = z.infer<typeof ShiftTemplateListResponseSchema>;
 
-export const ShiftTemplateCreateInputSchema = z.object({
+export const ShiftTemplateCreateInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema.nullable(),
   name: z.string().trim().min(1).max(80),
   position: z.string().trim().min(1).max(120),
@@ -2335,10 +2335,10 @@ export const ShiftTemplateCreateInputSchema = z.object({
   hourlyRate: z.number().nonnegative().nullable().optional(),
   payRate: z.number().nonnegative().nullable().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
-});
+}))();
 export type ShiftTemplateCreateInput = z.infer<typeof ShiftTemplateCreateInputSchema>;
 
-export const ShiftTemplateApplyInputSchema = z.object({
+export const ShiftTemplateApplyInputSchema = /* @__PURE__ */ (() => z.object({
   /** ISO date that anchors the target week — server snaps to local Sunday. */
   weekStart: z.string().datetime(),
   /** Override the template's clientId (required if template is global). */
@@ -2349,10 +2349,10 @@ export const ShiftTemplateApplyInputSchema = z.object({
    *  (duplicate_shift) unless this is set — a deliberate second slot at
    *  the same time is legitimate, an accidental double-apply is not. */
   allowDuplicate: z.boolean().optional(),
-});
+}))();
 export type ShiftTemplateApplyInput = z.infer<typeof ShiftTemplateApplyInputSchema>;
 
-export const CopyWeekInputSchema = z.object({
+export const CopyWeekInputSchema = /* @__PURE__ */ (() => z.object({
   /**
    * ISO instant of the first day of the visible week (local midnight on the
    * client). Used VERBATIM — the copy window is [sourceWeekStart, +7 days),
@@ -2371,10 +2371,10 @@ export const CopyWeekInputSchema = z.object({
    * drafts.
    */
   preserveAssignments: z.boolean().optional(),
-});
+}))();
 export type CopyWeekInput = z.infer<typeof CopyWeekInputSchema>;
 
-export const CopyWeekResponseSchema = z.object({
+export const CopyWeekResponseSchema = /* @__PURE__ */ (() => z.object({
   created: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
   /** How many of the copied shifts carried their associate assignment. */
@@ -2385,7 +2385,7 @@ export const CopyWeekResponseSchema = z.object({
    *  the week). Multiset-matched, so N legitimate identical slots still
    *  copy as N. */
   alreadyThere: z.number().int().nonnegative().optional(),
-});
+}))();
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
 /* Labor cost report =======================================================
@@ -2397,7 +2397,7 @@ export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
  * counted (noRate) instead of silently contributing $0-and-invisible.
  */
 
-export const LaborCostRowSchema = z.object({
+export const LaborCostRowSchema = /* @__PURE__ */ (() => z.object({
   /** Site-local calendar day (YYYY-MM-DD). */
   date: z.string(),
   clientId: UuidSchema.nullable(),
@@ -2462,22 +2462,22 @@ export const LaborCostRowSchema = z.object({
       }),
     )
     .optional(),
-});
+}))();
 export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
 
 /* Staffing targets ======================================================== */
 
-export const StaffingWindowTargetSchema = z.object({
+export const StaffingWindowTargetSchema = /* @__PURE__ */ (() => z.object({
   label: z.string(),
   /** Site-local wall-clock minutes; end <= start wraps past midnight. */
   startMinute: z.number().int().min(0).max(1439),
   endMinute: z.number().int().min(0).max(1439),
   targetCount: z.number().int().nonnegative(),
   effectiveFrom: z.string(),
-});
+}))();
 export type StaffingWindowTarget = z.infer<typeof StaffingWindowTargetSchema>;
 
-export const StaffingTargetLocationSchema = z.object({
+export const StaffingTargetLocationSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   locationName: z.string(),
   clientId: UuidSchema,
@@ -2488,15 +2488,15 @@ export const StaffingTargetLocationSchema = z.object({
   effectiveFrom: z.string().nullable(),
   /** Current per-shift window targets (latest per label). */
   windows: z.array(StaffingWindowTargetSchema),
-});
+}))();
 export type StaffingTargetLocation = z.infer<typeof StaffingTargetLocationSchema>;
 
-export const StaffingTargetsResponseSchema = z.object({
+export const StaffingTargetsResponseSchema = /* @__PURE__ */ (() => z.object({
   locations: z.array(StaffingTargetLocationSchema),
-});
+}))();
 export type StaffingTargetsResponse = z.infer<typeof StaffingTargetsResponseSchema>;
 
-export const StaffingTargetInputSchema = z
+export const StaffingTargetInputSchema = /* @__PURE__ */ (() => z
   .object({
     locationId: UuidSchema,
     targetCount: z.number().int().min(0).max(999),
@@ -2514,12 +2514,12 @@ export const StaffingTargetInputSchema = z
       (v.label === undefined && v.startMinute === undefined && v.endMinute === undefined) ||
       (v.label !== undefined && v.startMinute !== undefined && v.endMinute !== undefined),
     { message: 'label, startMinute, and endMinute must be provided together.' },
-  );
+  ))();
 export type StaffingTargetInput = z.infer<typeof StaffingTargetInputSchema>;
 
 /* Live floor board: clocked-in right now vs the expected headcount. */
 
-export const FloorNowRowSchema = z.object({
+export const FloorNowRowSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   locationName: z.string(),
   clientId: UuidSchema,
@@ -2551,10 +2551,10 @@ export const FloorNowRowSchema = z.object({
   /** Not over yet, but worked + remaining scheduled this week crosses 40h —
    *  the window where trimming a shift still avoids the 1.5× bill. */
   projectedOtHeads: z.number().int().nonnegative().optional(),
-});
+}))();
 export type FloorNowRow = z.infer<typeof FloorNowRowSchema>;
 
-export const FloorNowResponseSchema = z.object({
+export const FloorNowResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(FloorNowRowSchema),
   generatedAt: z.string().datetime(),
   /** The loaded-cost knobs in force, for honest labeling. */
@@ -2564,10 +2564,10 @@ export const FloorNowResponseSchema = z.object({
       overheadPerHour: z.number().nonnegative(),
     })
     .optional(),
-});
+}))();
 export type FloorNowResponse = z.infer<typeof FloorNowResponseSchema>;
 
-export const LaborCostReportResponseSchema = z.object({
+export const LaborCostReportResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(LaborCostRowSchema),
   /** True when the shift or punch caps were hit — totals are a floor. */
   truncated: z.boolean(),
@@ -2582,7 +2582,7 @@ export const LaborCostReportResponseSchema = z.object({
       leadBillRate: z.number().nullable(),
     })
     .optional(),
-});
+}))();
 export type LaborCostReportResponse = z.infer<typeof LaborCostReportResponseSchema>;
 
 /* Draft dedupe ============================================================
@@ -2592,22 +2592,22 @@ export type LaborCostReportResponse = z.infer<typeof LaborCostReportResponseSche
  * of each group; DRAFTs only — published shifts are never touched.
  */
 
-export const DedupeDraftsInputSchema = z.object({
+export const DedupeDraftsInputSchema = /* @__PURE__ */ (() => z.object({
   from: z.string().datetime(),
   /** Exclusive upper bound, like every other range endpoint. */
   to: z.string().datetime(),
   clientId: UuidSchema.optional(),
-});
+}))();
 export type DedupeDraftsInput = z.infer<typeof DedupeDraftsInputSchema>;
 
-export const DedupeDraftsResponseSchema = z.object({
+export const DedupeDraftsResponseSchema = /* @__PURE__ */ (() => z.object({
   /** DRAFT shifts examined in the window. */
   scanned: z.number().int().nonnegative(),
   /** Twin groups that had extras. */
   groups: z.number().int().nonnegative(),
   /** Extra copies deleted (the oldest of each group is kept). */
   removed: z.number().int().nonnegative(),
-});
+}))();
 export type DedupeDraftsResponse = z.infer<typeof DedupeDraftsResponseSchema>;
 
 /* Shift teams ==============================================================
@@ -2617,7 +2617,7 @@ export type DedupeDraftsResponse = z.infer<typeof DedupeDraftsResponseSchema>;
  * minutes prefill the create-shift dialog.
  */
 
-export const ShiftTeamSchema = z.object({
+export const ShiftTeamSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   locationId: UuidSchema,
@@ -2628,31 +2628,31 @@ export const ShiftTeamSchema = z.object({
   endMinute: z.number().int().min(0).max(1439).nullable(),
   memberCount: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type ShiftTeam = z.infer<typeof ShiftTeamSchema>;
 
-export const ShiftTeamListResponseSchema = z.object({
+export const ShiftTeamListResponseSchema = /* @__PURE__ */ (() => z.object({
   teams: z.array(ShiftTeamSchema),
-});
+}))();
 export type ShiftTeamListResponse = z.infer<typeof ShiftTeamListResponseSchema>;
 
-export const ShiftTeamCreateInputSchema = z.object({
+export const ShiftTeamCreateInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   locationId: UuidSchema,
   name: z.string().min(1).max(80),
   startMinute: z.number().int().min(0).max(1439).nullable().optional(),
   endMinute: z.number().int().min(0).max(1439).nullable().optional(),
-});
+}))();
 export type ShiftTeamCreateInput = z.infer<typeof ShiftTeamCreateInputSchema>;
 
-export const ShiftTeamUpdateInputSchema = z.object({
+export const ShiftTeamUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().min(1).max(80).optional(),
   startMinute: z.number().int().min(0).max(1439).nullable().optional(),
   endMinute: z.number().int().min(0).max(1439).nullable().optional(),
-});
+}))();
 export type ShiftTeamUpdateInput = z.infer<typeof ShiftTeamUpdateInputSchema>;
 
-export const ShiftTeamDetailResponseSchema = z.object({
+export const ShiftTeamDetailResponseSchema = /* @__PURE__ */ (() => z.object({
   team: ShiftTeamSchema,
   members: z.array(
     z.object({
@@ -2668,18 +2668,18 @@ export const ShiftTeamDetailResponseSchema = z.object({
       portalActive: z.boolean().optional(),
     }),
   ),
-});
+}))();
 export type ShiftTeamDetailResponse = z.infer<typeof ShiftTeamDetailResponseSchema>;
 
 /** Response of the "assign to this site" quick action on a team member. */
-export const ShiftTeamAssignHereResponseSchema = z.object({
+export const ShiftTeamAssignHereResponseSchema = /* @__PURE__ */ (() => z.object({
   assignmentId: UuidSchema,
-});
+}))();
 export type ShiftTeamAssignHereResponse = z.infer<typeof ShiftTeamAssignHereResponseSchema>;
 
-export const ShiftTeamMemberInputSchema = z.object({
+export const ShiftTeamMemberInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
-});
+}))();
 export type ShiftTeamMemberInput = z.infer<typeof ShiftTeamMemberInputSchema>;
 
 /* Phase 53 — pivot week view + publish-week ===============================
@@ -2688,22 +2688,22 @@ export type ShiftTeamMemberInput = z.infer<typeof ShiftTeamMemberInputSchema>;
  * OPEN/ASSIGNED in one click.
  */
 
-export const AssociateLiteSchema = z.object({
+export const AssociateLiteSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
   email: z.string(),
-});
+}))();
 export type AssociateLite = z.infer<typeof AssociateLiteSchema>;
 
-export const AssociateListResponseSchema = z.object({
+export const AssociateListResponseSchema = /* @__PURE__ */ (() => z.object({
   associates: z.array(AssociateLiteSchema),
   // True when the roster hit the server's page cap and rows were dropped.
   // The scheduling grid uses this list as its ROW AXIS, so a silent cut
   // means a manager scanning for unstaffed people reads an incomplete grid
   // as complete. Optional so older clients keep parsing.
   truncated: z.boolean().optional(),
-});
+}))();
 export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
 
 /**
@@ -2712,7 +2712,7 @@ export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
  * time off or one-off "can't work" exceptions. Lets the grid shade cells
  * BEFORE the manager drops a shift on someone who can't take it.
  */
-export const AvailabilityOverviewResponseSchema = z.object({
+export const AvailabilityOverviewResponseSchema = /* @__PURE__ */ (() => z.object({
   associates: z.array(
     z.object({
       associateId: UuidSchema,
@@ -2727,12 +2727,12 @@ export const AvailabilityOverviewResponseSchema = z.object({
       blockedDays: z.array(z.string()),
     }),
   ),
-});
+}))();
 export type AvailabilityOverviewResponse = z.infer<
   typeof AvailabilityOverviewResponseSchema
 >;
 
-export const PublishWeekInputSchema = z.object({
+export const PublishWeekInputSchema = /* @__PURE__ */ (() => z.object({
   /**
    * Exact start instant of the window (inclusive). The CLIENT computes the
    * displayed week's boundary — the server must not re-snap it: snapping to
@@ -2752,37 +2752,37 @@ export const PublishWeekInputSchema = z.object({
    * Absent = those drafts are skipped, exactly as before.
    */
   lateNoticeReason: z.string().trim().min(1).max(500).optional(),
-});
+}))();
 export type PublishWeekInput = z.infer<typeof PublishWeekInputSchema>;
 
-export const PublishWeekSkipReasonSchema = z.enum([
+export const PublishWeekSkipReasonSchema = /* @__PURE__ */ (() => z.enum([
   'predictive_schedule_violation',
   // Publishing this draft would give its associate two overlapping
   // ASSIGNED shifts — fix the times or reassign, then re-publish.
   'double_booking',
-]);
+]))();
 export type PublishWeekSkipReason = z.infer<typeof PublishWeekSkipReasonSchema>;
 
-export const PublishWeekSkipSchema = z.object({
+export const PublishWeekSkipSchema = /* @__PURE__ */ (() => z.object({
   shiftId: UuidSchema,
   reason: PublishWeekSkipReasonSchema,
   detail: z.string().nullable(),
-});
+}))();
 export type PublishWeekSkip = z.infer<typeof PublishWeekSkipSchema>;
 
-export const PublishWeekResponseSchema = z.object({
+export const PublishWeekResponseSchema = /* @__PURE__ */ (() => z.object({
   published: z.number().int().nonnegative(),
   skipped: z.array(PublishWeekSkipSchema),
   /** True when more than the per-request cap of drafts matched — the rest
    *  are still DRAFT; run publish again. Silent before, which quietly left
    *  drafts unpublished on very large weeks. */
   truncated: z.boolean().optional(),
-});
+}))();
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
 /* Auto-schedule the week ================================================== */
 
-export const AutoScheduleWeekInputSchema = z.object({
+export const AutoScheduleWeekInputSchema = /* @__PURE__ */ (() => z.object({
   /** Exact window start (inclusive) — same no-server-resnap contract as
    *  PublishWeekInput; snapping on a UTC server acted on the wrong week. */
   weekStart: z.string().datetime(),
@@ -2790,25 +2790,25 @@ export const AutoScheduleWeekInputSchema = z.object({
   weekEnd: z.string().datetime().optional(),
   /** When set, only fills OPEN shifts for this client. */
   clientId: UuidSchema.optional(),
-});
+}))();
 export type AutoScheduleWeekInput = z.infer<typeof AutoScheduleWeekInputSchema>;
 
-export const AutoScheduleSkipReasonSchema = z.enum([
+export const AutoScheduleSkipReasonSchema = /* @__PURE__ */ (() => z.enum([
   /** Every associate either had a hard conflict, was on PTO, or was unscored. */
   'no_eligible_candidate',
   /** Top candidate would already exceed 40h with no slack — manager review needed. */
   'all_candidates_overtime',
-]);
+]))();
 export type AutoScheduleSkipReason = z.infer<typeof AutoScheduleSkipReasonSchema>;
 
-export const AutoScheduleSkipSchema = z.object({
+export const AutoScheduleSkipSchema = /* @__PURE__ */ (() => z.object({
   shiftId: UuidSchema,
   reason: AutoScheduleSkipReasonSchema,
   detail: z.string().nullable(),
-});
+}))();
 export type AutoScheduleSkip = z.infer<typeof AutoScheduleSkipSchema>;
 
-export const AutoScheduleWeekResponseSchema = z.object({
+export const AutoScheduleWeekResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Number of OPEN shifts that were auto-assigned. */
   assigned: z.number().int().nonnegative(),
   /** Shifts that couldn't be auto-filled, with the reason. */
@@ -2821,59 +2821,59 @@ export const AutoScheduleWeekResponseSchema = z.object({
       shiftsAssigned: z.number().int().positive(),
     }),
   ),
-});
+}))();
 export type AutoScheduleWeekResponse = z.infer<typeof AutoScheduleWeekResponseSchema>;
 
 /* iCal feed URL for the signed-in associate */
 
-export const CalendarFeedUrlResponseSchema = z.object({
+export const CalendarFeedUrlResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Absolute URL the user can paste into Google/Apple/Outlook to subscribe. */
   url: z.string().url(),
   /** webcal:// variant — Apple Calendar handles this directly via system handler. */
   webcalUrl: z.string(),
-});
+}))();
 export type CalendarFeedUrlResponse = z.infer<typeof CalendarFeedUrlResponseSchema>;
 
 /* Phase 54.4 — schedule PDF export ======================================== */
 
-export const ScheduleExportInputSchema = z.object({
+export const ScheduleExportInputSchema = /* @__PURE__ */ (() => z.object({
   /** ISO timestamp; the server treats this as the inclusive start of the range. */
   from: z.string().datetime(),
   /** ISO timestamp; the server treats this as the EXCLUSIVE end of the range. */
   to: z.string().datetime(),
   clientId: UuidSchema.optional(),
-});
+}))();
 export type ScheduleExportInput = z.infer<typeof ScheduleExportInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Payroll — Phase 8 (MVP, demo-only withholding; disbursement stubbed)
  * -------------------------------------------------------------------------- */
 
-export const PayrollRunStatusSchema = z.enum([
+export const PayrollRunStatusSchema = /* @__PURE__ */ (() => z.enum([
   'DRAFT',
   'FINALIZED',
   'DISBURSED',
   'CANCELLED',
-]);
+]))();
 export type PayrollRunStatus = z.infer<typeof PayrollRunStatusSchema>;
 
-export const PayrollItemStatusSchema = z.enum([
+export const PayrollItemStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING',
   'DISBURSED',
   'FAILED',
   'HELD',
   // Gap 3 — set when the parent run is voided.
   'VOIDED',
-]);
+]))();
 export type PayrollItemStatus = z.infer<typeof PayrollItemStatusSchema>;
 
 // Gap 3 — distinguishes regular periodic runs from off-cycle bonus/terminal-pay
 // runs and from amendment runs that correct a prior disbursed run.
-export const PayrollRunKindSchema = z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT']);
+export const PayrollRunKindSchema = /* @__PURE__ */ (() => z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT']))();
 export type PayrollRunKind = z.infer<typeof PayrollRunKindSchema>;
 
 // Wave 1.2 — earning kinds. Mirrors PayrollEarningKind in schema.prisma.
-export const PayrollEarningKindSchema = z.enum([
+export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'REGULAR',
   'OVERTIME',
   'DOUBLE_TIME',
@@ -2884,10 +2884,10 @@ export const PayrollEarningKindSchema = z.enum([
   'COMMISSION',
   'TIPS',
   'REIMBURSEMENT',
-]);
+]))();
 export type PayrollEarningKind = z.infer<typeof PayrollEarningKindSchema>;
 
-export const PayrollItemEarningSchema = z.object({
+export const PayrollItemEarningSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: PayrollEarningKindSchema,
   hours: z.number().nullable(),
@@ -2895,10 +2895,10 @@ export const PayrollItemEarningSchema = z.object({
   amount: z.number(),
   isTaxable: z.boolean(),
   notes: z.string().nullable(),
-});
+}))();
 export type PayrollItemEarning = z.infer<typeof PayrollItemEarningSchema>;
 
-export const PayrollItemSchema = z.object({
+export const PayrollItemSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   payrollRunId: UuidSchema,
   associateId: UuidSchema,
@@ -2949,10 +2949,10 @@ export const PayrollItemSchema = z.object({
       minimumWageState: z.string().optional(),
     })
     .optional(),
-});
+}))();
 export type PayrollItem = z.infer<typeof PayrollItemSchema>;
 
-export const PayrollRunSummarySchema = z.object({
+export const PayrollRunSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
@@ -2990,17 +2990,17 @@ export const PayrollRunSummarySchema = z.object({
   // stay valid). Set when a second person approves a FINALIZED run.
   approvedAt: z.string().datetime().nullable().optional(),
   approverEmail: z.string().nullable().optional(),
-});
+}))();
 export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
 
-export const PayrollRunListResponseSchema = z.object({
+export const PayrollRunListResponseSchema = /* @__PURE__ */ (() => z.object({
   runs: z.array(PayrollRunSummarySchema),
-});
+}))();
 export type PayrollRunListResponse = z.infer<typeof PayrollRunListResponseSchema>;
 
-export const PayrollRunDetailSchema = PayrollRunSummarySchema.extend({
+export const PayrollRunDetailSchema = /* @__PURE__ */ (() => PayrollRunSummarySchema.extend({
   items: z.array(PayrollItemSchema),
-});
+}))();
 export type PayrollRunDetail = z.infer<typeof PayrollRunDetailSchema>;
 
 // Gap 3 — POST /payroll/runs/:id/amend body. HR sends ABSOLUTE corrected
@@ -3008,7 +3008,7 @@ export type PayrollRunDetail = z.infer<typeof PayrollRunDetailSchema>;
 // stores signed deltas on the new AMENDMENT run's items. `reason` is
 // rendered verbatim on the amendment paystub PDF and stored on
 // PayrollRun.amendmentReason — required, non-empty (whitespace stripped).
-export const PayrollRunAmendInputSchema = z.object({
+export const PayrollRunAmendInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().trim().min(1, 'reason is required'),
   corrections: z
     .array(
@@ -3037,10 +3037,10 @@ export const PayrollRunAmendInputSchema = z.object({
       })
     )
     .min(1, 'at least one correction is required'),
-});
+}))();
 export type PayrollRunAmendInput = z.infer<typeof PayrollRunAmendInputSchema>;
 
-export const PayrollRunCreateInputSchema = z
+export const PayrollRunCreateInputSchema = /* @__PURE__ */ (() => z
   .object({
     clientId: UuidSchema.nullable().optional(),
     /** YYYY-MM-DD inclusive. */
@@ -3057,13 +3057,13 @@ export const PayrollRunCreateInputSchema = z
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
     path: ['periodEnd'],
-  });
+  }))();
 export type PayrollRunCreateInput = z.infer<typeof PayrollRunCreateInputSchema>;
 
 // Wave 6.2 — Run preview. Same input shape as create (notes is irrelevant
 // but accepted so the wizard can pass the same payload). Output is a
 // projected per-associate breakdown with no DB rows touched.
-export const PayrollRunPreviewItemSchema = z.object({
+export const PayrollRunPreviewItemSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   hoursWorked: z.number().nonnegative(),
@@ -3103,10 +3103,10 @@ export const PayrollRunPreviewItemSchema = z.object({
       unauthorized: z.number().nonnegative(),
     })
     .optional(),
-});
+}))();
 export type PayrollRunPreviewItem = z.infer<typeof PayrollRunPreviewItemSchema>;
 
-export const PayrollRunPreviewResponseSchema = z.object({
+export const PayrollRunPreviewResponseSchema = /* @__PURE__ */ (() => z.object({
   items: z.array(PayrollRunPreviewItemSchema),
   totals: z.object({
     totalGross: z.number().nonnegative(),
@@ -3116,12 +3116,12 @@ export const PayrollRunPreviewResponseSchema = z.object({
     totalGarnishments: z.number().nonnegative(),
     itemCount: z.number().int().nonnegative(),
   }),
-});
+}))();
 export type PayrollRunPreviewResponse = z.infer<typeof PayrollRunPreviewResponseSchema>;
 
-export const PayrollItemListResponseSchema = z.object({
+export const PayrollItemListResponseSchema = /* @__PURE__ */ (() => z.object({
   items: z.array(PayrollItemSchema),
-});
+}))();
 export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSchema>;
 
 /**
@@ -3132,7 +3132,7 @@ export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSche
  * most recent 50 stubs, so summing what's loaded silently understates YTD
  * once an associate has more (a weekly payer passes 50 inside one year).
  */
-export const PayrollItemYtdResponseSchema = z.object({
+export const PayrollItemYtdResponseSchema = /* @__PURE__ */ (() => z.object({
   year: z.number().int(),
   /** Paystubs summed into these totals — lets the UI show what it's based on. */
   paystubCount: z.number().int().nonnegative(),
@@ -3152,22 +3152,22 @@ export const PayrollItemYtdResponseSchema = z.object({
   byKind: z.record(PayrollEarningKindSchema, z.number()),
   /** Van ride charges inside postTaxDeductions, YTD. */
   transport: z.number().optional(),
-});
+}))();
 export type PayrollItemYtdResponse = z.infer<typeof PayrollItemYtdResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Wave 1.1 — Pay schedules (QuickBooks Online Payroll parity)
  * -------------------------------------------------------------------------- */
 
-export const PayrollFrequencySchema = z.enum([
+export const PayrollFrequencySchema = /* @__PURE__ */ (() => z.enum([
   'WEEKLY',
   'BIWEEKLY',
   'SEMIMONTHLY',
   'MONTHLY',
-]);
+]))();
 export type PayrollFrequency = z.infer<typeof PayrollFrequencySchema>;
 
-export const PayrollScheduleSchema = z.object({
+export const PayrollScheduleSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
@@ -3185,16 +3185,16 @@ export const PayrollScheduleSchema = z.object({
   nextPayDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
-});
+}))();
 export type PayrollSchedule = z.infer<typeof PayrollScheduleSchema>;
 
-export const PayrollScheduleListResponseSchema = z.object({
+export const PayrollScheduleListResponseSchema = /* @__PURE__ */ (() => z.object({
   schedules: z.array(PayrollScheduleSchema),
-});
+}))();
 export type PayrollScheduleListResponse = z.infer<typeof PayrollScheduleListResponseSchema>;
 
 /** One selectable pay-period window in the admin time review picker. */
-export const PayPeriodSchema = z.object({
+export const PayPeriodSchema = /* @__PURE__ */ (() => z.object({
   /** YYYY-MM-DD, inclusive. */
   start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   /** YYYY-MM-DD, inclusive. */
@@ -3203,37 +3203,37 @@ export const PayPeriodSchema = z.object({
   current: z.boolean(),
   /** True when a payroll run exists for exactly this window. */
   hasRun: z.boolean(),
-});
+}))();
 export type PayPeriod = z.infer<typeof PayPeriodSchema>;
 
-export const PayPeriodListResponseSchema = z.object({
+export const PayPeriodListResponseSchema = /* @__PURE__ */ (() => z.object({
   periods: z.array(PayPeriodSchema),
-});
+}))();
 export type PayPeriodListResponse = z.infer<typeof PayPeriodListResponseSchema>;
 
-export const PayrollScheduleCreateInputSchema = z.object({
+export const PayrollScheduleCreateInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema.nullable().optional(),
   name: z.string().min(1).max(120),
   frequency: PayrollFrequencySchema,
   anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   payDateOffsetDays: z.number().int().min(0).max(31).optional(),
   notes: z.string().max(1000).optional(),
-});
+}))();
 export type PayrollScheduleCreateInput = z.infer<typeof PayrollScheduleCreateInputSchema>;
 
-export const PayrollScheduleUpdateInputSchema = z.object({
+export const PayrollScheduleUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().min(1).max(120).optional(),
   frequency: PayrollFrequencySchema.optional(),
   anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   payDateOffsetDays: z.number().int().min(0).max(31).optional(),
   isActive: z.boolean().optional(),
   notes: z.string().max(1000).nullable().optional(),
-});
+}))();
 export type PayrollScheduleUpdateInput = z.infer<typeof PayrollScheduleUpdateInputSchema>;
 
-export const PayrollScheduleAssignInputSchema = z.object({
+export const PayrollScheduleAssignInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
-});
+}))();
 export type PayrollScheduleAssignInput = z.infer<typeof PayrollScheduleAssignInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -3250,7 +3250,7 @@ export type PayrollScheduleAssignInput = z.infer<typeof PayrollScheduleAssignInp
  * a payroll admin should look at but doesn't break the run. `INFO` is
  * heads-up signal (OT spike, unsupported state).
  */
-export const PayrollExceptionKindSchema = z.enum([
+export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'MISSING_W4',          // BLOCKING — W2 employee with no W-4 submission
   'MISSING_BANK_ACCOUNT',// WARNING  — no primary payout method on file
   'TERMINATED_IN_RUN',   // WARNING  — terminated <= periodEnd but has hours
@@ -3258,13 +3258,13 @@ export const PayrollExceptionKindSchema = z.enum([
   'UNSUPPORTED_STATE',   // INFO     — state has no real SIT table; using fallback
   'UNAPPROVED_TIME',     // WARNING  — unapproved hours will NOT be paid this run
   'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
-]);
+]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
-export const PayrollExceptionSeveritySchema = z.enum(['BLOCKING', 'WARNING', 'INFO']);
+export const PayrollExceptionSeveritySchema = /* @__PURE__ */ (() => z.enum(['BLOCKING', 'WARNING', 'INFO']))();
 export type PayrollExceptionSeverity = z.infer<typeof PayrollExceptionSeveritySchema>;
 
-export const PayrollExceptionSchema = z.object({
+export const PayrollExceptionSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   kind: PayrollExceptionKindSchema,
@@ -3273,10 +3273,10 @@ export const PayrollExceptionSchema = z.object({
   message: z.string(),
   /** Optional structured detail (e.g. terminationDate, otHours). */
   detail: z.record(z.unknown()).optional(),
-});
+}))();
 export type PayrollException = z.infer<typeof PayrollExceptionSchema>;
 
-export const PayrollExceptionsResponseSchema = z.object({
+export const PayrollExceptionsResponseSchema = /* @__PURE__ */ (() => z.object({
   exceptions: z.array(PayrollExceptionSchema),
   /** Counts per severity — handy for the landing page chip. */
   counts: z.object({
@@ -3284,14 +3284,14 @@ export const PayrollExceptionsResponseSchema = z.object({
     warning: z.number().int().nonnegative(),
     info: z.number().int().nonnegative(),
   }),
-});
+}))();
 export type PayrollExceptionsResponse = z.infer<typeof PayrollExceptionsResponseSchema>;
 
-export const PayrollExceptionsInputSchema = z.object({
+export const PayrollExceptionsInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema.nullable().optional(),
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+}))();
 export type PayrollExceptionsInput = z.infer<typeof PayrollExceptionsInputSchema>;
 
 /**
@@ -3299,7 +3299,7 @@ export type PayrollExceptionsInput = z.infer<typeof PayrollExceptionsInputSchema
  * soonest schedule's projected run plus a snapshot of the most recent run
  * the user can see. `nextRun` is null when no schedule is configured.
  */
-export const PayrollUpcomingSummarySchema = z.object({
+export const PayrollUpcomingSummarySchema = /* @__PURE__ */ (() => z.object({
   nextRun: z
     .object({
       scheduleId: UuidSchema,
@@ -3336,18 +3336,18 @@ export const PayrollUpcomingSummarySchema = z.object({
       disbursedAt: z.string().datetime().nullable(),
     })
     .nullable(),
-});
+}))();
 export type PayrollUpcomingSummary = z.infer<typeof PayrollUpcomingSummarySchema>;
 
 // Read-only view of one row from the payroll_config DB table. Powers the
 // /payroll/config admin page so HR can sanity-check what tax tables the
 // withholding engine is about to use without reading the migration SQL.
-export const PayrollConfigBracketSchema = z.object({
+export const PayrollConfigBracketSchema = /* @__PURE__ */ (() => z.object({
   over: z.number(),
   flat: z.number(),
   rate: z.number(),
-});
-export const PayrollConfigSchema = z.object({
+}))();
+export const PayrollConfigSchema = /* @__PURE__ */ (() => z.object({
   year: z.number().int(),
   ssWageBase: z.number(),
   medicareSurchargeThreshold: z.number(),
@@ -3359,7 +3359,7 @@ export const PayrollConfigSchema = z.object({
    *  letting the admin walk the full ceremony into a 409. */
   requireSecondApproval: z.boolean().optional(),
   updatedAt: z.string().datetime(),
-});
+}))();
 export type PayrollConfigBracket = z.infer<typeof PayrollConfigBracketSchema>;
 export type PayrollConfig = z.infer<typeof PayrollConfigSchema>;
 
@@ -3367,7 +3367,7 @@ export type PayrollConfig = z.infer<typeof PayrollConfigSchema>;
  *  Documents — Phase 9 (local-fs storage; S3 swap is future work)
  * -------------------------------------------------------------------------- */
 
-export const DocumentKindSchema = z.enum([
+export const DocumentKindSchema = /* @__PURE__ */ (() => z.enum([
   'ID',
   'SSN_CARD',
   'I9_SUPPORTING',
@@ -3389,7 +3389,7 @@ export const DocumentKindSchema = z.enum([
   // processor report) attached to an ExternalPayment pay period.
   'PAYSTUB',
   'OTHER',
-]);
+]))();
 export type DocumentKind = z.infer<typeof DocumentKindSchema>;
 
 /** The kinds that make up an identity check — I-9 Section 2 and E-Verify.
@@ -3416,17 +3416,17 @@ export const RECLASSIFY_LOCKED_KINDS = [
 ] as const satisfies readonly DocumentKind[];
 
 /** Fix a misfiled upload: move a document to a different kind bucket. */
-export const DocumentReclassifyInputSchema = z.object({
+export const DocumentReclassifyInputSchema = /* @__PURE__ */ (() => z.object({
   kind: DocumentKindSchema,
-});
+}))();
 export type DocumentReclassifyInput = z.infer<typeof DocumentReclassifyInputSchema>;
 
-export const DocumentStatusSchema = z.enum([
+export const DocumentStatusSchema = /* @__PURE__ */ (() => z.enum([
   'UPLOADED',
   'VERIFIED',
   'REJECTED',
   'EXPIRED',
-]);
+]))();
 export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
 /* ----- External payments -------------------------------------------------- *
@@ -3435,16 +3435,16 @@ export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
  * dates are calendar dates (YYYY-MM-DD) — see the dateOnly helpers.
  * -------------------------------------------------------------------------- */
 
-export const ExternalPaymentMethodSchema = z.enum([
+export const ExternalPaymentMethodSchema = /* @__PURE__ */ (() => z.enum([
   'DIRECT_DEPOSIT',
   'CHECK',
   'CASH',
   'PAYROLL_PROVIDER',
   'OTHER',
-]);
+]))();
 export type ExternalPaymentMethod = z.infer<typeof ExternalPaymentMethodSchema>;
 
-export const ExternalPaymentInputSchema = z
+export const ExternalPaymentInputSchema = /* @__PURE__ */ (() => z
   .object({
     periodStart: z.string().date(),
     periodEnd: z.string().date(),
@@ -3458,10 +3458,10 @@ export const ExternalPaymentInputSchema = z
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
     path: ['periodEnd'],
-  });
+  }))();
 export type ExternalPaymentInput = z.infer<typeof ExternalPaymentInputSchema>;
 
-export const ExternalPaymentEvidenceSchema = z.object({
+export const ExternalPaymentEvidenceSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   filename: z.string(),
   mimeType: z.string(),
@@ -3469,10 +3469,10 @@ export const ExternalPaymentEvidenceSchema = z.object({
   createdAt: z.string(),
   /** False when the underlying blob is gone (ephemeral storage wiped). */
   fileAvailable: z.boolean(),
-});
+}))();
 export type ExternalPaymentEvidence = z.infer<typeof ExternalPaymentEvidenceSchema>;
 
-export const ExternalPaymentSchema = z.object({
+export const ExternalPaymentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   periodStart: z.string(), // YYYY-MM-DD
@@ -3486,13 +3486,13 @@ export const ExternalPaymentSchema = z.object({
   createdByEmail: z.string().nullable(),
   createdAt: z.string(),
   evidence: z.array(ExternalPaymentEvidenceSchema),
-});
+}))();
 export type ExternalPayment = z.infer<typeof ExternalPaymentSchema>;
 
-export const ExternalPaymentListResponseSchema = z.object({
+export const ExternalPaymentListResponseSchema = /* @__PURE__ */ (() => z.object({
   payments: z.array(ExternalPaymentSchema),
   total: z.number(),
-});
+}))();
 export type ExternalPaymentListResponse = z.infer<
   typeof ExternalPaymentListResponseSchema
 >;
@@ -3509,10 +3509,10 @@ export type ExternalPaymentListResponse = z.infer<
  * pass-through for them.
  * -------------------------------------------------------------------------- */
 
-export const I9DocListSchema = z.enum(['A', 'B', 'C']);
+export const I9DocListSchema = /* @__PURE__ */ (() => z.enum(['A', 'B', 'C']))();
 export type I9DocList = z.infer<typeof I9DocListSchema>;
 
-export const DocSideSchema = z.enum(['FRONT', 'BACK']);
+export const DocSideSchema = /* @__PURE__ */ (() => z.enum(['FRONT', 'BACK']))();
 export type DocSide = z.infer<typeof DocSideSchema>;
 
 export interface I9CatalogEntry {
@@ -3556,7 +3556,7 @@ export function i9SetSatisfied(lists: Array<I9DocList | null | undefined>): bool
   return has('A') || (has('B') && has('C'));
 }
 
-export const DocumentRecordSchema = z.object({
+export const DocumentRecordSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
@@ -3581,10 +3581,10 @@ export const DocumentRecordSchema = z.object({
    * filesystem reset on redeploy). UI should disable preview/download
    * and prompt re-upload when false. */
   fileAvailable: z.boolean(),
-});
+}))();
 export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 
-export const DocumentListResponseSchema = z.object({
+export const DocumentListResponseSchema = /* @__PURE__ */ (() => z.object({
   documents: z.array(DocumentRecordSchema),
   /** Total matching rows. The list is one page, so the UI can say
    *  "showing 1–50 of N" rather than presenting a partial vault as audit
@@ -3594,12 +3594,12 @@ export const DocumentListResponseSchema = z.object({
   page: z.number().int().nonnegative().optional(),
   /** Rows per page the server actually applied (it clamps). */
   pageSize: z.number().int().positive().optional(),
-});
+}))();
 export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
 
-export const DocumentRejectInputSchema = z.object({
+export const DocumentRejectInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().min(1).max(500),
-});
+}))();
 export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;
 
 /**
@@ -3611,7 +3611,7 @@ export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;
  * Statuses are plain strings (not the domain enums) — the vault renders
  * them; it is not the write path for any of these ledgers.
  */
-export const DocumentVaultSummarySchema = z.object({
+export const DocumentVaultSummarySchema = /* @__PURE__ */ (() => z.object({
   i9: z
     .object({
       section1CompletedAt: z.string().datetime().nullable(),
@@ -3649,24 +3649,24 @@ export const DocumentVaultSummarySchema = z.object({
       sponsorAgency: z.string(),
     })
     .nullable(),
-});
+}))();
 export type DocumentVaultSummary = z.infer<typeof DocumentVaultSummarySchema>;
 
-export const DocumentVaultResponseSchema = z.object({
+export const DocumentVaultResponseSchema = /* @__PURE__ */ (() => z.object({
   documents: z.array(DocumentRecordSchema),
   total: z.number().int().nonnegative(),
   summary: DocumentVaultSummarySchema,
-});
+}))();
 export type DocumentVaultResponse = z.infer<typeof DocumentVaultResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Compliance — Phase 10 (I-9, Background, J-1)
  * -------------------------------------------------------------------------- */
 
-export const I9DocumentListSchema = z.enum(['LIST_A', 'LIST_B_AND_C']);
+export const I9DocumentListSchema = /* @__PURE__ */ (() => z.enum(['LIST_A', 'LIST_B_AND_C']))();
 export type I9DocumentList = z.infer<typeof I9DocumentListSchema>;
 
-export const I9VerificationSchema = z.object({
+export const I9VerificationSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -3692,15 +3692,15 @@ export const I9VerificationSchema = z.object({
    *  application) — feeds the client filter. Null mid-onboarding. */
   clientId: UuidSchema.nullable().optional(),
   clientName: z.string().nullable().optional(),
-});
+}))();
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
-export const I9ListResponseSchema = z.object({
+export const I9ListResponseSchema = /* @__PURE__ */ (() => z.object({
   i9s: z.array(I9VerificationSchema),
-});
+}))();
 export type I9ListResponse = z.infer<typeof I9ListResponseSchema>;
 
-export const I9UpsertInputSchema = z
+export const I9UpsertInputSchema = /* @__PURE__ */ (() => z
   .object({
     section1CompletedAt: z.string().datetime().nullable().optional(),
     section2CompletedAt: z.string().datetime().nullable().optional(),
@@ -3720,19 +3720,19 @@ export const I9UpsertInputSchema = z
       // requires the verifier to record which list of docs they inspected.
       !v.section2CompletedAt || (v.documentList !== undefined && v.documentList !== null),
     { message: 'documentList is required when recording section 2', path: ['documentList'] }
-  );
+  ))();
 export type I9UpsertInput = z.infer<typeof I9UpsertInputSchema>;
 
-export const BgCheckStatusSchema = z.enum([
+export const BgCheckStatusSchema = /* @__PURE__ */ (() => z.enum([
   'INITIATED',
   'IN_PROGRESS',
   'PASSED',
   'FAILED',
   'NEEDS_REVIEW',
-]);
+]))();
 export type BgCheckStatus = z.infer<typeof BgCheckStatusSchema>;
 
-export const BackgroundCheckSchema = z.object({
+export const BackgroundCheckSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -3748,27 +3748,27 @@ export const BackgroundCheckSchema = z.object({
   /** BACKGROUND_CHECK_RESULT documents on file for this associate — a
    *  finalized status with zero reports is a decision with no evidence. */
   reportCount: z.number().int().nonnegative().optional(),
-});
+}))();
 export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
 
-export const BackgroundCheckListResponseSchema = z.object({
+export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object({
   checks: z.array(BackgroundCheckSchema),
-});
+}))();
 export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResponseSchema>;
 
-export const BackgroundInitiateInputSchema = z.object({
+export const BackgroundInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   provider: z.string().min(1).max(80).default('alto-stub'),
   /** The provider's own reference (e.g. Checkr candidate/report id) so a
    *  check ordered in an external portal is traceable from here. */
   externalId: z.string().max(120).optional(),
-});
+}))();
 export type BackgroundInitiateInput = z.infer<typeof BackgroundInitiateInputSchema>;
 
-export const BackgroundUpdateInputSchema = z.object({
+export const BackgroundUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   status: BgCheckStatusSchema,
   externalId: z.string().max(120).optional(),
-});
+}))();
 export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
 
 /**
@@ -3777,7 +3777,7 @@ export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
  * optional — Checkr collects DOB/SSN from the candidate directly, so no
  * heavy PII leaves this system).
  */
-export const BackgroundPendingRowSchema = z.object({
+export const BackgroundPendingRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
@@ -3787,39 +3787,39 @@ export const BackgroundPendingRowSchema = z.object({
    *  declared later in this module): APPROVED application ⇒ ACTIVE,
    *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
-});
+}))();
 export type BackgroundPendingRow = z.infer<typeof BackgroundPendingRowSchema>;
 
-export const BackgroundPendingResponseSchema = z.object({
+export const BackgroundPendingResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(BackgroundPendingRowSchema),
   /** True when more than the 500-row cap matched — the CSV is partial. */
   truncated: z.boolean(),
-});
+}))();
 export type BackgroundPendingResponse = z.infer<typeof BackgroundPendingResponseSchema>;
 
 /** Recorded AFTER the CSV upload to the provider succeeds — downloading a
  *  file is not ordering, so the download itself marks nothing. */
-export const BackgroundBulkInitiateInputSchema = z.object({
+export const BackgroundBulkInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
   provider: z.string().min(1).max(80).default('checkr'),
-});
+}))();
 export type BackgroundBulkInitiateInput = z.infer<typeof BackgroundBulkInitiateInputSchema>;
 
-export const BackgroundBulkInitiateResponseSchema = z.object({
+export const BackgroundBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.object({
   created: z.number().int().nonnegative(),
   /** Already had a check by the time this ran (raced with another admin). */
   skipped: z.number().int().nonnegative(),
-});
+}))();
 export type BackgroundBulkInitiateResponse = z.infer<typeof BackgroundBulkInitiateResponseSchema>;
 
 /** An HR-uploaded provider report on file for the check's associate. */
-export const BackgroundReportDocSchema = z.object({
+export const BackgroundReportDocSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: z.string(),
   filename: z.string(),
   mimeType: z.string(),
   fileAvailable: z.boolean(),
-});
+}))();
 export type BackgroundReportDoc = z.infer<typeof BackgroundReportDocSchema>;
 
 /**
@@ -3828,10 +3828,10 @@ export type BackgroundReportDoc = z.infer<typeof BackgroundReportDocSchema>;
  * closure packets. Reports attach to the ASSOCIATE (by document kind), so an
  * associate re-screened twice shares one report pool across both checks.
  */
-export const BackgroundCheckDetailSchema = z.object({
+export const BackgroundCheckDetailSchema = /* @__PURE__ */ (() => z.object({
   check: BackgroundCheckSchema,
   reports: z.array(BackgroundReportDocSchema),
-});
+}))();
 export type BackgroundCheckDetail = z.infer<typeof BackgroundCheckDetailSchema>;
 
 /* ----- Drug tests --------------------------------------------------------- *
@@ -3840,16 +3840,16 @@ export type BackgroundCheckDetail = z.infer<typeof BackgroundCheckDetailSchema>;
  * last DRUG_TEST_RESULT document is stale (or absent), not "never had a row".
  * -------------------------------------------------------------------------- */
 
-export const DrugTestStatusSchema = z.enum([
+export const DrugTestStatusSchema = /* @__PURE__ */ (() => z.enum([
   'INITIATED',
   'IN_PROGRESS',
   'PASSED',
   'FAILED',
   'NEEDS_REVIEW',
-]);
+]))();
 export type DrugTestStatus = z.infer<typeof DrugTestStatusSchema>;
 
-export const DrugTestSchema = z.object({
+export const DrugTestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -3864,28 +3864,28 @@ export const DrugTestSchema = z.object({
   completedAt: z.string().datetime().nullable(),
   /** DRUG_TEST_RESULT documents on file for this associate. */
   reportCount: z.number().int().nonnegative().optional(),
-});
+}))();
 export type DrugTest = z.infer<typeof DrugTestSchema>;
 
-export const DrugTestListResponseSchema = z.object({
+export const DrugTestListResponseSchema = /* @__PURE__ */ (() => z.object({
   tests: z.array(DrugTestSchema),
-});
+}))();
 export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
 
-export const DrugTestInitiateInputSchema = z.object({
+export const DrugTestInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   provider: z.string().min(1).max(80).default('checkr'),
   externalId: z.string().max(120).optional(),
-});
+}))();
 export type DrugTestInitiateInput = z.infer<typeof DrugTestInitiateInputSchema>;
 
-export const DrugTestUpdateInputSchema = z.object({
+export const DrugTestUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   status: DrugTestStatusSchema,
   externalId: z.string().max(120).optional(),
-});
+}))();
 export type DrugTestUpdateInput = z.infer<typeof DrugTestUpdateInputSchema>;
 
-export const DrugTestPendingRowSchema = z.object({
+export const DrugTestPendingRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
@@ -3897,36 +3897,36 @@ export const DrugTestPendingRowSchema = z.object({
   /** When their newest result document was filed — null means never tested;
    *  a date here means the result aged past the 60-day window. */
   lastResultAt: z.string().datetime().nullable(),
-});
+}))();
 export type DrugTestPendingRow = z.infer<typeof DrugTestPendingRowSchema>;
 
-export const DrugTestPendingResponseSchema = z.object({
+export const DrugTestPendingResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(DrugTestPendingRowSchema),
   truncated: z.boolean(),
-});
+}))();
 export type DrugTestPendingResponse = z.infer<typeof DrugTestPendingResponseSchema>;
 
-export const DrugTestBulkInitiateInputSchema = z.object({
+export const DrugTestBulkInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
   provider: z.string().min(1).max(80).default('checkr'),
-});
+}))();
 export type DrugTestBulkInitiateInput = z.infer<typeof DrugTestBulkInitiateInputSchema>;
 
-export const DrugTestBulkInitiateResponseSchema = z.object({
+export const DrugTestBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.object({
   created: z.number().int().nonnegative(),
   /** Gained an open order by the time this ran (raced with another admin). */
   skipped: z.number().int().nonnegative(),
-});
+}))();
 export type DrugTestBulkInitiateResponse = z.infer<typeof DrugTestBulkInitiateResponseSchema>;
 
-export const DrugTestDetailSchema = z.object({
+export const DrugTestDetailSchema = /* @__PURE__ */ (() => z.object({
   test: DrugTestSchema,
   /** Same doc shape as background reports — both render in the doc viewer. */
   reports: z.array(BackgroundReportDocSchema),
-});
+}))();
 export type DrugTestDetail = z.infer<typeof DrugTestDetailSchema>;
 
-export const J1ProfileSchema = z.object({
+export const J1ProfileSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -3940,15 +3940,15 @@ export const J1ProfileSchema = z.object({
   country: z.string(),
   /** Server-computed: days from now until programEndDate (negative = expired). */
   daysUntilEnd: z.number().int(),
-});
+}))();
 export type J1Profile = z.infer<typeof J1ProfileSchema>;
 
-export const J1ListResponseSchema = z.object({
+export const J1ListResponseSchema = /* @__PURE__ */ (() => z.object({
   profiles: z.array(J1ProfileSchema),
-});
+}))();
 export type J1ListResponse = z.infer<typeof J1ListResponseSchema>;
 
-export const J1UpsertInputSchema = z
+export const J1UpsertInputSchema = /* @__PURE__ */ (() => z
   .object({
     programStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     programEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -3961,7 +3961,7 @@ export const J1UpsertInputSchema = z
   .refine((v) => v.programEndDate >= v.programStartDate, {
     message: 'programEndDate must be on or after programStartDate',
     path: ['programEndDate'],
-  });
+  }))();
 export type J1UpsertInput = z.infer<typeof J1UpsertInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -3971,15 +3971,15 @@ export type J1UpsertInput = z.infer<typeof J1UpsertInputSchema>;
 /** One KPI's weekly trend: 8 UTC-week buckets (oldest → current; the last
  *  bucket is the in-progress week) plus the change between the last two
  *  complete weeks. */
-export const KpiTrendSchema = z.object({
+export const KpiTrendSchema = /* @__PURE__ */ (() => z.object({
   /** Weekly values, oldest first; last bucket is the in-progress week. */
   series: z.array(z.number()),
   /** Last complete week minus the week before it (absolute change). */
   delta: z.number(),
-});
+}))();
 export type KpiTrend = z.infer<typeof KpiTrendSchema>;
 
-export const DashboardKPIsSchema = z.object({
+export const DashboardKPIsSchema = /* @__PURE__ */ (() => z.object({
   activeAssociates: z.number().int().nonnegative(),
   openShiftsNext30d: z.number().int().nonnegative(),
   associatesClockedIn: z.number().int().nonnegative(),
@@ -4000,17 +4000,17 @@ export const DashboardKPIsSchema = z.object({
    *  `shiftsScheduled`, `applications`, `hires`). All-optional so older
    *  clients — and older servers — interop without a lockstep deploy. */
   trends: z.record(KpiTrendSchema).optional(),
-});
+}))();
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Communications — Phase 12 (stubbed providers; queue-based)
  * -------------------------------------------------------------------------- */
 
-export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP', 'WHATSAPP']);
+export const NotificationChannelSchema = /* @__PURE__ */ (() => z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP', 'WHATSAPP']))();
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 
-export const NotificationStatusSchema = z.enum([
+export const NotificationStatusSchema = /* @__PURE__ */ (() => z.enum([
   'QUEUED',
   'SENT',
   'FAILED',
@@ -4022,10 +4022,10 @@ export const NotificationStatusSchema = z.enum([
   'SUPPRESSED',
   // WHATSAPP — the handset took it (Brief 1C-4); read lands as READ.
   'DELIVERED',
-]);
+]))();
 export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
 
-export const NotificationSchema = z.object({
+export const NotificationSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   channel: NotificationChannelSchema,
   status: NotificationStatusSchema,
@@ -4053,19 +4053,19 @@ export const NotificationSchema = z.object({
   // failure notifications point at /payroll?run={runId}.
   linkUrl: z.string().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type Notification = z.infer<typeof NotificationSchema>;
 
-export const NotificationListResponseSchema = z.object({
+export const NotificationListResponseSchema = /* @__PURE__ */ (() => z.object({
   notifications: z.array(NotificationSchema),
   /** Total matching rows. The inbox is capped per request, and without
    *  this the bell silently stopped at the cap — notification N+1 was
    *  unreachable with no indication it existed. Optional for back-compat. */
   total: z.number().int().nonnegative().optional(),
-});
+}))();
 export type NotificationListResponse = z.infer<typeof NotificationListResponseSchema>;
 
-export const NotificationSendInputSchema = z
+export const NotificationSendInputSchema = /* @__PURE__ */ (() => z
   .object({
     channel: NotificationChannelSchema,
     recipientUserId: UuidSchema.optional(),
@@ -4089,49 +4089,49 @@ export const NotificationSendInputSchema = z
   .refine(
     (v) => v.channel !== 'SMS' || !!v.recipientPhone || !!v.recipientUserId,
     { message: 'SMS requires recipientPhone or recipientUserId', path: ['channel'] }
-  );
+  ))();
 export type NotificationSendInput = z.infer<typeof NotificationSendInputSchema>;
 
-export const NotificationBroadcastInputSchema = z.object({
+export const NotificationBroadcastInputSchema = /* @__PURE__ */ (() => z.object({
   channel: NotificationChannelSchema.exclude(['SMS']),
   audience: z.enum(['ALL_ASSOCIATES', 'ALL_HR']),
   subject: z.string().max(200).optional(),
   body: z.string().min(1).max(4000),
   category: z.string().min(1).max(80).optional(),
-});
+}))();
 export type NotificationBroadcastInput = z.infer<typeof NotificationBroadcastInputSchema>;
 
 /* ----- Email suppression list (do-not-email) --------------------------- */
 
-export const EmailSuppressionReasonSchema = z.enum(['BOUNCED', 'COMPLAINED', 'MANUAL']);
+export const EmailSuppressionReasonSchema = /* @__PURE__ */ (() => z.enum(['BOUNCED', 'COMPLAINED', 'MANUAL']))();
 export type EmailSuppressionReason = z.infer<typeof EmailSuppressionReasonSchema>;
 
-export const EmailSuppressionSchema = z.object({
+export const EmailSuppressionSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   email: z.string().email(),
   reason: EmailSuppressionReasonSchema,
   notes: z.string().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type EmailSuppression = z.infer<typeof EmailSuppressionSchema>;
 
-export const EmailSuppressionListResponseSchema = z.object({
+export const EmailSuppressionListResponseSchema = /* @__PURE__ */ (() => z.object({
   suppressions: z.array(EmailSuppressionSchema),
-});
+}))();
 export type EmailSuppressionListResponse = z.infer<typeof EmailSuppressionListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Performance — Phase 13
  * -------------------------------------------------------------------------- */
 
-export const PerformanceReviewStatusSchema = z.enum([
+export const PerformanceReviewStatusSchema = /* @__PURE__ */ (() => z.enum([
   'DRAFT',
   'SUBMITTED',
   'ACKNOWLEDGED',
-]);
+]))();
 export type PerformanceReviewStatus = z.infer<typeof PerformanceReviewStatusSchema>;
 
-export const PerformanceReviewSchema = z.object({
+export const PerformanceReviewSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -4149,15 +4149,15 @@ export const PerformanceReviewSchema = z.object({
   submittedAt: z.string().datetime().nullable(),
   acknowledgedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type PerformanceReview = z.infer<typeof PerformanceReviewSchema>;
 
-export const PerformanceReviewListResponseSchema = z.object({
+export const PerformanceReviewListResponseSchema = /* @__PURE__ */ (() => z.object({
   reviews: z.array(PerformanceReviewSchema),
-});
+}))();
 export type PerformanceReviewListResponse = z.infer<typeof PerformanceReviewListResponseSchema>;
 
-export const PerformanceReviewCreateInputSchema = z
+export const PerformanceReviewCreateInputSchema = /* @__PURE__ */ (() => z
   .object({
     associateId: UuidSchema,
     periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -4174,23 +4174,23 @@ export const PerformanceReviewCreateInputSchema = z
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
     path: ['periodEnd'],
-  });
+  }))();
 export type PerformanceReviewCreateInput = z.infer<typeof PerformanceReviewCreateInputSchema>;
 
-export const PerformanceReviewUpdateInputSchema = z.object({
+export const PerformanceReviewUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   overallRating: z.number().int().min(1).max(5).optional(),
   summary: z.string().min(1).max(4000).optional(),
   strengths: z.string().max(2000).nullable().optional(),
   improvements: z.string().max(2000).nullable().optional(),
   goals: z.string().max(2000).nullable().optional(),
-});
+}))();
 export type PerformanceReviewUpdateInput = z.infer<typeof PerformanceReviewUpdateInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Recruiting — Phase 14
  * -------------------------------------------------------------------------- */
 
-export const CandidateStageSchema = z.enum([
+export const CandidateStageSchema = /* @__PURE__ */ (() => z.enum([
   'APPLIED',
   'SCREENING',
   'INTERVIEW',
@@ -4198,10 +4198,10 @@ export const CandidateStageSchema = z.enum([
   'HIRED',
   'WITHDRAWN',
   'REJECTED',
-]);
+]))();
 export type CandidateStage = z.infer<typeof CandidateStageSchema>;
 
-export const CandidateSchema = z.object({
+export const CandidateSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
@@ -4223,26 +4223,26 @@ export const CandidateSchema = z.object({
   /** The posting they applied to or are hired against — what a hire fills. */
   jobPostingId: UuidSchema.nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type Candidate = z.infer<typeof CandidateSchema>;
 
-export const CandidateListResponseSchema = z.object({
+export const CandidateListResponseSchema = /* @__PURE__ */ (() => z.object({
   candidates: z.array(CandidateSchema),
   /** Everyone matching the filters — the page is `candidates`. */
   total: z.number().int(),
   offset: z.number().int(),
   limit: z.number().int(),
-});
+}))();
 export type CandidateListResponse = z.infer<typeof CandidateListResponseSchema>;
 
-export const CandidateSortSchema = z.enum(['newest', 'oldest', 'name', 'waiting', 'moved']);
+export const CandidateSortSchema = /* @__PURE__ */ (() => z.enum(['newest', 'oldest', 'name', 'waiting', 'moved']))();
 export type CandidateSort = z.infer<typeof CandidateSortSchema>;
 
 /**
  * The candidate list's filters, as the page keeps them in its URL and a
  * saved view stores them. All optional; the server does the filtering.
  */
-export const CandidateFiltersSchema = z.object({
+export const CandidateFiltersSchema = /* @__PURE__ */ (() => z.object({
   q: z.string().trim().max(120).optional(),
   /** One stage, or several comma-separated. */
   stage: z.string().max(120).optional(),
@@ -4251,11 +4251,11 @@ export const CandidateFiltersSchema = z.object({
   /** In an open stage for a week or more. */
   stuck: z.enum(['1']).optional(),
   sort: CandidateSortSchema.optional(),
-});
+}))();
 export type CandidateFilters = z.infer<typeof CandidateFiltersSchema>;
 
 /** The board: every stage's count, and the first page of each column. */
-export const CandidateBoardResponseSchema = z.object({
+export const CandidateBoardResponseSchema = /* @__PURE__ */ (() => z.object({
   columns: z.array(
     z.object({
       stage: CandidateStageSchema,
@@ -4263,20 +4263,20 @@ export const CandidateBoardResponseSchema = z.object({
       candidates: z.array(CandidateSchema),
     }),
   ),
-});
+}))();
 export type CandidateBoardResponse = z.infer<typeof CandidateBoardResponseSchema>;
 
 /* ----- Saved views ---------------------------------------------------------- */
 
-export const SavedViewScopeSchema = z.enum(['recruiting.candidates']);
+export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates']))();
 export type SavedViewScope = z.infer<typeof SavedViewScopeSchema>;
 
 /** A view's query: the list's own URL params — short strings only. */
-export const SavedViewQuerySchema = z
+export const SavedViewQuerySchema = /* @__PURE__ */ (() => z
   .record(z.string().max(40), z.string().max(200))
-  .refine((q) => Object.keys(q).length <= 20, 'Too many filters');
+  .refine((q) => Object.keys(q).length <= 20, 'Too many filters'))();
 
-export const SavedViewSchema = z.object({
+export const SavedViewSchema = /* @__PURE__ */ (() => z.object({
   id: z.string().uuid(),
   scope: SavedViewScopeSchema,
   name: z.string(),
@@ -4285,25 +4285,25 @@ export const SavedViewSchema = z.object({
   mine: z.boolean(),
   ownerName: z.string(),
   updatedAt: z.string(),
-});
+}))();
 export type SavedView = z.infer<typeof SavedViewSchema>;
 
-export const SavedViewInputSchema = z.object({
+export const SavedViewInputSchema = /* @__PURE__ */ (() => z.object({
   scope: SavedViewScopeSchema,
   name: z.string().trim().min(1).max(60),
   query: SavedViewQuerySchema,
   shared: z.boolean().optional(),
-});
+}))();
 export type SavedViewInput = z.infer<typeof SavedViewInputSchema>;
 
-export const SavedViewUpdateSchema = z.object({
+export const SavedViewUpdateSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(60).optional(),
   query: SavedViewQuerySchema.optional(),
   shared: z.boolean().optional(),
-});
+}))();
 export type SavedViewUpdate = z.infer<typeof SavedViewUpdateSchema>;
 
-export const CandidateCreateInputSchema = z.object({
+export const CandidateCreateInputSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
   email: z.string().email(),
@@ -4314,7 +4314,7 @@ export const CandidateCreateInputSchema = z.object({
   resumeUrl: httpUrl(2000).optional(),
   linkedinUrl: httpUrl(2000).optional(),
   jobPostingId: UuidSchema.nullable().optional(),
-});
+}))();
 export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
 
 // Public careers-site application body. A superset of the recruiter-facing
@@ -4323,7 +4323,7 @@ export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
 //    non-empty value lets us 200-OK the request without persisting.
 //  - `source` defaults to "CAREERS_PAGE" server-side; sites can override
 //    (e.g. "indeed-redirect") to track funnels.
-export const CareersApplyInputSchema = z.object({
+export const CareersApplyInputSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string().min(1).max(100),
   lastName: z.string().min(1).max(100),
   email: z.string().email(),
@@ -4334,10 +4334,10 @@ export const CareersApplyInputSchema = z.object({
   source: z.string().max(80).optional().nullable(),
   // Honeypot: must be empty/missing for legitimate submissions.
   website: z.string().max(500).optional().nullable(),
-});
+}))();
 export type CareersApplyInput = z.infer<typeof CareersApplyInputSchema>;
 
-export const CandidateUpdateInputSchema = z.object({
+export const CandidateUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string().min(1).max(80).optional(),
   lastName: z.string().min(1).max(80).optional(),
   phone: z.string().max(40).nullable().optional(),
@@ -4345,10 +4345,10 @@ export const CandidateUpdateInputSchema = z.object({
   source: z.string().max(80).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   jobPostingId: UuidSchema.nullable().optional(),
-});
+}))();
 export type CandidateUpdateInput = z.infer<typeof CandidateUpdateInputSchema>;
 
-export const CandidateAdvanceInputSchema = z
+export const CandidateAdvanceInputSchema = /* @__PURE__ */ (() => z
   .object({
     stage: CandidateStageSchema,
     rejectedReason: z.string().min(1).max(500).optional(),
@@ -4365,7 +4365,7 @@ export const CandidateAdvanceInputSchema = z
   .refine(
     (v) => v.stage !== 'HIRED',
     { message: 'use POST /candidates/:id/hire to move to HIRED (creates Associate)', path: ['stage'] }
-  );
+  ))();
 export type CandidateAdvanceInput = z.infer<typeof CandidateAdvanceInputSchema>;
 
 /**
@@ -4375,7 +4375,7 @@ export type CandidateAdvanceInput = z.infer<typeof CandidateAdvanceInputSchema>;
  * create a bare associate record and leave HR to re-type everything into
  * a separate invite.
  */
-export const CandidateHireInputSchema = z.object({
+export const CandidateHireInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   templateId: UuidSchema,
   locationId: UuidSchema.optional(),
@@ -4385,10 +4385,10 @@ export const CandidateHireInputSchema = z.object({
   hireRole: HireableRoleSchema.optional(),
   /** The accepted offer whose pay becomes their starting rate. */
   offerId: UuidSchema.optional(),
-});
+}))();
 export type CandidateHireInput = z.infer<typeof CandidateHireInputSchema>;
 
-export const CandidateHireResponseSchema = CandidateSchema.extend({
+export const CandidateHireResponseSchema = /* @__PURE__ */ (() => CandidateSchema.extend({
   applicationId: UuidSchema,
   /** Dev-stub only: the invite link when email isn't configured. */
   inviteUrl: z.string().nullable(),
@@ -4400,10 +4400,10 @@ export const CandidateHireResponseSchema = CandidateSchema.extend({
    * (or email isn't configured).
    */
   emailDueAt: z.string().nullable().optional(),
-});
+}))();
 export type CandidateHireResponse = z.infer<typeof CandidateHireResponseSchema>;
 
-export const CandidateEventKindSchema = z.enum([
+export const CandidateEventKindSchema = /* @__PURE__ */ (() => z.enum([
   'CREATED',
   'APPLIED_AGAIN',
   'EDITED',
@@ -4425,11 +4425,11 @@ export const CandidateEventKindSchema = z.enum([
   'HIRE_UNDONE',
   'REMOVED',
   'RESTORED',
-]);
+]))();
 export type CandidateEventKind = z.infer<typeof CandidateEventKindSchema>;
 
 /** One entry on a candidate's timeline. */
-export const CandidateEventSchema = z.object({
+export const CandidateEventSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: CandidateEventKindSchema,
   fromStage: CandidateStageSchema.nullable(),
@@ -4437,12 +4437,12 @@ export const CandidateEventSchema = z.object({
   body: z.string().nullable(),
   actorName: z.string().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type CandidateEvent = z.infer<typeof CandidateEventSchema>;
 
-export const CandidateEventListResponseSchema = z.object({
+export const CandidateEventListResponseSchema = /* @__PURE__ */ (() => z.object({
   events: z.array(CandidateEventSchema),
-});
+}))();
 export type CandidateEventListResponse = z.infer<typeof CandidateEventListResponseSchema>;
 
 /**
@@ -4458,7 +4458,7 @@ export const SCORECARD_RATINGS = [
   { value: 1, label: 'Weak' },
 ] as const;
 
-export const InterviewScorecardSchema = z.object({
+export const InterviewScorecardSchema = /* @__PURE__ */ (() => z.object({
   answers: z
     .array(
       z.object({
@@ -4469,25 +4469,25 @@ export const InterviewScorecardSchema = z.object({
     )
     .max(50),
   summary: z.string().max(8000),
-});
+}))();
 export type InterviewScorecard = z.infer<typeof InterviewScorecardSchema>;
 
-export const CandidateNoteInputSchema = z.object({
+export const CandidateNoteInputSchema = /* @__PURE__ */ (() => z.object({
   body: z.string().trim().min(1).max(4000),
-});
+}))();
 export type CandidateNoteInput = z.infer<typeof CandidateNoteInputSchema>;
 
 /** A candidate named on the recruiter's dashboard. */
-const RecruitingSummaryCandidateSchema = z.object({
+const RecruitingSummaryCandidateSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   name: z.string(),
   position: z.string().nullable(),
   stage: CandidateStageSchema,
   daysInStage: z.number().int(),
-});
+}))();
 
 /** The recruiter's dashboard: what's in the pipeline and what's waiting. */
-export const RecruitingSummarySchema = z.object({
+export const RecruitingSummarySchema = /* @__PURE__ */ (() => z.object({
   /** Open candidates per stage (Applied → Offer). */
   byStage: z.object({
     APPLIED: z.number().int(),
@@ -4517,7 +4517,7 @@ export const RecruitingSummarySchema = z.object({
   hiredThisMonth: z.number().int(),
   /** Median days from applying to hired, over hires in the last 90 days. */
   medianDaysToHire: z.number().nullable(),
-});
+}))();
 export type RecruitingSummary = z.infer<typeof RecruitingSummarySchema>;
 
 /* ----- Recruiting analytics ----------------------------------------------- *
@@ -4528,17 +4528,17 @@ export type RecruitingSummary = z.infer<typeof RecruitingSummarySchema>;
  * Rates are 0–100, rounded; null when there is nothing to divide by.
  * ------------------------------------------------------------------------- */
 
-const RateSchema = z.number().min(0).max(100).nullable();
+const RateSchema = /* @__PURE__ */ (() => z.number().min(0).max(100).nullable())();
 
-export const RecruitingFunnelStageSchema = z.object({
+export const RecruitingFunnelStageSchema = /* @__PURE__ */ (() => z.object({
   stage: z.enum(['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED']),
   /** Candidates from the range who got at least this far. */
   reached: z.number().int(),
   /** Of those, the share who reached the next stage. */
   toNextPct: RateSchema,
-});
+}))();
 
-export const RecruitingSourceRowSchema = z.object({
+export const RecruitingSourceRowSchema = /* @__PURE__ */ (() => z.object({
   /** The Candidate.source key; null when none was recorded. */
   source: z.string().nullable(),
   applicants: z.number().int(),
@@ -4548,9 +4548,9 @@ export const RecruitingSourceRowSchema = z.object({
   /** Spend recorded for the months the range touches; null when none. */
   spend: z.number().nullable(),
   costPerHire: z.number().nullable(),
-});
+}))();
 
-export const RecruitingClientRowSchema = z.object({
+export const RecruitingClientRowSchema = /* @__PURE__ */ (() => z.object({
   clientId: z.string().uuid(),
   clientName: z.string(),
   hires: z.number().int(),
@@ -4563,17 +4563,17 @@ export const RecruitingClientRowSchema = z.object({
   filled: z.number().int(),
   fillRatePct: RateSchema,
   medianDaysToFill: z.number().nullable(),
-});
+}))();
 
-export const RecruitingRetentionRowSchema = z.object({
+export const RecruitingRetentionRowSchema = /* @__PURE__ */ (() => z.object({
   key: z.string().nullable(),
   label: z.string(),
   hires: z.number().int(),
   stayed: z.number().int(),
   stayedPct: RateSchema,
-});
+}))();
 
-export const RecruitingAnalyticsSchema = z.object({
+export const RecruitingAnalyticsSchema = /* @__PURE__ */ (() => z.object({
   range: z.object({ from: z.string(), to: z.string() }),
   funnel: z.object({
     applicants: z.number().int(),
@@ -4610,7 +4610,7 @@ export const RecruitingAnalyticsSchema = z.object({
     bySource: z.array(RecruitingRetentionRowSchema),
     byRecruiter: z.array(RecruitingRetentionRowSchema),
   }),
-});
+}))();
 export type RecruitingAnalytics = z.infer<typeof RecruitingAnalyticsSchema>;
 
 /* ----- The recruiter's home ------------------------------------------------ *
@@ -4625,7 +4625,7 @@ const HomeCandidateRef = {
   candidateName: z.string(),
 };
 
-export const RecruiterHomeSchema = z.object({
+export const RecruiterHomeSchema = /* @__PURE__ */ (() => z.object({
   interviewsToday: z.array(
     z.object({
       id: z.string().uuid(),
@@ -4803,10 +4803,10 @@ export const RecruiterHomeSchema = z.object({
       createdAt: z.string(),
     }),
   ),
-});
+}))();
 export type RecruiterHome = z.infer<typeof RecruiterHomeSchema>;
 
-export const RecruitingSourceSpendSchema = z.object({
+export const RecruitingSourceSpendSchema = /* @__PURE__ */ (() => z.object({
   id: z.string().uuid(),
   source: z.string(),
   /** YYYY-MM. */
@@ -4814,22 +4814,22 @@ export const RecruitingSourceSpendSchema = z.object({
   amount: z.number(),
   note: z.string().nullable(),
   updatedByEmail: z.string().nullable(),
-});
+}))();
 export type RecruitingSourceSpend = z.infer<typeof RecruitingSourceSpendSchema>;
 
-export const RecruitingSourceSpendInputSchema = z.object({
+export const RecruitingSourceSpendInputSchema = /* @__PURE__ */ (() => z.object({
   source: z.string().trim().min(1).max(80),
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Month must be YYYY-MM'),
   amount: z.number().nonnegative().max(10_000_000),
   note: z.string().trim().max(500).nullable().optional(),
-});
+}))();
 export type RecruitingSourceSpendInput = z.infer<typeof RecruitingSourceSpendInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 15 — Time / Scheduling depth (Rippling-grade)
  * -------------------------------------------------------------------------- */
 
-export const TimeAnomalySchema = z.enum([
+export const TimeAnomalySchema = /* @__PURE__ */ (() => z.enum([
   'GEOFENCE_VIOLATION_IN',
   'GEOFENCE_VIOLATION_OUT',
   'NO_BREAK',
@@ -4839,23 +4839,23 @@ export const TimeAnomalySchema = z.enum([
   'OUTSIDE_SHIFT_WINDOW',
   // Clocked out well before the linked shift's scheduled end.
   'EARLY_OUT',
-]);
+]))();
 export type TimeAnomaly = z.infer<typeof TimeAnomalySchema>;
 
-export const BreakTypeSchema = z.enum(['MEAL', 'REST']);
+export const BreakTypeSchema = /* @__PURE__ */ (() => z.enum(['MEAL', 'REST']))();
 export type BreakType = z.infer<typeof BreakTypeSchema>;
 
-export const BreakEntrySchema = z.object({
+export const BreakEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   timeEntryId: UuidSchema,
   type: BreakTypeSchema,
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime().nullable(),
   minutes: z.number().int().nonnegative(),
-});
+}))();
 export type BreakEntry = z.infer<typeof BreakEntrySchema>;
 
-export const JobSchema = z.object({
+export const JobSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   clientName: z.string().nullable(),
@@ -4863,54 +4863,54 @@ export const JobSchema = z.object({
   billRate: z.number().nullable(),
   payRate: z.number().nullable(),
   isActive: z.boolean(),
-});
+}))();
 export type Job = z.infer<typeof JobSchema>;
 
-export const JobListResponseSchema = z.object({
+export const JobListResponseSchema = /* @__PURE__ */ (() => z.object({
   jobs: z.array(JobSchema),
-});
+}))();
 export type JobListResponse = z.infer<typeof JobListResponseSchema>;
 
-export const JobCreateInputSchema = z.object({
+export const JobCreateInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   name: z.string().min(1).max(120),
   billRate: z.number().nonnegative().optional(),
   payRate: z.number().nonnegative().optional(),
-});
+}))();
 export type JobCreateInput = z.infer<typeof JobCreateInputSchema>;
 
-export const JobUpdateInputSchema = z.object({
+export const JobUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().min(1).max(120).optional(),
   billRate: z.number().nonnegative().nullable().optional(),
   payRate: z.number().nonnegative().nullable().optional(),
   isActive: z.boolean().optional(),
-});
+}))();
 export type JobUpdateInput = z.infer<typeof JobUpdateInputSchema>;
 
-const GeoSchema = z.object({
+const GeoSchema = /* @__PURE__ */ (() => z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
-});
+}))();
 
-export const ClockInInputV2Schema = z.object({
+export const ClockInInputV2Schema = /* @__PURE__ */ (() => z.object({
   notes: z.string().max(500).optional(),
   jobId: UuidSchema.optional(),
   geo: GeoSchema.optional(),
-});
+}))();
 export type ClockInInputV2 = z.infer<typeof ClockInInputV2Schema>;
 
-export const ClockOutInputV2Schema = z.object({
+export const ClockOutInputV2Schema = /* @__PURE__ */ (() => z.object({
   notes: z.string().max(500).optional(),
   geo: GeoSchema.optional(),
-});
+}))();
 export type ClockOutInputV2 = z.infer<typeof ClockOutInputV2Schema>;
 
-export const StartBreakInputSchema = z.object({
+export const StartBreakInputSchema = /* @__PURE__ */ (() => z.object({
   type: BreakTypeSchema,
-});
+}))();
 export type StartBreakInput = z.infer<typeof StartBreakInputSchema>;
 
-export const ActiveDashboardEntrySchema = z.object({
+export const ActiveDashboardEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
@@ -4932,29 +4932,29 @@ export const ActiveDashboardEntrySchema = z.object({
   /** Matched shift bounds — powers the live board's shift-window filter. */
   shiftStartsAt: z.string().datetime().nullable().optional(),
   shiftEndsAt: z.string().datetime().nullable().optional(),
-});
+}))();
 export type ActiveDashboardEntry = z.infer<typeof ActiveDashboardEntrySchema>;
 
-export const ActiveDashboardResponseSchema = z.object({
+export const ActiveDashboardResponseSchema = /* @__PURE__ */ (() => z.object({
   entries: z.array(ActiveDashboardEntrySchema),
-});
+}))();
 export type ActiveDashboardResponse = z.infer<typeof ActiveDashboardResponseSchema>;
 
-export const AvailabilityWindowSchema = z.object({
+export const AvailabilityWindowSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   dayOfWeek: z.number().int().min(0).max(6),
   startMinute: z.number().int().min(0).max(24 * 60),
   endMinute: z.number().int().min(0).max(24 * 60),
-});
+}))();
 export type AvailabilityWindow = z.infer<typeof AvailabilityWindowSchema>;
 
-export const AvailabilityListResponseSchema = z.object({
+export const AvailabilityListResponseSchema = /* @__PURE__ */ (() => z.object({
   windows: z.array(AvailabilityWindowSchema),
-});
+}))();
 export type AvailabilityListResponse = z.infer<typeof AvailabilityListResponseSchema>;
 
-export const AvailabilityReplaceInputSchema = z.object({
+export const AvailabilityReplaceInputSchema = /* @__PURE__ */ (() => z.object({
   windows: z
     .array(
       z
@@ -4968,20 +4968,20 @@ export const AvailabilityReplaceInputSchema = z.object({
         })
     )
     .max(50),
-});
+}))();
 export type AvailabilityReplaceInput = z.infer<typeof AvailabilityReplaceInputSchema>;
 
-export const ShiftSwapStatusSchema = z.enum([
+export const ShiftSwapStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING_PEER',
   'PEER_ACCEPTED',
   'PEER_DECLINED',
   'MANAGER_APPROVED',
   'MANAGER_REJECTED',
   'CANCELLED',
-]);
+]))();
 export type ShiftSwapStatus = z.infer<typeof ShiftSwapStatusSchema>;
 
-export const ShiftSwapRequestSchema = z.object({
+export const ShiftSwapRequestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   shiftId: UuidSchema,
   shiftStartsAt: z.string().datetime(),
@@ -5006,50 +5006,50 @@ export const ShiftSwapRequestSchema = z.object({
   /** Admin list only: approving would push the receiving associate past
    *  40h scheduled that week. Advisory. */
   wouldExceed40h: z.boolean().optional(),
-});
+}))();
 export type ShiftSwapRequest = z.infer<typeof ShiftSwapRequestSchema>;
 
-export const ShiftSwapListResponseSchema = z.object({
+export const ShiftSwapListResponseSchema = /* @__PURE__ */ (() => z.object({
   requests: z.array(ShiftSwapRequestSchema),
-});
+}))();
 export type ShiftSwapListResponse = z.infer<typeof ShiftSwapListResponseSchema>;
 
-export const SwapCreateInputSchema = z.object({
+export const SwapCreateInputSchema = /* @__PURE__ */ (() => z.object({
   shiftId: UuidSchema,
   counterpartyAssociateId: UuidSchema,
   note: z.string().max(500).optional(),
   /** Optional trade: a shift of the counterparty's the requester takes in
    *  exchange. Must belong to the counterparty and still be upcoming. */
   counterpartShiftId: UuidSchema.optional(),
-});
+}))();
 export type SwapCreateInput = z.infer<typeof SwapCreateInputSchema>;
 
-export const SwapDecideInputSchema = z.object({
+export const SwapDecideInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().max(500).optional(),
-});
+}))();
 export type SwapDecideInput = z.infer<typeof SwapDecideInputSchema>;
 
-export const ShiftConflictSchema = z.object({
+export const ShiftConflictSchema = /* @__PURE__ */ (() => z.object({
   conflictingShiftId: UuidSchema,
   conflictingStartsAt: z.string().datetime(),
   conflictingEndsAt: z.string().datetime(),
   conflictingClientName: z.string().nullable(),
   conflictingPosition: z.string(),
-});
+}))();
 export type ShiftConflict = z.infer<typeof ShiftConflictSchema>;
 
 // Phase 52 — APPROVED time-off that overlaps the shift window. Surfaced
 // in the UI as a hard warning ("they're on PTO that day") so HR doesn't
 // accidentally double-book someone who's away.
-export const TimeOffConflictSchema = z.object({
+export const TimeOffConflictSchema = /* @__PURE__ */ (() => z.object({
   requestId: UuidSchema,
   category: z.string(),
   startDate: z.string(), // YYYY-MM-DD
   endDate: z.string(),
-});
+}))();
 export type TimeOffConflict = z.infer<typeof TimeOffConflictSchema>;
 
-export const ShiftConflictsResponseSchema = z.object({
+export const ShiftConflictsResponseSchema = /* @__PURE__ */ (() => z.object({
   conflicts: z.array(ShiftConflictSchema),
   timeOffConflicts: z.array(TimeOffConflictSchema).default([]),
   /** One-off "can't work this day" declarations covering the shift day. */
@@ -5061,10 +5061,10 @@ export const ShiftConflictsResponseSchema = z.object({
       }),
     )
     .default([]),
-});
+}))();
 export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema>;
 
-export const AutoFillCandidateSchema = z.object({
+export const AutoFillCandidateSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   weeklyMinutesScheduled: z.number().int().nonnegative(),
@@ -5075,12 +5075,12 @@ export const AutoFillCandidateSchema = z.object({
   // Surfaced so the picker can flag them; their score is also forced to 0.
   onApprovedTimeOff: z.boolean().default(false),
   score: z.number().min(0).max(1),
-});
+}))();
 export type AutoFillCandidate = z.infer<typeof AutoFillCandidateSchema>;
 
-export const AutoFillResponseSchema = z.object({
+export const AutoFillResponseSchema = /* @__PURE__ */ (() => z.object({
   candidates: z.array(AutoFillCandidateSchema),
-});
+}))();
 export type AutoFillResponse = z.infer<typeof AutoFillResponseSchema>;
 
 // Phase 131 — ClientGeofenceInputSchema was removed; the Client
@@ -5092,25 +5092,25 @@ export type AutoFillResponse = z.infer<typeof AutoFillResponseSchema>;
  *  Phase 16 — Invitation flow
  * -------------------------------------------------------------------------- */
 
-export const InviteSummarySchema = z.object({
+export const InviteSummarySchema = /* @__PURE__ */ (() => z.object({
   email: z.string().email(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   expiresAt: z.string().datetime(),
-});
+}))();
 export type InviteSummary = z.infer<typeof InviteSummarySchema>;
 
-export const AcceptInviteInputSchema = z.object({
+export const AcceptInviteInputSchema = /* @__PURE__ */ (() => z.object({
   token: z.string().min(20).max(200),
   password: z.string().min(12).max(256),
-});
+}))();
 export type AcceptInviteInput = z.infer<typeof AcceptInviteInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 39 — User settings (password change + display name)
  * -------------------------------------------------------------------------- */
 
-export const ChangePasswordInputSchema = z
+export const ChangePasswordInputSchema = /* @__PURE__ */ (() => z
   .object({
     currentPassword: z.string().min(1).max(256),
     newPassword: z.string().min(12).max(256),
@@ -5118,13 +5118,13 @@ export const ChangePasswordInputSchema = z
   .refine((d) => d.currentPassword !== d.newPassword, {
     message: 'New password must differ from current password',
     path: ['newPassword'],
-  });
+  }))();
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
 
-export const UpdateProfileInputSchema = z.object({
+export const UpdateProfileInputSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string().trim().min(1).max(100).optional(),
   lastName: z.string().trim().min(1).max(100).optional(),
-});
+}))();
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 
 /**
@@ -5179,15 +5179,15 @@ export const TIMEZONE_LABELS: Record<SupportedTimezone, string> = {
   'Australia/Sydney': 'Sydney',
 };
 
-export const UpdateLanguageInputSchema = z.object({
+export const UpdateLanguageInputSchema = /* @__PURE__ */ (() => z.object({
   // Null clears the preference (English).
   language: EmailLanguageSchema.nullable(),
-});
+}))();
 
-export const UpdateTimezoneInputSchema = z.object({
+export const UpdateTimezoneInputSchema = /* @__PURE__ */ (() => z.object({
   // Null clears the preference and falls back to the browser locale.
   timezone: z.enum(SUPPORTED_TIMEZONES).nullable(),
-});
+}))();
 export type UpdateTimezoneInput = z.infer<typeof UpdateTimezoneInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -5504,7 +5504,7 @@ const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as 
   ...NotificationCategory[],
 ];
 
-export const PatchNotificationPreferenceInputSchema = z
+export const PatchNotificationPreferenceInputSchema = /* @__PURE__ */ (() => z
   .object({
     category: z.enum(NOTIFICATION_CATEGORY_KEYS),
     // Either switch may be sent on its own — the settings page toggles one
@@ -5514,7 +5514,7 @@ export const PatchNotificationPreferenceInputSchema = z
   })
   .refine((v) => v.emailEnabled !== undefined || v.inAppEnabled !== undefined, {
     message: 'Provide emailEnabled, inAppEnabled, or both.',
-  });
+  }))();
 export type PatchNotificationPreferenceInput = z.infer<
   typeof PatchNotificationPreferenceInputSchema
 >;
@@ -5539,33 +5539,33 @@ export interface NotificationPreferenceEntry {
  *  if they didn't initiate.
  * -------------------------------------------------------------------------- */
 
-export const RequestEmailChangeInputSchema = z.object({
+export const RequestEmailChangeInputSchema = /* @__PURE__ */ (() => z.object({
   newEmail: z.string().email().max(254),
   // Same minimum as login — keeps the password-input UX consistent and
   // ensures the dummy-hash compare path can always run on a malformed
   // submission without blowing up.
   currentPassword: z.string().min(12).max(256),
-});
+}))();
 export type RequestEmailChangeInput = z.infer<typeof RequestEmailChangeInputSchema>;
 
-export const ConfirmEmailChangeInputSchema = z.object({
+export const ConfirmEmailChangeInputSchema = /* @__PURE__ */ (() => z.object({
   // ~43-char base64url; cap higher for forward compatibility.
   token: z.string().min(20).max(200),
-});
+}))();
 export type ConfirmEmailChangeInput = z.infer<typeof ConfirmEmailChangeInputSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 26 — Time off (sick-leave accrual + ledger)
  * -------------------------------------------------------------------------- */
 
-export const TimeOffCategorySchema = z.enum([
+export const TimeOffCategorySchema = /* @__PURE__ */ (() => z.enum([
   'SICK',
   'VACATION',
   'PTO',
   'BEREAVEMENT',
   'JURY_DUTY',
   'OTHER',
-]);
+]))();
 export type TimeOffCategory = z.infer<typeof TimeOffCategorySchema>;
 
 /**
@@ -5587,23 +5587,23 @@ export function isEventBasedTimeOffCategory(category: string): boolean {
   return (EVENT_BASED_TIME_OFF_CATEGORIES as readonly string[]).includes(category);
 }
 
-export const TimeOffLedgerReasonSchema = z.enum([
+export const TimeOffLedgerReasonSchema = /* @__PURE__ */ (() => z.enum([
   'ACCRUAL',
   'USE',
   'ADJUSTMENT',
   'CARRYOVER_FORFEIT',
   'ANNUAL_GRANT',
   'PAYOUT',
-]);
+]))();
 export type TimeOffLedgerReason = z.infer<typeof TimeOffLedgerReasonSchema>;
 
-export const TimeOffBalanceSchema = z.object({
+export const TimeOffBalanceSchema = /* @__PURE__ */ (() => z.object({
   category: TimeOffCategorySchema,
   balanceMinutes: z.number().int(),
-});
+}))();
 export type TimeOffBalance = z.infer<typeof TimeOffBalanceSchema>;
 
-export const TimeOffLedgerEntrySchema = z.object({
+export const TimeOffLedgerEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   category: TimeOffCategorySchema,
   reason: TimeOffLedgerReasonSchema,
@@ -5611,33 +5611,33 @@ export const TimeOffLedgerEntrySchema = z.object({
   sourceTimeEntryId: UuidSchema.nullable(),
   notes: z.string().nullable(),
   createdAt: z.string().datetime(),
-});
+}))();
 export type TimeOffLedgerEntry = z.infer<typeof TimeOffLedgerEntrySchema>;
 
-export const TimeOffMyBalanceResponseSchema = z.object({
+export const TimeOffMyBalanceResponseSchema = /* @__PURE__ */ (() => z.object({
   balances: z.array(TimeOffBalanceSchema),
   recentLedger: z.array(TimeOffLedgerEntrySchema),
-});
+}))();
 export type TimeOffMyBalanceResponse = z.infer<typeof TimeOffMyBalanceResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 30 — Time-off requests (associate-submitted; HR-approved)
  * -------------------------------------------------------------------------- */
 
-export const TimeOffRequestStatusSchema = z.enum([
+export const TimeOffRequestStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING',
   'APPROVED',
   'DENIED',
   'CANCELLED',
-]);
+]))();
 export type TimeOffRequestStatus = z.infer<typeof TimeOffRequestStatusSchema>;
 
 // Dates are submitted as YYYY-MM-DD strings; the server clamps to UTC midnight.
-const IsoDateSchema = z
+const IsoDateSchema = /* @__PURE__ */ (() => z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'))();
 
-export const TimeOffRequestCreateInputSchema = z
+export const TimeOffRequestCreateInputSchema = /* @__PURE__ */ (() => z
   .object({
     category: TimeOffCategorySchema,
     startDate: IsoDateSchema,
@@ -5649,10 +5649,10 @@ export const TimeOffRequestCreateInputSchema = z
   .refine((v) => v.endDate >= v.startDate, {
     message: 'endDate must be on or after startDate',
     path: ['endDate'],
-  });
+  }))();
 export type TimeOffRequestCreateInput = z.infer<typeof TimeOffRequestCreateInputSchema>;
 
-export const TimeOffRequestDecisionInputSchema = z.object({
+export const TimeOffRequestDecisionInputSchema = /* @__PURE__ */ (() => z.object({
   note: z.string().max(500).optional(),
   /**
    * Approve even though the balance doesn't cover it, and say why.
@@ -5668,16 +5668,16 @@ export const TimeOffRequestDecisionInputSchema = z.object({
    * thing that gets found months later by someone reconciling PTO.
    */
   overrideReason: z.string().trim().min(3).max(300).optional(),
-});
+}))();
 export type TimeOffRequestDecisionInput = z.infer<typeof TimeOffRequestDecisionInputSchema>;
 
-export const TimeOffRequestDenyInputSchema = z.object({
+export const TimeOffRequestDenyInputSchema = /* @__PURE__ */ (() => z.object({
   // Note is required for DENY — the associate sees this in their history.
   note: z.string().min(1).max(500),
-});
+}))();
 export type TimeOffRequestDenyInput = z.infer<typeof TimeOffRequestDenyInputSchema>;
 
-export const TimeOffRequestSchema = z.object({
+export const TimeOffRequestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
@@ -5700,29 +5700,29 @@ export const TimeOffRequestSchema = z.object({
    *  window overlaps — the coverage hole the approver is about to punch.
    *  Null/absent when not computed. */
   assignedShiftOverlaps: z.number().int().nullable().optional(),
-});
+}))();
 export type TimeOffRequest = z.infer<typeof TimeOffRequestSchema>;
 
-export const TimeOffRequestListResponseSchema = z.object({
+export const TimeOffRequestListResponseSchema = /* @__PURE__ */ (() => z.object({
   requests: z.array(TimeOffRequestSchema),
   /** True row count before the server cap — lets the UI say "200 of N". */
   total: z.number().int().nonnegative().optional(),
-});
+}))();
 export type TimeOffRequestListResponse = z.infer<typeof TimeOffRequestListResponseSchema>;
 
-export const TimeOffRequestResponseSchema = z.object({
+export const TimeOffRequestResponseSchema = /* @__PURE__ */ (() => z.object({
   request: TimeOffRequestSchema,
-});
+}))();
 export type TimeOffRequestResponse = z.infer<typeof TimeOffRequestResponseSchema>;
 
-export const TimeOffAdminListQuerySchema = z.object({
+export const TimeOffAdminListQuerySchema = /* @__PURE__ */ (() => z.object({
   status: TimeOffRequestStatusSchema.optional(),
-});
+}))();
 export type TimeOffAdminListQuery = z.infer<typeof TimeOffAdminListQuerySchema>;
 
 // ===== Phase 76 — Org hierarchy ===========================================
 
-export const DepartmentSchema = z.object({
+export const DepartmentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   parentId: UuidSchema.nullable(),
@@ -5730,47 +5730,47 @@ export const DepartmentSchema = z.object({
   code: z.string().nullable(),
   description: z.string().nullable(),
   associateCount: z.number().int().nonnegative(),
-});
+}))();
 export type Department = z.infer<typeof DepartmentSchema>;
 
-export const DepartmentListResponseSchema = z.object({
+export const DepartmentListResponseSchema = /* @__PURE__ */ (() => z.object({
   departments: z.array(DepartmentSchema),
-});
+}))();
 export type DepartmentListResponse = z.infer<typeof DepartmentListResponseSchema>;
 
-export const DepartmentInputSchema = z.object({
+export const DepartmentInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   parentId: UuidSchema.nullable().optional(),
   name: z.string().min(1).max(120),
   code: z.string().max(40).optional().nullable(),
   description: z.string().max(500).optional().nullable(),
-});
+}))();
 export type DepartmentInput = z.infer<typeof DepartmentInputSchema>;
 
-export const CostCenterSchema = z.object({
+export const CostCenterSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   code: z.string(),
   name: z.string(),
   description: z.string().nullable(),
   associateCount: z.number().int().nonnegative(),
-});
+}))();
 export type CostCenter = z.infer<typeof CostCenterSchema>;
 
-export const CostCenterListResponseSchema = z.object({
+export const CostCenterListResponseSchema = /* @__PURE__ */ (() => z.object({
   costCenters: z.array(CostCenterSchema),
-});
+}))();
 export type CostCenterListResponse = z.infer<typeof CostCenterListResponseSchema>;
 
-export const CostCenterInputSchema = z.object({
+export const CostCenterInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional().nullable(),
-});
+}))();
 export type CostCenterInput = z.infer<typeof CostCenterInputSchema>;
 
-export const JobProfileSchema = z.object({
+export const JobProfileSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   code: z.string(),
@@ -5780,15 +5780,15 @@ export const JobProfileSchema = z.object({
   isExempt: z.boolean(),
   description: z.string().nullable(),
   associateCount: z.number().int().nonnegative(),
-});
+}))();
 export type JobProfile = z.infer<typeof JobProfileSchema>;
 
-export const JobProfileListResponseSchema = z.object({
+export const JobProfileListResponseSchema = /* @__PURE__ */ (() => z.object({
   jobProfiles: z.array(JobProfileSchema),
-});
+}))();
 export type JobProfileListResponse = z.infer<typeof JobProfileListResponseSchema>;
 
-export const JobProfileInputSchema = z.object({
+export const JobProfileInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   code: z.string().min(1).max(40),
   title: z.string().min(1).max(120),
@@ -5796,13 +5796,13 @@ export const JobProfileInputSchema = z.object({
   level: z.string().max(40).optional().nullable(),
   isExempt: z.boolean().optional(),
   description: z.string().max(500).optional().nullable(),
-});
+}))();
 export type JobProfileInput = z.infer<typeof JobProfileInputSchema>;
 
 // ----- Shift positions ----------------------------------------------------
 // Per-client catalog that constrains the free-text Shift.position field to
 // an admin-curated dropdown ("F&D Morning Shift", etc.).
-export const ShiftPositionSchema = z.object({
+export const ShiftPositionSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   name: z.string(),
@@ -5810,31 +5810,31 @@ export const ShiftPositionSchema = z.object({
   /** Supervisor/lead position — drives the labor-cost report's
    *  lead-vs-associate split. Optional for back-compat. */
   isLead: z.boolean().optional(),
-});
+}))();
 export type ShiftPosition = z.infer<typeof ShiftPositionSchema>;
 
-export const ShiftPositionListResponseSchema = z.object({
+export const ShiftPositionListResponseSchema = /* @__PURE__ */ (() => z.object({
   shiftPositions: z.array(ShiftPositionSchema),
-});
+}))();
 export type ShiftPositionListResponse = z.infer<
   typeof ShiftPositionListResponseSchema
 >;
 
-export const ShiftPositionInputSchema = z.object({
+export const ShiftPositionInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   name: z.string().min(1).max(120),
   sortOrder: z.number().int().min(0).max(9999).optional(),
   isLead: z.boolean().optional(),
-});
+}))();
 export type ShiftPositionInput = z.infer<typeof ShiftPositionInputSchema>;
 
 // Associate-side org assignment. Used by PUT /associates/:id/org.
-export const AssociateOrgAssignmentInputSchema = z.object({
+export const AssociateOrgAssignmentInputSchema = /* @__PURE__ */ (() => z.object({
   managerId: UuidSchema.nullable().optional(),
   departmentId: UuidSchema.nullable().optional(),
   costCenterId: UuidSchema.nullable().optional(),
   jobProfileId: UuidSchema.nullable().optional(),
-});
+}))();
 export type AssociateOrgAssignmentInput = z.infer<typeof AssociateOrgAssignmentInputSchema>;
 
 // HR-side patch of plain associate fields (phone, etc.). Mirrors the
@@ -5842,7 +5842,7 @@ export type AssociateOrgAssignmentInput = z.infer<typeof AssociateOrgAssignmentI
 // HR can correct contact info without asking the associate to re-submit
 // onboarding. Address fields stay read-only here on purpose — those go
 // through onboarding's PROFILE_INFO task which is the source of truth.
-export const AssociateProfilePatchInputSchema = z.object({
+export const AssociateProfilePatchInputSchema = /* @__PURE__ */ (() => z.object({
   phone: z.string().trim().min(7).max(40).nullable().optional(),
   // Inline HR fixes to what the directory drawer displays. position and
   // startDate live on the associate's workplace APPLICATION (newest
@@ -5853,19 +5853,19 @@ export const AssociateProfilePatchInputSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
     .optional(),
-});
+}))();
 export type AssociateProfilePatchInput = z.infer<typeof AssociateProfilePatchInputSchema>;
 
 // Manual deactivate/reactivate — the temporary pause, distinct from a
 // Separation. The reason is required: it prints in the inactive-workforce
 // audit packet and the drawer, so "personal leave — expected back Oct"
 // beats a bare timestamp.
-export const AssociateDeactivateInputSchema = z.object({
+export const AssociateDeactivateInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().trim().min(3).max(300),
-});
+}))();
 export type AssociateDeactivateInput = z.infer<typeof AssociateDeactivateInputSchema>;
 
-export const AssociateDeactivateResponseSchema = z.object({
+export const AssociateDeactivateResponseSchema = /* @__PURE__ */ (() => z.object({
   ok: z.literal(true),
   deactivatedAt: z.string().datetime(),
   /** Future ASSIGNED shifts released back to OPEN so they can be re-covered. */
@@ -5873,10 +5873,10 @@ export const AssociateDeactivateResponseSchema = z.object({
   /** PENDING open-shift claims expired alongside. */
   expiredClaims: z.number().int(),
   loginDisabled: z.boolean(),
-});
+}))();
 export type AssociateDeactivateResponse = z.infer<typeof AssociateDeactivateResponseSchema>;
 
-export const AssociateOrgSummarySchema = z.object({
+export const AssociateOrgSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
@@ -5893,12 +5893,12 @@ export const AssociateOrgSummarySchema = z.object({
   // photo on file. Avatar component falls back to initials in the null
   // case. The URL is `/associates/:id/photo?v=<photoUpdatedAt>`.
   photoUrl: z.string().nullable(),
-});
+}))();
 export type AssociateOrgSummary = z.infer<typeof AssociateOrgSummarySchema>;
 
-export const AssociateOrgListResponseSchema = z.object({
+export const AssociateOrgListResponseSchema = /* @__PURE__ */ (() => z.object({
   associates: z.array(AssociateOrgSummarySchema),
-});
+}))();
 export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSchema>;
 
 // ===== Directory =========================================================
@@ -5907,14 +5907,14 @@ export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSc
 // actually wants in the row: employment status (derived from applications),
 // current workplace (client), live pay rate, employment type, start date,
 // and the org-fields tile. Powers /people.
-export const DirectoryStatusSchema = z.enum([
+export const DirectoryStatusSchema = /* @__PURE__ */ (() => z.enum([
   'ACTIVE', // Has at least one APPROVED application not yet ended.
   'PENDING', // Has a DRAFT/SUBMITTED/IN_REVIEW application — onboarding in flight.
   'INACTIVE', // No live applications (rejected, ended, or none at all).
-]);
+]))();
 export type DirectoryStatus = z.infer<typeof DirectoryStatusSchema>;
 
-export const DirectoryEntrySchema = z.object({
+export const DirectoryEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   firstName: z.string(),
   lastName: z.string(),
@@ -5970,29 +5970,29 @@ export const DirectoryEntrySchema = z.object({
   // separation date pickers use it as a floor: an effective date before
   // it would close the assignment before it began.
   currentAssignmentStartedAt: z.string().nullable(),
-});
+}))();
 export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
 
-export const DirectoryListResponseSchema = z.object({
+export const DirectoryListResponseSchema = /* @__PURE__ */ (() => z.object({
   associates: z.array(DirectoryEntrySchema),
   // See ClientListResponseSchema.nextCursor for the contract — same
   // shape, applies to /directory's cursor-paginated reads.
   nextCursor: z.string().uuid().nullable().optional(),
-});
+}))();
 export type DirectoryListResponse = z.infer<typeof DirectoryListResponseSchema>;
 
 // ===== Phase 78 — Position ================================================
 
-export const PositionStatusSchema = z.enum([
+export const PositionStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PLANNED',
   'OPEN',
   'FILLED',
   'FROZEN',
   'CLOSED',
-]);
+]))();
 export type PositionStatus = z.infer<typeof PositionStatusSchema>;
 
-export const PositionSchema = z.object({
+export const PositionSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   code: z.string(),
@@ -6014,15 +6014,15 @@ export const PositionSchema = z.object({
   minHourlyRate: z.string().nullable(),
   maxHourlyRate: z.string().nullable(),
   notes: z.string().nullable(),
-});
+}))();
 export type Position = z.infer<typeof PositionSchema>;
 
-export const PositionListResponseSchema = z.object({
+export const PositionListResponseSchema = /* @__PURE__ */ (() => z.object({
   positions: z.array(PositionSchema),
-});
+}))();
 export type PositionListResponse = z.infer<typeof PositionListResponseSchema>;
 
-export const PositionInputSchema = z.object({
+export const PositionInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   code: z.string().min(1).max(40),
   title: z.string().min(1).max(120),
@@ -6036,26 +6036,26 @@ export const PositionInputSchema = z.object({
   minHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
   maxHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
-});
+}))();
 export type PositionInput = z.infer<typeof PositionInputSchema>;
 
-export const PositionAssignInputSchema = z.object({
+export const PositionAssignInputSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   filledAt: z.string().datetime().optional(),
-});
+}))();
 export type PositionAssignInput = z.infer<typeof PositionAssignInputSchema>;
 
-export const PositionStatusInputSchema = z.object({
+export const PositionStatusInputSchema = /* @__PURE__ */ (() => z.object({
   status: PositionStatusSchema,
-});
+}))();
 export type PositionStatusInput = z.infer<typeof PositionStatusInputSchema>;
 
-export const PositionHeadcountSchema = z.object({
+export const PositionHeadcountSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
   byStatus: z.record(PositionStatusSchema, z.number().int().nonnegative()),
   fteAuthorized: z.string(),
   fteFilled: z.string(),
-});
+}))();
 export type PositionHeadcount = z.infer<typeof PositionHeadcountSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -6068,21 +6068,21 @@ export type PositionHeadcount = z.infer<typeof PositionHeadcountSchema>;
  *  exist yet. The UI shows them as "Coming soon" rather than fake numbers.
  * -------------------------------------------------------------------------- */
 
-export const ComplianceTagSchema = z.enum([
+export const ComplianceTagSchema = /* @__PURE__ */ (() => z.enum([
   'EEO_HARASSMENT',
   'OSHA_SAFETY',
   'WALMART_CADE',
   'FOOD_HANDLER',
-]);
+]))();
 export type ComplianceTag = z.infer<typeof ComplianceTagSchema>;
 
-export const EVerifyStatusSchema = z.enum([
+export const EVerifyStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PENDING',
   'EMPLOYMENT_AUTHORIZED',
   'TENTATIVE_NONCONFIRMATION',
   'FINAL_NONCONFIRMATION',
   'CLOSE_CASE_AND_RESUBMIT',
-]);
+]))();
 export type EVerifyStatus = z.infer<typeof EVerifyStatusSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -6096,15 +6096,15 @@ export type EVerifyStatus = z.infer<typeof EVerifyStatusSchema>;
  *  consts are in the temporal dead zone until their declaration runs.
  * -------------------------------------------------------------------------- */
 
-export const I9CitizenshipStatusSchema = z.enum([
+export const I9CitizenshipStatusSchema = /* @__PURE__ */ (() => z.enum([
   'US_CITIZEN',
   'NON_CITIZEN_NATIONAL',
   'LAWFUL_PERMANENT_RESIDENT',
   'ALIEN_AUTHORIZED_TO_WORK',
-]);
+]))();
 export type I9CitizenshipStatus = z.infer<typeof I9CitizenshipStatusSchema>;
 
-export const EVerifyBlockerSchema = z.enum([
+export const EVerifyBlockerSchema = /* @__PURE__ */ (() => z.enum([
   'NO_I9',
   'SECTION1_INCOMPLETE',
   'SECTION2_INCOMPLETE',
@@ -6112,12 +6112,12 @@ export const EVerifyBlockerSchema = z.enum([
   'NO_SSN',
   'NO_DOB',
   'NO_HIRE_DATE',
-]);
+]))();
 export type EVerifyBlocker = z.infer<typeof EVerifyBlockerSchema>;
 
 /** One row of the directory. SSN is last-4 only here — the full number is
  *  returned solely by the per-associate detail endpoint, which is audited. */
-export const EVerifyRosterRowSchema = z.object({
+export const EVerifyRosterRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   associateEmail: z.string(),
@@ -6137,10 +6137,10 @@ export const EVerifyRosterRowSchema = z.object({
   overdue: z.boolean(),
   blockers: z.array(EVerifyBlockerSchema),
   ready: z.boolean(),
-});
+}))();
 export type EVerifyRosterRow = z.infer<typeof EVerifyRosterRowSchema>;
 
-export const EVerifyRosterResponseSchema = z.object({
+export const EVerifyRosterResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(EVerifyRosterRowSchema),
   counts: z.object({
     total: z.number().int().nonnegative(),
@@ -6152,11 +6152,11 @@ export const EVerifyRosterResponseSchema = z.object({
     blocked: z.number().int().nonnegative(),
   }),
   truncated: z.boolean(),
-});
+}))();
 export type EVerifyRosterResponse = z.infer<typeof EVerifyRosterResponseSchema>;
 
 /** An identity document attached to the I-9, for the Section 2 panel. */
-export const EVerifyDocumentSchema = z.object({
+export const EVerifyDocumentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   kind: z.string(),
   filename: z.string(),
@@ -6167,7 +6167,7 @@ export const EVerifyDocumentSchema = z.object({
   i9DocTitle: z.string().nullable().optional(),
   i9List: I9DocListSchema.nullable().optional(),
   fileAvailable: z.boolean(),
-});
+}))();
 export type EVerifyDocument = z.infer<typeof EVerifyDocumentSchema>;
 
 /**
@@ -6178,7 +6178,7 @@ export type EVerifyDocument = z.infer<typeof EVerifyDocumentSchema>;
  * Carries a FULL SSN. Returned only to manage:compliance holders and audited
  * on every read.
  */
-export const EVerifyCaseDetailSchema = z.object({
+export const EVerifyCaseDetailSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   // --- Section 1: employee information and attestation ---
   lastName: z.string(),
@@ -6231,10 +6231,10 @@ export const EVerifyCaseDetailSchema = z.object({
   closedAt: z.string().datetime().nullable(),
   blockers: z.array(EVerifyBlockerSchema),
   ready: z.boolean(),
-});
+}))();
 export type EVerifyCaseDetail = z.infer<typeof EVerifyCaseDetailSchema>;
 
-export const EVerifyCaseInputSchema = z
+export const EVerifyCaseInputSchema = /* @__PURE__ */ (() => z
   .object({
     caseNumber: z.string().trim().min(1).max(60).nullable().optional(),
     status: EVerifyStatusSchema.nullable().optional(),
@@ -6255,18 +6255,18 @@ export const EVerifyCaseInputSchema = z
       v.status === 'PENDING' ||
       (v.caseNumber !== undefined && v.caseNumber !== null),
     { message: 'caseNumber is required to record an outcome', path: ['caseNumber'] },
-  );
+  ))();
 export type EVerifyCaseInput = z.infer<typeof EVerifyCaseInputSchema>;
 
 /** Narrow on purpose: this screen labels an identity, it doesn't rewrite one.
  *  Name, DOB and SSN stay owned by onboarding. */
-export const EVerifyIdentityInputSchema = z.object({
+export const EVerifyIdentityInputSchema = /* @__PURE__ */ (() => z.object({
   middleInitial: z.string().trim().max(1).nullable().optional(),
   otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
-});
+}))();
 export type EVerifyIdentityInput = z.infer<typeof EVerifyIdentityInputSchema>;
 
-export const ScorecardSeveritySchema = z.enum(['ok', 'warn', 'critical']);
+export const ScorecardSeveritySchema = /* @__PURE__ */ (() => z.enum(['ok', 'warn', 'critical']))();
 export type ScorecardSeverity = z.infer<typeof ScorecardSeveritySchema>;
 
 /**
@@ -6292,7 +6292,7 @@ export function scorecardGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
   return 'F';
 }
 
-const ScorecardSubjectSchema = z.object({
+const ScorecardSubjectSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema.nullable(),
   associateName: z.string().nullable(),
   clientId: UuidSchema.nullable(),
@@ -6302,11 +6302,11 @@ const ScorecardSubjectSchema = z.object({
   dueBy: z.string().nullable().optional(),
   /** Days PAST dueBy (positive = overdue). Null/absent = not applicable. */
   daysOverdue: z.number().int().nullable().optional(),
-});
+}))();
 export type ScorecardSubject = z.infer<typeof ScorecardSubjectSchema>;
 
 // Tile 1 — onboarding completeness
-export const ScorecardOnboardingSignalSchema = z.object({
+export const ScorecardOnboardingSignalSchema = /* @__PURE__ */ (() => z.object({
   key: z.enum([
     'AGE_18_PLUS',
     'DRUG_TEST_60D',
@@ -6326,10 +6326,10 @@ export const ScorecardOnboardingSignalSchema = z.object({
    *  E-Verify 3-business-day windows). Any overdue forces the signal —
    *  and its tile — critical regardless of population percentage. */
   overdueCount: z.number().int().nonnegative().optional(),
-});
+}))();
 export type ScorecardOnboardingSignal = z.infer<typeof ScorecardOnboardingSignalSchema>;
 
-export const ScorecardOnboardingResponseSchema = z.object({
+export const ScorecardOnboardingResponseSchema = /* @__PURE__ */ (() => z.object({
   activeAssociateCount: z.number().int().nonnegative(),
   // Number of active associates passing every signal (no gaps). Computed
   // server-side because the per-signal `missing[]` lists are capped for
@@ -6338,26 +6338,26 @@ export const ScorecardOnboardingResponseSchema = z.object({
   signals: z.array(ScorecardOnboardingSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardOnboardingResponse = z.infer<typeof ScorecardOnboardingResponseSchema>;
 
 /* ----- Manual compliance attestation (replaces Coming-soon rows) -------- */
 
-export const ManualAttestationCadenceSchema = z.enum(['WEEKLY', 'MONTHLY', 'ANNUAL']);
+export const ManualAttestationCadenceSchema = /* @__PURE__ */ (() => z.enum(['WEEKLY', 'MONTHLY', 'ANNUAL']))();
 export type ManualAttestationCadence = z.infer<typeof ManualAttestationCadenceSchema>;
 
-export const ManualAttestationOutcomeSchema = z.enum(['YES', 'NO', 'NOT_APPLICABLE']);
+export const ManualAttestationOutcomeSchema = /* @__PURE__ */ (() => z.enum(['YES', 'NO', 'NOT_APPLICABLE']))();
 export type ManualAttestationOutcome = z.infer<typeof ManualAttestationOutcomeSchema>;
 
-export const ManualAttestationStatusSchema = z.enum([
+export const ManualAttestationStatusSchema = /* @__PURE__ */ (() => z.enum([
   'attested',
   'due_soon',
   'overdue',
   'upcoming',
-]);
+]))();
 export type ManualAttestationStatus = z.infer<typeof ManualAttestationStatusSchema>;
 
-export const ManualAttestationSignalSchema = z.object({
+export const ManualAttestationSignalSchema = /* @__PURE__ */ (() => z.object({
   key: z.string(),
   label: z.string(),
   description: z.string(),
@@ -6391,15 +6391,15 @@ export const ManualAttestationSignalSchema = z.object({
       actionTakenAt: z.string().datetime().nullable(),
     })
     .nullable(),
-});
+}))();
 export type ManualAttestationSignal = z.infer<typeof ManualAttestationSignalSchema>;
 
-export const ManualAttestationListResponseSchema = z.object({
+export const ManualAttestationListResponseSchema = /* @__PURE__ */ (() => z.object({
   signals: z.array(ManualAttestationSignalSchema),
-});
+}))();
 export type ManualAttestationListResponse = z.infer<typeof ManualAttestationListResponseSchema>;
 
-export const ManualAttestationCreateInputSchema = z
+export const ManualAttestationCreateInputSchema = /* @__PURE__ */ (() => z
   .object({
     key: z.string().min(1).max(64),
     /** Period the attestation covers — the API validates it matches a known config period. */
@@ -6416,7 +6416,7 @@ export const ManualAttestationCreateInputSchema = z
       message: 'actionTakenAt is required when outcome is YES or NO',
       path: ['actionTakenAt'],
     },
-  );
+  ))();
 export type ManualAttestationCreateInput = z.infer<
   typeof ManualAttestationCreateInputSchema
 >;
@@ -6424,31 +6424,31 @@ export type ManualAttestationCreateInput = z.infer<
 /** Signals the ASSOCIATE can fix themselves — the only ones "Nudge all
  *  missing" accepts. I-9 §2 / E-Verify / background / age are HR-side
  *  work; nudging the associate for those would be noise. */
-export const ScorecardNudgeableSignalSchema = z.enum([
+export const ScorecardNudgeableSignalSchema = /* @__PURE__ */ (() => z.enum([
   'DRUG_TEST_60D',
   'W4_ON_FILE',
   'OFFER_LETTER_SIGNED',
   'POLICY_ACK_SIGNED',
-]);
+]))();
 export type ScorecardNudgeableSignal = z.infer<typeof ScorecardNudgeableSignalSchema>;
 
-export const ScorecardNudgeInputSchema = z.object({
+export const ScorecardNudgeInputSchema = /* @__PURE__ */ (() => z.object({
   signalKey: ScorecardNudgeableSignalSchema,
   clientId: UuidSchema.optional(),
-});
+}))();
 export type ScorecardNudgeInput = z.infer<typeof ScorecardNudgeInputSchema>;
 
-export const ScorecardNudgeResponseSchema = z.object({
+export const ScorecardNudgeResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Associates notified this call. */
   nudged: z.number().int().nonnegative(),
   /** Skipped — already nudged for this signal within the last 7 days. */
   deduped: z.number().int().nonnegative(),
   missingCount: z.number().int().nonnegative(),
-});
+}))();
 export type ScorecardNudgeResponse = z.infer<typeof ScorecardNudgeResponseSchema>;
 
 // Tile 2 — expiring documents (30/60/90)
-export const ScorecardExpirationKindSchema = z.enum([
+export const ScorecardExpirationKindSchema = /* @__PURE__ */ (() => z.enum([
   'WORKERS_COMP',
   'GENERAL_LIABILITY',
   'DRUG_TEST',
@@ -6459,19 +6459,19 @@ export const ScorecardExpirationKindSchema = z.enum([
   'DOCUMENT', // DocumentRecord.expiresAt (any kind carrying a date)
   'VACCINATION', // VaccinationRecord.expiresOn
   'AGREEMENT', // Agreement.expiresOn
-]);
+]))();
 export type ScorecardExpirationKind = z.infer<typeof ScorecardExpirationKindSchema>;
 
-export const ScorecardExpiringItemSchema = z.object({
+export const ScorecardExpiringItemSchema = /* @__PURE__ */ (() => z.object({
   kind: ScorecardExpirationKindSchema,
   label: z.string(),
   expiresAt: z.string(),
   daysUntil: z.number().int(),
   subject: ScorecardSubjectSchema,
-});
+}))();
 export type ScorecardExpiringItem = z.infer<typeof ScorecardExpiringItemSchema>;
 
-export const ScorecardExpirationsResponseSchema = z.object({
+export const ScorecardExpirationsResponseSchema = /* @__PURE__ */ (() => z.object({
   buckets: z.object({
     red: z.array(ScorecardExpiringItemSchema),    // 0–30 days
     amber: z.array(ScorecardExpiringItemSchema),  // 31–60 days
@@ -6485,11 +6485,11 @@ export const ScorecardExpirationsResponseSchema = z.object({
   attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardExpirationsResponse = z.infer<typeof ScorecardExpirationsResponseSchema>;
 
 // Tile 3 — shift compliance
-export const ScorecardShiftSignalSchema = z.object({
+export const ScorecardShiftSignalSchema = /* @__PURE__ */ (() => z.object({
   key: z.enum([
     'FILL_RATE',
     'NO_SHOW_RATE',
@@ -6506,19 +6506,19 @@ export const ScorecardShiftSignalSchema = z.object({
   value: z.number().nullable(),
   target: z.number().nullable(),
   reason: z.string().nullable(),
-});
+}))();
 export type ScorecardShiftSignal = z.infer<typeof ScorecardShiftSignalSchema>;
 
-export const ScorecardShiftsResponseSchema = z.object({
+export const ScorecardShiftsResponseSchema = /* @__PURE__ */ (() => z.object({
   windowDays: z.number().int().positive(),
   signals: z.array(ScorecardShiftSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardShiftsResponse = z.infer<typeof ScorecardShiftsResponseSchema>;
 
 // Tile 4 — billing & invoicing
-export const ScorecardBillingRateRowSchema = z.object({
+export const ScorecardBillingRateRowSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema,
   clientName: z.string(),
   jobId: UuidSchema,
@@ -6526,13 +6526,13 @@ export const ScorecardBillingRateRowSchema = z.object({
   billRate: z.number(),
   expectedRate: z.number().nullable(),
   match: z.boolean(),
-});
+}))();
 export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
 
 /** A FINAL unpaid statement aging toward the Walmart MSA 90-day forfeiture
  *  window. Live receivables data — the weekly INVOICE_FORFEITURE attestation
  *  confirms the human review; this is the list that review looks at. */
-export const ScorecardAtRiskStatementSchema = z.object({
+export const ScorecardAtRiskStatementSchema = /* @__PURE__ */ (() => z.object({
   statementId: UuidSchema,
   clientId: UuidSchema,
   clientName: z.string(),
@@ -6543,10 +6543,10 @@ export const ScorecardAtRiskStatementSchema = z.object({
   daysToForfeit: z.number().int(),
   /** Statement total from its snapshot; null when the snapshot predates totals. */
   amount: z.number().nullable(),
-});
+}))();
 export type ScorecardAtRiskStatement = z.infer<typeof ScorecardAtRiskStatementSchema>;
 
-export const ScorecardBillingResponseSchema = z.object({
+export const ScorecardBillingResponseSchema = /* @__PURE__ */ (() => z.object({
   rateChecks: z.array(ScorecardBillingRateRowSchema),
   /** FINAL unpaid statements ≥60 days old, oldest first. */
   atRiskStatements: z.array(ScorecardAtRiskStatementSchema),
@@ -6556,11 +6556,11 @@ export const ScorecardBillingResponseSchema = z.object({
   attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardBillingResponse = z.infer<typeof ScorecardBillingResponseSchema>;
 
 // Tile 5 — training completeness
-export const ScorecardTrainingSignalSchema = z.object({
+export const ScorecardTrainingSignalSchema = /* @__PURE__ */ (() => z.object({
   tag: ComplianceTagSchema,
   label: z.string(),
   contractClause: z.string(),
@@ -6577,27 +6577,27 @@ export const ScorecardTrainingSignalSchema = z.object({
   missingIds: z.array(UuidSchema),
   /** PUBLISHED courses carrying this tag — the enroll targets. */
   courses: z.array(z.object({ id: UuidSchema, title: z.string() })),
-});
+}))();
 export type ScorecardTrainingSignal = z.infer<typeof ScorecardTrainingSignalSchema>;
 
-export const ScorecardTrainingResponseSchema = z.object({
+export const ScorecardTrainingResponseSchema = /* @__PURE__ */ (() => z.object({
   signals: z.array(ScorecardTrainingSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardTrainingResponse = z.infer<typeof ScorecardTrainingResponseSchema>;
 
 // Tile 6 — open actions (rolled up from the other tiles server-side)
-export const ScorecardActionStateSchema = z.object({
+export const ScorecardActionStateSchema = /* @__PURE__ */ (() => z.object({
   status: z.enum(['OPEN', 'SNOOZED', 'DONE']),
   assigneeUserId: UuidSchema.nullable(),
   assigneeEmail: z.string().nullable(),
   snoozedUntil: z.string().datetime().nullable(),
   updatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardActionState = z.infer<typeof ScorecardActionStateSchema>;
 
-export const ScorecardActionSchema = z.object({
+export const ScorecardActionSchema = /* @__PURE__ */ (() => z.object({
   id: z.string(),
   severity: ScorecardSeveritySchema,
   title: z.string(),
@@ -6606,10 +6606,10 @@ export const ScorecardActionSchema = z.object({
   link: z.string().nullable(),  // SPA path, e.g. "/people?associate=..."
   /** Persisted remediation state (assignment/snooze). Absent = untouched. */
   state: ScorecardActionStateSchema.nullable().optional(),
-});
+}))();
 export type ScorecardAction = z.infer<typeof ScorecardActionSchema>;
 
-export const ScorecardActionsResponseSchema = z.object({
+export const ScorecardActionsResponseSchema = /* @__PURE__ */ (() => z.object({
   actions: z.array(ScorecardActionSchema),
   criticalCount: z.number().int().nonnegative(),
   warnCount: z.number().int().nonnegative(),
@@ -6620,10 +6620,10 @@ export const ScorecardActionsResponseSchema = z.object({
   truncated: z.boolean(),
   totalActionCount: z.number().int().nonnegative(),
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardActionsResponse = z.infer<typeof ScorecardActionsResponseSchema>;
 
-export const ScorecardActionStateInputSchema = z.object({
+export const ScorecardActionStateInputSchema = /* @__PURE__ */ (() => z.object({
   /** The derived action id (stable across regenerations). */
   actionId: z.string().min(1).max(300),
   status: z.enum(['OPEN', 'SNOOZED', 'DONE']).optional(),
@@ -6631,24 +6631,24 @@ export const ScorecardActionStateInputSchema = z.object({
   assigneeUserId: UuidSchema.nullable().optional(),
   /** Required when status=SNOOZED. */
   snoozedUntil: z.string().datetime().nullable().optional(),
-});
+}))();
 export type ScorecardActionStateInput = z.infer<typeof ScorecardActionStateInputSchema>;
 
-export const ScorecardHistoryPointSchema = z.object({
+export const ScorecardHistoryPointSchema = /* @__PURE__ */ (() => z.object({
   day: z.string(), // YYYY-MM-DD
   score: z.number().int().min(0).max(100),
   criticalCount: z.number().int().nonnegative(),
   warnCount: z.number().int().nonnegative(),
   activeAssociateCount: z.number().int().nonnegative(),
   fullyCompliantCount: z.number().int().nonnegative(),
-});
+}))();
 export type ScorecardHistoryPoint = z.infer<typeof ScorecardHistoryPointSchema>;
 
-export const ScorecardHistoryResponseSchema = z.object({
+export const ScorecardHistoryResponseSchema = /* @__PURE__ */ (() => z.object({
   points: z.array(ScorecardHistoryPointSchema),
   /** Score delta vs ~7 days ago (null when no snapshot exists that far back). */
   weekDelta: z.number().int().nullable(),
-});
+}))();
 export type ScorecardHistoryResponse = z.infer<typeof ScorecardHistoryResponseSchema>;
 
 // ----- Tile 7 — OSHA safety ------------------------------------------------
@@ -6656,21 +6656,21 @@ export type ScorecardHistoryResponse = z.infer<typeof ScorecardHistoryResponseSc
 // managed at /compliance/osha). These schemas mirror that model's enums;
 // they do not define a second incident system.
 
-export const OshaIncidentSeveritySchema = z.enum([
+export const OshaIncidentSeveritySchema = /* @__PURE__ */ (() => z.enum([
   'FIRST_AID',
   'MEDICAL_TREATMENT',
   'RESTRICTED_DUTY',
   'DAYS_AWAY',
   'FATAL',
-]);
+]))();
 export type OshaIncidentSeverity = z.infer<typeof OshaIncidentSeveritySchema>;
 
-export const OshaIncidentStatusSchema = z.enum([
+export const OshaIncidentStatusSchema = /* @__PURE__ */ (() => z.enum([
   'REPORTED',
   'INVESTIGATING',
   'RESOLVED',
   'ESCALATED',
-]);
+]))();
 export type OshaIncidentStatus = z.infer<typeof OshaIncidentStatusSchema>;
 
 /** DART = the recordables that involved days away or restricted duty. */
@@ -6685,7 +6685,7 @@ export const OSHA_TRIR_TARGET = 3.0;
 export const OSHA_DART_TARGET = 2.0;
 
 /** One OshaIncident as the scorecard tile surfaces it. */
-export const ScorecardSafetyIncidentSchema = z.object({
+export const ScorecardSafetyIncidentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema.nullable(),
   associateName: z.string().nullable(),
@@ -6700,10 +6700,10 @@ export const ScorecardSafetyIncidentSchema = z.object({
   daysAway: z.number().int().nonnegative(),
   daysRestricted: z.number().int().nonnegative(),
   status: OshaIncidentStatusSchema,
-});
+}))();
 export type ScorecardSafetyIncident = z.infer<typeof ScorecardSafetyIncidentSchema>;
 
-export const ScorecardSafetyResponseSchema = z.object({
+export const ScorecardSafetyResponseSchema = /* @__PURE__ */ (() => z.object({
   /** Whole days since the most recent recordable, all-time. Null = none ever
    *  (the factory sign reads "—", which is the best possible number). */
   daysSinceLastRecordable: z.number().int().nonnegative().nullable(),
@@ -6719,7 +6719,7 @@ export const ScorecardSafetyResponseSchema = z.object({
   attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
-});
+}))();
 export type ScorecardSafetyResponse = z.infer<typeof ScorecardSafetyResponseSchema>;
 
 // =============================================================================
@@ -6744,7 +6744,7 @@ export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
 
 // Org-enforced MFA policy. Mirrors the Prisma MfaRequirement enum; the
 // role mapping for ADMINS lives in roles.ts (isMfaAdminRole).
-export const MfaRequirementSchema = z.enum(['OFF', 'ADMINS', 'ALL']);
+export const MfaRequirementSchema = /* @__PURE__ */ (() => z.enum(['OFF', 'ADMINS', 'ALL']))();
 
 /* ---------------------------------------------------------------------------
  *  Names (product taxonomy, 2026-10-13). Hugo is the orchestrator and the
@@ -6755,7 +6755,7 @@ export const PRODUCT_NAME = 'Alto People';
 export const ASSISTANT_PLATFORM_NAME = 'Hugo';
 export const ASSISTANT_NAME_PROMPT = 'What would you like your team to call me?';
 
-export const OrgBrandingSchema = z.object({
+export const OrgBrandingSchema = /* @__PURE__ */ (() => z.object({
   orgName: z.string().min(1).max(120),
   /** The tenant's display name for Hugo. */
   assistantName: z.string().min(1).max(60),
@@ -6786,12 +6786,12 @@ export const OrgBrandingSchema = z.object({
   financeMailbox: z.string().nullable(),
   unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema,
   updatedAt: z.string().datetime(),
-});
+}))();
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
 
 // PATCH body — every field optional; null clears, undefined leaves alone.
 // Logo is uploaded via a separate multipart endpoint, not part of this body.
-export const UpdateOrgBrandingInputSchema = z
+export const UpdateOrgBrandingInputSchema = /* @__PURE__ */ (() => z
   .object({
     orgName: z.string().min(1).max(120).optional(),
     assistantName: z.string().trim().min(1).max(60).optional(),
@@ -6819,7 +6819,7 @@ export const UpdateOrgBrandingInputSchema = z
       .optional(),
     unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema.optional(),
   })
-  .strict();
+  .strict())();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -6834,65 +6834,65 @@ export const MFA_RECOVERY_CODE_COUNT = 8;
  *  recovery codes are shown to the user exactly once — closing the page
  *  without confirming throws them away (the encrypted secret stored
  *  server-side is overwritten on the next /enroll/start call). */
-export const MfaEnrollStartResponseSchema = z.object({
+export const MfaEnrollStartResponseSchema = /* @__PURE__ */ (() => z.object({
   secret: z.string().min(1),
   provisioningUri: z.string().url(),
   recoveryCodes: z.array(z.string().min(1)).length(MFA_RECOVERY_CODE_COUNT),
-});
+}))();
 export type MfaEnrollStartResponse = z.infer<typeof MfaEnrollStartResponseSchema>;
 
-export const MfaEnrollConfirmInputSchema = z.object({
+export const MfaEnrollConfirmInputSchema = /* @__PURE__ */ (() => z.object({
   // 6-digit numeric. Server tolerates a single 30s window of skew.
   code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits.'),
-});
+}))();
 export type MfaEnrollConfirmInput = z.infer<typeof MfaEnrollConfirmInputSchema>;
 
-export const MfaDisableInputSchema = z.object({
+export const MfaDisableInputSchema = /* @__PURE__ */ (() => z.object({
   currentPassword: z.string().min(1).max(256),
-});
+}))();
 export type MfaDisableInput = z.infer<typeof MfaDisableInputSchema>;
 
 /** Code submitted to /auth/mfa-challenge. Either a 6-digit TOTP or a
  *  recovery code in `xxxxx-xxxxx` format. The server resolves which
  *  flavour was provided. */
-export const MfaChallengeInputSchema = z.object({
+export const MfaChallengeInputSchema = /* @__PURE__ */ (() => z.object({
   code: z
     .string()
     .min(1)
     .max(20)
     .transform((s) => s.trim().toLowerCase()),
-});
+}))();
 export type MfaChallengeInput = z.infer<typeof MfaChallengeInputSchema>;
 
-export const MfaChallengeResponseSchema = z.object({
+export const MfaChallengeResponseSchema = /* @__PURE__ */ (() => z.object({
   user: AuthUserSchema,
-});
+}))();
 export type MfaChallengeResponse = z.infer<typeof MfaChallengeResponseSchema>;
 
 /** Snapshot of the caller's MFA state for the Settings card. */
-export const MfaStatusResponseSchema = z.object({
+export const MfaStatusResponseSchema = /* @__PURE__ */ (() => z.object({
   enrolled: z.boolean(),
   enabledAt: z.string().datetime().nullable(),
   remainingRecoveryCodes: z.number().int().nonnegative(),
-});
+}))();
 export type MfaStatusResponse = z.infer<typeof MfaStatusResponseSchema>;
 
 /** Regenerate-codes input. Same password-reauth contract as disable —
  *  rotating recovery codes is destructive (existing codes stop working) so
  *  we hold it to the same bar. */
-export const MfaRegenerateInputSchema = z.object({
+export const MfaRegenerateInputSchema = /* @__PURE__ */ (() => z.object({
   currentPassword: z.string().min(1).max(256),
-});
+}))();
 export type MfaRegenerateInput = z.infer<typeof MfaRegenerateInputSchema>;
 
-export const MfaRegenerateResponseSchema = z.object({
+export const MfaRegenerateResponseSchema = /* @__PURE__ */ (() => z.object({
   recoveryCodes: z.array(z.string().min(1)).length(MFA_RECOVERY_CODE_COUNT),
-});
+}))();
 export type MfaRegenerateResponse = z.infer<typeof MfaRegenerateResponseSchema>;
 
 // ===== Phase 131 — Locations + transfers =================================
 
-export const LocationSummarySchema = z.object({
+export const LocationSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   /** Brief 2-1b: null for a direct employer's site. */
   clientId: UuidSchema.nullable(),
@@ -6911,7 +6911,7 @@ export const LocationSummarySchema = z.object({
   // admin TYPES in this zone too (otherwise a CA admin entering "4am" for a
   // FL store stores 4am Pacific = 7am Eastern, and everyone sees it 3h late).
   timezone: z.string(),
-});
+}))();
 export type LocationSummary = z.infer<typeof LocationSummarySchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -6919,14 +6919,14 @@ export type LocationSummary = z.infer<typeof LocationSummarySchema>;
  *  FINAL is an immutable, sequentially numbered snapshot.
  * -------------------------------------------------------------------------- */
 
-export const StatementLineSchema = z.object({
+export const StatementLineSchema = /* @__PURE__ */ (() => z.object({
   label: z.string(),
   hours: z.number(),
   rate: z.number(),
   amount: z.number(),
-});
+}))();
 
-export const StatementSnapshotSchema = z.object({
+export const StatementSnapshotSchema = /* @__PURE__ */ (() => z.object({
   clientName: z.string(),
   periodStart: z.string(),
   periodEnd: z.string(),
@@ -6950,10 +6950,10 @@ export const StatementSnapshotSchema = z.object({
     noShows: z.number().int(),
     pendingEntries: z.number().int(),
   }),
-});
+}))();
 export type StatementSnapshot = z.infer<typeof StatementSnapshotSchema>;
 
-export const ClientStatementSchema = z.object({
+export const ClientStatementSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   periodStart: z.string(),
@@ -6967,12 +6967,12 @@ export const ClientStatementSchema = z.object({
    *  statement is outstanding). paymentRef = check/ACH reference. */
   paidAt: z.string().datetime().nullable().optional(),
   paymentRef: z.string().nullable().optional(),
-});
+}))();
 export type ClientStatement = z.infer<typeof ClientStatementSchema>;
 
-export const ClientStatementListResponseSchema = z.object({
+export const ClientStatementListResponseSchema = /* @__PURE__ */ (() => z.object({
   statements: z.array(ClientStatementSchema),
-});
+}))();
 export type ClientStatementListResponse = z.infer<
   typeof ClientStatementListResponseSchema
 >;
@@ -6981,7 +6981,7 @@ export type ClientStatementListResponse = z.infer<
  *  OT outlook — who is projected past 40h this week, by name.
  * -------------------------------------------------------------------------- */
 
-export const OtOutlookRowSchema = z.object({
+export const OtOutlookRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   /** Client(s) of their remaining shifts this week, display string. */
@@ -6993,20 +6993,20 @@ export const OtOutlookRowSchema = z.object({
   projectedOtMinutes: z.number(),
   /** Estimated extra billed cost of that OT at 1.5× the SOW rate. */
   estOtBilled: z.number().nullable(),
-});
+}))();
 export type OtOutlookRow = z.infer<typeof OtOutlookRowSchema>;
 
-export const OtOutlookResponseSchema = z.object({
+export const OtOutlookResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(OtOutlookRowSchema),
   generatedAt: z.string().datetime(),
-});
+}))();
 export type OtOutlookResponse = z.infer<typeof OtOutlookResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Retention analytics — computed, no storage.
  * -------------------------------------------------------------------------- */
 
-export const RetentionResponseSchema = z.object({
+export const RetentionResponseSchema = /* @__PURE__ */ (() => z.object({
   monthly: z.array(
     z.object({
       /** YYYY-MM */
@@ -7042,12 +7042,12 @@ export const RetentionResponseSchema = z.object({
       survival90Pct: z.number().nullable(),
     }),
   ),
-});
+}))();
 export type RetentionResponse = z.infer<typeof RetentionResponseSchema>;
 
-export const LocationListResponseSchema = z.object({
+export const LocationListResponseSchema = /* @__PURE__ */ (() => z.object({
   locations: z.array(LocationSummarySchema),
-});
+}))();
 export type LocationListResponse = z.infer<typeof LocationListResponseSchema>;
 
 /** Geofence inputs come as a trio: all three together (set) or all three
@@ -7055,7 +7055,7 @@ export type LocationListResponse = z.infer<typeof LocationListResponseSchema>;
  *  server. radius is meters. lat/lng have ~5cm precision. */
 /** Brief 2-1b step 7: the kind of site; the tenant's terminology names it. */
 export const SITE_TYPES = ['STORE', 'PROPERTY', 'OFFICE', 'WAREHOUSE', 'OTHER'] as const;
-export const SiteTypeSchema = z.enum(SITE_TYPES);
+export const SiteTypeSchema = /* @__PURE__ */ (() => z.enum(SITE_TYPES))();
 export type SiteType = z.infer<typeof SiteTypeSchema>;
 
 const LocationBaseFields = {
@@ -7080,13 +7080,13 @@ const LocationBaseFields = {
   timezone: z.enum(SUPPORTED_TIMEZONES).optional(),
 };
 
-export const LocationCreateInputSchema = z.object(LocationBaseFields);
+export const LocationCreateInputSchema = /* @__PURE__ */ (() => z.object(LocationBaseFields))();
 export type LocationCreateInput = z.infer<typeof LocationCreateInputSchema>;
 
-export const LocationUpdateInputSchema = z.object({
+export const LocationUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   ...LocationBaseFields,
   isActive: z.boolean().optional(),
-});
+}))();
 export type LocationUpdateInput = z.infer<typeof LocationUpdateInputSchema>;
 
 /** Body for POST /org/associates/:id/transfer. startedAt is ISO
@@ -7098,7 +7098,7 @@ export type LocationUpdateInput = z.infer<typeof LocationUpdateInputSchema>;
  *  cleared, kiosk PIN re-pointed), so it must be acknowledged with
  *  confirmCrossClient — otherwise a mis-picked location would quietly
  *  move someone to another client. */
-export const AssociateTransferInputSchema = z.object({
+export const AssociateTransferInputSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   startedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
   reason: z.string().max(200).nullable().optional(),
@@ -7107,10 +7107,10 @@ export const AssociateTransferInputSchema = z.object({
    *  associate's current one; the API 400s (cross_client_confirmation_required)
    *  without it. Ignored on intra-client transfers. */
   confirmCrossClient: z.boolean().optional(),
-});
+}))();
 export type AssociateTransferInput = z.infer<typeof AssociateTransferInputSchema>;
 
-export const AssociateTransferResponseSchema = z.object({
+export const AssociateTransferResponseSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   locationId: UuidSchema,
@@ -7125,30 +7125,30 @@ export const AssociateTransferResponseSchema = z.object({
   removedTeamMemberships: z.number().int(),
   vacatedPositions: z.number().int(),
   kioskPinMoved: z.boolean(),
-});
+}))();
 export type AssociateTransferResponse = z.infer<typeof AssociateTransferResponseSchema>;
 
 /* ===== Web push subscriptions ============================================ */
 
 /** Browser PushSubscription payload — stored per user; the API pushes
  *  through it whenever a bell notification is created. */
-export const PushSubscribeInputSchema = z.object({
+export const PushSubscribeInputSchema = /* @__PURE__ */ (() => z.object({
   endpoint: z.string().url().max(1000),
   keys: z.object({
     p256dh: z.string().min(1).max(300),
     auth: z.string().min(1).max(100),
   }),
-});
+}))();
 export type PushSubscribeInput = z.infer<typeof PushSubscribeInputSchema>;
 
-export const PushUnsubscribeInputSchema = z.object({
+export const PushUnsubscribeInputSchema = /* @__PURE__ */ (() => z.object({
   endpoint: z.string().url().max(1000),
-});
+}))();
 export type PushUnsubscribeInput = z.infer<typeof PushUnsubscribeInputSchema>;
 
-export const PushPublicKeyResponseSchema = z.object({
+export const PushPublicKeyResponseSchema = /* @__PURE__ */ (() => z.object({
   publicKey: z.string(),
-});
+}))();
 export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
 
 /* ===== Bulk associate CSV import (client onboarding / migration) ========= */
@@ -7156,7 +7156,7 @@ export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
 /** One parsed + normalized CSV row. Nullable fields were absent/blank in
  *  the file. clientId is the RESOLVED id (clientName → id lookup done
  *  server-side); clientName echoes what the file said for display. */
-export const CsvImportRowDataSchema = z.object({
+export const CsvImportRowDataSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string(),
   lastName: z.string(),
   email: z.string(),
@@ -7165,20 +7165,20 @@ export const CsvImportRowDataSchema = z.object({
   clientId: z.string().nullable(),
   clientName: z.string().nullable(),
   position: z.string().nullable(),
-});
+}))();
 export type CsvImportRowData = z.infer<typeof CsvImportRowDataSchema>;
 
-export const CsvImportPreviewRowSchema = z.object({
+export const CsvImportPreviewRowSchema = /* @__PURE__ */ (() => z.object({
   /** 1-based physical line in the uploaded file where this row starts
    *  (the header is line 1, so the first data row is usually line 2). */
   line: z.number().int().positive(),
   data: CsvImportRowDataSchema,
   /** Empty = importable. Human-readable, field-prefixed messages. */
   errors: z.array(z.string()),
-});
+}))();
 export type CsvImportPreviewRow = z.infer<typeof CsvImportPreviewRowSchema>;
 
-export const CsvImportPreviewResponseSchema = z.object({
+export const CsvImportPreviewResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(CsvImportPreviewRowSchema),
   summary: z.object({
     total: z.number().int().nonnegative(),
@@ -7188,25 +7188,25 @@ export const CsvImportPreviewResponseSchema = z.object({
      *  repeats an earlier line in the same file. Subset of `invalid`. */
     duplicateEmails: z.number().int().nonnegative(),
   }),
-});
+}))();
 export type CsvImportPreviewResponse = z.infer<typeof CsvImportPreviewResponseSchema>;
 
 /** 'create' = silent migration (Associate + Application rows, no emails).
  *  'invite' = additionally mint an INVITED user + send the invite email. */
-export const CsvImportModeSchema = z.enum(['create', 'invite']);
+export const CsvImportModeSchema = /* @__PURE__ */ (() => z.enum(['create', 'invite']))();
 export type CsvImportMode = z.infer<typeof CsvImportModeSchema>;
 
-export const CsvImportCommitRowSchema = z.object({
+export const CsvImportCommitRowSchema = /* @__PURE__ */ (() => z.object({
   line: z.number().int().positive(),
   email: z.string().nullable(),
   status: z.enum(['created', 'invited', 'skipped']),
   /** Set when status = skipped: 'already_exists', 'duplicate_in_file',
    *  'invalid: …', or a runtime failure code/message. */
   reason: z.string().nullable(),
-});
+}))();
 export type CsvImportCommitRow = z.infer<typeof CsvImportCommitRowSchema>;
 
-export const CsvImportCommitResponseSchema = z.object({
+export const CsvImportCommitResponseSchema = /* @__PURE__ */ (() => z.object({
   mode: CsvImportModeSchema,
   results: z.array(CsvImportCommitRowSchema),
   summary: z.object({
@@ -7215,7 +7215,7 @@ export const CsvImportCommitResponseSchema = z.object({
     invited: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
   }),
-});
+}))();
 export type CsvImportCommitResponse = z.infer<typeof CsvImportCommitResponseSchema>;
 
 /* ===== Phase 96 — Reports: relative period tokens ======================== */
@@ -7232,7 +7232,7 @@ export const REPORT_PERIOD_TOKENS = [
   'month-to-date',
   'year-to-date',
 ] as const;
-export const ReportPeriodTokenSchema = z.enum(REPORT_PERIOD_TOKENS);
+export const ReportPeriodTokenSchema = /* @__PURE__ */ (() => z.enum(REPORT_PERIOD_TOKENS))();
 export type ReportPeriodToken = z.infer<typeof ReportPeriodTokenSchema>;
 
 export const REPORT_PERIOD_LABELS: Record<ReportPeriodToken, string> = {
@@ -7553,7 +7553,7 @@ export interface LoginHistoryEvent {
 /** How the document vault orders a page. Sorting has to happen on the
  *  server: the queue's whole job is "oldest first", and a page sorted
  *  after it was cut shows the oldest rows OF THAT PAGE, not of the vault. */
-export const DocumentSortSchema = z.enum([
+export const DocumentSortSchema = /* @__PURE__ */ (() => z.enum([
   'uploaded_asc',
   'uploaded_desc',
   'associate_asc',
@@ -7566,13 +7566,13 @@ export const DocumentSortSchema = z.enum([
   'size_desc',
   'status_asc',
   'status_desc',
-]);
+]))();
 export type DocumentSort = z.infer<typeof DocumentSortSchema>;
 
 /** Vault counts, computed over the whole population rather than the page —
  *  the KPI strip used to be derived from the capped list, so every number
  *  on the page was wrong once the vault passed the cap. */
-export const DocumentStatsSchema = z.object({
+export const DocumentStatsSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
   uploaded: z.number().int().nonnegative(),
   verified: z.number().int().nonnegative(),
@@ -7580,7 +7580,7 @@ export const DocumentStatsSchema = z.object({
   expired: z.number().int().nonnegative(),
   /** Oldest still-unreviewed upload, for the SLA banner. */
   oldestPendingAt: z.string().datetime().nullable(),
-});
+}))();
 export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -7591,13 +7591,13 @@ export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
  *  whoever asks; stand down puts the schedule back from the next shift on.
  * -------------------------------------------------------------------------- */
 
-export const EmergencyStatusSchema = z.enum(['ACTIVE', 'STOOD_DOWN']);
+export const EmergencyStatusSchema = /* @__PURE__ */ (() => z.enum(['ACTIVE', 'STOOD_DOWN']))();
 export type EmergencyStatus = z.infer<typeof EmergencyStatusSchema>;
 
-export const EmergencyCheckInStatusSchema = z.enum(['SAFE', 'NEEDS_HELP']);
+export const EmergencyCheckInStatusSchema = /* @__PURE__ */ (() => z.enum(['SAFE', 'NEEDS_HELP']))();
 export type EmergencyCheckInStatus = z.infer<typeof EmergencyCheckInStatusSchema>;
 
-export const EmergencyDeclareInputSchema = z.object({
+export const EmergencyDeclareInputSchema = /* @__PURE__ */ (() => z.object({
   title: z.string().trim().min(2).max(120),
   /** The declarer's words, English. Sent as written. */
   message: z.string().trim().min(2).max(2000),
@@ -7613,14 +7613,14 @@ export const EmergencyDeclareInputSchema = z.object({
   /** Where the vans go; null means each rider's own store. */
   destinationLocationId: UuidSchema.nullable().optional(),
   escalationMinutes: z.number().int().min(5).max(1440).default(60),
-});
+}))();
 export type EmergencyDeclareInput = z.infer<typeof EmergencyDeclareInputSchema>;
 
-export const EmergencyCheckInInputSchema = z.object({
+export const EmergencyCheckInInputSchema = /* @__PURE__ */ (() => z.object({
   status: EmergencyCheckInStatusSchema,
   needsRide: z.boolean().default(false),
   note: z.string().trim().max(300).optional(),
-});
+}))();
 export type EmergencyCheckInInput = z.infer<typeof EmergencyCheckInInputSchema>;
 
 export interface EmergencySiteRef {
@@ -7710,7 +7710,7 @@ export interface MyEmergencyResponse {
  *  sponsors, the dates everything turns on, and the alerts those dates fire.
  * -------------------------------------------------------------------------- */
 
-export const ProgramTypeSchema = z.enum(['J1_SWT', 'H2B', 'DOMESTIC']);
+export const ProgramTypeSchema = /* @__PURE__ */ (() => z.enum(['J1_SWT', 'H2B', 'DOMESTIC']))();
 export type ProgramType = z.infer<typeof ProgramTypeSchema>;
 export const PROGRAM_TYPE_LABELS: Record<ProgramType, string> = {
   J1_SWT: 'J-1 Summer Work Travel',
@@ -7718,12 +7718,12 @@ export const PROGRAM_TYPE_LABELS: Record<ProgramType, string> = {
   DOMESTIC: 'Domestic',
 };
 
-export const SecondJobStatusSchema = z.enum(['NOT_REQUESTED', 'REQUESTED', 'APPROVED', 'DENIED']);
+export const SecondJobStatusSchema = /* @__PURE__ */ (() => z.enum(['NOT_REQUESTED', 'REQUESTED', 'APPROVED', 'DENIED']))();
 export type SecondJobStatus = z.infer<typeof SecondJobStatusSchema>;
 
-const ProgramDateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const ProgramDateOnly = /* @__PURE__ */ (() => z.string().regex(/^\d{4}-\d{2}-\d{2}$/))();
 
-export const SponsorInputSchema = z.object({
+export const SponsorInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160),
   programType: ProgramTypeSchema.default('J1_SWT'),
   contactName: z.string().trim().max(120).nullable().optional(),
@@ -7735,7 +7735,7 @@ export const SponsorInputSchema = z.object({
   reportingCadence: z.string().trim().max(500).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
   isActive: z.boolean().default(true),
-});
+}))();
 export type SponsorInput = z.infer<typeof SponsorInputSchema>;
 
 export interface Sponsor {
@@ -7755,7 +7755,7 @@ export interface Sponsor {
   activeParticipants: number;
 }
 
-export const ProgramInputSchema = z
+export const ProgramInputSchema = /* @__PURE__ */ (() => z
   .object({
     associateId: UuidSchema,
     type: ProgramTypeSchema,
@@ -7784,10 +7784,10 @@ export const ProgramInputSchema = z
   .refine((v) => v.type !== 'H2B' || !!v.petitionClientId, {
     message: 'An H-2B program names the client the petition was certified for',
     path: ['petitionClientId'],
-  });
+  }))();
 export type ProgramInput = z.infer<typeof ProgramInputSchema>;
 
-export const ProgramUpdateSchema = z.object({
+export const ProgramUpdateSchema = /* @__PURE__ */ (() => z.object({
   sponsorId: UuidSchema.nullable().optional(),
   ds2019Number: z.string().trim().max(80).nullable().optional(),
   ds2019IssuedOn: ProgramDateOnly.nullable().optional(),
@@ -7809,7 +7809,7 @@ export const ProgramUpdateSchema = z.object({
   documentIds: z.array(UuidSchema).max(20).optional(),
   /** Close early (left the program, transferred, no-show). */
   closedReason: z.string().trim().max(300).nullable().optional(),
-});
+}))();
 export type ProgramUpdate = z.infer<typeof ProgramUpdateSchema>;
 
 export type ProgramAlertKind =
@@ -7902,13 +7902,13 @@ export interface ProgramAlertSettings {
   sponsorCheckInDays: number[];
   petitionEndDays: number[];
 }
-export const ProgramAlertSettingsSchema = z.object({
+export const ProgramAlertSettingsSchema = /* @__PURE__ */ (() => z.object({
   programEndDays: z.array(z.number().int().min(0).max(365)).max(8),
   visaExpiryDays: z.array(z.number().int().min(0).max(365)).max(8),
   i9ReverifyDays: z.array(z.number().int().min(0).max(365)).max(8),
   sponsorCheckInDays: z.array(z.number().int().min(0).max(365)).max(8),
   petitionEndDays: z.array(z.number().int().min(0).max(365)).max(8),
-});
+}))();
 
 export interface ProgramAlertsResponse {
   alerts: ProgramAlert[];
@@ -7977,41 +7977,41 @@ export const RECRUITING_CHANNEL_LABELS: Record<RecruitingChannel, string> = {
   H2B: 'H-2B',
 };
 
-const ChannelPercentSchema = z.object({
+const ChannelPercentSchema = /* @__PURE__ */ (() => z.object({
   LOCAL: z.number().min(0).max(100),
   J1_NORTH: z.number().min(0).max(100),
   J1_SOUTH: z.number().min(0).max(100),
   H2B: z.number().min(0).max(100),
-});
+}))();
 export type ChannelPercent = z.infer<typeof ChannelPercentSchema>;
-const ChannelWeeksSchema = z.object({
+const ChannelWeeksSchema = /* @__PURE__ */ (() => z.object({
   LOCAL: z.number().int().min(0).max(52),
   J1_NORTH: z.number().int().min(0).max(52),
   J1_SOUTH: z.number().int().min(0).max(52),
   H2B: z.number().int().min(0).max(52),
-});
+}))();
 export type ChannelWeeks = z.infer<typeof ChannelWeeksSchema>;
 
-export const SeasonDemandWeekSchema = z.object({
+export const SeasonDemandWeekSchema = /* @__PURE__ */ (() => z.object({
   /** Org week start, YYYY-MM-DD (a Saturday). */
   week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   day: z.number().int().min(0).max(2000),
   evening: z.number().int().min(0).max(2000),
   overnight: z.number().int().min(0).max(2000),
-});
+}))();
 export type SeasonDemandWeek = z.infer<typeof SeasonDemandWeekSchema>;
 
-export const SeasonPlanSiteInputSchema = z.object({
+export const SeasonPlanSiteInputSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   bedsAvailable: z.number().int().min(0).max(5000).default(0),
   vanSeatsPerRun: z.number().int().min(0).max(200).default(14),
   runsPerShift: z.number().int().min(0).max(20).default(1),
   routeMinutes: z.number().int().min(0).max(600).default(45),
   demand: z.array(SeasonDemandWeekSchema).max(60).default([]),
-});
+}))();
 export type SeasonPlanSiteInput = z.infer<typeof SeasonPlanSiteInputSchema>;
 
-export const SeasonPlanInputSchema = z
+export const SeasonPlanInputSchema = /* @__PURE__ */ (() => z
   .object({
     name: z.string().trim().min(2).max(120),
     clientId: UuidSchema.nullable().optional(),
@@ -8028,10 +8028,10 @@ export const SeasonPlanInputSchema = z
     /** Sites in the plan; omitted on create = every active store of the client (or every store). */
     sites: z.array(SeasonPlanSiteInputSchema).max(60).optional(),
   })
-  .refine((v) => v.seasonEnd >= v.seasonStart, { message: 'seasonEnd must be on or after seasonStart', path: ['seasonEnd'] });
+  .refine((v) => v.seasonEnd >= v.seasonStart, { message: 'seasonEnd must be on or after seasonStart', path: ['seasonEnd'] }))();
 export type SeasonPlanInput = z.infer<typeof SeasonPlanInputSchema>;
 
-export const SeasonPlanUpdateSchema = z.object({
+export const SeasonPlanUpdateSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(120).optional(),
   seasonStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   seasonEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -8046,7 +8046,7 @@ export const SeasonPlanUpdateSchema = z.object({
   /** Replaces the site list when present. */
   sites: z.array(SeasonPlanSiteInputSchema).max(60).optional(),
   archived: z.boolean().optional(),
-});
+}))();
 export type SeasonPlanUpdate = z.infer<typeof SeasonPlanUpdateSchema>;
 
 export interface SeasonPlanSiteWeek {
@@ -8174,10 +8174,10 @@ export interface WhatsAppMeResponse {
   consent: { status: WhatsAppConsentStatus; phone: string; optedInAt: string; optedOutAt: string | null } | null;
 }
 
-export const WhatsAppConsentInputSchema = z.object({
+export const WhatsAppConsentInputSchema = /* @__PURE__ */ (() => z.object({
   optIn: z.boolean(),
   phone: z.string().trim().max(40).optional(),
-});
+}))();
 export type WhatsAppConsentInput = z.infer<typeof WhatsAppConsentInputSchema>;
 
 export type WhatsAppMessageStatus = 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED';
@@ -8226,11 +8226,11 @@ export interface WhatsAppOverview {
  *  worker has a type, an accountable owner, capabilities and a lifecycle.
  * -------------------------------------------------------------------------- */
 
-export const WorkerTypeSchema = z.enum(['PERSON', 'AGENT', 'ROBOT']);
+export const WorkerTypeSchema = /* @__PURE__ */ (() => z.enum(['PERSON', 'AGENT', 'ROBOT']))();
 export type WorkerType = z.infer<typeof WorkerTypeSchema>;
 export const WORKER_TYPE_LABELS: Record<WorkerType, string> = { PERSON: 'Person', AGENT: 'AI agent', ROBOT: 'Robot' };
 
-export const WorkerStatusSchema = z.enum(['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED']);
+export const WorkerStatusSchema = /* @__PURE__ */ (() => z.enum(['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED']))();
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
 export const WORKER_STATUS_LABELS: Record<WorkerStatus, string> = {
   ONBOARDING: 'Onboarding',
@@ -8258,7 +8258,7 @@ export const WORKER_CAPABILITIES = [
 export type WorkerCapabilityCode = (typeof WORKER_CAPABILITIES)[number]['code'];
 const capabilityCodes = WORKER_CAPABILITIES.map((c) => c.code) as [WorkerCapabilityCode, ...WorkerCapabilityCode[]];
 
-export const WorkerInputSchema = z.object({
+export const WorkerInputSchema = /* @__PURE__ */ (() => z.object({
   type: z.enum(['AGENT', 'ROBOT']),
   name: z.string().trim().min(2).max(160),
   /** Required: no worker without a human accountable for it. */
@@ -8268,24 +8268,24 @@ export const WorkerInputSchema = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
   /** Where it works from day one; optional. */
   locationId: UuidSchema.nullable().optional(),
-});
+}))();
 export type WorkerInput = z.infer<typeof WorkerInputSchema>;
 
-export const WorkerUpdateSchema = z.object({
+export const WorkerUpdateSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160).optional(),
   ownerUserId: UuidSchema.optional(),
   status: WorkerStatusSchema.optional(),
   capabilities: z.array(z.enum(capabilityCodes)).max(20).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
-});
+}))();
 export type WorkerUpdate = z.infer<typeof WorkerUpdateSchema>;
 
-export const WorkerAssignmentInputSchema = z.object({
+export const WorkerAssignmentInputSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   startedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   /** Ends the current open assignment at the same site before opening this one. */
   notes: z.string().trim().max(500).nullable().optional(),
-});
+}))();
 export type WorkerAssignmentInput = z.infer<typeof WorkerAssignmentInputSchema>;
 
 export interface WorkerSiteRef {
@@ -8330,7 +8330,7 @@ export interface WorkersResponse {
  *  profile carries what the registry needs beyond the worker row.
  * -------------------------------------------------------------------------- */
 
-export const AgentEnvironmentSchema = z.enum(['PRODUCTION', 'STAGING', 'DEVELOPMENT']);
+export const AgentEnvironmentSchema = /* @__PURE__ */ (() => z.enum(['PRODUCTION', 'STAGING', 'DEVELOPMENT']))();
 export type AgentEnvironment = z.infer<typeof AgentEnvironmentSchema>;
 export const AGENT_ENVIRONMENT_LABELS: Record<AgentEnvironment, string> = {
   PRODUCTION: 'Production',
@@ -8363,7 +8363,7 @@ export const AGENT_SCOPES = [
 ] as const;
 export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
 const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];
-export const AgentScopeSchema = z.enum(agentScopeCodes);
+export const AgentScopeSchema = /* @__PURE__ */ (() => z.enum(agentScopeCodes))();
 
 /**
  * The agent families of the product taxonomy. An agent record names its
@@ -8391,10 +8391,10 @@ export const AGENT_FAMILIES = [
 ] as const;
 export type AgentFamily = (typeof AGENT_FAMILIES)[number]['code'];
 const agentFamilyCodes = AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...AgentFamily[]];
-export const AgentFamilySchema = z.enum(agentFamilyCodes);
+export const AgentFamilySchema = /* @__PURE__ */ (() => z.enum(agentFamilyCodes))();
 
 /** High-risk actions an agent may only request; a person approves or rejects from the queue. */
-export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN', 'POLICY_GATE']);
+export const AgentGatedActionSchema = /* @__PURE__ */ (() => z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN', 'POLICY_GATE']))();
 export type AgentGatedAction = z.infer<typeof AgentGatedActionSchema>;
 export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
   PAY_CHANGE: 'Pay change',
@@ -8409,7 +8409,7 @@ export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
 /** The ones the agent carries out itself once a person approved; pay and separations are done by the approver. */
 export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN', 'POLICY_GATE'];
 
-export const AgentApprovalStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED']);
+export const AgentApprovalStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED']))();
 export type AgentApprovalStatus = z.infer<typeof AgentApprovalStatusSchema>;
 export const AGENT_APPROVAL_STATUS_LABELS: Record<AgentApprovalStatus, string> = {
   PENDING: 'Waiting',
@@ -8428,7 +8428,7 @@ const AgentLimitsShape = {
   allowedHoursEnd: z.number().int().min(1).max(24).nullable(),
 };
 
-export const AgentInputSchema = z.object({
+export const AgentInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160),
   /** Required: no agent without a person accountable for it. */
   ownerUserId: UuidSchema,
@@ -8447,10 +8447,10 @@ export const AgentInputSchema = z.object({
   status: WorkerStatusSchema.default('ONBOARDING'),
   capabilities: z.array(z.enum(capabilityCodes)).max(20).default([]),
   notes: z.string().trim().max(2000).nullable().optional(),
-});
+}))();
 export type AgentInput = z.infer<typeof AgentInputSchema>;
 
-export const AgentUpdateSchema = z.object({
+export const AgentUpdateSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160).optional(),
   ownerUserId: UuidSchema.optional(),
   purpose: z.string().trim().min(3).max(500).optional(),
@@ -8468,42 +8468,42 @@ export const AgentUpdateSchema = z.object({
   status: WorkerStatusSchema.optional(),
   capabilities: z.array(z.enum(capabilityCodes)).max(20).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
-});
+}))();
 export type AgentUpdate = z.infer<typeof AgentUpdateSchema>;
 
-export const AgentCredentialIssueSchema = z.object({
+export const AgentCredentialIssueSchema = /* @__PURE__ */ (() => z.object({
   /** Short-lived: a day by default, a week at most. */
   ttlHours: z.number().int().min(1).max(168).default(24),
-});
+}))();
 export type AgentCredentialIssue = z.infer<typeof AgentCredentialIssueSchema>;
 
-export const AgentRevokeSchema = z.object({ reason: z.string().trim().max(200).optional() });
+export const AgentRevokeSchema = /* @__PURE__ */ (() => z.object({ reason: z.string().trim().max(200).optional() }))();
 
-export const AgentRequestInputSchema = z.object({
+export const AgentRequestInputSchema = /* @__PURE__ */ (() => z.object({
   action: AgentGatedActionSchema,
   /** What the agent wants, in words a person can approve. */
   summary: z.string().trim().min(3).max(500),
   payload: z.record(z.string(), z.unknown()).default({}),
-});
+}))();
 export type AgentRequestInput = z.infer<typeof AgentRequestInputSchema>;
 
-export const AgentDecisionSchema = z.object({ note: z.string().trim().max(500).optional() });
+export const AgentDecisionSchema = /* @__PURE__ */ (() => z.object({ note: z.string().trim().max(500).optional() }))();
 
-export const AgentSpendInputSchema = z.object({
+export const AgentSpendInputSchema = /* @__PURE__ */ (() => z.object({
   amountCents: z.number().int().min(0).max(100_000_000),
   taskRef: z.string().trim().max(120).optional(),
   note: z.string().trim().max(300).optional(),
   occurredAt: z.string().datetime().optional(),
-});
+}))();
 export type AgentSpendInput = z.infer<typeof AgentSpendInputSchema>;
 
 /** What an agent sends to a conversation; a client thread turns it into an approval request. */
-export const AgentMessageInputSchema = z.object({
+export const AgentMessageInputSchema = /* @__PURE__ */ (() => z.object({
   conversationId: UuidSchema,
   body: z.string().trim().min(1).max(4000),
   /** An approved request's id, to carry out a message that was gated. */
   approvalId: UuidSchema.optional(),
-});
+}))();
 export type AgentMessageInput = z.infer<typeof AgentMessageInputSchema>;
 
 export type AgentCredentialState = 'ACTIVE' | 'ROTATING' | 'EXPIRED' | 'REVOKED';
@@ -8619,14 +8619,14 @@ export interface AgentSelf {
  *  production, the scorecard and the drift alert.
  * -------------------------------------------------------------------------- */
 
-export const AgentSuspendSchema = z.object({ reason: z.string().trim().min(3).max(300) });
+export const AgentSuspendSchema = /* @__PURE__ */ (() => z.object({ reason: z.string().trim().min(3).max(300) }))();
 
 /**
  * A scenario is an input and what must come back. `expected.output` is
  * compared whole (order of keys ignored); `expected.allowedActions` passes
  * when every action the agent took is in the set.
  */
-export const AgentScenarioInputSchema = z.object({
+export const AgentScenarioInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160),
   input: z.record(z.string(), z.unknown()),
   expected: z
@@ -8635,20 +8635,20 @@ export const AgentScenarioInputSchema = z.object({
       allowedActions: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
     })
     .refine((e) => e.output !== undefined || e.allowedActions !== undefined, { message: 'Give an expected output or the allowed actions.' }),
-});
+}))();
 export type AgentScenarioInput = z.infer<typeof AgentScenarioInputSchema>;
 
 /** What the agent answers a scenario with, through /agent/v1. */
-export const AgentScenarioAnswerSchema = z.object({
+export const AgentScenarioAnswerSchema = /* @__PURE__ */ (() => z.object({
   output: z.record(z.string(), z.unknown()).optional(),
   actions: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
-});
+}))();
 export type AgentScenarioAnswer = z.infer<typeof AgentScenarioAnswerSchema>;
 
-export const AgentDriftSchema = z.object({
+export const AgentDriftSchema = /* @__PURE__ */ (() => z.object({
   driftErrorRatePct: z.number().int().min(1).max(100).nullable().optional(),
   driftCostPerTaskCents: z.number().int().min(1).max(100_000_000).nullable().optional(),
-});
+}))();
 
 export interface AgentScenarioRunSummary {
   id: string;

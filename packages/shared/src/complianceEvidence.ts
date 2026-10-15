@@ -213,16 +213,16 @@ export function complianceControl(id: string): ComplianceControl | undefined {
  *  The evidence page's wire shapes.
  * ---------------------------------------------------------------- */
 
-export const EvidenceSignoffSchema = z.object({
+export const EvidenceSignoffSchema = /* @__PURE__ */ (() => z.object({
   id: z.string(),
   signedOffById: z.string(),
   signedOffByEmail: z.string().nullable(),
   note: z.string().nullable(),
   createdAt: z.string(),
-});
+}))();
 export type EvidenceSignoff = z.infer<typeof EvidenceSignoffSchema>;
 
-export const EvidenceRowSchema = z.object({
+export const EvidenceRowSchema = /* @__PURE__ */ (() => z.object({
   id: z.string(),
   control: z.string(),
   status: z.enum(EVIDENCE_STATUSES),
@@ -233,7 +233,7 @@ export const EvidenceRowSchema = z.object({
   periodStart: z.string().nullable(),
   periodEnd: z.string().nullable(),
   signoffs: z.array(EvidenceSignoffSchema),
-});
+}))();
 export type EvidenceRow = z.infer<typeof EvidenceRowSchema>;
 
 export type ControlState = 'current' | 'stale' | 'failing' | 'missing' | 'awaiting-signoff';
@@ -251,9 +251,9 @@ export interface ComplianceEvidenceResponse {
   counts: Record<ControlState, number>;
 }
 
-export const EvidenceSignoffInputSchema = z.object({
+export const EvidenceSignoffInputSchema = /* @__PURE__ */ (() => z.object({
   note: z.string().trim().max(1000).optional(),
-});
+}))();
 export type EvidenceSignoffInput = z.infer<typeof EvidenceSignoffInputSchema>;
 
 /**
