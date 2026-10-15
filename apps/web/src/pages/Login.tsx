@@ -629,6 +629,19 @@ export function Login() {
         <p className="text-center text-xs text-silver/70 mt-6">
           © {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR
         </p>
+        <nav aria-label={t('login.publicPages')} className="mt-2 flex items-center justify-center gap-3 text-xs text-silver/70">
+          <Link to="/status" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.status')}
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link to="/trust-center" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.trustCenter')}
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link to="/accessibility" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.accessibility')}
+          </Link>
+        </nav>
       </div>
     </div>
   );

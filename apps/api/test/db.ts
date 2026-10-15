@@ -29,6 +29,8 @@ const TABLES = [
   // Reliability rollups: no FK reaches either, same as the two above.
   'ApiBoot',
   'ReliabilityWeek',
+  'StatusIncidentUpdate',
+  'StatusIncident',
   // Emergency's FKs all SET NULL on delete (declarer, destination), so no
   // cascade from User or Location clears it; its sites and check-ins do
   // cascade from it.

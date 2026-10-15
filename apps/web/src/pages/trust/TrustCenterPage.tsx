@@ -42,11 +42,18 @@ export function TrustCenterPage() {
         subtitle="How the platform is run, with the evidence: the controls, the audit chain, the agents and their governance. The public page says the same with your numbers left out."
         breadcrumbs={[{ label: 'Settings & Trust' }, { label: 'Trust Center' }]}
         primaryAction={
-          <Button asChild variant="secondary" size="sm">
-            <a href="/trust-center" target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" /> Public page
-            </a>
-          </Button>
+          <span className="flex flex-wrap items-center gap-2">
+            <Button asChild variant="ghost" size="sm">
+              <a href="/status" target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" /> Status page
+              </a>
+            </Button>
+            <Button asChild variant="secondary" size="sm">
+              <a href="/trust-center" target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" /> Public page
+              </a>
+            </Button>
+          </span>
         }
       />
       <TrustHero data={d} />

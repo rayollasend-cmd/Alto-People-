@@ -11123,3 +11123,61 @@ model SamlCache {
 
   @@index([expiresAt])
 }
+
+// ---------------------------------------------------------------------------
+// The public status page: incidents the team posts, with their timeline.
+// Platform-wide (never a customer's numbers); the public read derives the
+// live component states from the reliability rollups.
+// ---------------------------------------------------------------------------
+
+enum StatusComponent {
+  API
+  WEB
+  KIOSK
+  MESSAGING
+  PAYROLL_WEBHOOK
+  EMAIL
+}
+
+enum StatusImpact {
+  DEGRADED
+  OUTAGE
+}
+
+enum StatusIncidentState {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+}
+
+model StatusIncident {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  title           String              @db.VarChar(160)
+  component       StatusComponent
+  impact          StatusImpact
+  state           StatusIncidentState @default(INVESTIGATING)
+  startedAt       DateTime            @default(now()) @db.Timestamptz(6)
+  resolvedAt      DateTime?           @db.Timestamptz(6)
+  createdByUserId String?             @db.Uuid
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  updates         StatusIncidentUpdate[]
+
+  @@index([startedAt])
+  @@index([state])
+}
+
+model StatusIncidentUpdate {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  incidentId String              @db.Uuid
+  state      StatusIncidentState
+  note       String              @db.VarChar(2000)
+  at         DateTime            @default(now()) @db.Timestamptz(6)
+  byUserId   String?             @db.Uuid
+  incident   StatusIncident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, at])
+}
