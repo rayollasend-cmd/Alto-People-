@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import { getPayrollYtd, type PayrollYtdResponse } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -40,8 +40,9 @@ export function PayrollYtd() {
     // `print-area` opts this page into the global print stylesheet's
     // allowlist (index.css @media print hides everything else). Without
     // it the Print button produced a blank page.
-    <div className="mx-auto print:max-w-none print-area">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto print:max-w-none print-area"
         title={`Year-to-date payroll report — ${year}`}
         subtitle="Per-associate gross, withholding, and net pay aggregated across all disbursed runs in the tax year."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'YTD report' }]}
@@ -62,7 +63,7 @@ export function PayrollYtd() {
             </Button>
           </div>
         }
-      />
+      >
 
       {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
 
@@ -141,7 +142,7 @@ export function PayrollYtd() {
           </Card>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

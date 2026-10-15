@@ -19,6 +19,7 @@ import { ClientRequestsSection, WavesSection } from './RelayRequestsWaves';
 import { RelayRequests } from './RelayRequests';
 import { RelayFiles } from './RelayFiles';
 import { workApi, workDeskOf } from './workTypes';
+import { ListTemplate } from '@/components/templates';
 import {
   DESK_BAR,
   DESK_LABELS,
@@ -214,8 +215,11 @@ export function RelayBoard() {
 
   if (board.isError) {
     return (
-      <div className="space-y-4">
-        <PageHeader title="The relay" subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on." />
+      // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+      <ListTemplate
+          className="space-y-4"
+          title="The relay" subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on."
+      >
         <ErrorBanner
           action={
             <Button size="sm" variant="secondary" onClick={() => void board.refetch()}>
@@ -225,7 +229,7 @@ export function RelayBoard() {
         >
           Could not load the relay board.
         </ErrorBanner>
-      </div>
+      </ListTemplate>
     );
   }
   if (!data) {

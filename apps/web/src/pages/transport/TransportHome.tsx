@@ -75,7 +75,6 @@ import { messageRun, planDay, routeRides } from '@/lib/transportDispatchApi';
 import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
 import { SoundToggle } from '@/components/transport/SoundToggle';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -90,6 +89,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { ListTemplate } from '@/components/templates';
 import {
   Dialog,
   DialogContent,
@@ -226,8 +226,8 @@ export function TransportHome() {
   const openIssues = board.data?.kpis.openIssues ?? 0;
 
   return (
-    <div>
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="Transportation"
         topbarTitle="Transportation"
         subtitle="The Alto vans — bookings, dispatch, drivers, and everything that comes up."
@@ -256,7 +256,7 @@ export function TransportHome() {
             </div>
           ) : undefined
         }
-      />
+    >
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
           {TABS.map((k) => (
@@ -299,7 +299,7 @@ export function TransportHome() {
           <SettingsTab manage={manage} />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

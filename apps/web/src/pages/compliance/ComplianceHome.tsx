@@ -8,7 +8,7 @@ import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
 import { AuditPacketTab } from './AuditPacketTab';
 import { RequirementsTab } from './RequirementsTab';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'requirements' | 'audit';
@@ -45,8 +45,9 @@ export function ComplianceHome() {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Compliance"
         subtitle="Track I-9, background-check, drug-test, and J-1 obligations across every active associate."
         secondaryActions={
@@ -56,7 +57,7 @@ export function ComplianceHome() {
             <Link to="/compliance/osha">OSHA / WC / EEO-1</Link>
           </Button>
         }
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
@@ -98,6 +99,6 @@ export function ComplianceHome() {
           </TabsContent>
         )}
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }

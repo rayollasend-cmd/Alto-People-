@@ -40,7 +40,8 @@ for (const f of targets) {
     const closeAt = out.indexOf(closeNeedle, start + m[0].length);
     if (closeAt < 0) { report.skipped.push(`${f}: root close not found`); continue; }
     // Header className is the header's alone.
-    props = props.replace(/(\n\s+)className=/, '$1headerClassName=');
+    // Only the header's own prop (at the header's prop indent), never a nested element's.
+    props = props.replace(new RegExp(`(\\n${indent}    )className=`), '$1headerClassName=');
     // One-line `<PageHeader title="…" />` leaves props starting with a space.
     const propsText = props.trimEnd();
     const classProp = rootClass ? `\n${indent}    className="${rootClass}"` : '';

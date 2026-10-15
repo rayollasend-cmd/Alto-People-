@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Activity, ChevronDown, ChevronUp, Clock, TrendingUp, Users } from 'lucide-react';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
 import { getOnboardingAnalytics } from '@/lib/analyticsApi';
@@ -8,7 +7,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -77,24 +76,18 @@ export function OnboardingAnalytics() {
   }
 
   return (
-    <div className="mx-auto">
-      <div className="mb-4">
-        <Link
-          to="/onboarding"
-          className="text-sm text-silver hover:text-gold inline-block"
-        >
-          ← Applications
-        </Link>
-      </div>
-
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template;
+    // the way back to the applications is the breadcrumb.
+    <ListTemplate
+        className="mx-auto"
+        breadcrumbs={[{ label: 'Onboarding', to: '/onboarding' }, { label: 'Analytics' }]}
         title="Onboarding analytics"
         subtitle={
           data
             ? `How long associates take to finish onboarding. Last ${data.windowDays} days unless noted.`
             : 'How long associates take to finish onboarding.'
         }
-      />
+      >
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
@@ -288,7 +281,7 @@ export function OnboardingAnalytics() {
           </Card>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

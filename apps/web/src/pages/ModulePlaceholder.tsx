@@ -1,5 +1,5 @@
 import type { ModuleKey } from '@/lib/modules';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 
 interface ModulePlaceholderProps {
   moduleKey: ModuleKey;
@@ -19,8 +19,8 @@ export function ModulePlaceholder({
   // center against; flex justify-center pushes the card to the middle.
   return (
     <div className="min-h-[70dvh] flex flex-col justify-center">
-      <div className="w-full mx-auto">
-        <PageHeader title={title} subtitle={description} />
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate className="w-full mx-auto" title={title} subtitle={description}>
 
         <div className="bg-navy border border-navy-secondary rounded-lg p-8 text-center">
           <div className="inline-block px-3 py-1 rounded-full bg-gold/10 border border-gold/30 text-gold text-xs uppercase tracking-widest mb-4">
@@ -35,7 +35,7 @@ export function ModulePlaceholder({
             per the project roadmap.
           </p>
         </div>
-      </div>
+      </ListTemplate>
     </div>
   );
 }

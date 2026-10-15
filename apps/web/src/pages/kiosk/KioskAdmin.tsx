@@ -72,7 +72,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -84,6 +83,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
@@ -147,12 +147,13 @@ export function KioskAdmin() {
   const countLabel = (n: number) => (n > 99 ? '99+' : String(n));
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Kiosk admin"
         subtitle="Register tablets, issue 4-digit employee numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time' }, { label: 'Kiosk' }]}
-      />
+    >
       {canManage && <PinHealthBanner onTab={() => setTab('pins')} bump={badgeBump} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
@@ -188,7 +189,7 @@ export function KioskAdmin() {
         <TabsContent value="log"><LogTab /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

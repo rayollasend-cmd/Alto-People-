@@ -48,7 +48,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   type SegmentedControlOption,
@@ -59,6 +58,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { downloadCsv } from '@/lib/csv';
+import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 
 // Deliberate departures from the shared vocabulary: an OPEN case is unclaimed
@@ -256,12 +256,13 @@ export function HrCasesHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('hrc.title')}
         subtitle={t('hrc.subtitle')}
         breadcrumbs={[{ label: 'Workforce' }, { label: 'HR cases' }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl<'mine' | 'queue'>
@@ -519,7 +520,7 @@ export function HrCasesHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

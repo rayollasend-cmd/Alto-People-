@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { ListTemplate } from '@/components/templates';
 import { QueryError } from '@/components/ui/QueryError';
 
 /**
@@ -62,8 +62,11 @@ export function SupportPage() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Support" subtitle="Ask Alto People for help. We answer here and in your notifications." breadcrumbs={[{ label: 'Help' }, { label: 'Support' }]} />
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
+        title="Support" subtitle="Ask Alto People for help. We answer here and in your notifications." breadcrumbs={[{ label: 'Help' }, { label: 'Support' }]}
+    >
       {config.data?.statusPageUrl && (
         <a className="inline-flex items-center gap-1 text-sm text-gold underline-offset-2 hover:underline" href={config.data.statusPageUrl} target="_blank" rel="noreferrer">
           System status <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -123,6 +126,6 @@ export function SupportPage() {
           </ul>
         )}
       </section>
-    </div>
+    </ListTemplate>
   );
 }

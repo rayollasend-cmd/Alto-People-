@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Archive, Building2, MapPin, Save } from 'lucide-react';
@@ -25,7 +25,7 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { RecordTemplate } from '@/components/templates';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
@@ -68,20 +68,18 @@ export function ClientDetail() {
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
 
-  // "?section=<key>" scrolls to that section once the client has loaded —
-  // the QuickBooks OAuth return uses ?section=quickbooks to land back on
-  // the card that started the flow. The param stays in the URL (it's a
-  // shareable deep link); the ref stops re-scrolling on every refresh.
-  const [searchParams] = useSearchParams();
+  // Design system §4.3 (UX upgrade step 6, the sweep): the Record template.
+  // The record's facets are tabs; "?section=<key>" (a shareable deep link,
+  // and where the QuickBooks OAuth return lands) is the open tab. The two
+  // keys that were one card each (basics, state) share the first tab.
+  const [searchParams, setSearchParams] = useSearchParams();
   const section = searchParams.get('section');
-  const scrolledSectionRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!client || !section || scrolledSectionRef.current === section) return;
-    const el = document.getElementById(`section-${section}`);
-    if (!el) return;
-    scrolledSectionRef.current = section;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [client, section]);
+  const activeTab = section === 'state' ? 'basics' : (section ?? 'basics');
+  const openTab = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('section', key);
+    setSearchParams(next, { replace: true });
+  };
 
   const onArchive = async () => {
     if (!client) return;
@@ -162,76 +160,46 @@ export function ClientDetail() {
     );
   }
 
+  const tabs = [
+    {
+      key: 'basics',
+      label: 'Basics',
+      content: (
+        <div className="space-y-6">
+          <BasicsEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
+          <StateEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
+        </div>
+      ),
+    },
+    { key: 'locations', label: 'Locations', content: <LocationsSection clientId={client.id} /> },
+    { key: 'portal', label: 'Portal access', content: <PortalAccessSection clientId={client.id} /> },
+    { key: 'jobs', label: 'Jobs', content: <JobsSection clientId={client.id} /> },
+    { key: 'rates', label: 'Rates', content: <RateDefaultsSection clientId={client.id} /> },
+    // Statements render only for process:payroll holders; the tab follows.
+    ...(can('process:payroll') ? [{ key: 'statements', label: 'Statements', content: <StatementsSection clientId={client.id} /> }] : []),
+    { key: 'benefits', label: 'Benefits', content: <BenefitsPlansSection clientId={client.id} /> },
+    { key: 'quickbooks', label: 'QuickBooks', content: <QuickbooksSection clientId={client.id} /> },
+  ];
+
   return (
-    <div className="mx-auto space-y-6">
-      <PageHeader
-        title={client.name}
-        breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
-        subtitle={
-          <span className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={client.status} />
-            {client.industry && <span>· {client.industry}</span>}
-            {client.contactEmail && <span>· {client.contactEmail}</span>}
-          </span>
-        }
-        secondaryActions={
-          canManage ? (
-            <Button variant="ghost" onClick={onArchive} loading={archiving}>
-              <Archive className="h-4 w-4" />
-              Archive
-            </Button>
-          ) : undefined
-        }
-        className="mb-0"
-      />
-
-      {/* Each section wrapper carries a stable id so ?section=<key> can
-          scroll straight to it (scroll-mt clears the sticky header). */}
-      <div id="section-basics" className="scroll-mt-20 empty:hidden">
-        <BasicsEditor
-          client={client}
-          canManage={canManage}
-          onSaved={(updated) => setClient(updated)}
-        />
-      </div>
-
-      <div id="section-state" className="scroll-mt-20 empty:hidden">
-        <StateEditor
-          client={client}
-          canManage={canManage}
-          onSaved={(updated) => setClient(updated)}
-        />
-      </div>
-
-      <div id="section-locations" className="scroll-mt-20 empty:hidden">
-        <LocationsSection clientId={client.id} />
-      </div>
-
-      <div id="section-portal" className="scroll-mt-20 empty:hidden">
-        <PortalAccessSection clientId={client.id} />
-      </div>
-
-      <div id="section-jobs" className="scroll-mt-20 empty:hidden">
-        <JobsSection clientId={client.id} />
-      </div>
-
-      <div id="section-rates" className="scroll-mt-20 empty:hidden">
-        <RateDefaultsSection clientId={client.id} />
-      </div>
-
-      {/* Renders only for process:payroll holders. */}
-      <div id="section-statements" className="scroll-mt-20 empty:hidden">
-        <StatementsSection clientId={client.id} />
-      </div>
-
-      <div id="section-benefits" className="scroll-mt-20 empty:hidden">
-        <BenefitsPlansSection clientId={client.id} />
-      </div>
-
-      <div id="section-quickbooks" className="scroll-mt-20 empty:hidden">
-        <QuickbooksSection clientId={client.id} />
-      </div>
-    </div>
+    <RecordTemplate
+      className="mx-auto"
+      breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
+      title={client.name}
+      status={<StatusBadge status={client.status} />}
+      subtitle={[client.industry, client.contactEmail].filter(Boolean).join(' · ') || undefined}
+      actions={
+        canManage ? (
+          <Button variant="ghost" onClick={onArchive} loading={archiving}>
+            <Archive className="h-4 w-4" />
+            Archive
+          </Button>
+        ) : undefined
+      }
+      tabs={tabs}
+      activeTab={tabs.some((t) => t.key === activeTab) ? activeTab : 'basics'}
+      onTabChange={openTab}
+    />
   );
 }
 
