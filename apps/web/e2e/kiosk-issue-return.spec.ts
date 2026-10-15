@@ -122,6 +122,13 @@ test('issuing from a People profile: "Back to People" lands on that profile, and
   // The profile opens (the People page resolves the id and drops the param).
   await expect(page.getByRole('dialog').getByText('Ana Lopez').first()).toBeVisible();
   await expect.poll(() => here(page)).toBe('/people');
+  // The kiosk's reveal names Ana too and stays on screen for a frame while the
+  // route changes, so the check above can pass before the profile drawer has
+  // parked its Back sentinel. A Back pressed in that window leaves /people
+  // outright (one run in ten, 2026-10-15, reproduced against a production
+  // build with the history calls logged). Back closes an overlay only once its
+  // sentinel is the current entry: wait for that.
+  await expect.poll(() => page.evaluate(() => (history.state as { altoOverlay?: boolean } | null)?.altoOverlay === true)).toBe(true);
 
   // Back closes the profile; Back again is the kiosk page, not the void.
   await page.goBack();
