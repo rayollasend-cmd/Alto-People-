@@ -778,7 +778,7 @@ function DecisionDialog({
 
 /* ------------------------------------------------------- kill switch */
 
-function SuspendAllDialog({ agents, onClose, onSuspended }: { agents: number; onClose: () => void; onSuspended: () => Promise<void> }) {
+export function SuspendAllDialog({ agents, onClose, onSuspended }: { agents: number; onClose: () => void; onSuspended: () => Promise<void> }) {
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const valid = reason.trim().length >= 3;

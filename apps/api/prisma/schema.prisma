@@ -9713,6 +9713,8 @@ model SeasonPlanSite {
   routeMinutes   Int    @default(45)
   /// [{ week: 'YYYY-MM-DD' (org week start), day, evening, overnight }] — headcount on the floor per shift per day.
   demand         Json   @default("[]")
+  /// Brief 3-3: [{ week, tasks: [{ capability, count, minutes, risk }] }] — the week's work as tasks; the planner proposes the people-robot mix from it.
+  taskDemand     Json   @default("[]")
 
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -11534,6 +11536,9 @@ model WorkTaskPolicy {
   agentCostPerTaskCents Int                    @default(0)
   /// Brief 3-3: the span of control the scheduler warns on.
   maxRobotsPerCrewLead  Int                    @default(4)
+  /// Brief 3-3: share of a robot's shift spent on tasks (the planner's capacity), and standby people per robot minute, as percents.
+  robotUtilizationPct   Int                    @default(70)
+  backupCrewRatioPct    Int                    @default(25)
   updatedByUserId       String?                @db.Uuid
   createdAt             DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime               @updatedAt @db.Timestamptz(6)

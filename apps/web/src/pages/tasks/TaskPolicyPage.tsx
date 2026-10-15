@@ -42,6 +42,8 @@ export function TaskPolicyPage() {
   const [robotDefault, setRobotDefault] = useState('4.00');
   const [agentCost, setAgentCost] = useState('0.00');
   const [span, setSpan] = useState('4');
+  const [utilization, setUtilization] = useState('70');
+  const [backup, setBackup] = useState('25');
   const [robotCosts, setRobotCosts] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -53,6 +55,8 @@ export function TaskPolicyPage() {
     setRobotDefault((p.robotDefaultCostCents / 100).toFixed(2));
     setAgentCost((p.agentCostPerTaskCents / 100).toFixed(2));
     setSpan(String(p.maxRobotsPerCrewLead));
+    setUtilization(String(p.robotUtilizationPct));
+    setBackup(String(p.backupCrewRatioPct));
     setRobotCosts(Object.fromEntries(Object.entries(p.robotCostPerTaskCents).map(([k, v]) => [k, (v / 100).toFixed(2)])));
   }, [q.data]);
 
@@ -67,6 +71,8 @@ export function TaskPolicyPage() {
           robotDefaultCostCents: cents(robotDefault),
           agentCostPerTaskCents: cents(agentCost),
           maxRobotsPerCrewLead: Number(span) || 4,
+          robotUtilizationPct: Math.min(100, Math.max(1, Number(utilization) || 70)),
+          backupCrewRatioPct: Math.min(100, Math.max(0, Number(backup) || 0)),
           robotCostPerTaskCents: Object.fromEntries(Object.entries(robotCosts).filter(([, v]) => v.trim() !== '').map(([k, v]) => [k, cents(v)])),
         },
         locationId || null,
@@ -119,8 +125,14 @@ export function TaskPolicyPage() {
                   </Select>
                 )}
               </Field>
-              <Field label="Robots per crew lead" hint="Brief 3-3: the scheduler warns above this.">
+              <Field label="Robots per crew lead" hint="The control room shows the span; the scheduler warns above this.">
                 {(p) => <Input {...p} type="number" min={1} max={50} value={span} onChange={(e) => setSpan(e.target.value)} disabled={!canEdit} className="w-32" />}
+              </Field>
+              <Field label="Robot utilisation (% of a shift on tasks)" hint="The season planner's robot capacity: a robot's shift minutes times this.">
+                {(p) => <Input {...p} type="number" min={1} max={100} value={utilization} onChange={(e) => setUtilization(e.target.value)} disabled={!canEdit} className="w-32" />}
+              </Field>
+              <Field label="Backup crew (% of robot minutes)" hint="Standby people a robot-dependent week needs, as a share of the robots' task minutes.">
+                {(p) => <Input {...p} type="number" min={0} max={100} value={backup} onChange={(e) => setBackup(e.target.value)} disabled={!canEdit} className="w-32" />}
               </Field>
             </CardContent>
           </Card>

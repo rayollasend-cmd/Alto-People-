@@ -47,6 +47,7 @@ export type ModuleKey =
   | 'scheduling'
   | 'ops'
   | 'robots'
+  | 'control-room'
   | 'labor-costs'
   | 'approvals'
   | 'payroll'
@@ -724,6 +725,14 @@ export const MODULES: ModuleNav[] = [
       'People, AI agents and robots in one roster: who owns each worker, what it can do, where it is in its lifecycle, and the record behind it.',
     requires: 'view:org',
     group: 'workforce-management',
+  },
+  {
+    key: 'control-room',
+    path: '/control-room',
+    label: 'Control room',
+    description: 'One live screen per site: every person, agent and robot on shift, the exceptions, what waits for a person, the safety zones and the span of control.',
+    requires: 'view:scheduling',
+    group: 'operations',
   },
   {
     key: 'tasks',

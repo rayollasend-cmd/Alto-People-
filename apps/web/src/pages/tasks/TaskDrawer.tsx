@@ -98,8 +98,9 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
       if (action === 'auto') return autoAssignTask(taskId);
       return recordTaskEvent(taskId, { kind: action });
     },
-    onSuccess: (_d, action) => {
+    onSuccess: (d, action) => {
       toast.success(action === 'handoff' ? 'Handed to a person.' : action === 'auto' ? 'The engine decided again.' : `Recorded: ${action.toLowerCase()}.`);
+      for (const w of (d as { warnings?: string[] }).warnings ?? []) toast.warning(w);
       void q.refetch();
       onChanged();
     },

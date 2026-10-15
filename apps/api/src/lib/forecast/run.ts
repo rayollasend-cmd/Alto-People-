@@ -372,7 +372,7 @@ export async function planFromForecast(db: Db, input: ForecastPlanInput, actorUs
         ? { week, day: split(share.day), evening: split(share.evening), overnight: split(share.overnight) }
         : { week, day: Math.round(daily), evening: 0, overnight: 0 };
     });
-    return { locationId: s.id, bedsAvailable: 0, vanSeatsPerRun: 14, runsPerShift: 1, routeMinutes: 45, demand };
+    return { locationId: s.id, bedsAvailable: 0, vanSeatsPerRun: 14, runsPerShift: 1, routeMinutes: 45, demand, taskDemand: [] };
   });
   const note = `Demand from the forecast run of ${keyOf(run.generatedAt)} (${run.method}).${beyondHorizon ? ` ${beyondHorizon} site-week${beyondHorizon === 1 ? '' : 's'} past the 26-week horizon repeat the last forecast week.` : ''}`;
   return createPlan(

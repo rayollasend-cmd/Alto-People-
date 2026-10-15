@@ -209,6 +209,7 @@ const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), '
 const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
 const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
 const TasksBoard = lazyNamed(() => import('@/pages/tasks/TasksBoard'), 'TasksBoard');
+const ControlRoomPage = lazyNamed(() => import('@/pages/controlRoom/ControlRoomPage'), 'ControlRoomPage');
 const TaskPolicyPage = lazyNamed(() => import('@/pages/tasks/TaskPolicyPage'), 'TaskPolicyPage');
 const ComplianceEvidenceHome = lazyNamed(() => import('@/pages/admin/ComplianceEvidenceHome'), 'ComplianceEvidenceHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
@@ -466,6 +467,7 @@ const LAYOUT_ROUTES = [
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   // Brief 3-2: tasks and their assignment.
   { path: 'tasks', element: <RequireCapability cap="view:scheduling"><TasksBoard /></RequireCapability> },
+  { path: 'control-room', element: <RequireCapability cap="view:scheduling"><ControlRoomPage /></RequireCapability> },
   { path: 'support', element: <SupportPage /> },
   // UX upgrade step 3: Settings & Trust — one area (rail + eyebrow) around the pages
   // an organization configures and an auditor checks. Paths unchanged.

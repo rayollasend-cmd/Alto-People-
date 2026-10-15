@@ -47,6 +47,8 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { DetailsTable, PortalTooltip, SERIES } from '@/pages/portal/portalCharts';
+import { TaskDemandEditor, linesOf, mixLine, spreadLines } from './TaskDemandEditor';
+import { fmtMoney } from '@/lib/format';
 
 /**
  * THE SEASON PLANNER — demand becomes people, beds, seats and recruits.
@@ -550,6 +552,7 @@ function draftsFrom(sites: SeasonPlanSiteComputed[], weeks: string[]): SiteDraft
       const w = s.weeks.find((x) => x.week === week);
       return { week, day: w?.day ?? 0, evening: w?.evening ?? 0, overnight: w?.overnight ?? 0 };
     }),
+    taskDemand: spreadLines(weeks, linesOf(s.taskDemand ?? [])),
   }));
 }
 
@@ -630,6 +633,17 @@ function SitesEditor({ plan, canManage, saving, onSave }: { plan: SeasonPlanComp
                     <Input type="number" min={0} max={600} value={d.routeMinutes} disabled={!canManage} className="text-base" onChange={(e) => patch(d.locationId, (x) => ({ ...x, routeMinutes: Math.max(0, Number(e.target.value) || 0) }))} />
                   </Field>
                 </div>
+                <TaskDemandEditor
+                  siteName={d.siteName}
+                  lines={linesOf(d.taskDemand)}
+                  disabled={!canManage}
+                  onChange={(lines) => patch(d.locationId, (x) => ({ ...x, taskDemand: spreadLines(plan.weeks, lines) }))}
+                />
+                {computed && computed.weeks.some((w) => w.mix) && (
+                  <p className="text-xs text-silver">
+                    At peak: {mixLine(computed.weeks.find((w) => w.week === computed.peak.week)?.mix ?? computed.weeks.find((w) => w.mix)?.mix, computed.robotsPlaced)}
+                  </p>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-wide text-silver">Floor headcount per day</span>
                   {canManage && (
@@ -648,6 +662,14 @@ function SitesEditor({ plan, canManage, saving, onSave }: { plan: SeasonPlanComp
                         <th className="py-1 pr-2">Overnight</th>
                         <th className="py-1 pr-2 text-right">On floor</th>
                         <th className="py-1 text-right">Associates</th>
+                        {computed?.weeks.some((w) => w.mix) && (
+                          <>
+                            <th className="py-1 pl-3 text-right">Robots</th>
+                            <th className="py-1 pl-3 text-right">Backup</th>
+                            <th className="py-1 pl-3 text-right">Labor $</th>
+                            <th className="py-1 pl-3 text-right">Robot $</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -673,6 +695,14 @@ function SitesEditor({ plan, canManage, saving, onSave }: { plan: SeasonPlanComp
                             ))}
                             <td className="py-1 pr-2 text-right tabular-nums">{num(w.day + w.evening + w.overnight)}</td>
                             <td className="py-1 text-right tabular-nums text-gold">{cw ? num(cw.associatesNeeded) : '—'}</td>
+                            {computed?.weeks.some((x) => x.mix) && (
+                              <>
+                                <td className="py-1 pl-3 text-right tabular-nums">{cw?.mix ? num(cw.mix.robotsNeeded) : '—'}</td>
+                                <td className="py-1 pl-3 text-right tabular-nums">{cw?.mix ? num(cw.mix.backupCrew) : '—'}</td>
+                                <td className="py-1 pl-3 text-right tabular-nums">{cw?.mix ? fmtMoney(cw.mix.laborCostCents / 100) : '—'}</td>
+                                <td className="py-1 pl-3 text-right tabular-nums">{cw?.mix ? fmtMoney(cw.mix.robotCostCents / 100) : '—'}</td>
+                              </>
+                            )}
                           </tr>
                         );
                       })}

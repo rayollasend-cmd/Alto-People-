@@ -26,6 +26,8 @@ import type {
   ZoneShape,
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
+import { policyFor } from './tasks/engine.js';
+import { spanOfControlAt } from './tasks/spanOfControl.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { fleetConnector, fleetProviderFromEnv, registerSimulatedRobot, type FleetRobotStatus } from './fleet/index.js';
@@ -329,7 +331,7 @@ async function passingChecklistFor(db: Db, workerId: string, shiftId: string | n
  * checklist, without a signed-off commissioning at the shift's site, and
  * inside a zone guests occupy. Records the start as an event.
  */
-export async function startRobotShift(db: Db, workerId: string, shiftId: string, actorUserId: string, now: Date = new Date()): Promise<{ shiftId: string; startedAt: string }> {
+export async function startRobotShift(db: Db, workerId: string, shiftId: string, actorUserId: string, now: Date = new Date()): Promise<{ shiftId: string; startedAt: string; warnings: string[] }> {
   const w = await robotWorker(db, workerId);
   if (w.status === 'SUSPENDED') throw new HttpError(409, 'robot_stopped', `${w.name} is under an emergency stop. Resume it first.`);
   if (w.status === 'OFFBOARDED') throw new HttpError(409, 'robot_offboarded', `${w.name} is offboarded.`);
@@ -349,7 +351,14 @@ export async function startRobotShift(db: Db, workerId: string, shiftId: string,
   }
   await db.robotEvent.create({ data: { workerId, tenantId: w.tenantId, kind: 'SHIFT_STARTED', at: now, byUserId: actorUserId, shiftId } });
   enqueueAudit({ actorUserId, clientId: null, workerId, action: 'robot.shift_started', entityType: 'Shift', entityId: shiftId }, 'robots');
-  return { shiftId, startedAt: now.toISOString() };
+  // Brief 3-3: the span of control is a warning on the start, never a block.
+  const warnings: string[] = [];
+  if (shift.locationId) {
+    const policy = await policyFor(db, shift.locationId);
+    const span = await spanOfControlAt(db, shift.locationId, policy.maxRobotsPerCrewLead, now);
+    if (span.exceeded || span.leads === 0) warnings.push(`Span of control: ${span.text}`);
+  }
+  return { shiftId, startedAt: now.toISOString(), warnings };
 }
 
 /* ----------------------------------------------------- stop / resume -- */

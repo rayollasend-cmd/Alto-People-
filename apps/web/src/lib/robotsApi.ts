@@ -50,7 +50,7 @@ export function resumeRobot(id: string, note?: string): Promise<RobotDetail> {
   return apiFetch<RobotDetail>(`/robots/${id}/resume`, { method: 'POST', body: { note: note ?? null } });
 }
 
-export function startRobotShift(id: string, shiftId: string): Promise<{ shiftId: string; startedAt: string }> {
+export function startRobotShift(id: string, shiftId: string): Promise<{ shiftId: string; startedAt: string; warnings?: string[] }> {
   return apiFetch(`/robots/${id}/shifts/${shiftId}/start`, { method: 'POST' });
 }
 

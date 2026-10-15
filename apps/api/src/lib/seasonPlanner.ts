@@ -15,12 +15,17 @@ import {
   type SeasonPlanSummary,
   type SeasonPlanUpdate,
   type SeasonRecruitingTarget,
+  type SeasonTaskDemandWeek,
+  type SeasonWeekMix,
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { activeAssociateIds } from './activeDefinition.js';
 import { currentStoreWindows } from './shiftWindows.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
+import { loadRateCards, resolveRate } from './rateCards.js';
+import { policyFor } from './tasks/engine.js';
+import { proposeMix } from './tasks/mix.js';
 
 /**
  * THE SEASON PLANNER — demand becomes people, beds, seats and recruits.
@@ -94,6 +99,50 @@ function demandOf(raw: unknown): SeasonDemandWeek[] {
   return raw
     .filter((d): d is SeasonDemandWeek => !!d && typeof d === 'object' && typeof (d as SeasonDemandWeek).week === 'string')
     .map((d) => ({ week: d.week, day: Number(d.day) || 0, evening: Number(d.evening) || 0, overnight: Number(d.overnight) || 0 }));
+}
+
+/** Brief 3-3: the week's work as tasks, as stored on the site row. */
+export function taskDemandOf(raw: unknown): SeasonTaskDemandWeek[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((d): d is SeasonTaskDemandWeek => !!d && typeof d === 'object' && typeof (d as SeasonTaskDemandWeek).week === 'string' && Array.isArray((d as SeasonTaskDemandWeek).tasks))
+    .map((d) => ({
+      week: d.week,
+      tasks: d.tasks
+        .filter((t) => !!t && typeof t === 'object' && typeof t.capability === 'string')
+        .map((t) => ({ capability: t.capability, count: Math.max(0, Number(t.count) || 0), minutes: Math.max(0, Number(t.minutes) || 0), risk: t.risk === 'HIGH' || t.risk === 'MEDIUM' ? t.risk : 'LOW' })),
+    }));
+}
+
+/** What a site's mix needs beyond the demand: its robots, its policy and its hourly rate. */
+interface MixContext {
+  robots: Array<{ capabilities: string[] }>;
+  policy: Awaited<ReturnType<typeof policyFor>>;
+  hourlyRateCents: number;
+}
+
+const DEFAULT_HOURLY_CENTS = 1500;
+
+async function mixContextFor(db: Db, site: PlanRow['sites'][number], now: Date): Promise<MixContext> {
+  const [placements, policy, recent] = await Promise.all([
+    db.workerAssignment.findMany({ where: { locationId: site.locationId, endedAt: null, worker: { type: 'ROBOT', status: { in: ['ACTIVE', 'ONBOARDING'] } } }, select: { worker: { select: { capabilities: true } } }, take: 100 }),
+    policyFor(db, site.locationId),
+    db.shift.findMany({
+      where: { locationId: site.locationId, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: new Date(now.getTime() - 56 * DAY_MS), lt: now } },
+      select: { payRate: true, position: true, clientId: true },
+      take: 500,
+    }),
+  ]);
+  const paid = recent.filter((r) => r.payRate != null).map((r) => Number(r.payRate));
+  let hourly = paid.length ? paid.reduce((a, b) => a + b, 0) / paid.length : NaN;
+  if (!Number.isFinite(hourly) || hourly <= 0) {
+    const clientId = site.location.clientId ?? null;
+    const cards = await loadRateCards(db, [clientId]);
+    const position = recent[0]?.position ?? '';
+    const rate = resolveRate(cards, { clientId: clientId ?? '', position, startsAt: now });
+    hourly = rate.payRate ?? DEFAULT_HOURLY_CENTS / 100;
+  }
+  return { robots: placements.map((p) => ({ capabilities: p.worker.capabilities })), policy, hourlyRateCents: Math.round(hourly * 100) };
 }
 
 function summary(p: PlanRow): SeasonPlanSummary {
@@ -246,12 +295,18 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
   const ride = weightedShare(s.channelMix, s.rideShare);
   const locationIds = p.sites.map((x) => x.locationId);
   const actuals = await actualsFor(db, locationIds, weeks, now);
+  // Brief 3-3: the hybrid mix needs each site's robots, policy and rate.
+  const contexts = new Map<string, MixContext>();
+  await Promise.all(p.sites.map(async (site) => contexts.set(site.locationId, await mixContextFor(db, site, now))));
 
   // A season plan is per client site; a client-less site (a direct employer) waits for step 5's org unit.
   const sites: SeasonPlanSiteComputed[] = p.sites.flatMap((site) => {
     const client = site.location.clientId && site.location.client ? { id: site.location.clientId, name: site.location.client.name } : null;
     if (!client) return [];
     const demand = new Map(demandOf(site.demand).map((d) => [d.week, d]));
+    const taskDemand = taskDemandOf(site.taskDemand);
+    const tasksByWeek = new Map(taskDemand.map((d) => [d.week, d.tasks]));
+    const ctx = contexts.get(site.locationId)!;
     const seatsAvailable = site.vanSeatsPerRun * site.runsPerShift;
     const rows: SeasonPlanSiteWeek[] = weeks.map((week) => {
       const d = demand.get(week) ?? { week, day: 0, evening: 0, overnight: 0 };
@@ -261,6 +316,10 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
       const bedsNeeded = Math.ceil(associatesNeeded * housing);
       const vanSeatsNeeded = Math.ceil(Math.max(d.day, d.evening, d.overnight) * ride);
       const sched = actuals.scheduledHours.get(`${site.locationId}|${week}`);
+      const tasks = tasksByWeek.get(week);
+      const mix: SeasonWeekMix | null = tasks && tasks.length
+        ? proposeMix({ tasks, robots: ctx.robots, policy: ctx.policy, shiftMinutes: s.shiftHours * 60, hourlyRateCents: ctx.hourlyRateCents, targetHoursPerWeek: s.targetHoursPerWeek })
+        : null;
       return {
         week,
         day: d.day,
@@ -278,6 +337,7 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
         scheduledHours: sched !== undefined ? Math.round(sched * 10) / 10 : week <= actuals.currentWeek ? 0 : null,
         activeHeadcount: week === actuals.currentWeek ? (actuals.activeNow.get(site.locationId) ?? 0) : null,
         forecastShortDays: actuals.forecastShort.get(`${site.locationId}|${week}`) ?? null,
+        mix,
       };
     });
     const peakRow = rows.reduce((best, r) => (r.associatesNeeded > best.associatesNeeded ? r : best), rows[0] ?? { week: weeks[0] ?? s.seasonStart, daily: 0, associatesNeeded: 0, bedsNeeded: 0, vanSeatsNeeded: 0 });
@@ -292,6 +352,9 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
       routeMinutes: site.routeMinutes,
       weeks: rows,
       peak: { week: peakRow.week, daily: peakRow.daily, associatesNeeded: peakRow.associatesNeeded, bedsNeeded: peakRow.bedsNeeded, vanSeatsNeeded: peakRow.vanSeatsNeeded },
+      taskDemand,
+      robotsPlaced: ctx.robots.length,
+      hourlyRateCents: ctx.hourlyRateCents,
     }];
   });
 
@@ -300,6 +363,7 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
     const anyActual = rows.some((r) => r.scheduledHours !== null);
     const anyActive = rows.some((r) => r.activeHeadcount !== null);
     const anyForecast = rows.some((r) => r.forecastShortDays != null);
+    const mixes = rows.map((r) => r.mix).filter((m): m is SeasonWeekMix => !!m);
     return {
       week,
       daily: rows.reduce((a, r) => a + r.daily, 0),
@@ -311,6 +375,10 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
       scheduledHours: anyActual ? Math.round(rows.reduce((a, r) => a + (r.scheduledHours ?? 0), 0) * 10) / 10 : null,
       activeHeadcount: anyActive ? rows.reduce((a, r) => a + (r.activeHeadcount ?? 0), 0) : null,
       forecastShortDays: anyForecast ? rows.reduce((a, r) => a + (r.forecastShortDays ?? 0), 0) : null,
+      laborCostCents: mixes.length ? mixes.reduce((a, m) => a + m.laborCostCents, 0) : null,
+      robotCostCents: mixes.length ? mixes.reduce((a, m) => a + m.robotCostCents, 0) : null,
+      robotsNeeded: mixes.length ? mixes.reduce((a, m) => a + m.robotsNeeded, 0) : null,
+      backupCrew: mixes.length ? mixes.reduce((a, m) => a + m.backupCrew, 0) : null,
     };
   });
   const peakTotal = totals.reduce((best, t) => (t.associatesNeeded > best.associatesNeeded ? t : best), totals[0] ?? { week: s.seasonStart, daily: 0, associatesNeeded: 0, bedsNeeded: 0, bedsAvailable: 0 });
@@ -425,6 +493,7 @@ async function siteInputs(db: Db, input: SeasonPlanInput): Promise<SeasonPlanSit
     runsPerShift: 1,
     routeMinutes: 45,
     demand: demand.get(l.id) ?? [],
+    taskDemand: [],
   }));
 }
 
@@ -472,6 +541,7 @@ export async function createPlan(db: Db, input: SeasonPlanInput, actorUserId: st
           runsPerShift: s.runsPerShift,
           routeMinutes: s.routeMinutes,
           demand: s.demand as unknown as Prisma.InputJsonArray,
+          taskDemand: s.taskDemand as unknown as Prisma.InputJsonArray,
         })),
       },
     },
@@ -506,6 +576,7 @@ export async function updatePlan(db: Db, id: string, input: SeasonPlanUpdate, no
                 runsPerShift: s.runsPerShift,
                 routeMinutes: s.routeMinutes,
                 demand: s.demand as unknown as Prisma.InputJsonArray,
+                taskDemand: s.taskDemand as unknown as Prisma.InputJsonArray,
               })),
             },
           }
@@ -542,6 +613,7 @@ export async function duplicatePlan(db: Db, id: string, name: string, actorUserI
           runsPerShift: s.runsPerShift,
           routeMinutes: s.routeMinutes,
           demand: s.demand as Prisma.InputJsonArray,
+          taskDemand: s.taskDemand as Prisma.InputJsonArray,
         })),
       },
     },
@@ -558,11 +630,11 @@ export function planCsv(plan: SeasonPlanComputed): string {
     return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   const rows: Array<Array<string | number | null>> = [
-    ['Plan', 'Site', 'Client', 'Week', 'Day', 'Evening', 'Overnight', 'Daily on floor', 'Shift slots', 'Associates needed', 'Beds needed', 'Beds available', 'Beds gap', 'Van seats needed', 'Van seats available', 'Van seats gap', 'Scheduled hours', 'Active headcount', 'Short days (forecast)'],
+    ['Plan', 'Site', 'Client', 'Week', 'Day', 'Evening', 'Overnight', 'Daily on floor', 'Shift slots', 'Associates needed', 'Beds needed', 'Beds available', 'Beds gap', 'Van seats needed', 'Van seats available', 'Van seats gap', 'Scheduled hours', 'Active headcount', 'Short days (forecast)', 'Task minutes', 'Robot tasks', 'Robots needed', 'People from tasks', 'Backup crew', 'Labor cost', 'Robot cost'],
   ];
   for (const site of plan.sites) {
     for (const w of site.weeks) {
-      rows.push([plan.name, site.siteName, site.clientName, w.week, w.day, w.evening, w.overnight, w.daily, w.shiftSlots, w.associatesNeeded, w.bedsNeeded, w.bedsAvailable, w.bedsGap, w.vanSeatsNeeded, w.vanSeatsAvailable, w.vanSeatsGap, w.scheduledHours, w.activeHeadcount, w.forecastShortDays ?? null]);
+      rows.push([plan.name, site.siteName, site.clientName, w.week, w.day, w.evening, w.overnight, w.daily, w.shiftSlots, w.associatesNeeded, w.bedsNeeded, w.bedsAvailable, w.bedsGap, w.vanSeatsNeeded, w.vanSeatsAvailable, w.vanSeatsGap, w.scheduledHours, w.activeHeadcount, w.forecastShortDays ?? null, w.mix?.taskMinutes ?? null, w.mix?.robotTasks ?? null, w.mix?.robotsNeeded ?? null, w.mix?.peopleNeeded ?? null, w.mix?.backupCrew ?? null, w.mix ? (w.mix.laborCostCents / 100).toFixed(2) : null, w.mix ? (w.mix.robotCostCents / 100).toFixed(2) : null]);
     }
   }
   return rows.map((r) => r.map(cell).join(',')).join('\r\n');

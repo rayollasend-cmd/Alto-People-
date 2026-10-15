@@ -105,6 +105,10 @@ export const WorkTaskPolicyUpdateSchema = /* @__PURE__ */ (() =>
     agentCostPerTaskCents: z.number().int().min(0).max(1_000_000).optional(),
     /** Brief 3-3 reads it; stored here so the two briefs share one policy row. */
     maxRobotsPerCrewLead: z.number().int().min(1).max(50).optional(),
+    /** Brief 3-3: share of a robot's shift it can spend on tasks (the planner's capacity). */
+    robotUtilizationPct: z.number().int().min(1).max(100).optional(),
+    /** Brief 3-3: standby people per robot minute, as a percent (25 = one standby shift per four robot shifts). */
+    backupCrewRatioPct: z.number().int().min(0).max(100).optional(),
   }))();
 export type WorkTaskPolicyUpdate = z.infer<typeof WorkTaskPolicyUpdateSchema>;
 
@@ -117,6 +121,8 @@ export interface WorkTaskPolicyView {
   robotDefaultCostCents: number;
   agentCostPerTaskCents: number;
   maxRobotsPerCrewLead: number;
+  robotUtilizationPct: number;
+  backupCrewRatioPct: number;
 }
 
 export const DEFAULT_WORK_TASK_POLICY: WorkTaskPolicyView = {
@@ -128,6 +134,8 @@ export const DEFAULT_WORK_TASK_POLICY: WorkTaskPolicyView = {
   robotDefaultCostCents: 400,
   agentCostPerTaskCents: 0,
   maxRobotsPerCrewLead: 4,
+  robotUtilizationPct: 70,
+  backupCrewRatioPct: 25,
 };
 
 export interface WorkTaskAssignmentView {
@@ -191,4 +199,35 @@ export interface WorkTaskSummary {
   inProgress: number;
   exceptions: number;
   doneToday: number;
+}
+
+/* ------------------------------------------------------- Brief 3-3 */
+
+/** Span of control at a site: robots on shift against the crew leads on the floor. */
+export interface SpanOfControl {
+  robots: number;
+  leads: number;
+  maxPerLead: number;
+  allowed: number;
+  exceeded: boolean;
+  text: string;
+}
+
+/** The hybrid mix the planner proposes for one site-week from its task demand. */
+export interface SeasonWeekMix {
+  taskMinutes: number;
+  robotMinutes: number;
+  personMinutes: number;
+  robotTasks: number;
+  personTasks: number;
+  /** Robots the robot minutes need at the policy's utilisation. */
+  robotsNeeded: number;
+  robotCapacityMinutes: number;
+  /** People the person minutes need at the plan's hours per week. */
+  peopleNeeded: number;
+  /** Standby shifts a robot-dependent week needs. */
+  backupCrew: number;
+  laborCostCents: number;
+  robotCostCents: number;
+  totalCostCents: number;
 }
