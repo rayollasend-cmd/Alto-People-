@@ -34,7 +34,7 @@ export function HugoSeat({ className }: { className?: string }) {
   };
   return (
     <Card className={className} data-testid="hugo-seat">
-      <CardContent className="space-y-3 p-5">
+      <CardContent className="space-y-3 p-[var(--d-card)]">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
             <Sparkles className="h-4 w-4" />
