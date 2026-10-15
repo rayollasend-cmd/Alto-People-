@@ -650,7 +650,7 @@ async function main() {
     await prisma.candidateEvent.create({ data: { candidateId: c.id, kind: 'CREATED', toStage: 'APPLIED', actorUserId: recruiter.id, createdAt: c.createdAt } });
     if (stage === 'INTERVIEW' || stage === 'OFFER') {
       const scheduledFor = i === 7 ? minutes(now, 110) : i === 8 ? minutes(now, 260) : i === 9 ? minutes(now, 26 * 60) : daysAgo(6);
-      await prisma.interview.create({ data: { candidateId: c.id, interviewerUserId: recruiter.id, scheduledFor, durationMinutes: 30, location: i === 9 ? 'Phone' : 'Front Beach 218 · training room', ...(i === 10 ? { completedAt: minutes(scheduledFor, 35), rating: 4 } : {}) } });
+      await prisma.interview.create({ data: { candidateId: c.id, interviewerUserId: recruiter.id, scheduledFor, durationMinutes: 30, location: i === 9 ? 'Phone' : 'Front Beach 218 · training room', ...(i === 10 ? { completedAt: minutes(scheduledFor, 35), rating: 2 } : {}) } });
       await prisma.candidateEvent.create({ data: { candidateId: c.id, kind: 'INTERVIEW_SCHEDULED', actorUserId: recruiter.id, createdAt: daysAgo(1) } });
     }
   }
@@ -695,7 +695,7 @@ async function main() {
       const sentAt = new Date(s.startsAt.getTime() - 26 * HOUR);
       if (sentAt > now) continue;
       const answered = rng.chance(0.85);
-      await prisma.attendanceConfirmation.create({ data: { shiftId: s.id, associateId, workerId: workforceAgent, channel: 'whatsapp', sentAt, cutoffAt: new Date(s.startsAt.getTime() - 12 * HOUR), ...(answered ? { answer: 'YES', answeredAt: minutes(sentAt, rng.int(5, 240)), answeredVia: 'whatsapp' } : {}) } });
+      await prisma.attendanceConfirmation.create({ data: { shiftId: s.id, associateId, workerId: workforceAgent, channel: 'WHATSAPP', sentAt, cutoffAt: new Date(s.startsAt.getTime() - 12 * HOUR), ...(answered ? { answer: 'YES', answeredAt: minutes(sentAt, rng.int(5, 240)), answeredVia: 'whatsapp' } : {}) } });
       audit.push({ workerId: workforceAgent, action: 'agent.attendance_confirm.sent', entityType: 'Shift', entityId: s.id, metadata: { capability: 'attendance.confirm', channel: 'whatsapp' }, createdAt: sentAt });
       count('attendanceConfirmations');
     }
