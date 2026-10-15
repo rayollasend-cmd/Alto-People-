@@ -35,6 +35,7 @@ import { preloadPayrollTaxConfig } from '../src/lib/payrollTax.js';
 import { aggregateAndPersistRun } from '../src/routes/payroll.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from '../src/lib/timeAnomalies.js';
 import { ATTENDANCE_POINTS } from '../src/lib/attendance.js';
+import { ATTESTATION_CONFIGS, periodForNow } from '../src/lib/manualAttestation.js';
 import { ALTO_TENANT_ID } from '../src/lib/tenant.js';
 import {
   BILL_RATE,
@@ -231,6 +232,21 @@ async function main() {
     const m = rng.pick(crews.filter((c) => !c.isLead));
     separatedIdx.add(m.castIndex);
   }
+  // Two hired this week at Front Beach: their I-9 Section 2 is still on the
+  // verifier's clock (due in one and two business days — inside the window,
+  // since a blown statutory deadline costs the scorecard a flat 10 points
+  // plus a critical action), their background checks are still running and
+  // their W-4s are not in.
+  // A third started two days ago with Section 2 done and E-Verify answering
+  // with a tentative nonconfirmation — inside the window, so it is a worklist
+  // item, not a blown deadline.
+  const newestIdx = new Map<number, number>();
+  const frontBeachPool = crews.filter((c) => c.storeKey === 'front-beach' && !c.isLead && !separatedIdx.has(c.castIndex));
+  const section2OpenIdx = new Set([frontBeachPool[4]!.castIndex, frontBeachPool[9]!.castIndex]);
+  const tncIdx = frontBeachPool[14]!.castIndex;
+  newestIdx.set(frontBeachPool[4]!.castIndex, 1);
+  newestIdx.set(frontBeachPool[9]!.castIndex, 2);
+  newestIdx.set(tncIdx, 2);
   const people: Person[] = [];
   const leadByStore = new Map<string, Person>();
   let usersMade = 0;
@@ -240,7 +256,7 @@ async function main() {
     const store = storeByKey.get(member.storeKey)!;
     const separated = separatedIdx.has(member.castIndex);
     const sepDays = separated ? rng.int(20, 150) : 0;
-    const hireDays = member.isLead ? rng.int(400, 530) : Math.max(sepDays + 60, rng.int(30, 520));
+    const hireDays = member.isLead ? rng.int(400, 530) : newestIdx.has(member.castIndex) ? newestIdx.get(member.castIndex)! : Math.max(sepDays + 60, rng.int(30, 520));
     const hireKey = addDaysToKey(todayKey, -hireDays);
     const rate = member.isLead ? PAY_RATE.lead : PAY_RATE.associate;
     const id = rng.uuid();
@@ -387,6 +403,102 @@ async function main() {
     if (soon) expiringSoon.push({ person: p, docId, expiresAt });
   });
   await createManyChunked('documents', docRows, (c) => prisma.documentRecord.createMany({ data: c }));
+
+  // ---- Onboarding compliance: the records the scorecard's signals read ----
+  // (routes/complianceScorecard.ts, buildScorecardBundle): a drug-test result
+  // document within 60 days, a passed background check (and its result), both
+  // I-9 sections with E-Verify cleared, a W-4, every required policy
+  // acknowledged. Nearly everyone passes; the gaps are the desk's real work:
+  // two drug tests past the 60-day window, the two newest hires with Section 2
+  // open, checks running and no W-4 yet, one E-Verify tentative nonconfirmation.
+  const activeCrew = people.filter((p) => !p.separatedAt);
+  const newest = activeCrew.filter((p) => section2OpenIdx.has(p.castIndex));
+  const tncPerson = activeCrew.find((p) => p.castIndex === tncIdx)!;
+  const settled = activeCrew.filter((p) => !newest.includes(p) && p !== tncPerson);
+  const drugStale = new Set([settled[5]!.id, settled[21]!.id]);
+  const businessDaysAfter = (d: Date, n: number): Date => {
+    const out = new Date(d);
+    let left = n;
+    while (left > 0) {
+      out.setUTCDate(out.getUTCDate() + 1);
+      if (out.getUTCDay() !== 0 && out.getUTCDay() !== 6) left -= 1;
+    }
+    return new Date(out.getTime() + 15 * HOUR);
+  };
+  const policies = await prisma.policy.findMany({ where: { clientId: null, deletedAt: null, requiredForOnboarding: true }, select: { id: true } });
+  const bgRows: Prisma.BackgroundCheckCreateManyInput[] = [];
+  const drugRows: Prisma.DrugTestCreateManyInput[] = [];
+  const resultDocs: Prisma.DocumentRecordCreateManyInput[] = [];
+  const i9Rows: Prisma.I9VerificationCreateManyInput[] = [];
+  const w4Rows: Prisma.W4SubmissionCreateManyInput[] = [];
+  const ackRows: Prisma.PolicyAcknowledgmentCreateManyInput[] = [];
+  for (const p of activeCrew) {
+    const hire = dateOf(p.hireKey);
+    const hireDays = Math.max(1, Math.round((now.getTime() - hire.getTime()) / DAY));
+    const before = (days: number) => new Date(hire.getTime() - days * DAY + 14 * HOUR);
+    const isNew = newest.includes(p);
+    const clientId = p.store!.clientId;
+    // Background check: Checkr at the offer; the two newest are still in progress.
+    if (isNew) {
+      bgRows.push({ associateId: p.id, clientId, provider: 'Checkr', externalId: `chk_${rng.uuid().slice(0, 12)}`, status: 'IN_PROGRESS', initiatedAt: before(3) });
+    } else {
+      bgRows.push({ associateId: p.id, clientId, provider: 'Checkr', externalId: `chk_${rng.uuid().slice(0, 12)}`, status: 'PASSED', initiatedAt: before(12), completedAt: before(9) });
+      resultDocs.push({ id: rng.uuid(), associateId: p.id, clientId, kind: 'BACKGROUND_CHECK_RESULT', filename: 'background-check-report.pdf', mimeType: 'application/pdf', size: rng.int(60_000, 140_000), status: 'VERIFIED', verifiedById: admin.id, verifiedAt: before(9), createdAt: before(9) });
+    }
+    // Drug screen: the SOW wants a result inside 60 days, so the crew retests
+    // each quarter; the latest result is what counts, and two are overdue.
+    // Results 5–28 days old expire in 32–55 days (the amber bucket): due for a
+    // retest soon, not a red row on the desk.
+    const testedDaysAgo = drugStale.has(p.id) ? rng.int(75, 110) : Math.min(hireDays + 3, rng.int(5, 28));
+    drugRows.push({ associateId: p.id, clientId, provider: 'Quest Diagnostics', externalId: `qd-${rng.int(100000, 999999)}`, status: 'PASSED', initiatedAt: daysAgo(testedDaysAgo + 2), completedAt: daysAgo(testedDaysAgo) });
+    resultDocs.push({ id: rng.uuid(), associateId: p.id, clientId, kind: 'DRUG_TEST_RESULT', filename: 'drug-screen-result.pdf', mimeType: 'application/pdf', size: rng.int(40_000, 90_000), status: 'VERIFIED', verifiedById: admin.id, verifiedAt: daysAgo(testedDaysAgo), createdAt: daysAgo(testedDaysAgo) });
+    // I-9: Section 1 at the invite, Section 2 the first business day after the
+    // start, E-Verify opened that day and cleared the next.
+    const citizenship = p.lang === 'en' ? 'US_CITIZEN' : rng.pick(['LAWFUL_PERMANENT_RESIDENT', 'ALIEN_AUTHORIZED_TO_WORK', 'US_CITIZEN'] as const);
+    const section2At = isNew ? null : businessDaysAfter(hire, 1);
+    const tnc = p.id === tncPerson.id;
+    i9Rows.push({
+      associateId: p.id,
+      section1CompletedAt: before(8),
+      section1TypedName: `${p.firstName} ${p.lastName}`,
+      citizenshipStatus: citizenship,
+      workAuthExpiresAt: citizenship === 'ALIEN_AUTHORIZED_TO_WORK' ? dateOf(addDaysToKey(todayKey, rng.int(200, 900))) : null,
+      documentsSubmittedAt: before(8),
+      createdAt: before(8),
+      ...(section2At
+        ? {
+            section2VerifierUserId: admin.id,
+            section2CompletedAt: section2At,
+            documentList: rng.pick(['LIST_A', 'LIST_B_AND_C'] as const),
+            eVerifyCaseNumber: `${section2At.getUTCFullYear()}${String(rng.int(100_000_000, 999_999_999))}`,
+            eVerifyCaseOpenedAt: section2At,
+            eVerifyStatus: tnc ? 'TENTATIVE_NONCONFIRMATION' : 'EMPLOYMENT_AUTHORIZED',
+            ...(tnc ? {} : { eVerifyClosedAt: new Date(section2At.getTime() + 20 * HOUR) }),
+          }
+        : {}),
+    });
+    // W-4: signed with the application, except the two who started this week.
+    if (!isNew) {
+      w4Rows.push({ associateId: p.id, filingStatus: rng.pick(['SINGLE', 'SINGLE', 'MARRIED_FILING_JOINTLY', 'HEAD_OF_HOUSEHOLD'] as const), multipleJobs: rng.chance(0.15), dependentsAmount: rng.chance(0.3) ? 2000 : 0, signedAt: before(7), createdAt: before(7) });
+    }
+    for (const pol of policies) ackRows.push({ policyId: pol.id, associateId: p.id, clientId, acknowledgedAt: before(7) });
+  }
+  await createManyChunked('backgroundChecks', bgRows, (c) => prisma.backgroundCheck.createMany({ data: c }));
+  await createManyChunked('drugTests', drugRows, (c) => prisma.drugTest.createMany({ data: c }));
+  await createManyChunked('resultDocuments', resultDocs, (c) => prisma.documentRecord.createMany({ data: c }));
+  await createManyChunked('i9Verifications', i9Rows, (c) => prisma.i9Verification.createMany({ data: c }));
+  await createManyChunked('w4Submissions', w4Rows, (c) => prisma.w4Submission.createMany({ data: c }));
+  await createManyChunked('policyAcknowledgments', ackRows, (c) => prisma.policyAcknowledgment.createMany({ data: c, skipDuplicates: true }));
+  // The desk's own attestations for the current period (insurance current,
+  // the monthly report, the weekly invoice and timesheet checks): the admin
+  // signed each one, so the scorecard's manual rows are not overdue.
+  for (const config of ATTESTATION_CONFIGS) {
+    const { periodStart, periodEnd } = periodForNow(config.cadence, now);
+    await prisma.manualComplianceAttestation.create({
+      data: { key: config.key, periodStart, periodEnd, outcome: 'YES', attestedById: admin.id, attestedAt: new Date(Math.max(periodStart.getTime() + 9 * HOUR, now.getTime() - rng.int(1, 4) * DAY)), actionTakenAt: now.getTime() - 2 * DAY > periodStart.getTime() ? daysAgo(2) : periodStart, notes: 'Reviewed on the compliance desk.' },
+    });
+    count('attestations');
+  }
 
   // Every person is a worker on the roster (the sweep the app runs at boot).
   // The shifts below carry their worker up front, which also spares the
