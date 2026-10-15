@@ -49,6 +49,7 @@ export function SettingsArea() {
       { key: 'sign-in', label: 'Sign-in & provisioning', to: '/admin/sign-in', icon: KeyRound, section: 'Access & trust', show: can('manage:org') },
       { key: 'audit', label: 'Audit & integrity', to: '/audit', icon: ScrollText, section: 'Access & trust', show: can('view:audit') },
       { key: 'compliance-evidence', label: 'Security & compliance', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', show: can('view:org') },
+      { key: 'trust', label: 'Trust Center', to: '/trust', icon: ShieldCheck, section: 'Access & trust', show: can('manage:org') || can('view:executive') || can('view:audit') },
       { key: 'agents', label: 'Agents & gates', to: '/agents', icon: Bot, section: 'Access & trust', show: can('view:org') },
       { key: 'workers', label: 'Worker types', to: '/workers', icon: Workflow, section: 'Access & trust', show: can('view:org') && tenant.modules.robotics },
       // Platform

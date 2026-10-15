@@ -12,6 +12,7 @@ export type ModuleKey =
   | 'sites'
   | 'product-analytics'
   | 'design-system'
+  | 'trust-center'
   | 'reliability'
   | 'compliance-evidence'
   | 'emergency'
@@ -1412,6 +1413,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Design system',
     description: 'The written standard the product follows: tokens, type, components and their states, the five page templates, and the design debt the sweep pays down.',
     requires: 'view:product-analytics',
+    group: 'platform',
+  },
+  {
+    key: 'trust-center',
+    path: '/trust',
+    label: 'Trust Center',
+    description: 'How the platform is run, with the evidence: controls, the audit chain, agents and their governance, and your own numbers; the public page for prospects.',
+    requires: 'view:audit',
+    requiresAny: ['manage:org', 'view:executive', 'view:audit'],
     group: 'platform',
   },
   {

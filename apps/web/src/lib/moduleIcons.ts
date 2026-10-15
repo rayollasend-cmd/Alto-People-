@@ -129,6 +129,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'analytics': LineChart,
   'product-analytics': Activity,
   'design-system': DesignSystemIcon,
+  'trust-center': ShieldCheck,
   'reliability': HeartPulse,
   'reports': ReportsIcon,
   'integrations': IntegrationsIcon,

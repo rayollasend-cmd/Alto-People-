@@ -213,6 +213,8 @@ const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'),
 const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
 const DesignSystemPage = lazyNamed(() => import('@/pages/platform/DesignSystemPage'), 'DesignSystemPage');
 const SettingsArea = lazyNamed(() => import('@/pages/settings/SettingsArea'), 'SettingsArea');
+const TrustCenterPage = lazyNamed(() => import('@/pages/trust/TrustCenterPage'), 'TrustCenterPage');
+const PublicTrustPage = lazyNamed(() => import('@/pages/trust/PublicTrustPage'), 'PublicTrustPage');
 const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHome'), 'ReliabilityHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
@@ -471,6 +473,7 @@ const LAYOUT_ROUTES = [
     { path: 'admin/compliance-evidence', element: <RequireCapability cap="view:org"><ComplianceEvidenceHome /></RequireCapability> },
     { path: 'admin/billing', element: <RequireCapability cap="manage:org" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
     { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
+    { path: 'trust', element: <RequireCapability cap="view:audit" anyOf={['manage:org', 'view:executive']}><TrustCenterPage /></RequireCapability> },
     { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
     { path: 'developers', element: <RequireCapability cap="view:integrations"><DevelopersPage /></RequireCapability> },
     ],
@@ -583,6 +586,17 @@ export const router = createBrowserRouter([
   // Public landing for "add this app to your home screen" — no auth, so we
   // can drop the link in invite emails before the associate has a password.
   { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },
+  // The public Trust Center (UX upgrade step 4): no auth and no Layout; a
+  // prospect's security review has no account.
+  {
+    path: '/trust-center',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <PublicTrustPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   {
     path: '/accept-invite/:token',
     element: <AcceptInvite />,
