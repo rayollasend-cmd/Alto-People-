@@ -333,8 +333,9 @@ export async function runAttendanceConfirm(db: Db = defaultPrisma, now: Date = n
     }
   }
 
-  // 2. Ask.
+  // 2. Ask, unless the shift already waits on a desk decision (a repair for leave, a fill).
   for (const { shift, points } of await selectAskable(db, tenantId, now)) {
+    if ((await earlierAssignProposals(db, tenantId, shift.id)).pending) continue;
     if (await ask(db, agent, shift, points, now)) out.asked += 1;
   }
 
