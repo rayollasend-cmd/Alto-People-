@@ -61,10 +61,13 @@ jobs:
       - name: Seed the scale tenant
         run: LOAD_SCALE=1 npm -w apps/api exec tsx scripts/load/seed-scale.ts
       - name: Build and start the API (production build, not the dev watcher)
+        # Production boot refuses to fall back to PAYOUT_ENCRYPTION_KEY for these two; throwaway values, this runner only.
+        env:
+          MFA_SECRET_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+          KIOSK_PIN_SECRET: a2lvc2stcGluLXNlY3JldC1mb3ItdGhlLWxvYWQtdGVzdC1vbmx5LW5ldmVyLXByb2Q=
         run: |
           npm -w apps/api run build
-          # Production boot refuses to fall back to PAYOUT_ENCRYPTION_KEY for these; throwaway values, this runner only.
-          KIOSK_PIN_SECRET=a2lvc2stcGluLXNlY3JldC1mb3ItdGhlLWxvYWQtdGVzdC1vbmx5LW5ldmVyLXByb2Q= MFA_SECRET_ENCRYPTION_KEY=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA= \n          LOGIN_IP_LIMIT=100000 NODE_ENV=production PORT=3001 npm -w apps/api run start > api.log 2>&1 &
+          LOGIN_IP_LIMIT=100000 NODE_ENV=production PORT=3001 npm -w apps/api run start > api.log 2>&1 &
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:3001/health/ready > /dev/null 2>&1 && break
             sleep 2
