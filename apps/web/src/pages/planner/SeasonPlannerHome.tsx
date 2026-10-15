@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowLeft, BedDouble, Bus, CalendarRange, Copy, Download, FileText, Plus, Users } from 'lucide-react';
+import { ArrowLeft, BedDouble, Bus, CalendarRange, Copy, Download, FileText, Plus, TrendingUp, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   RECRUITING_CHANNELS,
@@ -119,6 +119,15 @@ function PlansList() {
             <Button onClick={() => setCreating(true)}>
               <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
               New plan
+            </Button>
+          ) : undefined
+        }
+        secondaryActions={
+          canManage ? (
+            // Brief 3-4: a plan whose demand is the 26-week forecast, one click away.
+            <Button variant="outline" onClick={() => navigate('/forecast?plan=1')}>
+              <TrendingUp className="mr-2 h-4 w-4" aria-hidden="true" />
+              Start from the forecast
             </Button>
           ) : undefined
         }

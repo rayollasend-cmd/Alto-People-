@@ -53,6 +53,7 @@ import { identityRouter } from './routes/identity.js';
 import { tenantRolesRouter } from './routes/tenantRoles.js';
 import { trustRouter } from './routes/trust.js';
 import { statusRouter } from './routes/status.js';
+import { forecastRouter } from './routes/forecast.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { supportRouter } from './routes/support.js';
 import { telemetryRouter } from './routes/telemetry.js';
@@ -493,6 +494,8 @@ export function createApp() {
   // Season Planner: demand → associates, beds, van seats, recruiting
   // targets; scenarios saved and compared (view/manage:org).
   app.use('/season-plans', requireModule('programs'), seasonPlansRouter);
+  // Brief 3-4: the 26-week labor-demand forecast per site, and the planner's one-click start from it.
+  app.use('/forecast', requireModule('scheduling'), forecastRouter);
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
   app.use('/workers', workersRouter);
   app.use('/agents', agentsRouter);
