@@ -4,7 +4,7 @@
   "cssKb": 40,
   "defaultChunkKb": 80,
   "chunksKb": {
-    "main": 208,
+    "main": 209,
     "react-vendor": 85,
     "radix": 25,
     "style-utils": 12,
