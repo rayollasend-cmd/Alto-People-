@@ -849,6 +849,9 @@ model Site {
   credentialRequirements CredentialRequirement[]
   /// Agent families step 3: the Workforce agent's daily coverage.forecast rows for this site.
   coverageForecasts      CoverageForecastDay[]
+  forecastSiteWeeks      ForecastSiteWeek[]
+  forecastSignals        ForecastSignal[]
+  forecastAccuracies     ForecastAccuracy[]
   id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId               String?                 @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
@@ -11180,4 +11183,95 @@ model StatusIncidentUpdate {
   incident   StatusIncident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@index([incidentId, at])
+}
+
+// ===== Labor-demand forecasting (Brief 3-4) ================================
+// A transparent forecast per site and org week: last year scaled to the
+// site's level, the recent eight weeks and their trend, a holiday table and
+// the signals a person typed in. One run per compute; the monthly job
+// scores the previous runs against verified hours and tunes the weights.
+
+/// One compute of the 26-week forecast for a tenant (manual, monthly or a back-test).
+model ForecastRun {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  method       String   @db.VarChar(60)
+  horizonWeeks Int
+  /// The first org week the run forecasts (the week after the anchor's history ends).
+  anchorWeek   DateTime @db.Date
+  trigger      String   @db.VarChar(20)
+  /// { lastYearWeight, bandLow, bandHigh, mapePct } — what the run used, tuned by the back-test before it.
+  weights      Json     @default("{}")
+  createdById  String?  @db.Uuid
+  generatedAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  siteWeeks ForecastSiteWeek[]
+
+  @@index([tenantId, generatedAt(sort: Desc)])
+}
+
+/// One site-week of a run: the band and why.
+model ForecastSiteWeek {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  runId      String   @db.Uuid
+  locationId String   @db.Uuid
+  weekStart  DateTime @db.Date
+  /// Demand in verified hours for the week.
+  p10        Float
+  p50        Float
+  p90        Float
+  /// ForecastDrivers (shared/forecast.ts): the components the number was built from.
+  drivers    Json     @default("{}")
+
+  run      ForecastRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  location Site        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, locationId, weekStart])
+  @@index([tenantId, locationId, weekStart])
+}
+
+/// A client signal a person entered for a site-week: a multiplier on that week's demand.
+model ForecastSignal {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId  String   @db.Uuid
+  weekStart   DateTime @db.Date
+  /// TRUCKS | OCCUPANCY | EVENT | OTHER
+  kind        String   @db.VarChar(20)
+  factor      Float
+  source      String?  @db.VarChar(120)
+  note        String?  @db.VarChar(500)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  location Site @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, weekStart, kind])
+  @@index([tenantId, locationId])
+}
+
+/// The monthly scoring: what a run said for a week at a lead, against the verified hours that came.
+model ForecastAccuracy {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId  String   @db.Uuid
+  weekStart   DateTime @db.Date
+  leadWeeks   Int
+  forecastP50 Float
+  actualHours Float
+  /// |forecast − actual| ÷ actual, as a percentage.
+  absPctError Float
+  runId       String?  @db.Uuid
+  recordedAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  location Site @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, weekStart, leadWeeks])
+  @@index([tenantId, locationId, weekStart])
 }

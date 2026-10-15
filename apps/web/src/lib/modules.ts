@@ -18,6 +18,7 @@ export type ModuleKey =
   | 'emergency'
   | 'programs'
   | 'season-planner'
+  | 'forecast'
   | 'workers'
   | 'agents'
   | 'portal'
@@ -409,6 +410,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   transport: 'transportation',
   programs: 'programs',
   'season-planner': 'programs',
+  forecast: 'scheduling',
   statements: 'billRates',
   portal: 'clientPortal',
   'portal-today': 'clientPortal',
@@ -1066,6 +1068,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Season planner',
     description:
       'Demand by store, shift and week becomes associates, beds, van seats and recruiting targets by channel — scenarios saved and compared side by side.',
+    requires: 'view:org',
+    group: 'workforce-management',
+  },
+  {
+    key: 'forecast',
+    path: '/forecast',
+    label: 'Demand forecast',
+    description:
+      'Verified hours per site and week, forecast twenty-six weeks ahead with a confidence band from its own back-test; the season planner starts from it in one click.',
     requires: 'view:org',
     group: 'workforce-management',
   },

@@ -41,6 +41,11 @@ const TABLES = [
   'ProgramAlertSetting',
   // A company-wide SeasonPlan has no client, so nothing cascades into it.
   'SeasonPlan',
+  // Brief 3-4: a run has no FK path from the graph; its site-weeks cascade
+  // from it, the signals and accuracy rows from Location.
+  'ForecastRun',
+  'ForecastSignal',
+  'ForecastAccuracy',
   // WhatsAppMessage keeps its row when the associate goes (SET NULL), so
   // nothing cascades into it either.
   'WhatsAppMessage',

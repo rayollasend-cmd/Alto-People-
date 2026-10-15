@@ -25,6 +25,7 @@ import { startPortalCoverageAlertCron } from './lib/portalCoverageAlert.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
 import { startComplianceSnapshotCron } from './lib/complianceSnapshot.js';
+import { startForecastCron } from './lib/forecast/cron.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startReportScheduleCron } from './lib/reportScheduleRunner.js';
@@ -158,6 +159,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startReliabilityDigestCron();
   startEvidenceCron();
   startProgramDigestCron();
+  // Brief 3-4: monthly per tenant, the forecast scores what came true and recomputes.
+  startForecastCron();
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
