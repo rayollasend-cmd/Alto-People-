@@ -145,3 +145,26 @@ export async function auditLogImmutability(db: Db): Promise<EvidenceResult> {
     return failed('The audit immutability probe', err);
   }
 }
+
+/** The alert rules for a control are armed, a contact is set, and the last day's alerts were delivered. */
+export async function alertingResult(db: Db, rules: string[], now: Date = new Date()): Promise<EvidenceResult> {
+  try {
+    const { securityAlertsArmed } = await import('./securityAlerts.js');
+    const setting = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+    const alerts = await db.securityAlert.findMany({ where: { rule: { in: rules }, createdAt: { gte: new Date(now.getTime() - 86_400_000) } }, select: { rule: true, deliveredTo: true } });
+    const undelivered = alerts.filter((a) => a.deliveredTo.length === 0).length;
+    const armed = securityAlertsArmed();
+    const status = !armed || undelivered > 0 ? 'FAIL' : setting?.securityContactEmail ? 'PASS' : 'WARN';
+    return {
+      status,
+      summary: !armed
+        ? 'The alert rules are not running on this server.'
+        : undelivered
+          ? `${undelivered} of ${alerts.length} alerts in the last day reached nobody.`
+          : `Rules armed (${rules.join(', ').toLowerCase()}); ${alerts.length} alert${alerts.length === 1 ? '' : 's'} in the last day, all delivered${setting?.securityContactEmail ? '' : '; no security contact email set yet'}.`,
+      details: { rules, armed, alerts: alerts.length, undelivered, securityContactSet: !!setting?.securityContactEmail },
+    };
+  } catch (err) {
+    return failed('The alerting check', err);
+  }
+}

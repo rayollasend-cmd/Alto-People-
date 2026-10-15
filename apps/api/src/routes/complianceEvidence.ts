@@ -6,7 +6,9 @@ import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
-import { complianceEvidence, controlHistory, signOffEvidence } from '../lib/evidence.js';
+import { complianceEvidence, controlHistory, recordEvidence, signOffEvidence } from '../lib/evidence.js';
+import { timingSafeEqual } from 'node:crypto';
+import { env } from '../config/env.js';
 
 /**
  * Brief 2-5 step 1 — the Compliance evidence page.
@@ -73,5 +75,41 @@ complianceEvidenceRouter.post('/admin/access-review/run', MANAGE, operatorOnly, 
   const { recordAccessReview } = await import('../lib/accessReview.js');
   const id = await recordAccessReview(prisma, req.user!.id);
   if (!id) throw new HttpError(500, 'evidence_not_recorded', 'The review could not be recorded.');
+  res.status(201).json({ id });
+});
+
+/*
+ * Brief 2-5 step 7 — the security contact, and evidence posted from CI.
+ *
+ *   PUT  /admin/security-contact            who hears the security alerts by email (the operator's admins)
+ *   POST /admin/compliance-evidence/ingest  CI posts a control's result with EVIDENCE_INGEST_TOKEN (no session)
+ */
+complianceEvidenceRouter.get('/admin/security-contact', VIEW, operatorOnly, async (_req, res) => {
+  const s = await prisma.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+  res.json({ email: s?.securityContactEmail ?? null });
+});
+
+complianceEvidenceRouter.put('/admin/security-contact', MANAGE, operatorOnly, async (req, res) => {
+  const { email } = z.object({ email: z.string().trim().toLowerCase().email().max(254).nullable() }).strict().parse(req.body);
+  await prisma.orgSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', securityContactEmail: email }, update: { securityContactEmail: email } });
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'security.contact_set', entityType: 'OrgSetting', entityId: 'singleton', metadata: { set: !!email } }, 'compliance');
+  res.json({ email });
+});
+
+const INGESTIBLE = ['dependency-scanning', 'database-backup', 'restore-test'] as const;
+
+complianceEvidenceRouter.post('/admin/compliance-evidence/ingest', async (req, res) => {
+  const token = env.EVIDENCE_INGEST_TOKEN;
+  if (!token) throw new HttpError(503, 'ingest_not_configured', 'Evidence ingest is not configured.');
+  const m = /^Bearer\s+(\S+)$/i.exec(req.header('authorization') ?? '');
+  const a = Buffer.from(m?.[1] ?? '');
+  const b = Buffer.from(token);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new HttpError(401, 'unauthenticated', 'A valid ingest token is required.');
+  const input = z
+    .object({ control: z.enum(INGESTIBLE), status: z.enum(['PASS', 'FAIL', 'WARN']), summary: z.string().trim().min(3).max(500), details: z.record(z.string(), z.unknown()).default({}) })
+    .strict()
+    .parse(req.body);
+  const id = await recordEvidence(input.control, 'ci', { status: input.status, summary: input.summary, details: input.details }, prisma);
+  if (!id) throw new HttpError(500, 'evidence_not_recorded', 'The evidence could not be recorded.');
   res.status(201).json({ id });
 });

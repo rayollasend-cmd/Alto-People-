@@ -33,6 +33,15 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Brief 2-5 step 7 (CC7.1): no high or critical advisory in production
+      # dependencies unless accepted in security/accepted-risks.json with a
+      # reason and an expiry. On a push to main the result is posted as SOC 2
+      # evidence when the owner has set the two secrets.
+      - name: Dependency scan
+        run: node scripts/dependency-scan.mjs
+        env:
+          EVIDENCE_INGEST_URL: ${{ github.event_name == 'push' && secrets.EVIDENCE_INGEST_URL || '' }}
+          EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
       # Builds shared → web → api (the api build runs prisma generate).
       - run: npm run build
       # The bundle-size budget (apps/web/size-budget.json): a chunk that

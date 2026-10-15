@@ -175,6 +175,10 @@ export async function runEvidenceSweep(db: Db = defaultPrisma, now: Date = new D
     ['tls-database', () => c.tlsDatabase(db)],
     ['blob-encryption', () => c.blobEncryption()],
     ['audit-log-immutability', () => c.auditLogImmutability(db)],
+    // Brief 2-5 step 7: the alert rules are armed and what they raised was delivered.
+    ['auth-anomaly-alerting', () => c.alertingResult(db, ['FAILED_SIGNINS_IP', 'LOCKED_ACCOUNT', 'MFA_OFF_ADMIN'], now)],
+    ['privilege-change-alerting', () => c.alertingResult(db, ['PRIVILEGE_CHANGE'], now)],
+    ['export-alerting', () => c.alertingResult(db, ['EXPORTS'], now)],
   ];
   const recorded: string[] = [];
   for (const [control, collect] of daily) {

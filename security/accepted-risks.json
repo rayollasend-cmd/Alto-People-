@@ -1,0 +1,35 @@
+{
+  "_about": "Brief 2-5 step 7 — high and critical advisories in production dependencies that are accepted, each with its reason and an expiry. scripts/dependency-scan.mjs fails CI on any high or critical advisory not listed here, and on any entry past its expiry. Remove an entry when its fix lands.",
+  "accepted": [
+    {
+      "package": "deepmerge-ts",
+      "via": "prisma > @prisma/config",
+      "severity": "high",
+      "advisory": "DeepmergeTS stack exhaustion when merging recursive object graphs (GHSA via npm advisory 1145093)",
+      "reason": "Reached only by the Prisma CLI loading its own configuration at build and migrate time, from files in this repository; no request or user input reaches it. npm's only offered fix is a Prisma downgrade to 6.12.0.",
+      "acceptedBy": "engineering (Brief 2-5 step 7), for owner review",
+      "acceptedOn": "2026-10-15",
+      "expires": "2027-01-15"
+    },
+    {
+      "package": "@prisma/config",
+      "via": "prisma",
+      "severity": "high",
+      "advisory": "Inherited from deepmerge-ts above",
+      "reason": "Same as deepmerge-ts.",
+      "acceptedBy": "engineering (Brief 2-5 step 7), for owner review",
+      "acceptedOn": "2026-10-15",
+      "expires": "2027-01-15"
+    },
+    {
+      "package": "prisma",
+      "via": "prisma",
+      "severity": "high",
+      "advisory": "Inherited from deepmerge-ts above",
+      "reason": "Same as deepmerge-ts.",
+      "acceptedBy": "engineering (Brief 2-5 step 7), for owner review",
+      "acceptedOn": "2026-10-15",
+      "expires": "2027-01-15"
+    }
+  ]
+}

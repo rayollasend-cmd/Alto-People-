@@ -8158,6 +8158,8 @@ model OrgSetting {
   /// Brief 1A-2: the company workweek — the day it starts (0 = Sunday … 6 = Saturday) in the company time zone. Sites keep their own zone on Location.timezone.
   weekStartsOn           Int                    @default(6)
   timezone               String                 @default("America/New_York") @db.VarChar(64)
+  /// Brief 2-5 step 7: who hears the security alerts (sign-in anomalies, privilege changes, exports) by email.
+  securityContactEmail   String?                @db.VarChar(254)
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
@@ -10953,4 +10955,21 @@ model EncryptionCanary {
   keyId     Int      @id
   blob      Bytes
   createdAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Brief 2-5 step 7 — one security alert raised from the audit trail (lib/securityAlerts):
+/// the rule, what it is about (an IP, an account, an actor), the audit rows behind it and
+/// who heard it. At most one per rule and key an hour. Platform-level.
+model SecurityAlert {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// FAILED_SIGNINS_IP | LOCKED_ACCOUNT | MFA_OFF_ADMIN | PRIVILEGE_CHANGE | EXPORTS
+  rule        String   @db.VarChar(24)
+  key         String   @db.VarChar(200)
+  summary     String   @db.VarChar(500)
+  auditLogIds String[]
+  deliveredTo String[]
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([rule, key, createdAt])
+  @@index([createdAt])
 }

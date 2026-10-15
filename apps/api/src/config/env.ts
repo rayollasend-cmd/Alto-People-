@@ -525,6 +525,8 @@ const EnvSchema = z.object({
   // keys ("1:<base64>,2:<base64>") and pick the one new writes use. Unset: key 0, as before.
   FIELD_KEYS: z.string().optional(),
   FIELD_KEY_ACTIVE: z.coerce.number().int().min(0).max(255).optional(),
+  // Brief 2-5 step 7: CI posts the dependency scan (and later backups) as evidence with this bearer.
+  EVIDENCE_INGEST_TOKEN: z.string().min(32).optional(),
   WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
 });
 

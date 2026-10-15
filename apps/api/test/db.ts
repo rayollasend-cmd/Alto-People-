@@ -144,6 +144,7 @@ const TABLES = [
   'BillingInvoice',
   // Brief 2-5 step 3: the keyring canary (platform-level, no keys to anything).
   'EncryptionCanary',
+  'SecurityAlert',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

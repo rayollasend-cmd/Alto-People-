@@ -18,6 +18,7 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { AccessReviewPanel } from './AccessReviewPanel';
+import { SecurityContactCard } from './SecurityContactCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -82,6 +83,7 @@ const COLUMNS: GridColumn<ComplianceControlView>[] = [
 ];
 
 export function ComplianceEvidenceHome() {
+  const { can } = useAuth();
   const q = useQuery({ queryKey: ['compliance-evidence', 'overview'], queryFn: getComplianceEvidence });
   const [open, setOpen] = useState<ComplianceControlView | null>(null);
   const controls = useMemo(() => q.data?.controls ?? [], [q.data]);
@@ -97,6 +99,7 @@ export function ComplianceEvidenceHome() {
         breadcrumbs={[{ label: 'Admin' }, { label: 'Compliance evidence' }]}
       />
       {q.isError ? <QueryError what="compliance evidence" query={q} /> : null}
+      <SecurityContactCard canManage={can('manage:org')} />
 
       <Card>
         <CardHeader>
