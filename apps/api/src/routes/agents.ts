@@ -26,6 +26,7 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { GatePolicyInputSchema, approverMayDecide, createGatePolicy, endGatePolicy, gateFor } from '../lib/agentGates.js';
+import { BiasAuditInputSchema, DECISION_EVENTS, DecisionProfileInputSchema, addBiasAudit, decisionProfileFor, markDecisionEvent, saveDecisionProfile } from '../lib/decisionRecord.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { mcpCatalogFor } from '../lib/mcpCatalog.js';
 import { approvalAction, assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
@@ -476,6 +477,107 @@ agentsRouter.patch('/:id/drift', MANAGE, ownAgent, async (req, res, next) => {
     await prisma.agentProfile.update({ where: { workerId: id }, data: input });
     enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'agent.drift.configured', entityType: 'Worker', entityId: id, workerId: id, metadata: input }, 'agents');
     res.json(await getAgent(prisma, id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Brief 2-6 step 3: the automated-decision record -------------------------
+
+async function decisionRecordOf(workerId: string) {
+  const tenantId = tenantIdForWrite();
+  const now = new Date();
+  const caps = await prisma.agentCapability.findMany({ where: { workerId, tenantId }, select: { key: true } });
+  const saved = await prisma.agentDecisionProfile.findMany({ where: { workerId }, select: { capabilityKey: true } });
+  const keys = [...new Set([...caps.map((c) => c.key), ...saved.map((p) => p.capabilityKey)])];
+  const profiles = (await Promise.all(keys.map((k) => decisionProfileFor(prisma, workerId, k)))).filter((p) => p !== null);
+  const audits = await prisma.agentBiasAudit.findMany({ where: { workerId, tenantId }, orderBy: { conductedAt: 'desc' } });
+  const rows = await prisma.automatedDecisionRecord.findMany({ where: { workerId, tenantId }, orderBy: { createdAt: 'desc' }, take: 500 });
+  const people = await prisma.associate.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.subjectAssociateId).filter((x): x is string => !!x))] } }, select: { id: true, firstName: true, lastName: true } });
+  const nameOf = new Map(people.map((p) => [p.id, `${p.firstName} ${p.lastName}`.trim()]));
+  const dayMs = 86_400_000;
+  return {
+    profiles,
+    audits: audits.map((a) => ({
+      id: a.id,
+      auditorName: a.auditorName,
+      conductedAt: a.conductedAt.toISOString().slice(0, 10),
+      validUntil: a.validUntil.toISOString().slice(0, 10),
+      inForce: a.conductedAt <= now && a.validUntil.getTime() + dayMs > now.getTime(),
+      expiresSoon: a.validUntil.getTime() + dayMs > now.getTime() && a.validUntil.getTime() - now.getTime() < 30 * dayMs,
+      dataKind: a.dataKind,
+      summaryUrl: a.summaryUrl,
+    })),
+    decisions: rows.map((r) => ({
+      id: r.id,
+      at: r.createdAt.toISOString(),
+      capabilityKey: r.capabilityKey,
+      decisionType: r.decisionType,
+      subject: r.subjectAssociateId ? (nameOf.get(r.subjectAssociateId) ?? 'A person') : r.subjectRef,
+      subjectAssociateId: r.subjectAssociateId,
+      outcome: r.outcome,
+      summary: r.summary,
+      jurisdictionTags: r.jurisdictionTags,
+      humanDecidedAt: r.humanDecidedAt?.toISOString() ?? null,
+      auditId: r.auditId,
+      noticeGivenAt: r.noticeGivenAt?.toISOString() ?? null,
+      explanationSentAt: r.explanationSentAt?.toISOString() ?? null,
+      reviewRequestedAt: r.reviewRequestedAt?.toISOString() ?? null,
+      reviewResolvedAt: r.reviewResolvedAt?.toISOString() ?? null,
+      dataRequestAt: r.dataRequestAt?.toISOString() ?? null,
+      dataSentAt: r.dataSentAt?.toISOString() ?? null,
+    })),
+  };
+}
+
+agentsRouter.get('/:id/decision-record', VIEW, ownAgent, async (req, res, next) => {
+  try {
+    res.json(await decisionRecordOf(Id.parse(req.params.id)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.get('/:id/decision-record.csv', VIEW, ownAgent, async (req, res, next) => {
+  try {
+    const { decisions } = await decisionRecordOf(Id.parse(req.params.id));
+    const cell = (v: unknown) => {
+      const t = String(v ?? '');
+      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const head = ['at', 'capability', 'decisionType', 'subject', 'outcome', 'summary', 'jurisdictions', 'humanDecidedAt', 'biasAuditId', 'noticeGivenAt', 'explanationSentAt', 'reviewRequestedAt', 'reviewResolvedAt', 'dataRequestAt', 'dataSentAt'];
+    const lines = decisions.map((d) => [d.at, d.capabilityKey, d.decisionType, d.subject, d.outcome, d.summary, d.jurisdictionTags.join(' '), d.humanDecidedAt, d.auditId, d.noticeGivenAt, d.explanationSentAt, d.reviewRequestedAt, d.reviewResolvedAt, d.dataRequestAt, d.dataSentAt].map(cell).join(','));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="decision-record-${req.params.id}.csv"`);
+    res.send([head.join(','), ...lines].join('\n') + '\n');
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.put('/:id/decision-profiles/:key', MANAGE, ownAgent, async (req, res, next) => {
+  try {
+    const key = z.string().min(1).max(80).parse(req.params.key);
+    res.json(await saveDecisionProfile(prisma, tenantIdForWrite(), Id.parse(req.params.id), key, DecisionProfileInputSchema.parse(req.body), req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post('/:id/bias-audits', MANAGE, ownAgent, async (req, res, next) => {
+  try {
+    const row = await addBiasAudit(prisma, tenantIdForWrite(), Id.parse(req.params.id), BiasAuditInputSchema.parse(req.body), req.user!.id);
+    res.status(201).json({ id: row.id, validUntil: row.validUntil.toISOString().slice(0, 10) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post('/decisions/:did/events', MANAGE, async (req, res, next) => {
+  try {
+    const { event, channel } = z.object({ event: z.enum(DECISION_EVENTS), channel: z.enum(['EMAIL', 'SMS', 'WHATSAPP', 'IN_APP', 'PAPER']).optional() }).strict().parse(req.body);
+    const row = await markDecisionEvent(prisma, tenantIdForWrite(), Id.parse(req.params.did), event, req.user!.id, { channel });
+    res.json({ id: row.id });
   } catch (err) {
     next(err);
   }

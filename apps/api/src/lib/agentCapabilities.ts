@@ -22,6 +22,7 @@ import { ALTO_TENANT_ID, runWithTenant } from './tenant.js';
 import { loadTenantProfile, moduleOn } from './tenantProfile.js';
 import { createApprovalRequest, logAgentAction, type AgentContext } from './agents.js';
 import { gateFor } from './agentGates.js';
+import { complianceHold } from './decisionRecord.js';
 import { AGENT_KILL_CATEGORY, allAgentsSuspended, evaluateScenario } from './agentControls.js';
 
 /**
@@ -269,11 +270,16 @@ export async function createProposal(db: Db, agent: AgentContext, input: AgentPr
   const missing = def.scopes.find((s) => !agent.scopes.includes(s));
   if (missing) throw new HttpError(403, 'agent_scope_missing', `This agent was not granted ${missing}.`);
 
+  // Brief 2-6 step 3: screening, hiring or promotion in New York City waits for its bias audit and notices.
+  const hold = await complianceHold(db, agent.workerId, def.key, now);
+  if (hold.length) throw new HttpError(409, 'compliance_hold', `${def.label} is on compliance hold: it needs ${hold.join(' and ')}.`, { missing: hold });
+
   let approvalId: string | null = null;
   let created = true;
   // Brief 2-6 step 2: a capability the platform does not gate may be gated by the customer's own policy.
   const profile = def.gate ? null : await db.agentProfile.findUnique({ where: { workerId: agent.workerId }, select: { family: true } });
   const customerGate = def.gate ? null : await gateFor(db, { workerId: agent.workerId, tenantId, family: profile?.family ?? def.family }, null, def.key, now);
+  // A capability that decides about people is required by the floor even when the catalog gives it no gate.
   const gateAction = def.gate ?? (customerGate?.required ? ('POLICY_GATE' as const) : null);
   if (gateAction) {
     if (!input.summary && def.gate) throw new HttpError(400, 'summary_required', 'A gated proposal needs a summary a person can approve.');

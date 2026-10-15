@@ -65,6 +65,7 @@ import { HugoPanel } from './HugoPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
 import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
 import { AgentGatesPanel } from './AgentGatesPanel';
+import { AgentDecisionRecordTab } from './AgentDecisionRecordTab';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -1182,6 +1183,7 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
             <TabsTrigger value="requests">Requests ({agent.approvals.length})</TabsTrigger>
             <TabsTrigger value="spend">Spend ({agent.spend.length})</TabsTrigger>
             <TabsTrigger value="trail">Trail ({agent.trail.length})</TabsTrigger>
+            <TabsTrigger value="record">Compliance record</TabsTrigger>
           </TabsList>
 
           <TabsContent value="profile">
@@ -1232,6 +1234,10 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
 
           <TabsContent value="trail">
             <TrailSection agent={agent} />
+          </TabsContent>
+
+          <TabsContent value="record">
+            <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} />
           </TabsContent>
         </Tabs>
       </DialogContent>

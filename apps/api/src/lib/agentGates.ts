@@ -4,6 +4,7 @@ import { AGENT_GATED_ACTION_LABELS, AgentGatedActionSchema, capabilityDef, type 
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from './audit.js';
 import { ALTO_TENANT_ID } from './tenant.js';
+import { decisionTypesFor } from './decisionRecord.js';
 
 /**
  * Brief 2-6 step 2 — customer-defined gates (docs/agent-product-billing-investigation.md §4.2).
@@ -47,7 +48,10 @@ export async function gateFor(
   now: Date = new Date(),
 ): Promise<GateDecision> {
   const tenantId = agent.tenantId ?? ALTO_TENANT_ID;
-  const floor = action !== null && action !== 'POLICY_GATE';
+  // Brief 2-6 step 3 (decision 5): a capability tagged as deciding something about a person's
+  // employment always needs a person, like the platform's own gated actions.
+  const decides = capabilityKey ? (await decisionTypesFor(db, agent.workerId, capabilityKey)).length > 0 : false;
+  const floor = (action !== null && action !== 'POLICY_GATE') || decides;
   const actions = ['*', ...(action && action !== 'POLICY_GATE' ? [action] : []), ...(capabilityKey ? [capabilityKey] : [])];
   const policies = await db.agentGatePolicy.findMany({
     where: {

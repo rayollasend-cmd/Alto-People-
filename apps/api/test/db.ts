@@ -133,6 +133,10 @@ const TABLES = [
   'IdentityConnection',
   'TenantDomain',
   'ScimToken',
+  // Brief 2-6 step 3: the decision record keeps ids, not keys (an append-only row must outlive what it names).
+  'AgentDecisionProfile',
+  'AgentBiasAudit',
+  'AutomatedDecisionRecord',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

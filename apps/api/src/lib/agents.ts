@@ -33,6 +33,7 @@ import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { emitAgentApproval } from './webhookEvents.js';
 import { moduleOn } from './tenantProfile.js';
 import { approverMayDecide, gateFor } from './agentGates.js';
+import { recordDecisionsForApproval } from './decisionRecord.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
 function registryTenant(tenantId?: string | null): string {
@@ -814,6 +815,8 @@ export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 
     'agents',
   );
   await syncProposalWithApproval(db, id, decision, now);
+  // Brief 2-6 step 3: a decision about people goes on the automated-decision record.
+  await recordDecisionsForApproval(db, id, decision, userId, now);
   emitAgentApproval('agent.approval_decided', { id, action: row.action, status: decision, summary: updated.summary, workerId: row.workerId }, registryTenant(tenantIdArg));
   // Agent families step 1: an approved proposal of an in-process agent is carried out now.
   if (decision === 'APPROVED') await afterProposalApproved(id, now);

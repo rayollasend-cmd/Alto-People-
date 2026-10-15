@@ -10758,3 +10758,94 @@ model AgentGatePolicy {
 
   @@index([tenantId, scope])
 }
+
+/// Brief 2-6 step 3 — what an agent capability decides about people
+/// (docs/agent-product-billing-investigation.md §4.3). One row per agent and
+/// capability ('*' for the whole agent); a catalog capability ships defaults
+/// in lib/decisionRecord. Fields and notice texts are reviewed by counsel
+/// before notices go out (decision 6).
+model AgentDecisionProfile {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId          String    @db.Uuid
+  capabilityKey     String    @db.VarChar(80)
+  /// SCREENING | HIRING | PROMOTION | SCHEDULING | COMPENSATION | DISCIPLINE | TERMINATION | OTHER
+  decisionTypes     String[]
+  /// NYC_LL144 | CO_ADMT
+  jurisdictions     String[]
+  /// What the tool evaluates, in words (the NYC notice states it).
+  assesses          String    @db.VarChar(1000)
+  dataSources       String    @db.VarChar(1000)
+  retentionPolicy   String    @db.VarChar(300)
+  /// ALWAYS | ON_REQUEST
+  humanReview       String    @default("ALWAYS") @db.VarChar(12)
+  /// When notices began (the NYC hold counts 10 business days from it).
+  noticeStartedAt   DateTime? @db.Timestamptz(6)
+  noticeTextVersion Int       @default(1)
+  createdById       String?   @db.Uuid
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@unique([workerId, capabilityKey])
+  @@index([tenantId])
+}
+
+/// An independent bias audit of an agent (NYC LL144 §5.1): in force for a year from when it was conducted.
+model AgentBiasAudit {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId             String    @db.Uuid
+  auditorName          String    @db.VarChar(200)
+  independenceAttested Boolean
+  independenceText     String    @db.VarChar(1000)
+  conductedAt          DateTime  @db.Date
+  validUntil           DateTime  @db.Date
+  distributionDate     DateTime? @db.Date
+  summaryUrl           String?   @db.VarChar(1000)
+  /// Selection or scoring rates and impact ratios by sex, race/ethnicity and intersectional categories.
+  results              Json
+  /// HISTORICAL | TEST
+  dataKind             String    @db.VarChar(12)
+  testDataReason       String?   @db.VarChar(1000)
+  createdById          String?   @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, workerId])
+}
+
+/// One decision about a person by an agent capability, append-only (a database trigger
+/// refuses edits and deletes; the lifecycle dates are set once). A correction appends a
+/// row that points at the old one. Kept at least three years (Colorado).
+model AutomatedDecisionRecord {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  workerId           String    @db.Uuid
+  capabilityKey      String    @db.VarChar(80)
+  decisionType       String    @db.VarChar(20)
+  subjectAssociateId String?   @db.Uuid
+  /// An applicant or other subject without an associate record.
+  subjectRef         String?   @db.VarChar(120)
+  jurisdictionTags   String[]
+  proposalId         String?   @db.Uuid
+  approvalId         String?   @db.Uuid
+  humanReviewerId    String?   @db.Uuid
+  humanDecidedAt     DateTime? @db.Timestamptz(6)
+  /// FAVORABLE | ADVERSE | NONE
+  outcome            String    @db.VarChar(10)
+  /// What the decision was, in words (no reason text a person did not write).
+  summary            String    @db.VarChar(500)
+  noticeGivenAt      DateTime? @db.Timestamptz(6)
+  noticeChannel      String?   @db.VarChar(20)
+  noticeTextVersion  Int?
+  auditId            String?   @db.Uuid
+  explanationSentAt  DateTime? @db.Timestamptz(6)
+  reviewRequestedAt  DateTime? @db.Timestamptz(6)
+  reviewResolvedAt   DateTime? @db.Timestamptz(6)
+  dataRequestAt      DateTime? @db.Timestamptz(6)
+  dataSentAt         DateTime? @db.Timestamptz(6)
+  correctsId         String?   @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, workerId, createdAt(sort: Desc)])
+  @@index([subjectAssociateId])
+}
