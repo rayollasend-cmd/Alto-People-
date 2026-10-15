@@ -456,6 +456,10 @@ export function gradeWeeks(
   const delivered = rows.reduce((a, w) => a + w.delivered, 0);
   const ended = rows.reduce((a, w) => a + w.ended, 0);
   const showed = rows.reduce((a, w) => a + w.showed, 0);
+  // No shift has ended yet: a store on its first day has a contract but
+  // no evidence either way, and an F for work that has not happened is a
+  // wrong answer, not a strict one. The grade starts with the first shift.
+  if (ended === 0) return { grade: null, score: null, basis: null };
   let score: number;
   let basis: GradeBasis;
   if (contracted > 0) {

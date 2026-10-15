@@ -338,9 +338,9 @@ export function ShiftCard({
         onClick={toggle}
         aria-expanded={expanded}
         aria-controls={detailId}
-        className="w-full flex items-center justify-between gap-4 p-4 text-left rounded-lg transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="w-full flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 p-4 text-left rounded-lg transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
       >
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-white font-medium">
             {shift.position}{' '}
             <span className="text-silver text-sm font-normal">
@@ -375,23 +375,25 @@ export function ShiftCard({
             <div className="text-xs text-silver/70">{shift.location}</div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="flex flex-col items-end gap-1">
-            {isNext && (
-              <Badge variant="accent" className="bg-gold/15 text-gold border-gold/40">
-                {t('shift.next')}
-              </Badge>
-            )}
-            <Badge variant={badge.variant}>{badge.label}</Badge>
-          </div>
-          <ChevronDown
-            aria-hidden="true"
-            className={[
-              'h-4 w-4 text-silver/70 transition-transform',
-              expanded ? 'rotate-180' : '',
-            ].join(' ')}
-          />
+        {/* On a phone the status takes its own row under the title, so a
+            long shift name keeps to two lines; from sm the badges sit at
+            the right before the chevron. Order, not duplication: the label
+            exists once for the reader and the tests. */}
+        <div className="order-3 flex w-full flex-row items-center gap-1 sm:order-none sm:w-auto sm:shrink-0 sm:flex-col sm:items-end">
+          {isNext && (
+            <Badge variant="accent" className="bg-gold/15 text-gold border-gold/40">
+              {t('shift.next')}
+            </Badge>
+          )}
+          <Badge variant={badge.variant}>{badge.label}</Badge>
         </div>
+        <ChevronDown
+          aria-hidden="true"
+          className={[
+            'order-2 h-4 w-4 shrink-0 text-silver/70 transition-transform sm:order-none',
+            expanded ? 'rotate-180' : '',
+          ].join(' ')}
+        />
       </button>
       )}
 

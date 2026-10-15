@@ -1,8 +1,8 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1579,
-    "raw-heading": 147,
+    "brand-text": 1577,
+    "raw-heading": 146,
     "loading-text": 4,
     "empty-text": 39,
     "hex": 58,
@@ -82,8 +82,8 @@
       "brand-text": 4
     },
     "src/pages/AdminDashboard.tsx": {
-      "brand-text": 4,
-      "raw-heading": 2
+      "brand-text": 2,
+      "raw-heading": 1
     },
     "src/pages/agreements/AgreementsHome.tsx": {
       "brand-text": 2

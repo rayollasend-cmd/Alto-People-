@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
   ChevronUp,
@@ -158,6 +158,7 @@ export function Sidebar() {
           : null;
   const { pinned, isPinned, togglePin } = usePinnedModules();
   const recents = useRecentModules();
+  const location = useLocation();
 
   const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
   for (const m of visible) {
@@ -184,10 +185,13 @@ export function Sidebar() {
   const pinnedModules = pinned
     .map((k) => byKey.get(k))
     .filter((m): m is ModuleNav => !!m);
+  // The page a person is on is highlighted in its own group already; a
+  // second copy of it under Recent is noise, so Recent shows where they
+  // were, not where they are.
   const recentModules = recents
     .filter((k) => !pinned.includes(k))
     .map((k) => byKey.get(k))
-    .filter((m): m is ModuleNav => !!m)
+    .filter((m): m is ModuleNav => !!m && m.path !== location.pathname)
     .slice(0, 3);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups() ?? defaultCollapsedGroups());

@@ -16,10 +16,8 @@ import {
   FileSearch,
   FileText,
   ShieldCheck,
-  Sparkles,
   Users,
   Wallet,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import type {
@@ -219,7 +217,7 @@ export function AdminDashboard() {
         subtitle={(role && SUBTITLE_BY_ROLE[role]) ?? "Here's what's happening across your workforce today."}
         meta={
           <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
+            <span className="flex items-center gap-1.5 text-xs text-ink-muted">
               <Calendar className="h-3 w-3" aria-hidden="true" />
               <LiveNow render={(now) => fmtDate(now)} />
             </span>
@@ -233,7 +231,6 @@ export function AdminDashboard() {
         }
         banners={
           <>
-            {canAct && <WelcomeCard greetingName={greetingName} />}
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </>
         }
@@ -268,77 +265,6 @@ export function AdminDashboard() {
   );
 }
 
-/* ========================== Welcome (first login) ======================== */
-
-const WELCOME_DISMISSED_KEY = 'alto.dashboard.welcomeDismissed';
-
-/**
- * One-time welcome card surfaced on the first session a user lands on
- * the admin dashboard. Establishes the centre-of-gravity layout
- * (Action required → KPIs → Onboarding pipeline → Activity feed) so
- * the user has a mental map of the page on day one. Dismissed
- * forever once the user clicks ✕ — there's no global "show tour
- * again" UI, intentionally, because re-tutorialising daily users is
- * a confidence anti-signal.
- */
-function WelcomeCard({ greetingName }: { greetingName: string }) {
-  const [dismissed, setDismissed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    try {
-      return window.localStorage.getItem(WELCOME_DISMISSED_KEY) === '1';
-    } catch {
-      return true;
-    }
-  });
-
-  if (dismissed) return null;
-
-  const dismiss = () => {
-    setDismissed(true);
-    try {
-      window.localStorage.setItem(WELCOME_DISMISSED_KEY, '1');
-    } catch {
-      /* private mode etc. — re-show next session is fine */
-    }
-  };
-
-  return (
-    <Card className="border-l-2 border-l-navy-secondary relative overflow-hidden">
-      <CardContent className="pt-5">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={dismiss}
-          aria-label="Dismiss welcome"
-          className="absolute top-2 right-2"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </Button>
-        <div className="text-2xs uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
-          <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
-          Welcome
-        </div>
-        <h2 className="text-xl md:text-2xl text-white mt-1 leading-tight">
-          You're set up, {greetingName}.
-        </h2>
-        <p className="text-sm text-silver mt-2 max-w-2xl leading-relaxed">
-          This is your home base. Items needing your attention are pinned
-          at the top, followed by today's workforce metrics. Tap any tile
-          to drill in.
-          {/* The keyboard tip named a sidebar and a ⌘K that a phone has
-              neither of; the tab bar's own hint takes its place there. */}
-          <span className="hidden md:inline">
-            {' '}Drag a sidebar item into the topbar's command palette
-            (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-2xs font-mono">⌘K</kbd>) to jump anywhere in two keystrokes.
-          </span>
-          <span className="md:hidden">
-            {' '}The tabs along the bottom carry the rest — More opens everything else.
-          </span>
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
 
 /* ============================ Action required ============================ */
 
@@ -497,26 +423,9 @@ function ActionRequiredSection({
       </section>
     );
   }
-  if (items.length === 0) {
-    return (
-      <section aria-label="Action required">
-        <Card className="border-success/30 bg-success/5">
-          <CardContent className="py-5 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-success/15 grid place-items-center text-success shrink-0">
-              <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-white font-medium">You're all caught up</div>
-              <div className="text-sm text-silver">
-                No applications, I-9s, document reviews, or payroll disbursements
-                waiting on you.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-    );
-  }
+  // Nothing to act on: the decision queue above already says so in one
+  // line, and a second "caught up" card under it said the same thing twice.
+  if (items.length === 0) return null;
   return (
     <section aria-label="Action required" className="space-y-3">
       <SectionTitle icon={AlertTriangle}>Needs your attention</SectionTitle>

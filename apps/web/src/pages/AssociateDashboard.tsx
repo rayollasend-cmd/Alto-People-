@@ -47,7 +47,7 @@ import {
 } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
 import { getPushStatus, subscribeToPush } from '@/lib/push';
-import { OnboardingBanner } from '@/components/OnboardingBanner';
+import { OnboardingBanner, useOpenOnboarding } from '@/components/OnboardingBanner';
 import { ReadyToWorkCard } from '@/components/ReadyToWorkCard';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
@@ -145,6 +145,34 @@ export function AssociateDashboard() {
     ? [nextShift.locationName, nextShift.clientName].filter(Boolean).join(' · ')
     : '';
 
+  const openOnboarding = useOpenOnboarding();
+  // Their shift, in the tone of the moment — on the clock, late, coming
+  // up, or nothing scheduled.
+  const shiftHero =
+    activeQuery.isError || shiftsQuery.isError ? (
+    <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" />
+    ) : (
+    <MyShiftHero
+      active={active}
+      shifts={shifts}
+      openShiftCount={openShiftCount}
+      footer={(state) =>
+        // Late already says where to punch; the number is what they
+        // need at the tablet.
+        state === 'late' ? (
+          <EmployeeNumberLine />
+        ) : (
+          <div className="mt-4 border-t border-navy-secondary/60 pt-3">
+            <p className="text-xs text-silver/80">
+              {t('dash.offClock')} · {t('dash.kioskHint')}
+            </p>
+            <EmployeeNumberLine />
+          </div>
+        )
+      }
+    />
+    );
+
   return (
     <>
       <PullToRefreshIndicator state={pullState} />
@@ -171,42 +199,20 @@ export function AssociateDashboard() {
                 while an emergency that includes this person is active. */}
             <EmergencyBanner />
             <CelebrationRibbon />
-            <OnboardingBanner />
             {/* From the clock-in number to the first punch: where they work, who
                 runs the floor, and how to reach them. */}
             <ReadyToWorkCard className="mb-4" />
           </>
         }
         hero={
-          // Their shift, in the tone of the moment — on the clock, late, coming
-          // up, or nothing scheduled.
-          activeQuery.isError || shiftsQuery.isError ? (
-        <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" />
-      ) : (
-        <MyShiftHero
-          active={active}
-          shifts={shifts}
-          openShiftCount={openShiftCount}
-          footer={(state) =>
-            // Late already says where to punch; the number is what they
-            // need at the tablet.
-            state === 'late' ? (
-              <EmployeeNumberLine />
-            ) : (
-              <div className="mt-4 border-t border-navy-secondary/60 pt-3">
-                <p className="text-xs text-silver/80">
-                  {t('dash.offClock')} · {t('dash.kioskHint')}
-                </p>
-                <EmployeeNumberLine />
-              </div>
-            )
-          }
-        />
-      )
+          // Until the checklist is done, onboarding is the one thing this
+          // person has to do, so it is the hero and the shift follows it.
+          openOnboarding ? <OnboardingBanner hero /> : shiftHero
         }
         assistant={<HugoSeat />}
         waysIn={<QuickActions />}
       >
+        {openOnboarding && shiftHero}
         {/* Their van — the ride that's coming, or a one-tap ride for the
             next shift that needs one. */}
         <RideStrip />

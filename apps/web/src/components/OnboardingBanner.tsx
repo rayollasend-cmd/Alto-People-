@@ -14,7 +14,12 @@ import { ProgressBar } from '@/components/ProgressBar';
  * common "they accepted the invite then forgot" failure mode dies here:
  * every dashboard visit re-surfaces the unfinished work prominently.
  */
-export function OnboardingBanner() {
+/**
+ * The associate's unfinished onboarding, if any: undefined while loading,
+ * null when there is none (or the person has no application at all). The
+ * home reads it to decide what the hero is; the card renders it.
+ */
+export function useOpenOnboarding(): ApplicationSummary | null | undefined {
   const [item, setItem] = useState<ApplicationSummary | null | undefined>(undefined);
 
   const itemQuery = useQuery({
@@ -39,6 +44,18 @@ export function OnboardingBanner() {
     setItem(null);
   }, [itemQuery.isError, itemQuery.error]);
 
+  return item;
+}
+
+/**
+ * The onboarding card. On the associate home it IS the hero while the
+ * checklist is unfinished (`hero`): a person who cannot work yet has one
+ * job, and the greeting sits above it, not under a banner. Elsewhere it
+ * is the nudge it always was.
+ */
+export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
+  const item = useOpenOnboarding();
+
   if (!item) return null;
 
   const isFresh = item.percentComplete === 0;
@@ -46,7 +63,7 @@ export function OnboardingBanner() {
   return (
     <Link
       to={`/onboarding/me/${item.id}`}
-      className="group block mb-6 rounded-lg border border-gold/40 bg-gradient-to-br from-gold/10 via-navy to-navy p-5 transition-all hover:border-gold hover:from-gold/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      className={`group block rounded-lg border border-gold/40 bg-gradient-to-br from-gold/10 via-navy to-navy p-5 transition-all hover:border-gold hover:from-gold/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${hero ? '' : 'mb-6'}`}
       aria-label="Continue onboarding"
     >
       <div className="flex items-start gap-4">

@@ -43,11 +43,11 @@ export function ClockStrip({ className }: { className?: string }) {
   return (
     <div
       className={
-        'flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs uppercase tracking-[0.14em] text-silver/60 ' +
+        'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted ' +
         (className ?? '')
       }
     >
-      <CalendarClock className="h-3 w-3 text-gold/60" aria-hidden="true" />
+      <CalendarClock className="h-3 w-3 text-accent/70" aria-hidden="true" />
       {parts.map((p, i) => (
         <span key={p} className="flex items-center gap-2 whitespace-nowrap">
           {i > 0 && (
