@@ -156,8 +156,9 @@ export function FinanceDashboard() {
       decisions={{ title: t('fin.today'), count: tasksToday, content: <TodayList data={data} headless /> }}
       assistant={<HugoSeat />}
     >
-      {/* ---- The four numbers that matter ----------------------------- */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* ---- The four numbers that matter (two across until xl: the
+          template's main column is two thirds wide beside Hugo) ---------- */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <FinKpi
           to="/labor-costs"
           label={t('fin.kpiRevenue')}

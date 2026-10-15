@@ -160,6 +160,8 @@ Each step: tests, the walk, acceptance reported before the next.
 
 **Step 6, slice 3 (2026-10-15): the first lists on the List template.** The people directory, onboarding applications and Fieldglass timesheets declare the template (`data-template="list"`): the header, the summary strip, the one filter row, the grid and the drawer are the template's slots now, and nothing moved on screen. Third walk (slice 1 on main, run 38759893348): the supervisor home reads as designed on desktop and phone (banner, greeting, place, the floor, "Needs you", the tiles, ways in at the foot); the driver's phone shows one setup banner above the greeting and the empty day as the hero. One fix from it: the supervisor's four KPI tiles squeezed four-across in the template's main column, so they go two across until xl like the admin's.
 
+Fourth and fifth walks (slices 2 and 3 on main, runs 38761596161 and 38762874711): the recruiter, workforce and finance homes read as designed (greeting, hero, "Needs you" counted, Hugo's seat); the people directory, onboarding and timesheets lists are unchanged on screen. Two fixes: the recruiter's "New applicants" card stretched to the aside's row height (`h-full` inside the template's column), and the finance KPI tiles clipped their captions four-across (two until xl now). Rule for the sweep: inside a Home's main column, a four-tile strip is `xl:grid-cols-4`, and no card carries `h-full` unless it sits in its own grid row.
+
 ## 8. Risks
 
 1. **A repaint without a restructure.** Mitigation: steps 2 to 5 change where things are; step 1 changes what they look like; neither ships alone.

@@ -140,7 +140,7 @@ const INTERVIEW_STATE: Record<RecruiterHome['interviewsToday'][number]['state'],
 function Today({ home }: { home: RecruiterHome }) {
   const list = home.interviewsToday;
   return (
-    <Card className="h-full">
+    <Card>
       <CardContent className="p-4 md:p-5">
         <SectionTitle
           count={list.length}
@@ -179,7 +179,7 @@ function Today({ home }: { home: RecruiterHome }) {
 function NewApplicants({ home }: { home: RecruiterHome }) {
   const a = home.newApplicants;
   return (
-    <Card className="h-full">
+    <Card>
       <CardContent className="p-4 md:p-5">
         <SectionTitle action={<MoreLink to="/recruiting?view=list&stage=ALL&sort=newest">Newest</MoreLink>}>
           <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
