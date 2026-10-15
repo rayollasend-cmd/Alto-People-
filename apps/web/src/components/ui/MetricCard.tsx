@@ -224,14 +224,14 @@ export function MetricCard({
   const isInteractive = Boolean(href || wrap);
   const card = (
     <Card interactive={isInteractive} className={cn('group', className)}>
-      <CardContent className="pt-5">
+      <CardContent className="pt-[var(--d-tile)]">
         {/* The one canonical KPI label spec (audits found three). */}
         <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <div
           className={cn(
-            'font-display text-3xl mt-2 leading-none tabular-nums',
+            'font-display text-[length:var(--d-value)] mt-2 leading-none tabular-nums',
             accent ? 'text-warning' : 'text-gold',
           )}
         >

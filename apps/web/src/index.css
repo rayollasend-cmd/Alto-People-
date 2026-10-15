@@ -769,16 +769,41 @@ input[type='radio'] {
  * preference still persists in localStorage; we just don't honour the
  * smaller paddings until the viewport is wide enough to handle them.
  * ------------------------------------------------------------------------- */
-@media (min-width: 768px) {
-  :root[data-density='compact'] .h-10 { height: 2rem; }                 /* TableHead */
-  :root[data-density='compact'] [class*='px-3'] [class*='py-3'],
-  :root[data-density='compact'] td.px-3.py-3 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
-  :root[data-density='compact'] th.h-10.px-3 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-  :root[data-density='compact'] .p-5 { padding: 0.875rem; }              /* CardHeader / CardContent */
-  :root[data-density='compact'] .p-5.pt-3 { padding-top: 0.5rem; padding-bottom: 0.875rem; }
-  :root[data-density='compact'] .p-5.pb-3 { padding-bottom: 0.5rem; padding-top: 0.875rem; }
-  :root[data-density='compact'] .p-4 { padding: 0.625rem; }              /* Card row body */
-  :root[data-density='compact'] tbody tr { font-size: 0.8125rem; }       /* tighter rows read smaller */
+/* The density scale (UX upgrade, 2026-10-15): one set of variables the
+ * kit reads — table rows, cards, tiles, page stacks, titles, nav rows —
+ * so "compact" is a system, not a list of class hacks. Comfortable is the
+ * phone and associate default; compact is the enterprise default for an
+ * admin on a desktop (lib/density.tsx picks it by role and pointer). */
+:root {
+  --d-row-y: 0.75rem;        /* table cell vertical padding */
+  --d-cell-x: 0.75rem;       /* table cell horizontal padding */
+  --d-head-h: 2.5rem;        /* table header row height */
+  --d-table-text: 0.875rem;  /* table body text */
+  --d-card: 1.25rem;         /* card padding */
+  --d-card-top: 0.75rem;     /* card content top padding under a header */
+  --d-tile: 1.25rem;         /* KPI tile padding */
+  --d-value: 1.875rem;       /* KPI value size */
+  --d-stack: 1rem;           /* gap between a page's blocks */
+  --d-stack-lg: 1.5rem;      /* gap between a home's sections */
+  --d-title: 2.25rem;        /* page title at md+ */
+  --d-nav-y: 0.5rem;         /* sidebar row vertical padding */
+}
+@media (min-width: 768px) and (pointer: fine) {
+  :root[data-density='compact'] {
+    --d-row-y: 0.4375rem;
+    --d-cell-x: 0.625rem;
+    --d-head-h: 2rem;
+    --d-table-text: 0.8125rem;
+    --d-card: 0.875rem;
+    --d-card-top: 0.5rem;
+    --d-tile: 0.875rem;
+    --d-value: 1.5rem;
+    --d-stack: 0.75rem;
+    --d-stack-lg: 1rem;
+    --d-title: 1.75rem;
+    --d-nav-y: 0.3125rem;
+  }
+  :root[data-density='compact'] h1.font-display { font-size: var(--d-title); }
 }
 
 /* ===========================================================================

@@ -63,7 +63,7 @@ export function PageHeader({
   useHeroObserver(heroRef);
 
   return (
-    <header className={cn('mb-5 md:mb-7', className)}>
+    <header className={cn('mb-5 md:mb-[var(--d-stack-lg)]', className)}>
       {/* Phones read like an app's large-title header: no breadcrumb trail
           (the top bar names the page, the tab bar navigates), a two-line
           description, and one swipeable row of actions. */}

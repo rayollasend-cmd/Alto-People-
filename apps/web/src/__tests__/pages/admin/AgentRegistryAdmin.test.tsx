@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import {
   ROLE_CAPABILITIES,
   type AgentApprovalSummary,
@@ -59,6 +59,7 @@ vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(tr
 import { certifyAgent, decideAgentApproval, getAgent, getAgentScorecard, getCapabilityScorecard, issueAgentCredential, listAgentApprovals, listAgentCapabilities, listAgentScenarios, listAgents, resumeAllAgents, suspendAgentCapability } from '@/lib/agentsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { AgentRegistryAdmin } from '@/pages/admin/AgentRegistryAdmin';
+import { AgentRecordPage } from '@/pages/admin/AgentRecordPage';
 
 const OWNER = { id: '11111111-1111-4111-8111-111111111111', name: 'Jo Park', email: 'jo@alto.example' };
 const AGENT_ID = '22222222-2222-4222-8222-222222222222';
@@ -206,7 +207,10 @@ function renderPage(role: 'HR_ADMINISTRATOR' | 'EXECUTIVE_CHAIRMAN' = 'HR_ADMINI
     >
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={[path]}>
-          <AgentRegistryAdmin />
+          <Routes>
+            <Route path="/agents" element={<AgentRegistryAdmin />} />
+            <Route path="/agents/:id" element={<AgentRecordPage />} />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>
     </AuthContext.Provider>,
@@ -214,6 +218,7 @@ function renderPage(role: 'HR_ADMINISTRATOR' | 'EXECUTIVE_CHAIRMAN' = 'HR_ADMINI
 }
 
 beforeEach(() => {
+  window.localStorage.removeItem('alto.agents.view');
   vi.clearAllMocks();
   vi.mocked(listAgents).mockResolvedValue(registry);
   vi.mocked(listAgentApprovals).mockResolvedValue({ approvals: [approval] });
@@ -260,6 +265,7 @@ describe('AgentRegistryAdmin', () => {
   });
 
   it('shows the agent, its scopes and spend in the grid', async () => {
+    window.localStorage.setItem('alto.agents.view', 'table');
     renderPage();
     // The name shows in the queue row and in the grid.
     expect(await screen.findAllByText('Roster Bot')).toHaveLength(2);
@@ -272,8 +278,8 @@ describe('AgentRegistryAdmin', () => {
   it('issues a credential and shows the plaintext once', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    const dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    const dialog = document.body;
     await within(dialog).findByText(/Answers schedule questions/);
     await user.click(within(dialog).getByRole('tab', { name: /Credentials/ }));
     await user.selectOptions(within(dialog).getByLabelText(/Valid for/), '1');
@@ -294,8 +300,8 @@ describe('AgentRegistryAdmin', () => {
     expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Register agent/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Open Roster Bot' }));
-    const dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    const dialog = document.body;
     await within(dialog).findByText(/Answers schedule questions/);
     await user.click(within(dialog).getByRole('tab', { name: /Credentials/ }));
     expect(within(dialog).queryByRole('button', { name: 'Issue credential' })).not.toBeInTheDocument();
@@ -330,6 +336,7 @@ describe('AgentRegistryAdmin', () => {
   });
 
   it('shows Recertify in the grid for an agent whose certification is not current', async () => {
+    window.localStorage.setItem('alto.agents.view', 'table');
     vi.mocked(listAgents).mockResolvedValue({
       ...registry,
       agents: [agent({ certification: { ...certified, modelVersion: '4.6', current: false, passing: 0, ready: false } })],
@@ -339,6 +346,7 @@ describe('AgentRegistryAdmin', () => {
   });
 
   it('shows the certified version in the grid when certification is current', async () => {
+    window.localStorage.setItem('alto.agents.view', 'table');
     renderPage();
     expect(await screen.findByText('✓ 4.5')).toBeInTheDocument();
   });
@@ -354,8 +362,8 @@ describe('AgentRegistryAdmin', () => {
 
     // Not the owner: Resume is there but disabled, with the hint.
     const first = renderPage('HR_ADMINISTRATOR', '/agents', 'u1');
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    let dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    let dialog = document.body;
     await within(dialog).findByText(/Answering off-script/);
     expect(within(dialog).getByText(/by Sam Ops/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Resume' })).toBeDisabled();
@@ -364,8 +372,8 @@ describe('AgentRegistryAdmin', () => {
 
     // The owner: enabled.
     renderPage('HR_ADMINISTRATOR', '/agents', OWNER.id);
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    dialog = document.body;
     await within(dialog).findByText(/Answering off-script/);
     expect(within(dialog).getByRole('button', { name: 'Resume' })).toBeEnabled();
     expect(within(dialog).queryByText(/Only the owner/)).not.toBeInTheDocument();
@@ -377,8 +385,8 @@ describe('AgentRegistryAdmin', () => {
     const recert: AgentDetail = { ...detail, certification: { ...certified, modelVersion: '4.6', current: false, ready: true } };
     vi.mocked(getAgent).mockResolvedValue(recert);
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    const dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    const dialog = document.body;
     await within(dialog).findByText(/Answers schedule questions/);
     await user.click(within(dialog).getByRole('tab', { name: /Certification/ }));
     expect(await within(dialog).findByText('Tomorrow shift question')).toBeInTheDocument();
@@ -399,8 +407,8 @@ describe('AgentRegistryAdmin', () => {
     const user = userEvent.setup();
     vi.mocked(getAgent).mockResolvedValue({ ...detail, status: 'ONBOARDING', certification: { ...certified, certifiedAt: null, certifiedModelVersion: null, current: false, passing: 0, ready: false } });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    const dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    const dialog = document.body;
     await within(dialog).findByText(/Answers schedule questions/);
     await user.click(within(dialog).getByRole('tab', { name: /Certification/ }));
     expect(await within(dialog).findByText('Tomorrow shift question')).toBeInTheDocument();
@@ -411,7 +419,7 @@ describe('AgentRegistryAdmin', () => {
     renderPage('HR_ADMINISTRATOR', `/agents?agent=${AGENT_ID}`);
     // The loading dialog is swapped for the loaded one, so wait on the content.
     expect(await screen.findByText(/Answers schedule questions/)).toBeInTheDocument();
-    const dialog = screen.getByRole('dialog');
+    const dialog = document.body;
     expect(within(dialog).getByRole('tab', { name: /Scorecard/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('tab', { name: /Certification/ })).toBeInTheDocument();
   });
@@ -430,8 +438,8 @@ describe('AgentRegistryAdmin', () => {
     }));
     vi.mocked(suspendAgentCapability).mockResolvedValue({} as never);
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Open Roster Bot' }));
-    const dialog = await screen.findByRole('dialog');
+    await user.click(await screen.findByRole('link', { name: 'Open Roster Bot' }));
+    const dialog = document.body;
     await user.click(within(dialog).getByRole('tab', { name: /Capabilities/ }));
     const fill = await within(dialog).findByTestId('capability-shift.fill');
     expect(within(fill).getByText('Fill open shifts')).toBeInTheDocument();

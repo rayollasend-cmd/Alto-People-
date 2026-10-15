@@ -47,6 +47,35 @@ function applyDensity(density: Density): void {
   document.documentElement.dataset.density = density;
 }
 
+/** True when a density was chosen by hand (the default is otherwise picked by role and pointer). */
+export function hasStoredDensity(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored === 'comfortable' || stored === 'compact';
+  } catch {
+    return true;
+  }
+}
+
+/** Roles whose screens are read on a phone or by a client: they keep the roomy default. */
+const COMFORTABLE_ROLES = new Set(['ASSOCIATE', 'DRIVER', 'CLIENT_PORTAL']);
+
+/**
+ * The enterprise default (UX upgrade, 2026-10-15): an admin, manager,
+ * finance or executive person on a desktop with a mouse gets compact
+ * density the first time, so the lists read like a workbench, not a
+ * brochure. A phone, a touch screen, an associate and a client keep
+ * comfortable. A choice made by hand (the toggle) always wins.
+ */
+export function defaultDensityFor(role: string | null | undefined): Density {
+  if (!role || COMFORTABLE_ROLES.has(role)) return 'comfortable';
+  if (typeof window === 'undefined' || !window.matchMedia) return 'comfortable';
+  const fine = window.matchMedia('(pointer: fine)').matches;
+  const wide = window.matchMedia('(min-width: 768px)').matches;
+  return fine && wide ? 'compact' : 'comfortable';
+}
+
 export function DensityProvider({ children }: { children: ReactNode }) {
   const [density, setDensityState] = useState<Density>(() => readInitialDensity());
 

@@ -31,7 +31,7 @@ export const Table = React.forwardRef<HTMLTableElement, TableProps>(
     <div className={cn('relative w-full overflow-x-auto', wrapperClassName)}>
       <table
         ref={ref}
-        className={cn('w-full caption-bottom text-sm', className)}
+        className={cn('w-full caption-bottom text-[length:var(--d-table-text)]', className)}
         {...props}
       >
         {caption && <caption className="sr-only">{caption}</caption>}
@@ -156,7 +156,7 @@ export const TableHead = React.forwardRef<
     ref={ref}
     scope="col"
     className={cn(
-      'h-10 px-3 text-left align-middle text-2xs font-semibold uppercase tracking-widest text-silver',
+      'h-[var(--d-head-h)] px-[var(--d-cell-x)] text-left align-middle text-2xs font-semibold uppercase tracking-widest text-silver',
       className
     )}
     {...props}
@@ -170,7 +170,7 @@ export const TableCell = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <td
     ref={ref}
-    className={cn('px-3 py-3 align-middle text-sm text-white', className)}
+    className={cn('px-[var(--d-cell-x)] py-[var(--d-row-y)] align-middle text-white', className)}
     {...props}
   />
 ));

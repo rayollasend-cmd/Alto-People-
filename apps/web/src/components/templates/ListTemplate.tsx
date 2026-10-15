@@ -37,7 +37,7 @@ export interface ListTemplateProps {
 
 export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, primaryAction, secondaryActions, filters, summary, children, drawer, className, headerClassName }: ListTemplateProps) {
   return (
-    <div className={cn('space-y-4', className)} data-template="list">
+    <div className={cn('space-y-[var(--d-stack)]', className)} data-template="list">
       <PageHeader className={headerClassName} title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={primaryAction} secondaryActions={secondaryActions} />
       {summary}
       {filters}

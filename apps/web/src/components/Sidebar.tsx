@@ -552,7 +552,7 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed, badge }: Si
         // coarse: taller rows — the sidebar IS the primary nav on iPads.
         railCollapsed
           ? 'mx-2 h-9 w-9 coarse:h-11 coarse:w-11 justify-center'
-          : 'mx-2 gap-2.5 px-3 py-2 coarse:py-2.5',
+          : 'mx-2 gap-2.5 px-3 py-[var(--d-nav-y)] coarse:py-2.5',
         active
           ? 'bg-navy-secondary text-white before:opacity-100'
           : 'text-silver hover:text-white hover:bg-navy-secondary/50',

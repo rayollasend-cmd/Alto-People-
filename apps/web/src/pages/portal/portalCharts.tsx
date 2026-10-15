@@ -533,13 +533,13 @@ export function StatTile({
   return (
     <div
       className={cn(
-        'rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 elev-1',
+        'rounded-lg border border-navy-secondary bg-navy-secondary/20 p-[var(--d-tile)] elev-1',
         className,
       )}
     >
       <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{label}</div>
       <div className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-        <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{value}</span>
+        <span className="text-2xl font-bold tracking-tight text-white sm:text-[length:var(--d-value)]">{value}</span>
         {unit && <span className="text-sm text-silver">{unit}</span>}
         {delta && (
           <span

@@ -20,6 +20,7 @@ import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { moduleKeyForPath } from '@/lib/modules';
 import { recordRecentModule } from '@/lib/navPersonalization';
+import { defaultDensityFor, hasStoredDensity, useDensity } from '@/lib/density';
 import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 import { useChunkLoading } from '@/lib/chunkLoading';
@@ -130,6 +131,19 @@ export function Layout() {
     const key = moduleKeyForPath(location.pathname);
     if (key) recordRecentModule(key, userId);
   }, [location.pathname, userId]);
+
+  // The enterprise density default: picked once by role and pointer, never
+  // over a choice the person made with the toggle (lib/density.tsx).
+  const { density, setDensity } = useDensity();
+  const role = user?.role ?? null;
+  useEffect(() => {
+    if (!role || hasStoredDensity()) return;
+    const wanted = defaultDensityFor(role);
+    if (wanted !== density) setDensity(wanted);
+    // The default is decided from the role once; density itself is read for
+    // the comparison only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
 
   // Live SSE channel for the authed shell — bell + approvals badge
   // refetch the instant a notification lands instead of on next poll.

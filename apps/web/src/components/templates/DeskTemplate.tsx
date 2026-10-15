@@ -36,7 +36,7 @@ export interface DeskTemplateProps {
 
 export function DeskTemplate({ title, subtitle, topbarTitle, breadcrumbs, counts, actions, filters, queue, item, itemOpen, className }: DeskTemplateProps) {
   return (
-    <div className={cn('space-y-4', className)} data-template="desk">
+    <div className={cn('space-y-[var(--d-stack)]', className)} data-template="desk">
       <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={actions} secondaryActions={counts} />
       {filters}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">

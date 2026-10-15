@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { BotMessageSquare, Copy, Plus, ShieldAlert } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { BotMessageSquare, Copy, LayoutGrid, Plus, ShieldAlert, TableProperties } from 'lucide-react';
+import { AgentCards } from '@/components/agents/AgentCards';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { toast } from 'sonner';
 import {
   AGENT_APPROVAL_STATUS_LABELS,
@@ -38,7 +40,6 @@ import {
   createAgent,
   decideAgentApproval,
   ensureBuiltInAgents,
-  getAgent,
   getAgentControl,
   getAgentScorecard,
   getCapabilityScorecard,
@@ -57,7 +58,6 @@ import {
   suspendAgent,
   suspendAgentCapability,
   suspendAllAgents,
-  updateAgent,
   updateAgentDrift,
 } from '@/lib/agentsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -65,7 +65,6 @@ import { HugoPanel } from './HugoPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
 import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
 import { AgentGatesPanel } from './AgentGatesPanel';
-import { AgentDecisionRecordTab } from './AgentDecisionRecordTab';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -74,7 +73,6 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import {
   Dialog,
   DialogContent,
@@ -104,7 +102,7 @@ import {
 
 const STATUSES: WorkerStatus[] = ['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED'];
 const ENVIRONMENTS: AgentEnvironment[] = ['PRODUCTION', 'STAGING', 'DEVELOPMENT'];
-const STATUS_VARIANT: Record<WorkerStatus, 'pending' | 'success' | 'destructive' | 'outline'> = {
+export const STATUS_VARIANT: Record<WorkerStatus, 'pending' | 'success' | 'destructive' | 'outline'> = {
   ONBOARDING: 'pending',
   ACTIVE: 'success',
   SUSPENDED: 'destructive',
@@ -138,11 +136,11 @@ const TTL_OPTIONS: { value: number; label: string }[] = [
 const SCOPE_LABEL = new Map<string, string>(AGENT_SCOPES.map((s) => [s.code, s.label]));
 const HUMAN_ONLY_ACTIONS = (Object.keys(AGENT_GATED_ACTION_LABELS) as AgentGatedAction[]).filter((a) => !AGENT_EXECUTABLE_ACTIONS.includes(a));
 
-function familyLabel(code: string | null | undefined): string {
+export function familyLabel(code: string | null | undefined): string {
   return AGENT_FAMILIES.find((f) => f.code === code)?.label ?? '';
 }
 
-function errorMessage(err: unknown, fallback: string): string {
+export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
     const code = (err as { code?: string }).code ?? '';
     if (code === 'owner_not_eligible') return 'A client portal account cannot own an agent.';
@@ -163,7 +161,7 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 /** Cents → "$12.34". Money reads in heavy sans, never the display serif. */
-function Money({ cents, className = '' }: { cents: number; className?: string }) {
+export function Money({ cents, className = '' }: { cents: number; className?: string }) {
   return <span className={`font-semibold tabular-nums ${className}`}>{fmtMoney(cents / 100)}</span>;
 }
 
@@ -188,7 +186,7 @@ function certificationLabel(c: AgentCertification | undefined, status: WorkerSta
   return { text: 'Recertify', variant: 'destructive' };
 }
 
-function hoursLabel(start: number | null, end: number | null): string {
+export function hoursLabel(start: number | null, end: number | null): string {
   if (start === null && end === null) return 'Any hour';
   const s = start ?? 0;
   const e = end ?? 24;
@@ -211,13 +209,32 @@ function scopeChips(scopes: readonly string[]) {
 
 /* ------------------------------------------------------------ the page */
 
+const AGENTS_VIEW_KEY = 'alto.agents.view';
+function readAgentsView(): 'cards' | 'table' {
+  try {
+    return window.localStorage.getItem(AGENTS_VIEW_KEY) === 'table' ? 'table' : 'cards';
+  } catch {
+    return 'cards';
+  }
+}
+function writeAgentsView(v: 'cards' | 'table'): void {
+  try {
+    window.localStorage.setItem(AGENTS_VIEW_KEY, v);
+  } catch {
+    /* private mode */
+  }
+}
+
 export function AgentRegistryAdmin() {
   const { can } = useAuth();
   const canManage = can('manage:org');
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // Cards are how a buyer meets five agents; the table is how an operator
+  // works fifty. The choice sticks per browser.
+  const [view, setView] = useState<'cards' | 'table'>(() => readAgentsView());
   const [ensuring, setEnsuring] = useState(false);
   const [suspendingAll, setSuspendingAll] = useState(false);
   const [resumingAll, setResumingAll] = useState(false);
@@ -270,17 +287,13 @@ export function AgentRegistryAdmin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, queueLoaded, pending]);
 
-  // Deep link: ?agent=<id> opens that agent's detail (the kill,
-  // recertification and drift notifications point here). The detail
-  // dialog loads the agent itself, so nothing waits on the registry.
+  // Deep link: ?agent=<id> (the kill, recertification and drift
+  // notifications point here) lands on that agent's record page.
   const agentTarget = searchParams.get('agent');
   useEffect(() => {
     if (!agentTarget) return;
-    const next = new URLSearchParams(searchParams);
-    next.delete('agent');
-    setSearchParams(next, { replace: true });
-    setOpenId(agentTarget);
-    // Same reasoning as above: the consume changes searchParams' identity.
+    navigate(`/agents/${agentTarget}`, { replace: true });
+    // The redirect consumes the param; navigate is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentTarget]);
 
@@ -606,6 +619,19 @@ export function AgentRegistryAdmin() {
         </div>
       )}
 
+      <div className="flex items-center justify-between gap-3">
+        <SectionTitle title="The agents" />
+        <div role="radiogroup" aria-label="Agents view" className="inline-flex gap-0.5 rounded-md border border-line bg-navy-secondary/30 p-0.5">
+          <Button size="xs" variant={view === 'cards' ? 'secondary' : 'ghost'} role="radio" aria-checked={view === 'cards'} onClick={() => { setView('cards'); writeAgentsView('cards'); }}>
+            <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" /> Cards
+          </Button>
+          <Button size="xs" variant={view === 'table' ? 'secondary' : 'ghost'} role="radio" aria-checked={view === 'table'} onClick={() => { setView('table'); writeAgentsView('table'); }}>
+            <TableProperties className="h-3.5 w-3.5" aria-hidden="true" /> Table
+          </Button>
+        </div>
+      </div>
+      {view === 'cards' && agents.length > 0 && !registry.isLoading && <AgentCards agents={agents} />}
+      {(view === 'table' || agents.length === 0 || registry.isLoading) && (
       <DataGrid
         id="agents"
         caption="AI agents"
@@ -619,7 +645,7 @@ export function AgentRegistryAdmin() {
         exportCsv={{ filename: 'agents' }}
         columnChooser
         columns={columns}
-        onRowClick={(a) => setOpenId(a.id)}
+        onRowClick={(a) => navigate(`/agents/${a.id}`)}
         rowActionLabel={(a) => `Open ${a.name}`}
         defaultSort={{ key: 'name', direction: 'asc' }}
         empty={{
@@ -628,6 +654,7 @@ export function AgentRegistryAdmin() {
           description: canManage ? 'Register an agent, or register the built-in ones Alto already runs.' : 'Agents appear here once they are registered.',
         }}
       />
+      )}
 
       {creating && (
         <CreateAgentDialog
@@ -638,7 +665,6 @@ export function AgentRegistryAdmin() {
           }}
         />
       )}
-      {openId && <AgentDetailDialog id={openId} canManage={canManage} onClose={() => setOpenId(null)} onChanged={refetchAll} />}
       {suspendingAll && (
         <SuspendAllDialog
           agents={counts ? counts.ACTIVE + counts.ONBOARDING : agents.length}
@@ -831,7 +857,7 @@ function OwnerSelect({ value, onChange, id, ...aria }: { value: string; onChange
 
 /* ------------------------------------------------------- profile form */
 
-interface ProfileForm {
+export interface ProfileForm {
   name: string;
   ownerUserId: string;
   purpose: string;
@@ -868,7 +894,7 @@ function emptyForm(): ProfileForm {
   };
 }
 
-function formFromAgent(a: AgentDetail): ProfileForm {
+export function formFromAgent(a: AgentDetail): ProfileForm {
   return {
     name: a.name,
     ownerUserId: a.owner?.id ?? '',
@@ -887,7 +913,7 @@ function formFromAgent(a: AgentDetail): ProfileForm {
   };
 }
 
-function formValid(f: ProfileForm): boolean {
+export function formValid(f: ProfileForm): boolean {
   const rate = Number(f.rateLimit);
   const cap = f.spendCap === '' ? null : Number(f.spendCap);
   const hs = f.hoursStart === '' ? null : Number(f.hoursStart);
@@ -908,7 +934,7 @@ function formValid(f: ProfileForm): boolean {
   );
 }
 
-function limitsFromForm(f: ProfileForm) {
+export function limitsFromForm(f: ProfileForm) {
   return {
     spendCapCents: f.spendCap === '' ? null : Math.round(Number(f.spendCap) * 100),
     rateLimitPerMinute: Number(f.rateLimit),
@@ -936,7 +962,7 @@ function ScopePicker({ value, onChange, disabled }: { value: AgentScope[]; onCha
 }
 
 /** The profile fields shared by Register and Edit. */
-function ProfileFields({ form, set, canManage, owner }: { form: ProfileForm; set: <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => void; canManage: boolean; owner: AgentDetail['owner'] | undefined }) {
+export function ProfileFields({ form, set, canManage, owner }: { form: ProfileForm; set: <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => void; canManage: boolean; owner: AgentDetail['owner'] | undefined }) {
   return (
     <>
       <Field label="Name" required hint="How it appears on schedules and in audit.">
@@ -1079,172 +1105,6 @@ function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCrea
 
 /* ------------------------------------------------------------- detail */
 
-function AgentDetailDialog({ id, canManage, onClose, onChanged }: { id: string; canManage: boolean; onClose: () => void; onChanged: () => Promise<unknown> }) {
-  const detail = useQuery({ queryKey: ['agents', 'detail', id], queryFn: () => getAgent(id) });
-  if (!detail.data) {
-    return (
-      <Dialog open onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{detail.error ? 'Could not load this agent' : 'Loading…'}</DialogTitle>
-            <DialogDescription>{detail.error ? errorMessage(detail.error, 'Try again in a moment.') : 'Profile, credentials, requests, spend and trail.'}</DialogDescription>
-          </DialogHeader>
-          {detail.error && <QueryError what="this agent" query={detail} />}
-        </DialogContent>
-      </Dialog>
-    );
-  }
-  return <AgentDetailBody key={detail.data.id} agent={detail.data} canManage={canManage} onClose={onClose} onChanged={onChanged} />;
-}
-
-function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: AgentDetail; canManage: boolean; onClose: () => void; onChanged: () => Promise<unknown> }) {
-  const confirm = useConfirm();
-  const [tab, setTab] = useState('profile');
-  const certification = agent.certification;
-  const [form, setForm] = useState<ProfileForm>(() => formFromAgent(agent));
-  const [saving, setSaving] = useState(false);
-  const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => setForm((f) => ({ ...f, [k]: v }));
-  const baseline = useMemo(() => JSON.stringify(formFromAgent(agent)), [agent]);
-  const dirty = JSON.stringify(form) !== baseline;
-  const valid = formValid(form);
-
-  const save = async () => {
-    if (!valid || !canManage || !dirty) return;
-    if ((form.status === 'SUSPENDED' || form.status === 'OFFBOARDED') && form.status !== agent.status) {
-      const ok = await confirm({
-        title: form.status === 'SUSPENDED' ? `Suspend ${agent.name}?` : `Offboard ${agent.name}?`,
-        description: 'Every credential is revoked at once and the agent stops being able to call Alto. The record and its trail stay for audit.',
-        confirmLabel: form.status === 'SUSPENDED' ? 'Suspend' : 'Offboard',
-        destructive: true,
-      });
-      if (!ok) return;
-    }
-    setSaving(true);
-    try {
-      await updateAgent(agent.id, {
-        name: form.name.trim(),
-        ownerUserId: form.ownerUserId !== (agent.owner?.id ?? '') ? form.ownerUserId : undefined,
-        purpose: form.purpose.trim(),
-        vendor: form.vendor.trim(),
-        model: form.model.trim(),
-        modelVersion: form.modelVersion.trim(),
-        environment: form.environment,
-        scopes: form.scopes,
-        ...limitsFromForm(form),
-        status: form.status,
-        notes: form.notes.trim() || null,
-      });
-      toast.success('Saved.');
-      await onChanged();
-    } catch (err) {
-      toast.error(errorMessage(err, 'Could not save the agent.'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const liveCredentials = agent.credentials.filter((c) => c.state === 'ACTIVE' || c.state === 'ROTATING').length;
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} confirmDiscard={dirty && !saving}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            <span className="inline-flex flex-wrap items-center gap-2">
-              {agent.name}
-              <Badge variant={STATUS_VARIANT[agent.status]} size="sm">
-                {WORKER_STATUS_LABELS[agent.status]}
-              </Badge>
-            </span>
-          </DialogTitle>
-          <DialogDescription>
-            {agent.profile.vendor} · {agent.profile.model} {agent.profile.modelVersion} · {AGENT_ENVIRONMENT_LABELS[agent.profile.environment]}
-            {agent.profile.builtInKey ? ' · built in' : ''} · spend this month <Money cents={agent.spendThisMonthCents} className="text-white" />
-            {agent.profile.spendCapCents !== null && (
-              <>
-                {' of '}
-                <Money cents={agent.profile.spendCapCents} />
-              </>
-            )}
-            {' · '}
-            {hoursLabel(agent.profile.allowedHoursStart, agent.profile.allowedHoursEnd)} · {agent.profile.rateLimitPerMinute}/min
-          </DialogDescription>
-        </DialogHeader>
-
-        <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} />
-
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-            <TabsTrigger value="credentials">Credentials ({liveCredentials})</TabsTrigger>
-            <TabsTrigger value="certification">Certification{certification ? ` (${certification.passing}/${certification.scenarios})` : ''}</TabsTrigger>
-            <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
-            <TabsTrigger value="scorecard">Scorecard</TabsTrigger>
-            <TabsTrigger value="requests">Requests ({agent.approvals.length})</TabsTrigger>
-            <TabsTrigger value="spend">Spend ({agent.spend.length})</TabsTrigger>
-            <TabsTrigger value="trail">Trail ({agent.trail.length})</TabsTrigger>
-            <TabsTrigger value="record">Compliance record</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="profile">
-            <form
-              className="space-y-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void save();
-              }}
-            >
-              <ProfileFields form={form} set={set} canManage={canManage} owner={agent.owner} />
-              <DialogFooter>
-                <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
-                  {canManage ? 'Cancel' : 'Close'}
-                </Button>
-                {canManage && (
-                  <Button type="submit" disabled={!valid || !dirty || saving}>
-                    {saving ? 'Saving…' : 'Save'}
-                  </Button>
-                )}
-              </DialogFooter>
-            </form>
-          </TabsContent>
-
-          <TabsContent value="credentials">
-            <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} />
-          </TabsContent>
-
-          <TabsContent value="certification">
-            <CertificationSection agent={agent} canManage={canManage} onChanged={onChanged} />
-          </TabsContent>
-
-          <TabsContent value="capabilities">
-            <CapabilitiesSection agent={agent} canManage={canManage} />
-          </TabsContent>
-
-          <TabsContent value="scorecard">
-            <ScorecardSection agent={agent} canManage={canManage} onChanged={onChanged} />
-          </TabsContent>
-
-          <TabsContent value="requests">
-            <RequestsSection approvals={agent.approvals} />
-          </TabsContent>
-
-          <TabsContent value="spend">
-            <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} />
-          </TabsContent>
-
-          <TabsContent value="trail">
-            <TrailSection agent={agent} />
-          </TabsContent>
-
-          <TabsContent value="record">
-            <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} />
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /* -------------------------------------------------------- kill switch */
 
 /**
@@ -1252,7 +1112,7 @@ function AgentDetailBody({ agent, canManage, onClose, onChanged }: { agent: Agen
  * reason) or resume (the owner, and only the owner). Suspending revokes
  * every credential; resuming gives none back.
  */
-function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
   const { user } = useAuth();
   const prompt = usePrompt();
   const [busy, setBusy] = useState(false);
@@ -1361,7 +1221,7 @@ const METRIC_LABELS: Record<string, string> = {
  * accountable owner alone resumes) and its own scorecard read from the
  * proposals it made.
  */
-function CapabilitiesSection({ agent, canManage }: { agent: AgentDetail; canManage: boolean }) {
+export function CapabilitiesSection({ agent, canManage }: { agent: AgentDetail; canManage: boolean }) {
   const caps = useQuery({ queryKey: ['agents', 'capabilities', agent.id], queryFn: () => listAgentCapabilities(agent.id), select: (d) => d.capabilities });
   if (caps.error) return <QueryError what="capabilities" query={caps} />;
   if (!caps.data) return <p className="text-sm text-silver">Loading…</p>;
@@ -1500,7 +1360,7 @@ function parseJsonObject(text: string): { value: Record<string, unknown> } | { e
   return { value: parsed as Record<string, unknown> };
 }
 
-function CertificationSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function CertificationSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const scenarios = useQuery({ queryKey: ['agents', 'scenarios', agent.id], queryFn: () => listAgentScenarios(agent.id), select: (d) => d.scenarios });
@@ -1774,7 +1634,7 @@ function MoneyValue({ cents }: { cents: number | null }) {
   return <span className="font-sans text-2xl font-semibold tabular-nums">{fmtMoney(cents / 100)}</span>;
 }
 
-function ScorecardSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function ScorecardSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
   const [days, setDays] = useState<number>(7);
   const scorecard = useQuery({
     queryKey: ['agents', 'scorecard', agent.id, days],
@@ -1886,7 +1746,7 @@ function ScorecardSection({ agent, canManage, onChanged }: { agent: AgentDetail;
 
 /* -------------------------------------------------------- credentials */
 
-function CredentialsSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function CredentialsSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
   const prompt = usePrompt();
   const [ttl, setTtl] = useState(24);
   const [issuing, setIssuing] = useState(false);
@@ -2012,7 +1872,7 @@ function CredentialsSection({ agent, canManage, onChanged }: { agent: AgentDetai
 
 /* ----------------------------------------------------------- requests */
 
-function RequestsSection({ approvals }: { approvals: AgentApprovalSummary[] }) {
+export function RequestsSection({ approvals }: { approvals: AgentApprovalSummary[] }) {
   if (approvals.length === 0) return <p className="text-sm text-silver/70">This agent has not asked for anything.</p>;
   return (
     <ul className="divide-y divide-navy-secondary rounded-md border border-navy-secondary text-sm">
@@ -2041,7 +1901,7 @@ function RequestsSection({ approvals }: { approvals: AgentApprovalSummary[] }) {
 
 /* -------------------------------------------------------------- spend */
 
-function SpendSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function SpendSection({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
   const [amount, setAmount] = useState('');
   const [taskRef, setTaskRef] = useState('');
   const [note, setNote] = useState('');
@@ -2144,7 +2004,7 @@ function summariseMeta(meta: Record<string, unknown> | null): string {
   return parts.join(' · ');
 }
 
-function TrailSection({ agent }: { agent: AgentDetail }) {
+export function TrailSection({ agent }: { agent: AgentDetail }) {
   if (agent.trail.length === 0) return <p className="text-sm text-silver/70">Nothing in the trail yet.</p>;
   return (
     <div className="overflow-x-auto">

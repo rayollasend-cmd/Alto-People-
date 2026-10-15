@@ -52,7 +52,7 @@ export function RecordTemplate({ breadcrumbs, identity, title, subtitle, status,
     onTabChange?.(k);
   };
   return (
-    <div className={cn('space-y-5', className)} data-template="record">
+    <div className={cn('space-y-[var(--d-stack-lg)]', className)} data-template="record">
       {breadcrumbs && breadcrumbs.length > 0 && (
         <div className="hidden md:block">
           <Breadcrumb segments={breadcrumbs} />
