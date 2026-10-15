@@ -31,6 +31,7 @@ import { ensurePersonWorkers } from '../src/lib/workers.js';
 import { ensureBuiltInAgents, payloadHash } from '../src/lib/agents.js';
 import { ensureStoreChannels } from '../src/lib/messaging.js';
 import { getCurrentPeriod } from '../src/lib/payrollSchedule.js';
+import { preloadPayrollTaxConfig } from '../src/lib/payrollTax.js';
 import { aggregateAndPersistRun } from '../src/routes/payroll.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from '../src/lib/timeAnomalies.js';
 import { ATTENDANCE_POINTS } from '../src/lib/attendance.js';
@@ -576,6 +577,10 @@ async function main() {
     const periodEnd = addDaysToKey(periodStart, 13);
     const payDate = addDaysToKey(periodEnd, 7);
     if (payDate > todayKey) continue; // not paid yet — the next payday on the page
+    // The aggregator computes withholding from the in-process tax config the
+    // server preloads at boot; a script has to load it itself, for the
+    // period's year (the current year when that year has no row).
+    await preloadPayrollTaxConfig(prisma, Number(periodEnd.slice(0, 4))).catch(() => preloadPayrollTaxConfig(prisma));
     const run = await prisma.$transaction(
       async (tx) => {
         const r = await tx.payrollRun.create({
