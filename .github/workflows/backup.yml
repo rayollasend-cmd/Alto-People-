@@ -1,0 +1,125 @@
+# Brief 2-5 step 5 — the daily encrypted database dump and the monthly
+# restore test (docs/soc2-controls-investigation.md §4.4; owner's decision 3:
+# GitHub Actions, whose Postgres service container is the scratch database).
+#
+# Waits for the owner: until BACKUP_DATABASE_URL (a READ-ONLY production
+# login), the BACKUP_S3_* bucket secrets and BACKUP_ENCRYPTION_KEY are set
+# as repository secrets, each job says so and stops green. Evidence posts to
+# the API when EVIDENCE_INGEST_URL and EVIDENCE_INGEST_TOKEN are set too.
+
+name: Backups
+
+on:
+  schedule:
+    - cron: '30 7 * * *' # daily dump, 07:30 UTC
+    - cron: '0 9 1 * *' # restore test, the 1st of each month
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'backup or restore-test'
+        required: true
+        default: backup
+
+concurrency:
+  group: backups
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Encrypted database dump
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'backup' || github.event.schedule == '30 7 * * *'
+    runs-on: ubuntu-latest
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+      BACKUP_S3_REGION: ${{ secrets.BACKUP_S3_REGION }}
+      BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+      BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+      EVIDENCE_INGEST_URL: ${{ secrets.EVIDENCE_INGEST_URL }}
+      EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
+    steps:
+      - name: Configured?
+        id: ready
+        run: |
+          if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$BACKUP_S3_BUCKET" ] || [ -z "$BACKUP_ENCRYPTION_KEY" ]; then
+            echo "::notice::Database backup not configured yet (BACKUP_DATABASE_URL, BACKUP_S3_*, BACKUP_ENCRYPTION_KEY). Nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.ready.outputs.go == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.ready.outputs.go == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Postgres client 17
+        if: steps.ready.outputs.go == 'true'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q && sudo apt-get install -yq postgresql-client-17
+      - if: steps.ready.outputs.go == 'true'
+        run: npm ci
+      - name: Dump, encrypt, upload
+        if: steps.ready.outputs.go == 'true'
+        run: npm -w apps/api exec tsx scripts/db-backup.ts
+
+  restore-test:
+    name: Monthly restore test
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'restore-test' || github.event.schedule == '0 9 1 * *'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: restore
+          POSTGRES_PASSWORD: restore
+          POSTGRES_DB: restore
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U restore"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      RESTORE_DATABASE_URL: postgresql://restore:restore@localhost:5432/restore
+      BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+      BACKUP_S3_REGION: ${{ secrets.BACKUP_S3_REGION }}
+      BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+      BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+      EVIDENCE_INGEST_URL: ${{ secrets.EVIDENCE_INGEST_URL }}
+      EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
+    steps:
+      - name: Configured?
+        id: ready
+        run: |
+          if [ -z "$BACKUP_S3_BUCKET" ] || [ -z "$BACKUP_ENCRYPTION_KEY" ]; then
+            echo "::notice::Restore test not configured yet (BACKUP_S3_*, BACKUP_ENCRYPTION_KEY). Nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.ready.outputs.go == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.ready.outputs.go == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Postgres client 17
+        if: steps.ready.outputs.go == 'true'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -q && sudo apt-get install -yq postgresql-client-17
+      - if: steps.ready.outputs.go == 'true'
+        run: npm ci
+      - name: Restore the newest dump and compare
+        if: steps.ready.outputs.go == 'true'
+        run: npm -w apps/api exec tsx scripts/db-restore-test.ts

@@ -68,3 +68,28 @@ the `UPLOAD_DIR` warning in `storage.ts`.
 - Point-in-time file recovery between nightly runs: a file uploaded and
   deleted the same day may miss the window. Acceptable at current scale;
   shrink `BACKUP_INTERVAL_HOURS` if that ever stops being true.
+
+## The database: daily encrypted dump and monthly restore test (Brief 2-5 step 5)
+
+Neon's point-in-time recovery stays the primary recovery. `.github/workflows/backup.yml`
+adds the off-provider copy and proves it restores:
+
+- **Daily, 07:30 UTC** — `scripts/db-backup.ts`: in one repeatable-read snapshot, every
+  table's row count (the manifest) and `pg_dump --snapshot` of exactly that state; the dump
+  is encrypted (AES-256-GCM) and uploaded to `db/` in the backup bucket with its manifest.
+- **The 1st of each month** — `scripts/db-restore-test.ts`: the newest dump is downloaded,
+  decrypted, checksum-verified, restored into the job's throwaway Postgres 17, and every
+  table recounted against the manifest. PASS only when every count matches.
+
+Both post SOC 2 evidence (controls `database-backup`, `restore-test`) to
+`POST /api/admin/compliance-evidence/ingest`. The uploads job above now records
+`uploads-backup` evidence on every run.
+
+**Setup (owner):** repository secrets `BACKUP_DATABASE_URL` (a READ-ONLY Neon role),
+`BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ENDPOINT` (B2/R2), `BACKUP_S3_ACCESS_KEY_ID`,
+`BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY` (`openssl rand -base64 32`, kept
+outside the app — never on Railway), and `EVIDENCE_INGEST_URL`
+(`https://people.altohr.com/api/admin/compliance-evidence/ingest`) with
+`EVIDENCE_INGEST_TOKEN` (also set on Railway as `EVIDENCE_INGEST_TOKEN`, 32+ characters).
+Until then both jobs report "not configured" and stop green. Run either by hand from
+Actions › Backups › Run workflow.

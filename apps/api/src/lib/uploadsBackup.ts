@@ -9,6 +9,7 @@ import * as tar from 'tar';
 import { env } from '../config/env.js';
 import { UPLOAD_ROOT } from './storage.js';
 import { platformJob } from './tenantJobs.js';
+import { recordEvidence } from './evidence.js';
 
 /**
  * Nightly off-site backup of the uploads volume.
@@ -154,13 +155,18 @@ export function startUploadsBackupCron(): void {
   }
   const run = () => {
     void platformJob('uploadsBackup', runUploadsBackup)()
-      .then((r) =>
+      .then(async (r) => {
         console.log(
           `[backup] uploads backed up to ${r.key}` +
             (r.prunedOld ? ` (pruned ${r.prunedOld} old)` : ''),
-        ),
-      )
-      .catch((err) => console.error('[backup] uploads backup failed:', err));
+        );
+        // Brief 2-5 step 5: every run is SOC 2 evidence (control uploads-backup).
+        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'PASS', summary: `Uploads archived to ${r.key}.`, details: { key: r.key, prunedOld: r.prunedOld } });
+      })
+      .catch(async (err) => {
+        console.error('[backup] uploads backup failed:', err);
+        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'FAIL', summary: `The uploads backup failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) });
+      });
   };
   // First run shortly after boot (not immediately — let the service warm
   // up), then every BACKUP_INTERVAL_HOURS.
