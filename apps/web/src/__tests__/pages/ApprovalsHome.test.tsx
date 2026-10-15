@@ -135,7 +135,7 @@ describe('<ApprovalsHome>', () => {
     expect(await screen.findByText('Nothing waiting on you')).toBeInTheDocument();
     // The timesheet tile still carries its count and opens the review queue.
     expect(await screen.findByText('3')).toBeInTheDocument();
-    expect(screen.getByText('Timesheets', { selector: 'div' }).closest('a')).toHaveAttribute(
+    expect(screen.getByText('Review on Time & attendance').closest('a')).toHaveAttribute(
       'href',
       '/time-attendance?tab=queue',
     );

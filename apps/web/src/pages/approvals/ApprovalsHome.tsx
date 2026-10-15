@@ -7,6 +7,7 @@ import { hapticConfirm } from '@/lib/haptics';
 import {
   ArrowLeftRight,
   CalendarCheck,
+  BellRing,
   CalendarOff,
   Check,
   ChevronLeft,
@@ -52,7 +53,6 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
-import { StatTile } from '@/pages/portal/portalCharts';
 import {
   Dialog,
   DialogContent,
@@ -245,16 +245,20 @@ export function ApprovalsHome() {
         onClick={() => setPicked('unconfirmed')}
         aria-pressed={openQueue === 'unconfirmed'}
         className={cn(
-          'block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40',
-          openQueue === 'unconfirmed' && '[&>div]:border-gold/60 [&>div]:bg-gold/[0.04]',
+          'flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+          openQueue === 'unconfirmed' && 'border-gold/60 bg-gold/[0.04]',
         )}
       >
-        <StatTile label="Not confirmed yet" value="48h" sub="Shifts nobody has confirmed — chase by phone" className="h-full" />
+        <span className="min-w-0">
+          <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Not confirmed yet</span>
+          <span className="mt-0.5 block truncate text-xs text-ink-muted">Shifts in the next 48h nobody has confirmed — chase by phone</span>
+        </span>
+        <BellRing className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
       </button>
       {timesheetFailed ? (
-        <div className="rounded-lg border border-alert/40 bg-navy-secondary/20 p-4">
-          <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Timesheets</div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+        <div className="rounded-lg border border-alert/40 bg-surface px-4 py-3">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Timesheets</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
             <span role="alert" className="text-alert">
               Couldn't load
             </span>
@@ -266,9 +270,13 @@ export function ApprovalsHome() {
       ) : (
         <Link
           to="/time-attendance?tab=queue"
-          className="block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:h-full [&>div]:transition-colors [&>div]:hover:border-gold/40"
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
-          <StatTile label="Timesheets" value={timesheetCount ?? '—'} sub="Review on Time & attendance" />
+          <span className="min-w-0">
+            <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Timesheets</span>
+            <span className="mt-0.5 block truncate text-xs text-ink-muted">Review on Time & attendance</span>
+          </span>
+          <span className="shrink-0 text-2xl font-semibold tabular-nums text-ink">{timesheetCount ?? '—'}</span>
         </Link>
       )}
     </div>
@@ -385,26 +393,36 @@ function QueueTile({
   selected?: boolean;
   onClick?: () => void;
 }) {
-  const tile = (
-    <StatTile
-      label={label}
-      value={value === undefined ? '…' : value === null ? '—' : value}
-      sub={value === undefined || value === null ? undefined : sub}
-      className={cn('h-full', urgent && 'border-alert/40 bg-alert/[0.06]')}
-    />
+  // A queue row on the desk: the count on the right, the one-line state
+  // beneath the name. Compact on purpose — the column lists six of them.
+  const body = (
+    <>
+      <span className="min-w-0">
+        <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</span>
+        {value !== undefined && value !== null && <span className="mt-0.5 block truncate text-xs text-ink-muted">{sub}</span>}
+      </span>
+      <span className={cn('shrink-0 text-2xl font-semibold tabular-nums', urgent ? 'text-alert' : 'text-ink')}>
+        {value === undefined ? '…' : value === null ? '—' : value}
+      </span>
+    </>
   );
-  if (!onClick) return tile;
+  const frame = cn(
+    'flex w-full items-center justify-between gap-3 rounded-lg border bg-surface px-4 py-3 text-left transition-colors',
+    urgent ? 'border-alert/40 bg-alert/[0.06]' : 'border-line',
+  );
+  if (!onClick) return <div className={frame}>{body}</div>;
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={selected}
       className={cn(
-        'block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40',
-        selected && '[&>div]:border-gold/60 [&>div]:bg-gold/[0.04]',
+        frame,
+        'hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        selected && 'border-gold/60 bg-gold/[0.04]',
       )}
     >
-      {tile}
+      {body}
     </button>
   );
 }
