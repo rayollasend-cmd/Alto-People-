@@ -44,9 +44,6 @@ export function isLang(value: unknown): value is Lang {
 
 import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
 import { tr as trAssociate } from './i18n/tr';
-import { ht as htAssociate } from './i18n/ht';
-import { pt as ptAssociate } from './i18n/pt';
-import { uk as ukAssociate } from './i18n/uk';
 
 const STORAGE_KEY = 'alto.lang';
 
@@ -5830,14 +5827,32 @@ const tr: Partial<Record<MessageKey, string>> = {
 // The three later languages and the rest of Turkish live in their own
 // modules (the associate app's keys, generated from reviewed chunks); the
 // hand-written Turkish lines above win where they overlap.
-const MESSAGES: Record<Lang, Partial<Record<MessageKey, string>>> = {
+const MESSAGES: Partial<Record<Lang, Partial<Record<MessageKey, string>>>> = {
   en,
   es,
   tr: { ...trAssociate, ...tr },
-  ht: htAssociate,
-  pt: ptAssociate,
-  uk: ukAssociate,
 };
+
+/**
+ * The languages added in Phase 3 load when a person picks them (about 25 KB
+ * gzip each): shipping all four in the main chunk cost every visitor a third
+ * more before first paint. Turkish stays inline — a first language of the
+ * workforce, and the tests read it synchronously. Until a pack arrives the
+ * screen reads English, then re-renders in the chosen language.
+ */
+const PACK_LOADERS: Partial<Record<Lang, () => Promise<Partial<Record<MessageKey, string>>>>> = {
+  ht: () => import('./i18n/ht').then((m) => m.ht),
+  pt: () => import('./i18n/pt').then((m) => m.pt),
+  uk: () => import('./i18n/uk').then((m) => m.uk),
+};
+const packCache = new Map<Lang, Partial<Record<MessageKey, string>>>();
+
+/** Load a language pack ahead of time (tests, or a picker that wants no flash of English). */
+export async function loadLanguagePack(lang: Lang): Promise<void> {
+  const loader = PACK_LOADERS[lang];
+  if (!loader || packCache.has(lang)) return;
+  packCache.set(lang, await loader());
+}
 
 /**
  * The tenant's words, available to every string as {worker} {workers}
@@ -5901,6 +5916,20 @@ const I18nContext = createContext<I18nContextValue | null>(null);
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
   const [termVars, setTermVarsState] = useState<TermVars>(DEFAULT_TERM_VARS);
+  // Bumped when a lazy pack lands so t() re-renders in the chosen language.
+  const [packVersion, setPackVersion] = useState(0);
+  useEffect(() => {
+    if (!PACK_LOADERS[lang] || packCache.has(lang)) return;
+    let cancelled = false;
+    // A code chunk, not data: the query layer has no business caching a language pack.
+    // eslint-disable-next-line no-restricted-syntax
+    void loadLanguagePack(lang).then(() => {
+      if (!cancelled) setPackVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
   const setTermVars = useCallback((vars: TermVars) => {
     setTermVarsState((prev) => (shallowEqual(prev, vars) ? prev : vars));
   }, []);
@@ -5920,8 +5949,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback<Translate>(
-    (key, vars) => format(MESSAGES[lang][key] ?? en[key] ?? key, vars, termVars),
-    [lang, termVars],
+    (key, vars) => format(packCache.get(lang)?.[key] ?? MESSAGES[lang]?.[key] ?? en[key] ?? key, vars, termVars),
+    // packVersion is the signal that a lazy pack arrived.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lang, termVars, packVersion],
   );
 
   const value = useMemo(() => ({ lang, setLang, t, setTermVars }), [lang, setLang, t, setTermVars]);
