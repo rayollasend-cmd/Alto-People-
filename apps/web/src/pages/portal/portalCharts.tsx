@@ -239,14 +239,17 @@ export function CoverageCurve({
               dot={false}
               activeDot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }}
             />
+            {/* Unfilled slots sit on top of the scheduled stack as a fill with no
+                stroke: an outline at zero height painted a red line over the gold one
+                and made a fully covered day read as unfilled (walk 2026-10-15). */}
             <Area
               type="stepAfter"
               dataKey="open"
               stackId="a"
               stroke={STATUS.bad}
-              strokeWidth={2}
+              strokeWidth={0}
               fill={STATUS.bad}
-              fillOpacity={0.12}
+              fillOpacity={0.35}
               isAnimationActive={false}
               dot={false}
               activeDot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }}
@@ -361,7 +364,7 @@ export function WeekFillChart({
               stackId="a"
               fill={STATUS.bad}
               stroke={SURFACE}
-              strokeWidth={2}
+              strokeWidth={0}
               maxBarSize={24}
               radius={[4, 4, 0, 0]}
               isAnimationActive={false}
