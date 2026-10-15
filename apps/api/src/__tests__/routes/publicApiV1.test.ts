@@ -205,7 +205,8 @@ describe('writes', () => {
     expect(cancelled.body.status).toBe('CANCELLED');
 
     await flushPendingAudits();
-    const rows = await prisma.auditLog.findMany({ where: { apiClientId: issued.client.id }, select: { action: true, actorUserId: true } });
+    // The shift's own rows (the client's creation row, written by the admin who made it, also names the client).
+    const rows = await prisma.auditLog.findMany({ where: { apiClientId: issued.client.id, entityType: 'Shift' }, select: { action: true, actorUserId: true } });
     const actions = rows.map((r) => r.action);
     expect(actions).toEqual(expect.arrayContaining(['shift.created', 'shift.assigned']));
     expect(rows.every((r) => r.actorUserId === null)).toBe(true);

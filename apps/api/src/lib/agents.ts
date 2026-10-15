@@ -32,6 +32,7 @@ import { afterProposalApproved, grantCapability, seedCatalogScenarios, syncPropo
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { emitAgentApproval } from './webhookEvents.js';
 import { moduleOn } from './tenantProfile.js';
+import { approverMayDecide, gateFor } from './agentGates.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
 function registryTenant(tenantId?: string | null): string {
@@ -743,18 +744,40 @@ export async function createApprovalRequest(
   const hash = payloadHash(input.action, input.payload);
   const open = await db.agentApprovalRequest.findFirst({ where: { workerId: agent.workerId, payloadHash: hash, status: { in: ['PENDING', 'APPROVED'] }, expiresAt: { gt: now } }, include: APPROVAL_INCLUDE });
   if (open) return { approval: approvalSummary(open), created: false };
+  // Brief 2-6 step 2: the customer's gate policy in force names who decides and how long the request lives.
+  const profile = await db.agentProfile.findUnique({ where: { workerId: agent.workerId }, select: { family: true } });
+  const capabilityKey = typeof input.payload.capability === 'string' ? input.payload.capability : null;
+  const gate = await gateFor(db, { workerId: agent.workerId, tenantId: agent.tenantId, family: profile?.family ?? null }, input.action, capabilityKey, now);
   const row = await db.agentApprovalRequest.create({
-    data: { workerId: agent.workerId, action: input.action, summary: input.summary, payload: input.payload as Prisma.InputJsonObject, payloadHash: hash, requestedAt: now, expiresAt: new Date(now.getTime() + APPROVAL_TTL_MS) },
+    data: {
+      workerId: agent.workerId,
+      action: input.action,
+      summary: input.summary,
+      payload: input.payload as Prisma.InputJsonObject,
+      payloadHash: hash,
+      requestedAt: now,
+      expiresAt: new Date(now.getTime() + (gate.policyId ? gate.ttlHours * 3_600_000 : APPROVAL_TTL_MS)),
+      ...(gate.policyId ? { gatePolicyId: gate.policyId, approverKind: gate.approver, approverRole: gate.approverRole, approverUserId: gate.approverUserId } : {}),
+    },
     include: APPROVAL_INCLUDE,
   });
   logAgentAction(agent, { action: 'agent.approval.requested', entityType: 'AgentApprovalRequest', entityId: row.id, metadata: { gated: input.action, summary: input.summary } });
   emitAgentApproval('agent.approval_requested', { id: row.id, action: row.action, status: row.status, summary: row.summary, workerId: row.workerId }, agent.tenantId ?? null);
-  await notifyUser(agent.ownerUserId, {
-    subject: `${agent.name} is asking for approval`,
-    body: `${AGENT_GATED_ACTION_LABELS[input.action]}: ${input.summary}`,
-    category: AGENT_APPROVAL_CATEGORY,
-    linkUrl: `/agents?approval=${row.id}`,
-  });
+  // The decided approver gets the notice: a named person, everyone in a role here, else the owner (today's rule).
+  const recipients =
+    gate.policyId && gate.approver === 'USER' && gate.approverUserId
+      ? [gate.approverUserId]
+      : gate.policyId && gate.approver === 'ROLE' && gate.approverRole
+        ? (await db.user.findMany({ where: { role: gate.approverRole, status: 'ACTIVE', deletedAt: null, tenantId: agent.tenantId ?? ALTO_TENANT_ID }, select: { id: true }, take: 25 })).map((u) => u.id)
+        : [agent.ownerUserId];
+  for (const to of recipients) {
+    await notifyUser(to, {
+      subject: `${agent.name} is asking for approval`,
+      body: `${AGENT_GATED_ACTION_LABELS[input.action]}: ${input.summary}`,
+      category: AGENT_APPROVAL_CATEGORY,
+      linkUrl: `/agents?approval=${row.id}`,
+    });
+  }
   return { approval: approvalSummary(row), created: true };
 }
 
@@ -776,8 +799,13 @@ export async function getApproval(db: Db, id: string, tenantIdArg?: string | nul
 
 /** A person decides. Logged with who, what and the note. */
 export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 'REJECTED', userId: string, note: string | null, now: Date = new Date(), tenantIdArg?: string | null): Promise<AgentApprovalSummary> {
-  const row = await db.agentApprovalRequest.findFirst({ where: { id, agent: { tenantId: registryTenant(tenantIdArg) } }, select: { status: true, expiresAt: true, workerId: true, action: true } });
+  const row = await db.agentApprovalRequest.findFirst({ where: { id, agent: { tenantId: registryTenant(tenantIdArg) } }, select: { status: true, expiresAt: true, workerId: true, action: true, approverKind: true, approverRole: true, approverUserId: true } });
   if (!row) throw new HttpError(404, 'approval_not_found', 'No such request.');
+  // Brief 2-6 step 2: a request filed under a customer's gate is decided by the approver it names.
+  if (row.approverKind) {
+    const decider = await db.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    if (!decider || !(await approverMayDecide(db, row, decider))) throw new HttpError(403, 'not_the_approver', 'Your organization’s policy names someone else to decide this request.');
+  }
   if (row.status !== 'PENDING') throw new HttpError(409, 'approval_decided', `This request is already ${row.status.toLowerCase()}.`);
   if (row.expiresAt <= now) throw new HttpError(409, 'approval_expired', 'This request expired before it was decided.');
   const updated = await db.agentApprovalRequest.update({ where: { id }, data: { status: decision, decidedById: userId, decidedAt: now, decisionNote: note }, include: APPROVAL_INCLUDE });

@@ -176,6 +176,8 @@ agentApiRouter.get('/exports/schedule.csv', requireAgent('view:scheduling'), asy
 agentApiRouter.post('/requests', requireAgent(), async (req, res, next) => {
   try {
     const input = AgentRequestInputSchema.parse(req.body);
+    // Brief 2-6 step 2: a policy gate is filed by a capability's proposal (POST /proposals), never asked for directly.
+    if (input.action === 'POLICY_GATE') throw new HttpError(400, 'use_proposals', 'A capability gated by your organization’s policy is put forward through POST /agent/v1/proposals.');
     const r = await createApprovalRequest(prisma, req.agent!, input);
     res.locals.agentAction = 'agent.request.filed';
     res.locals.agentTarget = { type: 'AgentApprovalRequest', id: r.approval.id };

@@ -41,6 +41,8 @@ const ENTRIES: Record<string, () => Promise<unknown>> = {
   // Brief 2-7.
   mcpServer: () => import('../../lib/mcpServer.js'),
   mcpRoute: () => import('../../routes/mcp.js'),
+  // Brief 2-6 step 2.
+  agentGates: () => import('../../lib/agentGates.js'),
 };
 
 describe('agent modules load in any order', () => {

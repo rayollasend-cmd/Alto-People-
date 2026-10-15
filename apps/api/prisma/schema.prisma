@@ -9881,6 +9881,8 @@ enum AgentGatedAction {
   SHIFT_ASSIGN
   /// Agent families step 0: an HR case the agent proposes to open; executable once approved.
   CASE_OPEN
+  /// Brief 2-6 step 2: a capability the platform does not gate, gated by the customer's own policy.
+  POLICY_GATE
 }
 
 enum AgentApprovalStatus {
@@ -9965,21 +9967,27 @@ model AgentCredential {
 }
 
 model AgentApprovalRequest {
-  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workerId     String              @db.Uuid
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workerId       String              @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId     String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  action       AgentGatedAction
-  summary      String              @db.VarChar(500)
-  payload      Json
-  payloadHash  String              @db.VarChar(64)
-  status       AgentApprovalStatus @default(PENDING)
-  requestedAt  DateTime            @default(now()) @db.Timestamptz(6)
-  expiresAt    DateTime            @db.Timestamptz(6)
-  decidedById  String?             @db.Uuid
-  decidedAt    DateTime?           @db.Timestamptz(6)
-  decisionNote String?             @db.VarChar(500)
-  consumedAt   DateTime?           @db.Timestamptz(6)
+  tenantId       String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  action         AgentGatedAction
+  summary        String              @db.VarChar(500)
+  payload        Json
+  payloadHash    String              @db.VarChar(64)
+  status         AgentApprovalStatus @default(PENDING)
+  requestedAt    DateTime            @default(now()) @db.Timestamptz(6)
+  expiresAt      DateTime            @db.Timestamptz(6)
+  decidedById    String?             @db.Uuid
+  decidedAt      DateTime?           @db.Timestamptz(6)
+  decisionNote   String?             @db.VarChar(500)
+  consumedAt     DateTime?           @db.Timestamptz(6)
+  /// Brief 2-6 step 2: who must decide, from the customer's gate policy in force when it was filed (null: today's rule).
+  gatePolicyId   String?             @db.Uuid
+  /// OWNER | ROLE | DESK | USER
+  approverKind   String?             @db.VarChar(10)
+  approverRole   Role?
+  approverUserId String?             @db.Uuid
 
   agent     AgentProfile   @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
   decidedBy User?          @relation("AgentApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
@@ -10720,4 +10728,33 @@ model ScimToken {
   revokedAt    DateTime? @db.Timestamptz(6)
 
   @@index([tenantId])
+}
+
+/// Brief 2-6 step 2 — a customer's own gate (docs/agent-product-billing-investigation.md §4.2).
+/// The most specific policy wins (AGENT over CAPABILITY over FAMILY over TENANT) on top of
+/// the platform floor, which a policy can never lower: a platform-gated action stays
+/// required whatever a policy says; a policy can add a requirement or name who decides.
+model AgentGatePolicy {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// TENANT | FAMILY | CAPABILITY | AGENT
+  scope          String    @db.VarChar(12)
+  /// The family code, capability key or agent worker id; null for TENANT.
+  scopeKey       String?   @db.VarChar(120)
+  /// A gated action (SHIFT_ASSIGN…), a capability key, or * for every action in scope.
+  action         String    @db.VarChar(60)
+  /// REQUIRED | NOT_REQUIRED
+  requirement    String    @db.VarChar(14)
+  /// OWNER | ROLE | DESK | USER
+  approver       String    @default("OWNER") @db.VarChar(10)
+  approverRole   Role?
+  approverUserId String?   @db.Uuid
+  ttlHours       Int       @default(72)
+  effectiveFrom  DateTime  @default(now()) @db.Timestamptz(6)
+  effectiveTo    DateTime? @db.Timestamptz(6)
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId, scope])
 }

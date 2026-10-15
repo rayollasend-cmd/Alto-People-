@@ -21,6 +21,7 @@ import { notifyUser } from './notify.js';
 import { ALTO_TENANT_ID, runWithTenant } from './tenant.js';
 import { loadTenantProfile, moduleOn } from './tenantProfile.js';
 import { createApprovalRequest, logAgentAction, type AgentContext } from './agents.js';
+import { gateFor } from './agentGates.js';
 import { AGENT_KILL_CATEGORY, allAgentsSuspended, evaluateScenario } from './agentControls.js';
 
 /**
@@ -270,10 +271,14 @@ export async function createProposal(db: Db, agent: AgentContext, input: AgentPr
 
   let approvalId: string | null = null;
   let created = true;
-  if (def.gate) {
-    if (!input.summary) throw new HttpError(400, 'summary_required', 'A gated proposal needs a summary a person can approve.');
+  // Brief 2-6 step 2: a capability the platform does not gate may be gated by the customer's own policy.
+  const profile = def.gate ? null : await db.agentProfile.findUnique({ where: { workerId: agent.workerId }, select: { family: true } });
+  const customerGate = def.gate ? null : await gateFor(db, { workerId: agent.workerId, tenantId, family: profile?.family ?? def.family }, null, def.key, now);
+  const gateAction = def.gate ?? (customerGate?.required ? ('POLICY_GATE' as const) : null);
+  if (gateAction) {
+    if (!input.summary && def.gate) throw new HttpError(400, 'summary_required', 'A gated proposal needs a summary a person can approve.');
     const payload = { capability: def.key, subjectType: input.subjectType, subjectId: input.subjectId ?? null, ...input.payload };
-    const r = await createApprovalRequest(db, agent, { action: def.gate, summary: input.summary, payload }, now);
+    const r = await createApprovalRequest(db, agent, { action: gateAction, summary: input.summary ?? `${def.label}: ${input.subjectType}`, payload }, now);
     approvalId = r.approval.id;
     created = r.created;
     // Asking twice is the same proposal, as it is the same approval.

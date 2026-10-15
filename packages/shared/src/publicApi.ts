@@ -24,7 +24,8 @@ export const API_SCOPES = [
   'pay:read',
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
-export const ApiScopeSchema = z.enum(API_SCOPES);
+// Pure: the web's main chunk ships this barrel and must drop what no first-paint page uses.
+export const ApiScopeSchema = /* @__PURE__ */ z.enum(API_SCOPES);
 
 export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   'workers:read': 'Read workers',
@@ -41,14 +42,15 @@ export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   'pay:read': 'Read pay rates (granted explicitly)',
 };
 
-export const ApiClientInputSchema = z
-  .object({
-    name: z.string().trim().min(2).max(120),
-    scopes: z.array(ApiScopeSchema).min(1),
-    ownerUserId: z.string().uuid(),
-    expiresAt: z.string().datetime().nullable().optional(),
-  })
-  .strict();
+export const ApiClientInputSchema = /* @__PURE__ */ (() =>
+  z
+    .object({
+      name: z.string().trim().min(2).max(120),
+      scopes: z.array(ApiScopeSchema).min(1),
+      ownerUserId: z.string().uuid(),
+      expiresAt: z.string().datetime().nullable().optional(),
+    })
+    .strict())();
 export type ApiClientInput = z.infer<typeof ApiClientInputSchema>;
 
 export interface ApiClientSummary {

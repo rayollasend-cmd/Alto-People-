@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   AgentApprovalStatusSchema,
   AgentCapabilityKeySchema,
+  AgentGatedActionSchema,
   AgentCredentialIssueSchema,
   AgentDecisionSchema,
   AgentDriftSchema,
@@ -24,6 +25,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { GatePolicyInputSchema, approverMayDecide, createGatePolicy, endGatePolicy, gateFor } from '../lib/agentGates.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { mcpCatalogFor } from '../lib/mcpCatalog.js';
 import { approvalAction, assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
@@ -39,6 +41,8 @@ import { capabilityScorecard, deskMayDecide, listAgentCapabilities, listProposal
  *   GET   /agents/approvals?status=             the queue
  *   GET   /agents/approvals/:id
  *   POST  /agents/approvals/:id/approve|reject  the decision, logged
+ *   GET   /agents/gates · POST /agents/gates · POST /agents/gates/:gid/end   Brief 2-6: the organization's own gates over the floor
+ *   GET   /agents/gates/preview?workerId&action|capability                   what would happen
  *   GET   /agents/:id                           profile, credentials, requests, spend, the trail
  *   PATCH /agents/:id
  *   POST  /agents/:id/credentials               issue a short-lived credential (plaintext shown once)
@@ -109,6 +113,13 @@ async function canDecide(req: Request, _res: Response, next: NextFunction): Prom
       return;
     }
     const approvalId = parsed.data;
+    // Brief 2-6 step 2: the approver a customer's gate names may decide it, whatever their role's capabilities
+    // (decideApproval checks it again, for every path).
+    const named = await prisma.agentApprovalRequest.findFirst({ where: { id: approvalId, tenantId: tenantIdForWrite(), approverKind: { in: ['OWNER', 'ROLE', 'USER'] } }, select: { approverKind: true, approverRole: true, approverUserId: true, workerId: true } });
+    if (named && (await approverMayDecide(prisma, named, { id: req.user!.id, role }))) {
+      next();
+      return;
+    }
     const action = await approvalAction(prisma, approvalId, tenantIdForWrite());
     const desk = action ? DESK_DECIDERS[action] : undefined;
     if ((action === 'SHIFT_ASSIGN' || action === 'CASE_OPEN') && desk && hasCapability(role, desk)) {
@@ -248,6 +259,63 @@ agentsRouter.post('/platform/resume-all', MANAGE, operatorOnly, async (req, res,
 });
 
 // ---- One agent -------------------------------------------------------------
+
+/* Brief 2-6 step 2 — the organization's own gates over the platform floor. */
+
+agentsRouter.get('/gates', VIEW, async (_req, res, next) => {
+  try {
+    const rows = await prisma.agentGatePolicy.findMany({ where: { tenantId: tenantIdForWrite() }, orderBy: [{ effectiveTo: { sort: 'desc', nulls: 'first' } }, { createdAt: 'desc' }], take: 500 });
+    const now = Date.now();
+    res.json({
+      policies: rows.map((p) => ({
+        id: p.id,
+        scope: p.scope,
+        scopeKey: p.scopeKey,
+        action: p.action,
+        requirement: p.requirement,
+        approver: p.approver,
+        approverRole: p.approverRole,
+        approverUserId: p.approverUserId,
+        ttlHours: p.ttlHours,
+        effectiveFrom: p.effectiveFrom.toISOString(),
+        effectiveTo: p.effectiveTo?.toISOString() ?? null,
+        inForce: p.effectiveFrom.getTime() <= now && (!p.effectiveTo || p.effectiveTo.getTime() > now),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post('/gates', MANAGE, async (req, res, next) => {
+  try {
+    const row = await createGatePolicy(prisma, tenantIdForWrite(), GatePolicyInputSchema.parse(req.body), req.user!.id);
+    res.status(201).json({ id: row.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+agentsRouter.post('/gates/:gid/end', MANAGE, async (req, res, next) => {
+  try {
+    await endGatePolicy(prisma, tenantIdForWrite(), Id.parse(req.params.gid), req.user!.id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** What would happen: the resolution for an agent and an action or capability, now. */
+agentsRouter.get('/gates/preview', VIEW, async (req, res, next) => {
+  try {
+    const q = z.object({ workerId: Id, action: AgentGatedActionSchema.exclude(['POLICY_GATE']).optional(), capability: z.string().max(120).optional() }).parse(req.query);
+    await assertTenantAgent(prisma, q.workerId, tenantIdForWrite());
+    const profile = await prisma.agentProfile.findUnique({ where: { workerId: q.workerId }, select: { family: true } });
+    res.json(await gateFor(prisma, { workerId: q.workerId, tenantId: tenantIdForWrite(), family: profile?.family ?? null }, q.action ?? null, q.capability ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
 
 agentsRouter.get('/:id', VIEW, ownAgent, async (req, res, next) => {
   try {

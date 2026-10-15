@@ -8391,7 +8391,7 @@ const agentFamilyCodes = AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...A
 export const AgentFamilySchema = z.enum(agentFamilyCodes);
 
 /** High-risk actions an agent may only request; a person approves or rejects from the queue. */
-export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN']);
+export const AgentGatedActionSchema = z.enum(['PAY_CHANGE', 'SEPARATION', 'CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN', 'POLICY_GATE']);
 export type AgentGatedAction = z.infer<typeof AgentGatedActionSchema>;
 export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
   PAY_CHANGE: 'Pay change',
@@ -8400,9 +8400,11 @@ export const AGENT_GATED_ACTION_LABELS: Record<AgentGatedAction, string> = {
   DATA_EXPORT: 'Data export',
   SHIFT_ASSIGN: 'Shift assignment',
   CASE_OPEN: 'Open an HR case',
+  // Brief 2-6 step 2: a capability the customer's own policy gates.
+  POLICY_GATE: 'Gated by your policy',
 };
 /** The ones the agent carries out itself once a person approved; pay and separations are done by the approver. */
-export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN'];
+export const AGENT_EXECUTABLE_ACTIONS: readonly AgentGatedAction[] = ['CLIENT_MESSAGE', 'DATA_EXPORT', 'SHIFT_ASSIGN', 'CASE_OPEN', 'POLICY_GATE'];
 
 export const AgentApprovalStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED']);
 export type AgentApprovalStatus = z.infer<typeof AgentApprovalStatusSchema>;

@@ -64,6 +64,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { HugoPanel } from './HugoPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
 import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
+import { AgentGatesPanel } from './AgentGatesPanel';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -587,6 +588,7 @@ export function AgentRegistryAdmin() {
 
       {/* Hugo: ask him, and see what the agents he routes to are doing (agent families step 3). */}
       <HugoPanel />
+      <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} />
       <McpCatalogPreview />
 
       {builtInMissing.length > 0 && (
