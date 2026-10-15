@@ -107,7 +107,7 @@ describe('overrides', () => {
     await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
     const two = await adminOf(T2);
     expect((await two.a.post(`/labor-rules/sets/${pack.id}/activate`).send({ note: 'We say so' })).status).toBe(403);
-    expect((await two.a.patch(`/labor-rules/sets/${pack.id}`).send({ source: 'x' })).status).toBe(403);
+    expect((await two.a.patch(`/labor-rules/sets/${pack.id}`).send({ source: 'Our own reading' })).status).toBe(403);
     const alto = await adminOf();
     const signed = await alto.a.post(`/labor-rules/sets/${pack.id}/activate`).send({ note: 'Counsel memo CM-2026-14, 2026-10-15' });
     expect(signed.body.status).toBe('ACTIVE');

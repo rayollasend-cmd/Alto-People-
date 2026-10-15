@@ -97,7 +97,7 @@ export async function deliverAuditSink(db: Db, sinkId: string, now: Date = new D
     error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
   }
   const ok = error === null;
-  await db.auditSinkDelivery.create({ data: { sinkId, fromSeq, toSeq, rows: rows.length, status, ok, error } });
+  await db.auditSinkDelivery.create({ data: { sinkId, tenantId: sink.tenantId, fromSeq, toSeq, rows: rows.length, status, ok, error } });
   if (ok) {
     await db.auditSink.update({ where: { id: sinkId }, data: { cursorSeq: toSeq, failures: 0, nextAttemptAt: null, lastError: null, lastDeliveredAt: now } });
     return rows.length;

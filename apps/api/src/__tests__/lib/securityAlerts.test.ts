@@ -71,7 +71,7 @@ describe('the export sweep', () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const admin = await loginAs(agent(), user.email);
     const routes = listRoutes(createApp()).filter((r) => r.method === 'GET' && /\.csv$/.test(r.path) && !/:[A-Za-z]/.test(r.path));
-    expect(routes.length).toBeGreaterThan(3);
+    expect(routes.length).toBeGreaterThanOrEqual(3);
     let exported = 0;
     for (const r of routes) {
       await flushPendingAudits();

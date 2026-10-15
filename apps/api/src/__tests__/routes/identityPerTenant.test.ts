@@ -58,7 +58,7 @@ afterAll(async () => {
 
 async function tenantTwo() {
   await prisma.tenant.create({ data: { id: T2, slug: 'acme-hotels', name: 'Acme Hotels' } });
-  const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'it@acme-hotels.test' });
+  const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR', email: `it-${Math.random().toString(36).slice(2, 8)}@acme-hotels.test` });
   await prisma.user.update({ where: { id: admin.id }, data: { tenantId: T2 } });
   const a = await loginAs(agent(), admin.email);
   const made = await a.post('/identity/connections').send({ displayName: 'Acme Okta', buttonLabel: 'Continue with Okta', issuerUrl: ISSUER, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });

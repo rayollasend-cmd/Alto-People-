@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { decryptBytes, encryptBytes, encryptWithKey, fieldKeyring, keyIdOf } from './crypto.js';
 
 /**
@@ -94,11 +94,18 @@ export interface ColumnInventory {
   byKeyId: Record<string, number>;
 }
 
+/** Rows holding a value: `{ not: null }` on a nullable column; a required column has one in every row (and Prisma refuses the filter). */
+function present(model: string, column: string): Record<string, unknown> {
+  const field = Prisma.dmmf.datamodel.models.find((m) => m.name.toLowerCase() === model.toLowerCase())?.fields.find((f) => f.name === column);
+  return field?.isRequired ? {} : { [column]: { not: null } };
+}
+
 /** Counts per column and key id; never a byte of plaintext. */
 export async function inventory(db: Db): Promise<ColumnInventory[]> {
   const out: ColumnInventory[] = [];
   for (const c of FIELD_COLUMNS) {
-    const rows = await delegate(db, c.model).findMany({ where: { [c.column]: { not: null } }, select: { [c.column]: true, [c.dated]: true } });
+    // An empty value holds no secret (a SAML connection has no client secret).
+    const rows = (await delegate(db, c.model).findMany({ where: present(c.model, c.column), select: { [c.column]: true, [c.dated]: true } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
     const t: ColumnInventory = { model: c.model, column: c.column, label: c.label, rows: 0, readable: 0, unreadable: 0, unreadableAfterIncident: 0, byKeyId: {} };
     for (const r of rows) {
       const blob = r[c.column] as Uint8Array | null;
@@ -141,7 +148,7 @@ export async function rotate(db: Db, opts: { dryRun: boolean; batch?: number } =
   const out: RotationResult = { dryRun: opts.dryRun, activeKey: active, columns: [] };
   for (const c of FIELD_COLUMNS) {
     const d = delegate(db, c.model);
-    const rows = await d.findMany({ where: { [c.column]: { not: null } }, select: { id: true, [c.column]: true } });
+    const rows = (await d.findMany({ where: present(c.model, c.column), select: { id: true, [c.column]: true } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
     const pending = rows.filter((r) => keyIdOf(r[c.column] as Uint8Array) !== active);
     const col = { model: c.model, column: c.column, toRotate: pending.length, rotated: 0, unreadable: 0, failed: 0 };
     if (!opts.dryRun) {

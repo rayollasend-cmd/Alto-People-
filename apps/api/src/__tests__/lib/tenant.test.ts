@@ -18,8 +18,10 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-const EXEMPT = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache']);
-const NO_DEFAULT = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff']);
+// Platform rows, not any tenant's: the price list, the keyring canary, the security alerts
+// (their audit rows carry the tenant), SAML's request/assertion memory.
+const EXEMPT = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache', 'BillingPrice', 'EncryptionCanary', 'SecurityAlert', 'SamlCache']);
+const NO_DEFAULT = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff', 'AuditChainCheck', 'AuditArchive']);
 
 describe('the schema', () => {
   it('has the Alto HR tenant and a tenantId on every model but the shared reference data', async () => {

@@ -38,7 +38,7 @@ describe('support requests', () => {
     const asked = await hotel.a.post('/support').send({ category: 'PROBLEM', subject: 'Kiosk will not pair', body: 'The front desk kiosk shows an error on pairing.', pageUrl: '/time-attendance/kiosk', appVersion: '2026.10.15' });
     expect(asked.status).toBe(201);
     await flushPendingNotifications();
-    expect(await prisma.notification.count({ where: { recipientUserId: altoAdmin.id, subject: 'Support: Kiosk will not pair' } })).toBe(1);
+    expect(await prisma.notification.count({ where: { recipientUserId: altoAdmin.id, channel: 'IN_APP', subject: 'Support: Kiosk will not pair' } })).toBe(1);
 
     const inbox = await platform.get('/support/inbox');
     expect(inbox.body.requests).toEqual([expect.objectContaining({ id: asked.body.id, tenant: 'Acme Hotels', requester: hotel.user.email, status: 'OPEN' })]);
@@ -48,7 +48,7 @@ describe('support requests', () => {
     await flushPendingNotifications();
     const mine = await hotel.a.get('/support/mine');
     expect(mine.body.requests[0]).toMatchObject({ status: 'RESOLVED', reply: 'Re-issue the pairing code from Kiosk admin.' });
-    expect(await prisma.notification.count({ where: { recipientUserId: hotel.user.id, subject: 'Resolved: Kiosk will not pair' } })).toBe(1);
+    expect(await prisma.notification.count({ where: { recipientUserId: hotel.user.id, channel: 'IN_APP', subject: 'Resolved: Kiosk will not pair' } })).toBe(1);
   });
 
   it('the status link is public', async () => {

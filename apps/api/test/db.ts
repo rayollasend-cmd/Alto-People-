@@ -153,6 +153,8 @@ const TABLES = [
   'AuditArchive',
   'AuditSink',
   'SamlCache',
+  // Brief 2-6 step 2: a customer's gate policies name tenants and agents by id, never by key.
+  'AgentGatePolicy',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

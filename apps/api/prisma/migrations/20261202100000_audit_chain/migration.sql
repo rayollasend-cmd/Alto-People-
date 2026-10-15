@@ -133,6 +133,7 @@ CREATE UNIQUE INDEX "AuditSink_tenantId_key" ON "AuditSink"("tenantId");
 
 CREATE TABLE "AuditSinkDelivery" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "tenantId" UUID DEFAULT '00000000-0000-4000-8000-000000000001'::uuid,
     "sinkId" UUID NOT NULL,
     "fromSeq" BIGINT NOT NULL,
     "toSeq" BIGINT NOT NULL,

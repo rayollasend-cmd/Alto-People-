@@ -66,7 +66,7 @@ describe('a finalized run in shadow', () => {
     expect(Number(diff.engineOvertime)).toBe(4);
     // 4 hours × $20 × 0.5 more than was paid.
     expect(Number(diff.amountDifference)).toBe(40);
-    expect(diff.reasons).toEqual(expect.arrayContaining([expect.stringContaining('(daily), SITE 2026-01-01 v1')]));
+    expect(diff.reasons).toEqual(expect.arrayContaining([expect.stringContaining(`(daily), SITE:${site.id} 2026-01-01 v1`)]));
   });
 
   it('the Rules routes list the shadow runs and one run’s people', async () => {

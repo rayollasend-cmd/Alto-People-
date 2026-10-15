@@ -11098,6 +11098,7 @@ model AuditSink {
 
 model AuditSinkDelivery {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   sinkId    String    @db.Uuid
   sink      AuditSink @relation(fields: [sinkId], references: [id], onDelete: Cascade)
   fromSeq   BigInt
