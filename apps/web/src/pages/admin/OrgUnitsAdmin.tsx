@@ -81,7 +81,7 @@ export function OrgUnitsAdmin() {
     u.legacyRegionId ? (
       <span className="text-xs text-silver">
         mirrors a region; managed from{' '}
-        <Link to="/regions" className="text-gold underline-offset-2 hover:underline">
+        <Link to="/regions" className="text-gold underline underline-offset-2">
           Regions
         </Link>
       </span>

@@ -153,7 +153,7 @@ describe('DataGrid', () => {
     renderGrid({ onRowClick, rowActionLabel: (r) => `Open ${r.name}` });
     // The test stub answers min-width queries as matching, so this is the
     // desktop table.
-    const row = within(screen.getByRole('table', { name: 'Test rows' })).getByRole('button', { name: 'Open Dee Kpakpo' });
+    const row = within(screen.getByRole('table', { name: 'Test rows' })).getByRole('row', { name: 'Open Dee Kpakpo' });
     row.focus();
     await userEvent.keyboard('{Enter}');
     expect(onRowClick).toHaveBeenCalledWith(ROWS[1]);

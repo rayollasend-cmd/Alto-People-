@@ -122,7 +122,10 @@ export const TableRow = React.forwardRef<
       ref={ref}
       onKeyDown={handleKeyDown}
       tabIndex={interactive ? (tabIndex ?? 0) : tabIndex}
-      role={interactive ? (role ?? 'button') : role}
+      // A row stays a row: it is focusable and Enter/Space open it, but it
+      // never claims role="button" — its cells hold links, checkboxes and
+      // row actions, and a button may not contain other controls.
+      role={role}
       className={cn(
         'border-b border-navy-secondary transition-colors',
         // Default subtle hover for any row.

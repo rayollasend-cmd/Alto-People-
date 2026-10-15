@@ -3427,7 +3427,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                           {sh.status !== 'COMPLETED' && sh.status !== 'CANCELLED' && (
                             // Quiet until it's meant: a red block on every row
                             // shouted louder than the work (the dialog confirms).
-                            <Button size="sm" variant="ghost" className="text-alert/80 hover:text-alert" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
+                            <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
                               <X className="h-3.5 w-3.5" />
                               Cancel
                             </Button>

@@ -1120,7 +1120,7 @@ function FloorNowCard() {
                       <td className="py-2 pr-3">
                         <div className="text-white">{r.locationName}</div>
                         {anyMultiStoreClient && r.clientName !== r.locationName && (
-                          <div className="text-2xs text-silver/50">{r.clientName}</div>
+                          <div className="text-2xs text-silver/70">{r.clientName}</div>
                         )}
                         {/* Act in place: a short floor gets its fix here. */}
                         {under && canManage && (
@@ -1142,7 +1142,7 @@ function FloorNowCard() {
                             {r.windowLabel}
                           </span>
                         ) : r.expected !== null ? (
-                          <span className="text-2xs text-silver/50">floor total</span>
+                          <span className="text-2xs text-silver/70">floor total</span>
                         ) : (
                           <span className="text-2xs text-silver/40">no target</span>
                         )}
@@ -1165,7 +1165,7 @@ function FloorNowCard() {
                           }
                         >
                           {r.clockedIn}
-                          <span className="text-silver/50">
+                          <span className="text-silver/70">
                             {' '}/ {r.expected !== null ? r.expected : '—'}
                           </span>
                         </span>
@@ -1375,7 +1375,7 @@ function TargetRow({
               {minuteToHhmm(w.startMinute)}–{minuteToHhmm(w.endMinute)}
             </span>
             <span className="tabular-nums text-white">{w.targetCount} heads</span>
-            <span className="text-silver/50">since {w.effectiveFrom}</span>
+            <span className="text-silver/70">since {w.effectiveFrom}</span>
           </div>
         ))}
         <WindowForm location={location} onSaved={onSaved} />
@@ -1551,7 +1551,7 @@ const marginClass = (revenue: number, margin: number, child: boolean) =>
         : 'text-alert'
     : child
       ? 'text-silver/40'
-      : 'text-silver/50';
+      : 'text-silver/70';
 
 const fmtMargin = (revenue: number, margin: number) =>
   revenue > 0 ? `${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}` : '—';
@@ -1577,7 +1577,7 @@ const DAY_COLUMNS: GridColumn<DayLine>[] = [
         <span className="text-xs text-silver/80">
           ↳ {l.w.label}
           {l.w.startMinute !== null && l.w.endMinute !== null && (
-            <span className="ml-1 text-2xs tabular-nums text-silver/50">
+            <span className="ml-1 text-2xs tabular-nums text-silver/70">
               {minuteToHhmm(l.w.startMinute)}–{minuteToHhmm(l.w.endMinute)}
             </span>
           )}
@@ -2051,6 +2051,7 @@ export function LaborCostsHome() {
           </label>
           <Input
             type="date"
+            aria-label="From date"
             value={from}
             max={toInclusive}
             onChange={(e) => setFrom(e.target.value)}
@@ -2063,6 +2064,7 @@ export function LaborCostsHome() {
           </label>
           <Input
             type="date"
+            aria-label="To date"
             value={toInclusive}
             min={from}
             onChange={(e) => setToInclusive(e.target.value)}

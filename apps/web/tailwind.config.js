@@ -42,6 +42,7 @@ export default {
         // white on saturated fills (alert/steel/success).
         'on-accent': 'rgb(var(--color-on-accent) / <alpha-value>)',
         'on-solid': 'rgb(var(--color-on-solid) / <alpha-value>)',
+        'on-alert': 'rgb(var(--color-on-alert) / <alpha-value>)',
         // Design system step 1: tokens by JOB (index.css defines them in
         // terms of the brand tokens, so they follow the theme). New code
         // uses these; the brand names above stay as aliases while pages

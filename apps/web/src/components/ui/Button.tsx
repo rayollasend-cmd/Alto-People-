@@ -37,7 +37,7 @@ const buttonVariants = cva(
           'text-silver hover:text-white hover:bg-navy-secondary/60',
         // Destructive — irreversible actions (Delete, Cancel run, Reject).
         destructive:
-          'bg-alert text-on-solid hover:bg-alert/90 shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_4px_12px_rgba(233,98,85,0.25)]',
+          'bg-alert text-on-alert hover:bg-alert/90 shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_4px_12px_rgba(233,98,85,0.25)]',
         // Link-styled (rare — use only for inline navigation in copy).
         link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },

@@ -875,7 +875,7 @@ function GridCore<T>({
                       <TableHead className="w-8 pr-0">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 accent-gold"
+                          className="h-6 w-6 accent-gold"
                           checked={allSelected}
                           onChange={toggleAll}
                           disabled={selectableRows.length === 0}
@@ -972,7 +972,7 @@ function GridCore<T>({
                             {!child && !selectable.disabled?.(row) && (
                               <input
                                 type="checkbox"
-                                className="h-4 w-4 accent-gold"
+                                className="h-6 w-6 accent-gold"
                                 checked={isSelected}
                                 onChange={() => toggleOne(key)}
                                 aria-label={`Select ${primary.accessor(row) ?? 'row'}`}

@@ -233,7 +233,7 @@ export function BrandingHome() {
           <>
             Org-wide overrides for the name, sender display, support email, primary colour, and logo shown on every outbound email. The business model, the
             modules and the words live on the{' '}
-            <Link to="/admin/organization" className="text-gold underline-offset-2 hover:underline">
+            <Link to="/admin/organization" className="text-gold underline underline-offset-2">
               Organization profile
             </Link>
             .

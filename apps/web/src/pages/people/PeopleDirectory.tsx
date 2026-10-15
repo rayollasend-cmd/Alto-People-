@@ -890,7 +890,7 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
         <Link
           to={`/clients/${r.workplaceClientId}`}
           onClick={(e) => e.stopPropagation()}
-          className="hover:text-white inline-flex items-center gap-1.5"
+          className="hover:text-white inline-flex min-h-6 items-center gap-1.5"
         >
           <Building2 className="h-3.5 w-3.5" />
           <span className="truncate">{r.workplaceClientName}</span>

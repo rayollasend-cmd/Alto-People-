@@ -309,7 +309,7 @@ export function TenantProfileHome() {
             <div className="sticky bottom-0 flex items-center justify-between gap-3 rounded-lg border border-navy-secondary bg-navy/95 p-3 backdrop-blur">
               <p className="text-xs text-silver">
                 {dirty ? 'Unsaved changes.' : 'Everything is saved.'} Branding, the assistant's name and the workweek live on the{' '}
-                <Link to="/admin/branding" className="text-gold underline-offset-2 hover:underline">
+                <Link to="/admin/branding" className="text-gold underline underline-offset-2">
                   Branding page
                 </Link>
                 .

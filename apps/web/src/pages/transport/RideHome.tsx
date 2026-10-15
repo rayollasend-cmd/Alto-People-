@@ -289,7 +289,14 @@ function AuthorizationCard({ data }: { data: MyTransport }) {
                   {t('ride.authorizationRate', { fare: cents(agreement.fareCents), fee: cents(agreement.noShowFeeCents) })}
                 </span>
               </div>
-              <div className="max-h-64 space-y-2 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-silver" data-testid="ride-authorization-text">
+              <div
+                className="max-h-64 space-y-2 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-silver focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                data-testid="ride-authorization-text"
+                // A scrolling region the keyboard can reach and scroll.
+                tabIndex={0}
+                role="region"
+                aria-label={agreement.title}
+              >
                 {agreement.body.split(/\n\s*\n/).map((para, i) => (
                   <p key={i} className="whitespace-pre-line">
                     {para}

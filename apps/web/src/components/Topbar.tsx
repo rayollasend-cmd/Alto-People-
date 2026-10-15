@@ -195,6 +195,9 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         // otherwise meet the page's name twice in a row. A page with no hero
         // of its own (`hasHero` false) keeps its name here permanently.
         aria-hidden={hasHero && !heroHidden}
+        // Hidden from assistive tech AND from the tab order: a breadcrumb link
+        // inside an aria-hidden block is a focus stop nobody can see.
+        {...({ inert: hasHero && !heroHidden ? '' : undefined } as Record<string, unknown>)}
         className={cn(
           'flex min-w-0 items-center transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none',
           hasHero && !heroHidden

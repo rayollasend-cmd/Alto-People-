@@ -81,7 +81,7 @@ export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, brea
         <nav aria-label={areaLabel ?? 'Settings'} className="-mx-4 flex gap-1 overflow-x-auto px-4 scrollbar-none lg:mx-0 lg:flex-col lg:gap-4 lg:overflow-visible lg:px-0">
           {sections.map(([section, items]) => (
             <div key={section || '_'} className="flex gap-1 lg:flex-col">
-              {section && <div className="hidden px-3 pb-1 text-2xs uppercase tracking-[0.18em] text-ink-subtle lg:block">{section}</div>}
+              {section && <div className="hidden px-3 pb-1 text-2xs uppercase tracking-[0.18em] text-ink-muted lg:block">{section}</div>}
               {items.map((item) => {
                 const Icon = item.icon;
                 const isActive = item.key === active;

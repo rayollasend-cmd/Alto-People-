@@ -303,7 +303,7 @@ function HeroStrip({
             </h1>
             <p className="text-xs text-silver mt-0.5">
               Live against {clientName ? `the ${clientName} contract` : 'every client contract'}: MSA, SOW and MTSA. Refreshes every 15 minutes.{' '}
-              <Link to="/compliance?tab=audit" className="text-gold hover:underline">
+              <Link to="/compliance?tab=audit" className="text-gold underline underline-offset-2">
                 Audit evidence →
               </Link>
             </p>
@@ -1671,9 +1671,15 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
                     s.status === 'live' ? 'hover:bg-navy-secondary/40' : 'opacity-70',
                   )}
                 >
-                  <ClauseTooltip clause={s.contractClause}>
-                    <span className="text-xs text-white truncate">{s.label}</span>
-                  </ClauseTooltip>
+                  {/* A disabled row is not a control, so it carries no tooltip
+                      trigger inside it (a control inside a control). */}
+                  {s.status === 'live' ? (
+                    <ClauseTooltip clause={s.contractClause}>
+                      <span className="text-xs text-white truncate">{s.label}</span>
+                    </ClauseTooltip>
+                  ) : (
+                    <span className="text-xs text-ink truncate">{s.label}</span>
+                  )}
                   {s.status === 'live' ? (
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
@@ -2398,7 +2404,7 @@ function BucketTile({ label, count, severity }: { label: string; count: number; 
   return (
     <div className={cn('rounded border px-2 py-2 text-center', tone)}>
       <div className="text-lg font-bold tabular-nums">{count}</div>
-      <div className="text-2xs uppercase tracking-wider opacity-80">{label}</div>
+      <div className="text-2xs uppercase tracking-wider">{label}</div>
     </div>
   );
 }

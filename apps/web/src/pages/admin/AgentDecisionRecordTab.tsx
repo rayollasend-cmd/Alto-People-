@@ -87,7 +87,7 @@ export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string
                   {a.inForce ? (a.expiresSoon ? 'Lapses within 30 days' : 'In force') : 'Lapsed'}
                 </Badge>
                 {a.summaryUrl && (
-                  <a className="text-gold underline-offset-2 hover:underline" href={a.summaryUrl} target="_blank" rel="noreferrer">
+                  <a className="text-gold underline underline-offset-2" href={a.summaryUrl} target="_blank" rel="noreferrer">
                     Published summary
                   </a>
                 )}

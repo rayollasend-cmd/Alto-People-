@@ -95,7 +95,7 @@ export function RelayPipeline({
           <Trophy className="h-3.5 w-3.5" aria-hidden="true" />
           {p.keptPct !== null ? `${p.keptPct}% of promises kept` : 'Promise: no checks yet'}
           {p.medianDays !== null && <span className="text-gold/70">· median {p.medianDays}d</span>}
-          <span className="text-gold/60">· {p.windowDays} days</span>
+          <span className="text-gold/80">· {p.windowDays} days</span>
         </span>
       </SectionHead>
 

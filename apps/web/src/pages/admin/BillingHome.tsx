@@ -110,7 +110,7 @@ export function BillingHome() {
                           </Badge>
                           <span className="ml-auto font-semibold text-white">{fmtMoney(i.totalCents / 100)}</span>
                           {i.hostedUrl && (
-                            <a className="inline-flex items-center gap-1 text-gold underline-offset-2 hover:underline" href={i.hostedUrl} target="_blank" rel="noreferrer">
+                            <a className="inline-flex items-center gap-1 text-gold underline underline-offset-2" href={i.hostedUrl} target="_blank" rel="noreferrer">
                               View <ExternalLink className="h-3 w-3" aria-hidden="true" />
                             </a>
                           )}

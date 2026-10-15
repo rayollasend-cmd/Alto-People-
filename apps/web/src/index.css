@@ -98,6 +98,10 @@
      broke in light mode because those vars are remapped. */
   --color-on-accent:       11  24  50;  /* dark ink on gold */
   --color-on-solid:       255 255 255;  /* white on saturated fills */
+  /* The alert fill is the one saturated fill white fails on in the dark
+     theme (#E96255 : white = 3.3), so it carries dark ink there and white
+     on the deeper light-theme red. */
+  --color-on-alert:        11  24  50;
 }
 
 :root[data-theme='light'] {
@@ -158,6 +162,7 @@
   /* Same values as dark — that is the point (see above). */
   --color-on-accent:       11  24  50;
   --color-on-solid:       255 255 255;
+  --color-on-alert:       255 255 255;
 }
 
 /* Design system step 1 (2026-10-15, docs/design-system.md): tokens named

@@ -151,7 +151,7 @@ export function WorkerTypesAdmin() {
           return (
             <span className="inline-flex items-center gap-2">
               {to ? (
-                <Link to={to} className="font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
+                <Link to={to} className="inline-block py-0.5 font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
                   {w.name}
                 </Link>
               ) : (
