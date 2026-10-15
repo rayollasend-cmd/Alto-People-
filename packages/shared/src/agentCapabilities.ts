@@ -159,6 +159,21 @@ const I9_SECTION2_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { firstRef: 'dan', pending: 2 } },
 };
 
+const INCIDENT_LOOP_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Five open incidents: a case for the recordable days-away one with a person; the week-old first-aid one can close',
+  world: {},
+  input: {
+    incidents: [
+      { ref: 'away', openDays: 4, severity: 'DAYS_AWAY', recordable: true, person: true },
+      { ref: 'fresh', openDays: 1, severity: 'DAYS_AWAY', recordable: true, person: true },
+      { ref: 'nobody', openDays: 5, severity: 'RESTRICTED_DUTY', recordable: true, person: false },
+      { ref: 'hasCase', openDays: 9, severity: 'FATAL', recordable: true, person: true, hasCase: true },
+      { ref: 'scrape', openDays: 8, severity: 'FIRST_AID', recordable: false, person: true },
+    ],
+  },
+  expected: { output: { caseFor: 'away', closable: 'scrape' }, allowedActions: ['propose'] },
+};
+
 const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
   world: {
@@ -248,7 +263,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:compliance', 'open:hr-case'],
     gate: 'CASE_OPEN',
     metrics: ['openIncidents', 'medianAgeDays', 'closedAfterChase'],
-    scenarios: [],
+    scenarios: [INCIDENT_LOOP_FIXTURE],
   },
   {
     key: 'coverage.credentials',

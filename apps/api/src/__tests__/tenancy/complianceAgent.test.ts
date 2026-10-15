@@ -245,7 +245,8 @@ describe('the Compliance agent: certification', () => {
     }
     const run = await (await loginAs(agent(), w.hr.email)).post(`/agents/${w.workerId}/scenarios/run`).send({});
     expect(run.status, JSON.stringify(run.body)).toBe(200);
-    expect(run.body).toMatchObject({ ran: 2, passed: 2 });
+    // document.chase, i9.section2, incident.loop.
+    expect(run.body).toMatchObject({ ran: 3, passed: 3 });
     expect(await prisma.documentRecord.count()).toBe(0);
     expect(await prisma.application.count()).toBe(0);
   });

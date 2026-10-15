@@ -198,9 +198,9 @@ export const BUILT_IN_AGENTS = [
     model: 'Rule-based agent (lib/complianceAgent)',
     modelVersion: '1',
     environment: 'PRODUCTION',
-    scopes: ['view:compliance', 'manage:compliance', 'manage:communications', 'view:org'] as AgentScope[],
-    capabilities: ['document.chase', 'i9.section2'],
-    grants: ['document.chase', 'i9.section2'],
+    scopes: ['view:compliance', 'manage:compliance', 'manage:communications', 'view:org', 'open:hr-case'] as AgentScope[],
+    capabilities: ['document.chase', 'i9.section2', 'incident.loop'],
+    grants: ['document.chase', 'i9.section2', 'incident.loop'],
     status: 'ONBOARDING',
   },
 ] as const satisfies readonly {

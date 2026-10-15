@@ -5725,8 +5725,14 @@ model OshaIncident {
   resolvedAt     DateTime?            @db.Timestamptz(6)
   createdAt      DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
+  /// Agent families step 5 (incident.loop): the HR case opened for it on a person's approval.
+  hrCaseId       String?              @db.Uuid
+  /// incident.loop's chase: 1 = told at 3 days open, 2 = at 7, 3 = at 14.
+  chaseStage     Int                  @default(0)
+  lastChasedAt   DateTime?            @db.Timestamptz(6)
 
   client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  hrCase     HrCase?    @relation(fields: [hrCaseId], references: [id], onDelete: SetNull)
   store      Site?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
   associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   reportedBy User?      @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
@@ -7685,9 +7691,11 @@ model HrCase {
   createdAt    DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
 
-  associate  Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  assignedTo User?           @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
-  comments   HrCaseComment[]
+  associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  assignedTo    User?           @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  /// The safety incidents this case was opened for (incident.loop).
+  oshaIncidents OshaIncident[]
+  comments      HrCaseComment[]
 
   @@index([associateId])
   @@index([status])

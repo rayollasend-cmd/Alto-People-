@@ -12,6 +12,7 @@ import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
 import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
+import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severityWords } from './incidentLoop.js';
 import { shiftDeepLink } from './workforceAgent.js';
 import { tenantIdForWrite } from './tenant.js';
 
@@ -381,6 +382,40 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:compliance')) {
+    // Agent families step 5: with incident.loop running, every incident open 3 days is a dated item.
+    if ((await runningCapabilityKeys(prisma, tenantIdForWrite())).has(INCIDENT_LOOP)) {
+      const aged = (await openIncidents(prisma, tenantIdForWrite())).filter((i) => openDays(i, now) >= 3);
+      if (aged.length > 0 && aged.length <= 5) {
+        for (const i of aged) {
+          const days = openDays(i, now);
+          out.push({
+            key: `safety:incident:${i.id}`,
+            domain: 'compliance',
+            severity: i.severity === 'FATAL' || i.severity === 'DAYS_AWAY' || days >= 14 ? 'critical' : 'high',
+            label: `${severityWords(i.severity)} incident at ${incidentWhere(i)}, open ${days} days`,
+            detail: closable(i, now)
+              ? 'Nothing recordable here: close it if the reporter has nothing to add.'
+              : i.hrCaseId
+                ? 'An HR case is open for it. Update the incident as the case moves.'
+                : 'Update it or resolve it on the OSHA page.',
+            stakes: null,
+            ageDays: days,
+            linkUrl: '/compliance/osha',
+          });
+        }
+      } else if (aged.length > 5) {
+        out.push({
+          key: 'safety:incidents-aged',
+          domain: 'compliance',
+          severity: 'critical',
+          label: `${aged.length} safety incidents open 3 days or more`,
+          detail: 'The oldest first on the OSHA page.',
+          stakes: null,
+          ageDays: openDays(aged[0]!, now),
+          linkUrl: '/compliance/osha',
+        });
+      }
+    }
     // Agent families step 4: what the Compliance agent chased and the person did not renew.
     const expired = await prisma.documentChase.findMany({
       where: { tenantId: tenantIdForWrite(), escalatedAt: { not: null }, resolvedAt: null },

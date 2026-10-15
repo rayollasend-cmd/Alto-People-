@@ -7,6 +7,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
+import { osha300aSummary } from '../lib/osha300a.js';
 
 /**
  * Phase 88 — OSHA + WC class codes + EEO-1.
@@ -244,41 +245,7 @@ oshaWcEeoRouter.put('/osha/incidents/:id', MANAGE_COMP, async (req, res) => {
 oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
   const year = z.coerce.number().int().min(2000).max(2100).parse(req.query.year);
-  const start = new Date(`${year}-01-01T00:00:00Z`);
-  const end = new Date(`${year + 1}-01-01T00:00:00Z`);
-  const rows = await prisma.oshaIncident.findMany({
-    take: 500,
-    where: {
-      clientId,
-      occurredAt: { gte: start, lt: end },
-      isRecordable: true,
-    },
-  });
-  const totalCases = rows.length;
-  const fatalities = rows.filter((r) => r.severity === 'FATAL').length;
-  const daysAwayCases = rows.filter((r) => r.severity === 'DAYS_AWAY').length;
-  const restrictedCases = rows.filter(
-    (r) => r.severity === 'RESTRICTED_DUTY',
-  ).length;
-  // First-aid-only cases are excluded from the query via isRecordable
-  // (default false for FIRST_AID); any explicitly-marked-recordable
-  // leftovers bucket under "other recordable" per the form's categories.
-  const otherRecordable = rows.filter(
-    (r) => r.severity === 'MEDICAL_TREATMENT' || r.severity === 'FIRST_AID',
-  ).length;
-  const totalDaysAway = rows.reduce((s, r) => s + r.daysAway, 0);
-  const totalDaysRestricted = rows.reduce((s, r) => s + r.daysRestricted, 0);
-  res.json({
-    clientId,
-    year,
-    totalCases,
-    fatalities,
-    daysAwayCases,
-    restrictedCases,
-    otherRecordable,
-    totalDaysAway,
-    totalDaysRestricted,
-  });
+  res.json(await osha300aSummary(prisma, clientId, year));
 });
 
 // ----- Workers' Comp class codes -----------------------------------------

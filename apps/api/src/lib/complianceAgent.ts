@@ -183,7 +183,7 @@ export function chaseMessage(lang: WaLang, items: Array<{ wordKey: string; expir
 }
 
 /** Is a capability of this agent running for the tenant (module, agent, capability)? The agent, or why not. */
-async function complianceAgentFor(db: Db, tenantId: string, key: string): Promise<AgentContext | 'module_off' | 'agent_stopped' | 'capability_off'> {
+export async function complianceAgentFor(db: Db, tenantId: string, key: string): Promise<AgentContext | 'module_off' | 'agent_stopped' | 'capability_off'> {
   for (const m of capabilityDef(key)!.requiresModule) {
     if (!(await moduleOn(m, tenantId))) return 'module_off';
   }
@@ -399,9 +399,11 @@ const BLOCKER_WORDS: Record<string, string> = {
 };
 export const blockerWords = (b: string) => BLOCKER_WORDS[b] ?? b.toLowerCase().replace(/_/g, ' ');
 
-/** One tick of both (the hourly compliance cron). */
+/** One tick of every capability (the hourly compliance cron). */
 export async function runComplianceAgent(db: Db = defaultPrisma, now: Date = new Date()) {
-  return { chase: await runDocumentChase(db, now), section2: await runSection2Clock(db, now) };
+  // Loaded on use: incidentLoop imports this module (a static import back would be a cycle).
+  const { runIncidentLoop } = await import('./incidentLoop.js');
+  return { chase: await runDocumentChase(db, now), section2: await runSection2Clock(db, now), incidents: await runIncidentLoop(db, now) };
 }
 
 /* ---- Registration: certification and the scorecard -------------------- */
