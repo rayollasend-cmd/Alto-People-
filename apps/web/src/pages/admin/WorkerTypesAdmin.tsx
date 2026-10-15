@@ -147,7 +147,7 @@ export function WorkerTypesAdmin() {
         // The row opens the record behind it: a person in People, an agent in
         // Agents (UX upgrade step 5: one roster, the records where they live).
         cell: (w) => {
-          const to = w.type === 'PERSON' && w.associateId ? `/people?associateId=${w.associateId}` : w.type === 'AGENT' ? `/agents?agent=${w.id}` : null;
+          const to = w.type === 'PERSON' && w.associateId ? `/people?associateId=${w.associateId}` : w.type === 'AGENT' ? `/agents?agent=${w.id}` : w.type === 'ROBOT' ? `/robots/${w.id}` : null;
           return (
             <span className="inline-flex items-center gap-2">
               {to ? (

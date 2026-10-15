@@ -56,6 +56,7 @@ import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
+import { sampleRobots } from './lib/robots.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
 import { onPlatformScope } from './lib/tenant.js';
@@ -183,6 +184,10 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   void sweepAgents();
   setInterval(sweepAgents, 15 * 60_000).unref();
   startAgentDriftCron();
+  // Brief 3-1: every robot's fleet status, once a minute per tenant with robotics on.
+  const sampleFleet = () => runForEachTenant('robots', (tenantId) => sampleRobots(prisma, tenantId), { module: 'robotics' }).catch((err) => logger.warn({ err }, 'robot sampling failed'));
+  void sampleFleet();
+  setInterval(sampleFleet, 60_000).unref();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
   // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.
