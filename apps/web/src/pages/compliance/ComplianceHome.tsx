@@ -7,10 +7,11 @@ import { DrugTestTab } from './DrugTestTab';
 import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
 import { AuditPacketTab } from './AuditPacketTab';
+import { RequirementsTab } from './RequirementsTab';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
-type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'audit';
+type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'requirements' | 'audit';
 
 export function ComplianceHome() {
   const { can } = useAuth();
@@ -27,7 +28,7 @@ export function ComplianceHome() {
   // other pages deep-link a directorate (the profile document vault links
   // each category to its owning tab), the URL stays shareable, and Back
   // retraces tab switches instead of dumping out of the page.
-  const TABS: readonly Tab[] = ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1', 'audit'];
+  const TABS: readonly Tab[] = ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1', 'requirements', 'audit'];
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
   // A bookmarked ?tab=audit from before the capability narrowed would
@@ -66,6 +67,8 @@ export function ComplianceHome() {
           <TabsTrigger value="background">Background checks</TabsTrigger>
           <TabsTrigger value="drugtests">Drug tests</TabsTrigger>
           <TabsTrigger value="j1">J-1 program</TabsTrigger>
+          {/* What each site requires (agent families step 5: the Compliance agent measures it weekly). */}
+          <TabsTrigger value="requirements">Site requirements</TabsTrigger>
           {canAudit && <TabsTrigger value="audit">Audit packets</TabsTrigger>}
         </TabsList>
         <TabsContent value="scorecard">
@@ -85,6 +88,9 @@ export function ComplianceHome() {
         </TabsContent>
         <TabsContent value="j1">
           <J1Tab canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="requirements">
+          <RequirementsTab canManage={canManage} />
         </TabsContent>
         {canAudit && (
           <TabsContent value="audit">

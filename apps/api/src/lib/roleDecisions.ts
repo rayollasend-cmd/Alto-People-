@@ -13,6 +13,7 @@ import { startOfWeekUTC } from './timeAnomalies.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
 import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
 import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severityWords } from './incidentLoop.js';
+import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
 import { shiftDeepLink } from './workforceAgent.js';
 import { tenantIdForWrite } from './tenant.js';
 
@@ -413,6 +414,35 @@ export async function computeRoleDecisions(
           stakes: null,
           ageDays: openDays(aged[0]!, now),
           linkUrl: '/compliance/osha',
+        });
+      }
+    }
+    // Agent families step 5: the week's credential gaps against what each site requires.
+    if ((await runningCapabilityKeys(prisma, tenantIdForWrite())).has(COVERAGE_CREDENTIALS)) {
+      const short = (await latestCoverage(prisma, tenantIdForWrite())).filter((r) => r.latest && r.latest.missing > 0);
+      if (short.length > 0 && short.length <= 5) {
+        for (const r of short) {
+          out.push({
+            key: `credentials:gap:${r.id}`,
+            domain: 'compliance',
+            severity: 'high',
+            label: `${r.label} at ${r.place}: ${r.latest!.missing} of ${r.latest!.population} without it`,
+            detail: 'The Compliance agent asked each of them this week, in their language.',
+            stakes: null,
+            ageDays: null,
+            linkUrl: '/compliance?tab=requirements',
+          });
+        }
+      } else if (short.length > 5) {
+        out.push({
+          key: 'credentials:gaps',
+          domain: 'compliance',
+          severity: 'high',
+          label: `${short.length} site requirements not fully covered`,
+          detail: 'Each gap, with who is missing it, on the requirements tab.',
+          stakes: null,
+          ageDays: null,
+          linkUrl: '/compliance?tab=requirements',
         });
       }
     }

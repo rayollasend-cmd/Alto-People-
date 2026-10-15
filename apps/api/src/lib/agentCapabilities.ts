@@ -505,6 +505,13 @@ export async function runCapabilityFixture(
       for (const t of fixture.world.targets ?? []) {
         await db.staffingTarget.create({ data: { locationId: refs[t.siteRef]!, targetCount: t.headcount, effectiveFrom: new Date(now.getTime() - 30 * DAY), tenantId } });
       }
+      // Vaccinations (removed with their person) and site requirements (removed with their site).
+      for (const v of fixture.world.vaccinations ?? []) {
+        await db.vaccinationRecord.create({ data: { associateId: refs[v.personRef]!, kind: v.kind, administeredOn: new Date(now.getTime() - 300 * DAY), expiresOn: v.expiresInDays === null ? null : new Date(now.getTime() + v.expiresInDays * DAY), tenantId } });
+      }
+      for (const r of fixture.world.requirements ?? []) {
+        await db.credentialRequirement.create({ data: { locationId: refs[r.siteRef]!, kind: 'VACCINATION', vaccinationKind: r.vaccinationKind, label: r.label, tenantId } });
+      }
       // The attendance record the risk score reads; removed with its person (cascade).
       for (const a of fixture.world.attendance ?? []) {
         await db.attendanceEvent.create({

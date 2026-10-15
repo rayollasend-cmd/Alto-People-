@@ -33,6 +33,7 @@ import { financialChangesRouter } from './routes/financialChanges.js';
 import { w4RecollectionRouter } from './routes/w4Recollection.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
+import { credentialRequirementsRouter } from './routes/credentialRequirements.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
@@ -429,6 +430,8 @@ export function createApp() {
     requireCapability('view:compliance'),
     complianceRouter
   );
+  // What a site or client requires its people to hold (agent families step 5, coverage.credentials).
+  app.use('/credential-requirements', requireCapability('view:compliance'), requireModule('compliance'), credentialRequirementsRouter);
   // Walmart Contract Compliance Scorecard — preventative dashboard
   // (separate from /audit which is the forensic event log).
   app.use(

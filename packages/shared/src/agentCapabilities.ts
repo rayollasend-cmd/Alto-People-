@@ -32,6 +32,10 @@ export interface CapabilityScenarioFixture {
     documents?: Array<{ personRef: string; kind: 'ID' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019'; expiresInDays: number }>;
     /** Approved hires: start date days before `now`, and how far their I-9 got. */
     hires?: Array<{ personRef: string; startDaysAgo: number; section1: boolean; section2: boolean }>;
+    /** What a site requires (coverage.credentials): a vaccination kind. */
+    requirements?: Array<{ siteRef: string; vaccinationKind: 'COVID19' | 'INFLUENZA_FLU' | 'HEPATITIS_B' | 'TDAP' | 'MMR' | 'TB_TEST'; label: string }>;
+    /** Vaccinations on file; expiresInDays null = does not expire, negative = expired. */
+    vaccinations?: Array<{ personRef: string; kind: 'COVID19' | 'INFLUENZA_FLU' | 'HEPATITIS_B' | 'TDAP' | 'MMR' | 'TB_TEST'; expiresInDays: number | null }>;
     /** Unexcused attendance on record, days before `now` (the no-show risk score reads it). */
     attendance?: Array<{ personRef: string; kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE'; daysAgo: number }>;
   };
@@ -174,6 +178,25 @@ const INCIDENT_LOOP_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { caseFor: 'away', closable: 'scrape' }, allowedActions: ['propose'] },
 };
 
+const COVERAGE_CREDENTIALS_FIXTURE: CapabilityScenarioFixture = {
+  name: 'A hotel requires a TB test: one current, one expired, one never tested; two are missing it',
+  world: {
+    sites: [{ ref: 'hotel', name: 'The Grand Hotel', timezone: 'America/Chicago' }],
+    people: [
+      { ref: 'ana', firstName: 'Ana', lastName: 'Current', placedAt: 'hotel' },
+      { ref: 'ben', firstName: 'Ben', lastName: 'Expired', placedAt: 'hotel' },
+      { ref: 'cy', firstName: 'Cy', lastName: 'Never', placedAt: 'hotel' },
+    ],
+    requirements: [{ siteRef: 'hotel', vaccinationKind: 'TB_TEST', label: 'TB test' }],
+    vaccinations: [
+      { personRef: 'ana', kind: 'TB_TEST', expiresInDays: 200 },
+      { personRef: 'ben', kind: 'TB_TEST', expiresInDays: -10 },
+    ],
+  },
+  input: {},
+  expected: { output: { coveredRef: 'ana', missing: 2 } },
+};
+
 const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
   world: {
@@ -273,7 +296,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:compliance', 'view:org'],
     gate: null,
     metrics: ['sitesBelowRequirement', 'gapsClosed'],
-    scenarios: [],
+    scenarios: [COVERAGE_CREDENTIALS_FIXTURE],
   },
 ] as const satisfies readonly AgentCapabilityDef[];
 

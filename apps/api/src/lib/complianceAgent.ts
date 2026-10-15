@@ -403,7 +403,13 @@ export const blockerWords = (b: string) => BLOCKER_WORDS[b] ?? b.toLowerCase().r
 export async function runComplianceAgent(db: Db = defaultPrisma, now: Date = new Date()) {
   // Loaded on use: incidentLoop imports this module (a static import back would be a cycle).
   const { runIncidentLoop } = await import('./incidentLoop.js');
-  return { chase: await runDocumentChase(db, now), section2: await runSection2Clock(db, now), incidents: await runIncidentLoop(db, now) };
+  const { runCredentialCoverage } = await import('./credentialCoverage.js');
+  return {
+    chase: await runDocumentChase(db, now),
+    section2: await runSection2Clock(db, now),
+    incidents: await runIncidentLoop(db, now),
+    credentials: await runCredentialCoverage(db, now),
+  };
 }
 
 /* ---- Registration: certification and the scorecard -------------------- */

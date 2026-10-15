@@ -683,59 +683,61 @@ model User {
 }
 
 model Client {
-  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Agent families step 5: credentials every site of this client requires.
+  credentialRequirements CredentialRequirement[]
+  id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId             String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  name                 String
-  industry             String?
-  status               ClientStatus          @default(ACTIVE)
-  contactEmail         String?
+  tenantId               String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name                   String
+  industry               String?
+  status                 ClientStatus            @default(ACTIVE)
+  contactEmail           String?
   // This client's scheduling week start, 0=Sunday … 6=Saturday. Some
   // clients run Sun–Sat weeks, others Wed–Tue; drives the associate
   // week-ahead digest (sent the evening before this day) and future
   // per-client week math.
-  weekStartsOn         Int                   @default(0)
+  weekStartsOn           Int                     @default(0)
   // Tier-2 — this employer's actual SUTA experience rate + wage base
   // from the state agency's annual notice. Null = the new-employer
   // defaults baked into the engine's per-state table.
-  sutaRateOverride     Decimal?              @db.Decimal(6, 5)
-  sutaWageBaseOverride Decimal?              @db.Decimal(12, 2)
+  sutaRateOverride       Decimal?                @db.Decimal(6, 5)
+  sutaWageBaseOverride   Decimal?                @db.Decimal(12, 2)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
   // formatted as "XX-XXXXXXX". HR fills these in before generating W-2s.
-  legalName            String?               @db.VarChar(255)
-  ein                  String?               @db.VarChar(20)
+  legalName              String?                 @db.VarChar(255)
+  ein                    String?                 @db.VarChar(20)
   // Gap 1 — Employer address used on tax forms. `state` already lives
   // below as the work-site code; reused for the W-2 employer block too.
-  addressLine1         String?               @db.VarChar(255)
-  addressLine2         String?               @db.VarChar(255)
-  city                 String?               @db.VarChar(120)
-  zip                  String?               @db.VarChar(10)
+  addressLine1           String?                 @db.VarChar(255)
+  addressLine2           String?                 @db.VarChar(255)
+  city                   String?                 @db.VarChar(120)
+  zip                    String?                 @db.VarChar(10)
   // Verbatim SAP Fieldglass "Site" label for this client engagement (e.g.
   // "1 - Onsite - FL - Destin"), rendered on the Timesheets export so the
   // Site column matches Fieldglass character-for-character. Null = fall back
   // to the worksite/client name.
-  fieldglassSiteName   String?               @db.VarChar(255)
+  fieldglassSiteName     String?                 @db.VarChar(255)
   // Fieldglass bill rate ($/hr) for this SOW — the client-billed "Rate" on
   // the Fieldglass timesheet accounting block (Amount = rate × hours). Not
   // the associate pay rate. Null = accounting Amount can't be computed.
-  fieldglassBillRate   Decimal?              @db.Decimal(8, 2)
+  fieldglassBillRate     Decimal?                @db.Decimal(8, 2)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
-  state                String?               @db.VarChar(2)
+  state                  String?                 @db.VarChar(2)
   // Phase 131 — geofence moved to Location. Each physical site has its
   // own coordinates and radius; lookups read Location.geofence with a
   // "first active Location under this client" fallback for associates
   // who haven't been placed at a Location yet.
-  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime              @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?             @db.Timestamptz(6)
+  createdAt              DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
+  deletedAt              DateTime?               @db.Timestamptz(6)
   /// Brief 2-1b: the employer-of-record row that carries this client's legal facts, when it is one.
-  employerOrganization EmployerOrganization?
-  orgUnits             OrgUnit[]
+  employerOrganization   EmployerOrganization?
+  orgUnits               OrgUnit[]
 
   applications            Application[]
   petitionPrograms        Program[]                 @relation("PetitionClient")
@@ -834,39 +836,41 @@ model Client {
 // employer address; Site.state is the actual work-site code that
 // drives OT / meal-break / predictive-scheduling rules.
 model Site {
+  /// Agent families step 5: credentials this site requires (coverage.credentials).
+  credentialRequirements CredentialRequirement[]
   /// Agent families step 3: the Workforce agent's daily coverage.forecast rows for this site.
-  coverageForecasts    CoverageForecastDay[]
-  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String?               @db.Uuid
+  coverageForecasts      CoverageForecastDay[]
+  id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId               String?                 @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId             String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  name                 String
-  addressLine1         String?               @db.VarChar(255)
-  addressLine2         String?               @db.VarChar(255)
-  city                 String?               @db.VarChar(120)
-  state                String?               @db.VarChar(2)
-  zip                  String?               @db.VarChar(10)
-  latitude             Decimal?              @db.Decimal(10, 7)
-  longitude            Decimal?              @db.Decimal(10, 7)
-  geofenceRadiusMeters Int?
+  tenantId               String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name                   String
+  addressLine1           String?                 @db.VarChar(255)
+  addressLine2           String?                 @db.VarChar(255)
+  city                   String?                 @db.VarChar(120)
+  state                  String?                 @db.VarChar(2)
+  zip                    String?                 @db.VarChar(10)
+  latitude               Decimal?                @db.Decimal(10, 7)
+  longitude              Decimal?                @db.Decimal(10, 7)
+  geofenceRadiusMeters   Int?
   // IANA timezone of the physical work site (e.g. "America/New_York").
   // Shifts store UTC instants; this is what turns a UTC instant into the
   // store's wall-clock time for availability matching, the schedule PDF,
   // and shift notifications. Defaults to Eastern (the current deployment);
   // admins set it per location. Validated against SUPPORTED_TIMEZONES on
   // write.
-  timezone             String                @default("America/New_York")
+  timezone               String                  @default("America/New_York")
   /// Brief 2-1b step 7: what kind of site this is. The noun the tenant uses for it comes from the terminology table.
-  type                 SiteType              @default(STORE)
+  type                   SiteType                @default(STORE)
   // The region this store rolls up to (the command center). Stores may
   // belong to different clients and still share a region.
-  regionId             String?               @db.Uuid
+  regionId               String?                 @db.Uuid
   /// Brief 2-1b step 5: the organizational unit this site belongs to (division / region / business unit / cost center).
-  orgUnitId            String?               @db.Uuid
-  isActive             Boolean               @default(true)
-  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime              @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?             @db.Timestamptz(6)
+  orgUnitId              String?                 @db.Uuid
+  isActive               Boolean                 @default(true)
+  createdAt              DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
+  deletedAt              DateTime?               @db.Timestamptz(6)
 
   client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   employments            Employment[]            @relation("EmploymentSite")
@@ -5305,17 +5309,19 @@ enum OpenShiftClaimStatus {
 }
 
 model Qualification {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String?   @db.Uuid
+  /// Agent families step 5: sites or clients that require this qualification.
+  credentialRequirements CredentialRequirement[]
+  id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId               String?                 @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  code        String
-  name        String
-  description String?
-  isCert      Boolean   @default(false)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
-  deletedAt   DateTime? @db.Timestamptz(6)
+  tenantId               String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  code                   String
+  name                   String
+  description            String?
+  isCert                 Boolean                 @default(false)
+  createdAt              DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
+  deletedAt              DateTime?               @db.Timestamptz(6)
 
   client                  Client?                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associateQualifications AssociateQualification[]
@@ -10208,6 +10214,58 @@ model DocumentChase {
 
   @@index([associateId, resolvedAt])
   @@index([tenantId, resolvedAt])
+}
+
+/// Agent families step 5 (lib/credentialCoverage): a credential everyone placed
+/// at a site (or at every site of a client) must hold. Exactly one target, by
+/// kind: a vaccination kind, a training by compliance tag, or a qualification.
+/// Soft-deleted so the weekly coverage rows keep their meaning.
+model CredentialRequirement {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId      String?          @db.Uuid
+  clientId        String?          @db.Uuid
+  /// VACCINATION | TRAINING | QUALIFICATION
+  kind            String           @db.VarChar(20)
+  vaccinationKind VaccinationKind?
+  complianceTag   ComplianceTag?
+  qualificationId String?          @db.Uuid
+  /// What the desk and the person read ("TB test", "Food handler card").
+  label           String           @db.VarChar(120)
+  createdById     String?          @db.Uuid
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  deletedAt       DateTime?        @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  location      Site?                    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  client        Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  qualification Qualification?           @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+  weeks         CredentialCoverageWeek[]
+
+  @@index([tenantId, deletedAt])
+  @@index([locationId])
+  @@index([clientId])
+}
+
+/// One requirement's coverage as the Compliance agent measured it that week
+/// (org week start). Written once, never updated: gapsClosed compares weeks.
+model CredentialCoverageWeek {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requirementId String   @db.Uuid
+  weekOf        DateTime @db.Date
+  /// People placed in scope.
+  population    Int
+  /// Of them, without a current credential.
+  missing       Int
+  missingIds    Json
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  requirement CredentialRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, weekOf])
+  @@index([tenantId, weekOf])
 }
 
 /// The tenant's own kill switch; one row per tenant. The AgentControl singleton is the platform's.

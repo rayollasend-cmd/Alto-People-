@@ -199,8 +199,8 @@ export const BUILT_IN_AGENTS = [
     modelVersion: '1',
     environment: 'PRODUCTION',
     scopes: ['view:compliance', 'manage:compliance', 'manage:communications', 'view:org', 'open:hr-case'] as AgentScope[],
-    capabilities: ['document.chase', 'i9.section2', 'incident.loop'],
-    grants: ['document.chase', 'i9.section2', 'incident.loop'],
+    capabilities: ['document.chase', 'i9.section2', 'incident.loop', 'coverage.credentials'],
+    grants: ['document.chase', 'i9.section2', 'incident.loop', 'coverage.credentials'],
     status: 'ONBOARDING',
   },
 ] as const satisfies readonly {
