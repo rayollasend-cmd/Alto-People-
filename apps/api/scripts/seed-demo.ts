@@ -695,7 +695,7 @@ async function main() {
       const sentAt = new Date(s.startsAt.getTime() - 26 * HOUR);
       if (sentAt > now) continue;
       const answered = rng.chance(0.85);
-      await prisma.attendanceConfirmation.create({ data: { shiftId: s.id, associateId, workerId: workforceAgent, channel: 'WHATSAPP', sentAt, cutoffAt: new Date(s.startsAt.getTime() - 12 * HOUR), ...(answered ? { answer: 'YES', answeredAt: minutes(sentAt, rng.int(5, 240)), answeredVia: 'whatsapp' } : {}) } });
+      await prisma.attendanceConfirmation.create({ data: { shiftId: s.id, associateId, workerId: workforceAgent, channel: 'WHATSAPP', sentAt, cutoffAt: new Date(s.startsAt.getTime() - 12 * HOUR), ...(answered ? { answer: 'YES', answeredAt: minutes(sentAt, rng.int(5, 240)), answeredVia: 'WHATSAPP' } : {}) } });
       audit.push({ workerId: workforceAgent, action: 'agent.attendance_confirm.sent', entityType: 'Shift', entityId: s.id, metadata: { capability: 'attendance.confirm', channel: 'whatsapp' }, createdAt: sentAt });
       count('attendanceConfirmations');
     }
