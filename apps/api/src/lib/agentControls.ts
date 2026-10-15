@@ -6,7 +6,9 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { revokeAllCredentials, type BuiltInAgentKey } from './agents.js';
-import { detectIntent } from './whatsappAssistant.js';
+// The registry itself (lib/hugo: no imports of ours), not the assistant: importing
+// whatsappAssistant here closed an import cycle back into agentCapabilities.
+import { detectHugoIntent } from './hugo.js';
 import { updateWorker } from './workers.js';
 import { capabilityRunnable, catalogFixture, runCapabilityFixture } from './agentCapabilities.js';
 
@@ -136,7 +138,7 @@ export function evaluateScenario(expected: Expected, answer: AgentScenarioAnswer
 export function runBuiltIn(key: BuiltInAgentKey | null, input: Record<string, unknown>): AgentScenarioAnswer | null {
   if (key === 'whatsapp-assistant') {
     const text = typeof input.text === 'string' ? input.text : '';
-    const r = detectIntent(text);
+    const r = detectHugoIntent(text, { channel: 'whatsapp', audience: 'associate', moduleOn: () => true, capabilityOn: () => true });
     return { output: { intent: r.intent, ...(r.lang ? { lang: r.lang } : {}) }, actions: [r.intent === 'HANDOFF' ? 'handoff' : 'reply'] };
   }
   return null;

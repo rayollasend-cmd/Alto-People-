@@ -394,6 +394,16 @@ export const WA_REPLY = {
       },
       lang,
     ),
+  /** document.chase, asked: nothing of theirs expires soon. */
+  noRenewals: (lang: WaLang) =>
+    say(
+      {
+        en: 'Nothing of yours expires in the next 30 days.',
+        es: 'Nada tuyo vence en los próximos 30 días.',
+        tr: 'Önümüzdeki 30 gün içinde süresi dolan bir belgen yok.',
+      },
+      lang,
+    ),
   /** attendance.confirm: they said YES. */
   confirmedYes: (lang: WaLang, when: string) =>
     say(

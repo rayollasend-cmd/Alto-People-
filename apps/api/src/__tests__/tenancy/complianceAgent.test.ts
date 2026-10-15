@@ -6,6 +6,8 @@ import { catalogFixture, runCapabilityFixture, suspendCapability } from '../../l
 import { DOCUMENT_CHASE, I9_SECTION2, chaseKey, chaseMessage, runDocumentChase, runSection2Clock } from '../../lib/complianceAgent.js';
 import { addBusinessDays } from '../../lib/everifyReadiness.js';
 import { flushPendingAudits } from '../../lib/audit.js';
+import { runExpirationDigest } from '../../lib/expirationDigest.js';
+import { runWithTenant } from '../../lib/tenant.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
@@ -22,6 +24,7 @@ import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
  */
 
 const DAY = 86_400_000;
+const runTenant = <T,>(fn: () => Promise<T>) => runWithTenant(ALTO_TENANT_ID, 'job', fn);
 
 beforeEach(async () => {
   await truncateAll();
@@ -61,12 +64,13 @@ describe('document.chase', () => {
   it('asks in their language at 30 and 14 days, once a day, and closes when the renewal is on file', async () => {
     const w = await world();
     const now = new Date();
-    await doc(w.ana.id, 'ID', new Date(now.getTime() + 20 * DAY));
+    const id = await doc(w.ana.id, 'ID', new Date(now.getTime() + 20 * DAY));
 
     expect(await runDocumentChase(prisma, now)).toMatchObject({ messages: 1, chased: 1 });
     await flushPendingNotifications();
     const [first] = await notices(w.anaUser.id);
-    expect(first).toMatchObject({ subject: 'Renueva tu identificación', linkUrl: '/documents' });
+    // The link opens that document's renewal on the Documents page.
+    expect(first).toMatchObject({ subject: 'Renueva tu identificación', linkUrl: `/documents?renew=${id.id}` });
     expect(first!.body).toMatch(/Sube el nuevo en la app, en Documentos/);
     expect((await chases(w.ana.id))[0]).toMatchObject({ stage: 1, kind: 'DOCUMENT' });
 
@@ -138,6 +142,46 @@ describe('document.chase', () => {
     expect(chaseMessage('tr', items).subject).toBe('çalışma izni yenilenmeli');
     expect(chaseMessage('en', items).body).toMatch(/^These expire soon:\n• work authorization: November 2\n/);
     expect(chaseMessage('en', [...items, { wordKey: 'ID', expiresAt: new Date('2026-11-03T00:00:00Z') }]).subject).toBe('2 documents to renew');
+  });
+});
+
+describe('the expiration digest', () => {
+  it('now lists what already expired (as its comment always promised), leaving out the waived', async () => {
+    const w = await world();
+    const now = new Date();
+    await doc(w.ana.id, 'ID', new Date(now.getTime() - 2.5 * DAY));
+    const bob = await createAssociate({ firstName: 'Bob', lastName: 'Waived' });
+    const waived = await doc(bob.id, 'ID', new Date(now.getTime() - 3 * DAY));
+    await prisma.complianceActionState.create({ data: { actionKey: chaseKey('DOCUMENT', bob.id, waived.expiresAt!), status: 'DONE' } });
+    await runTenant(() => runExpirationDigest(now));
+    await flushPendingNotifications();
+    const digest = await prisma.notification.findFirst({ where: { recipientUserId: w.hr.id, category: 'compliance.expirations', channel: 'IN_APP' } });
+    expect(digest?.subject).toBe('[Compliance] 1 item expired or expiring within 30 days');
+    expect(digest?.body).toContain('Ana Lopez — Id — id.pdf: EXPIRED 2 days ago');
+    expect(digest?.body).not.toContain('Bob');
+  });
+});
+
+describe('Hugo, asked what to renew (routes to document.chase)', () => {
+  it('an associate hears their own renewals in their language, linked to the first one; nothing due, he says so', async () => {
+    const w = await world();
+    const ana = await loginAs(agent(), w.anaUser.email);
+    const me = await ana.get('/hugo');
+    expect(me.body.can.map((c: { key: string }) => c.key)).toContain('RENEW');
+    expect((await ana.post('/hugo/ask').send({ text: '¿Qué tengo que renovar?' })).body).toMatchObject({ intent: 'RENEW', reply: 'Nada tuyo vence en los próximos 30 días.' });
+    const id = await doc(w.ana.id, 'ID', new Date(Date.now() + 20 * DAY));
+    const asked = await ana.post('/hugo/ask').send({ text: '¿Qué tengo que renovar?' });
+    expect(asked.body.intent).toBe('RENEW');
+    expect(asked.body.reply).toMatch(/^Estos vencen pronto:\n• identificación: /);
+    expect(asked.body.linkUrl).toBe(`/documents?renew=${id.id}`);
+  });
+
+  it('with the capability suspended he neither offers nor answers it', async () => {
+    const w = await world();
+    await suspendCapability(prisma, w.workerId, DOCUMENT_CHASE, ALTO_TENANT_ID, w.hr.id, 'Checking the wording');
+    const ana = await loginAs(agent(), w.anaUser.email);
+    expect((await ana.get('/hugo')).body.can.map((c: { key: string }) => c.key)).not.toContain('RENEW');
+    expect((await ana.post('/hugo/ask').send({ text: 'What do I need to renew?' })).body.intent).toBe('HANDOFF');
   });
 });
 

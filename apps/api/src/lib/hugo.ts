@@ -25,6 +25,7 @@ export type HugoIntentKey =
   | 'HELP'
   | 'DESK'
   | 'COVERAGE'
+  | 'RENEW'
   | 'PAYDAY'
   | 'RIDE'
   | 'SCHEDULE'
@@ -69,6 +70,7 @@ const WHO = /\b(who are you|what are you|are you (a |an )?(bot|robot|ai|human|re
 const HELP = /\b(help|what can you do|what do you do|ayuda|ayudame|que puedes hacer|que haces|yardim|neler yapabilirsin|ne yapabilirsin)\b/;
 const DESK = /\b(waiting on me|my desk|my queue|to approve|approvals?|proposals?|pending|what are you doing|que estas haciendo|pendientes?|aprobar|bekleyen|bekliyor|onay\w*|ne yapiyorsun)\b/;
 const COVERAGE = /\b(coverage|covered|short|shortfall|staffing|staffed|understaffed|gaps?|cobertura|faltan?|falta gente|personal|eksik|kadro)\b/;
+const RENEW = /\b(renew\w*|expir\w*|my documents?|my papers|documents?|papers|renovar|vence\w*|vencid\w*|documentos?|papeles|yenile\w*|suresi|belge\w*)\b/;
 const PAYDAY = /\b(pay ?day|paid|pay\b|paycheck|paystub|cobr\w*|pago|pagan|sueldo|nomina|maas|odeme|para)\b/;
 const RIDE = /\b(ride|van|pick ?up|bus|shuttle|viaje|camioneta|recog\w*|transporte|servis|arac|minibus|ulasim)\b/;
 const SCHEDULE = /\b(schedule|shift|shifts|work|working|hours|horario|turno|turnos|trabajo|vardiya|calis\w*|program\w*|mesai)\b/;
@@ -122,6 +124,15 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
     requiresModule: 'scheduling',
     match: (t) => COVERAGE.test(t),
     help: h(['Coverage for the next 7 days', 'Where are we short this week?'], ['Cobertura de los próximos 7 días', '¿Dónde nos falta gente esta semana?'], ['Önümüzdeki 7 günün kadrosu', 'Bu hafta nerede eksik var?']),
+  },
+  {
+    key: 'RENEW',
+    capability: 'document.chase',
+    audiences: ['associate'],
+    channels: ['whatsapp', 'app'],
+    requiresModule: 'compliance',
+    match: (t) => RENEW.test(t),
+    help: h(['Documents to renew', 'What do I need to renew?'], ['Documentos por renovar', '¿Qué tengo que renovar?'], ['Yenilenecek belgeler', 'Neyi yenilemem gerekiyor?']),
   },
   {
     key: 'PAYDAY',

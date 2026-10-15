@@ -9,6 +9,7 @@ import { inProcessAgent, logBuiltInAgentAction } from '../lib/agents.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from '../lib/agentCapabilities.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { computeCoverageForecast } from '../lib/coverageForecast.js';
+import { answerRenewals } from '../lib/complianceAgent.js';
 import { detectHugoIntent, hugoAudienceOf, intentsFor, type HugoAudience, type HugoContext, type HugoIntentKey } from '../lib/hugo.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
@@ -126,6 +127,9 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
       break;
     case 'DESK':
       out = await answerDesk(user, tenantId, lang);
+      break;
+    case 'RENEW':
+      out = await answerRenewals(prisma, tenantId, user.associateId!, lang, now);
       break;
     case 'PAYDAY':
       out = { reply: await answerPayday(user.associateId!, lang, now), linkUrl: null };

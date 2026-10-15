@@ -5,6 +5,8 @@ import { notifyAllAdmins, notifyAssociate } from './notify.js';
 import { agreementReminderEmail } from './emailContent.js';
 import { buildExpirationsTile } from '../routes/complianceScorecard.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { chaseItems } from './complianceAgent.js';
+import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 
 /**
  * Daily compliance-expiration digest.
@@ -17,10 +19,21 @@ import { publicBaseUrl } from './emailLayout.js';
  * everything expiring within 30 days (expired items first). Sent only
  * when there is something to say; the daily cadence is the de-dup.
  */
-export async function runExpirationDigest(): Promise<{ notified: number }> {
+export async function runExpirationDigest(now: Date = new Date()): Promise<{ notified: number }> {
   const tile = await buildExpirationsTile();
-  // The red bucket IS the 0–30 day window (expired items included).
-  const soon = tile.buckets.red;
+  // The red bucket is the 0–30 day window: the tile reads from today on, so
+  // it never held the items already expired this comment always promised.
+  // Those come from the Compliance agent's read (lib/complianceAgent
+  // chaseItems: documents, work authorizations, vaccinations; waived, snoozed
+  // and renewed ones left out), whether or not the agent is switched on.
+  const expired = (await chaseItems(prisma, currentTenantId() ?? ALTO_TENANT_ID, now))
+    .filter((i) => i.expiresAt < now)
+    .map((i) => ({
+      daysUntil: -Math.max(1, Math.floor((now.getTime() - i.expiresAt.getTime()) / 86_400_000)),
+      label: i.label,
+      subject: { associateName: i.associateName as string | null, clientName: null as string | null },
+    }));
+  const soon = [...tile.buckets.red, ...expired];
   if (soon.length === 0) return { notified: 0 };
 
   const sorted = [...soon].sort((a, b) => a.daysUntil - b.daysUntil);
@@ -41,7 +54,7 @@ export async function runExpirationDigest(): Promise<{ notified: number }> {
     sorted.length > 40 ? `\n  …and ${sorted.length - 40} more.` : '';
 
   void notifyAllAdmins({
-    subject: `[Compliance] ${sorted.length} item${sorted.length === 1 ? '' : 's'} expiring within 30 days`,
+    subject: `[Compliance] ${sorted.length} item${sorted.length === 1 ? '' : 's'} expired or expiring within 30 days`,
     body:
       `Compliance items needing renewal:\n\n${lines}${overflow}\n\n` +
       `Full list: ${publicBaseUrl()}/compliance`,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Bus,
@@ -263,6 +264,28 @@ export function AssociateDocumentsView() {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     fileRef.current?.focus();
   };
+
+  // The Compliance agent's chase links here (agent families step 4):
+  // ?renew=<documentId> opens the renewal for that document, ?kind=<kind>
+  // preselects what to upload (a work authorization has no one document).
+  // Consumed once the documents load, then dropped from the URL.
+  const [params, setParams] = useSearchParams();
+  const renewParam = params.get('renew');
+  const kindParam = params.get('kind');
+  useEffect(() => {
+    if (!docs || (!renewParam && !kindParam)) return;
+    const target = renewParam ? docs.find((d) => d.id === renewParam) : undefined;
+    if (target) startRenewal(target);
+    else if (kindParam && (kindValues as readonly string[]).includes(kindParam)) {
+      setKind(kindParam as DocumentKind);
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const next = new URLSearchParams(params);
+    next.delete('renew');
+    next.delete('kind');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per deep link, when the documents arrive
+  }, [docs, renewParam, kindParam]);
 
   const pullState = usePullToRefresh(refresh);
 

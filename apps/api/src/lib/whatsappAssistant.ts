@@ -9,9 +9,9 @@ import { resolveStoreForAssociate, storeSupervisors } from './readyToWork.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { logBuiltInAgentAction } from './agents.js';
+import { tenantIdForWrite } from './tenant.js';
 import { getBrandingSync } from './branding.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
-import { answerFromWhatsApp } from './attendanceConfirm.js';
 
 /**
  * THE ASSISTANT — three questions, answered from the associate's own data.
@@ -166,7 +166,11 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
   let lang = toWaLang(user?.language);
   // Brief 2-1b / step 3: an intent whose module is off is not matched at all (the registry filters it).
   const profile = await loadTenantProfile();
-  const { intent, lang: wanted } = detectHugoIntent(msg.text, { channel: 'whatsapp', audience: 'associate', moduleOn: (m) => profile.modules[m], capabilityOn: () => true });
+  // A family capability Hugo routes to (RENEW → document.chase) is offered only while it runs.
+  // Loaded on use, like attendanceConfirm below: agentCapabilities must stay out of this module's import graph.
+  const { runningCapabilityKeys } = await import('./agentCapabilities.js');
+  const running = await runningCapabilityKeys(db, tenantIdForWrite());
+  const { intent, lang: wanted } = detectHugoIntent(msg.text, { channel: 'whatsapp', audience: 'associate', moduleOn: (m) => profile.modules[m], capabilityOn: (k) => running.has(k) });
 
   const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null) => {
     const sent = await sendWhatsApp(db, { associateId, text: () => text, lang, category: 'assistant', kind, replyToId: replyTo }, now);
@@ -179,6 +183,9 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
   // A bare YES/NO answers the Workforce agent's open ask, when there is one; otherwise it falls through.
   const yn = detectConfirmAnswer(msg.text);
   if (yn) {
+    // Loaded on use: attendanceConfirm reaches agentCapabilities, which must not be
+    // in this module's import graph (agentControls → … → here closed a cycle).
+    const { answerFromWhatsApp } = await import('./attendanceConfirm.js');
     const answered = await answerFromWhatsApp(db, associateId, yn, now);
     if (answered) {
       const tz = answered.shift.timezone ?? DEFAULT_TIMEZONE;
@@ -208,6 +215,10 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
       lang = wanted ?? lang;
       if (user) await db.user.update({ where: { id: user.id }, data: { language: lang } });
       return { intent, reply: await say(WA_REPLY.languageSet(lang), 'SYSTEM'), associateId };
+    }
+    case 'RENEW': {
+      const { answerRenewals } = await import('./complianceAgent.js');
+      return { intent, reply: await say((await answerRenewals(db, tenantIdForWrite(), associateId, lang, now)).reply), associateId };
     }
     case 'PAYDAY':
       return { intent, reply: await say(await answerPayday(associateId, lang, now)), associateId };

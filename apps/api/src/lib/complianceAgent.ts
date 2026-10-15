@@ -10,7 +10,7 @@ import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { moduleOn } from './tenantProfile.js';
 import { orgDateKey } from './timeAnomalies.js';
-import { toWaLang, type WaLang } from './whatsappContent.js';
+import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
 
 /**
  * The Compliance agent (agent families step 4;
@@ -76,6 +76,8 @@ export interface ChaseItem {
   /** English label for HR (the scorecard's wording). */
   label: string;
   expiresAt: Date;
+  /** Where the person renews it: that document's renewal, else the kind to upload. */
+  linkUrl: string;
 }
 
 /** The scorecard's action key: a waiver or snooze set there is read here (complianceScorecard.ts). */
@@ -88,16 +90,16 @@ const humanize = (s: string) => s.toLowerCase().replace(/_/g, ' ').replace(/^\w/
  * 90, held by someone employed, not superseded by a newer one of the same
  * kind, not waived (DONE) or snoozed on the scorecard.
  */
-export async function chaseItems(db: Db, tenantId: string, now: Date): Promise<ChaseItem[]> {
+export async function chaseItems(db: Db, tenantId: string, now: Date, opts: { associateId?: string } = {}): Promise<ChaseItem[]> {
   const from = new Date(now.getTime() - EXPIRED_LOOKBACK_DAYS * DAY_MS);
   const to = new Date(now.getTime() + WINDOW_DAYS * DAY_MS);
-  const employed = { tenantId, ...EMPLOYED_WHERE } satisfies Prisma.AssociateWhereInput;
+  const employed = { tenantId, ...EMPLOYED_WHERE, ...(opts.associateId ? { id: opts.associateId } : {}) } satisfies Prisma.AssociateWhereInput;
   const name = (a: { firstName: string; lastName: string }) => `${a.firstName} ${a.lastName}`.trim();
   const items: ChaseItem[] = [];
 
   const docs = await db.documentRecord.findMany({
     where: { tenantId, deletedAt: null, status: { not: 'REJECTED' }, kind: { in: [...CHASED_DOC_KINDS] }, expiresAt: { gte: from, lte: to }, associate: employed },
-    select: { associateId: true, kind: true, filename: true, expiresAt: true, createdAt: true, associate: { select: { firstName: true, lastName: true } } },
+    select: { id: true, associateId: true, kind: true, filename: true, expiresAt: true, createdAt: true, associate: { select: { firstName: true, lastName: true } } },
     take: 2_000,
   });
   if (docs.length) {
@@ -109,7 +111,7 @@ export async function chaseItems(db: Db, tenantId: string, now: Date): Promise<C
     for (const d of docs) {
       if (!d.associateId || !d.expiresAt) continue;
       if (newer.some((n) => n.associateId === d.associateId && n.kind === d.kind && n.createdAt > d.createdAt)) continue;
-      items.push({ itemKey: chaseKey('DOCUMENT', d.associateId, d.expiresAt), associateId: d.associateId, associateName: name(d.associate!), kind: 'DOCUMENT', wordKey: d.kind, label: `${humanize(d.kind)} — ${d.filename}`, expiresAt: d.expiresAt });
+      items.push({ itemKey: chaseKey('DOCUMENT', d.associateId, d.expiresAt), associateId: d.associateId, associateName: name(d.associate!), kind: 'DOCUMENT', wordKey: d.kind, label: `${humanize(d.kind)} — ${d.filename}`, expiresAt: d.expiresAt, linkUrl: `/documents?renew=${d.id}` });
     }
   }
 
@@ -119,7 +121,7 @@ export async function chaseItems(db: Db, tenantId: string, now: Date): Promise<C
     take: 2_000,
   });
   for (const r of i9) {
-    items.push({ itemKey: chaseKey('I9_WORK_AUTH', r.associateId, r.workAuthExpiresAt!), associateId: r.associateId, associateName: name(r.associate), kind: 'I9_WORK_AUTH', wordKey: 'I9_WORK_AUTH', label: 'I-9 work authorization', expiresAt: r.workAuthExpiresAt! });
+    items.push({ itemKey: chaseKey('I9_WORK_AUTH', r.associateId, r.workAuthExpiresAt!), associateId: r.associateId, associateName: name(r.associate), kind: 'I9_WORK_AUTH', wordKey: 'I9_WORK_AUTH', label: 'I-9 work authorization', expiresAt: r.workAuthExpiresAt!, linkUrl: '/documents?kind=I9_SUPPORTING' });
   }
 
   const vax = await db.vaccinationRecord.findMany({
@@ -135,7 +137,7 @@ export async function chaseItems(db: Db, tenantId: string, now: Date): Promise<C
     for (const v of vax) {
       if (later.some((l) => l.associateId === v.associateId && l.kind === v.kind && l.administeredOn > v.administeredOn)) continue;
       const label = v.kind === 'OTHER' && v.customLabel ? `Vaccination — ${v.customLabel}` : `Vaccination — ${humanize(v.kind)}`;
-      items.push({ itemKey: chaseKey('VACCINATION', v.associateId, v.expiresOn!), associateId: v.associateId, associateName: name(v.associate), kind: 'VACCINATION', wordKey: 'VACCINATION', label, expiresAt: v.expiresOn! });
+      items.push({ itemKey: chaseKey('VACCINATION', v.associateId, v.expiresOn!), associateId: v.associateId, associateName: name(v.associate), kind: 'VACCINATION', wordKey: 'VACCINATION', label, expiresAt: v.expiresOn!, linkUrl: '/documents' });
     }
   }
 
@@ -253,8 +255,10 @@ export async function runDocumentChase(db: Db = defaultPrisma, now: Date = new D
     if (recent) continue;
     const user = await db.user.findFirst({ where: { associateId, status: 'ACTIVE' }, select: { language: true } });
     const lang = toWaLang(user?.language);
+    list.sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
     const msg = chaseMessage(lang, list);
-    await notifyAssociate(associateId, { subject: msg.subject, body: msg.body, category: CHASE_CATEGORY, linkUrl: '/documents', emailFallback: true });
+    // The link opens the soonest one's renewal (AssociateDocumentsView reads ?renew / ?kind).
+    await notifyAssociate(associateId, { subject: msg.subject, body: msg.body, category: CHASE_CATEGORY, linkUrl: list[0]!.linkUrl, emailFallback: true });
     for (const i of list) {
       await db.documentChase.update({ where: { itemKey: i.itemKey }, data: { stage: chaseStage(i.expiresAt, now), lastSentAt: now } });
     }
@@ -263,6 +267,13 @@ export async function runDocumentChase(db: Db = defaultPrisma, now: Date = new D
     out.chased += list.length;
   }
   return out;
+}
+
+/** Hugo, asked "what do I need to renew?": the same read as the chase, this person only. */
+export async function answerRenewals(db: Db, tenantId: string, associateId: string, lang: WaLang, now: Date): Promise<{ reply: string; linkUrl: string | null }> {
+  const mine = (await chaseItems(db, tenantId, now, { associateId })).sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
+  if (!mine.length) return { reply: WA_REPLY.noRenewals(lang), linkUrl: null };
+  return { reply: chaseMessage(lang, mine).body, linkUrl: mine[0]!.linkUrl };
 }
 
 /* ---------------------------------------------------------- i9.section2 */
