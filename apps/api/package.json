@@ -15,6 +15,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "tsx prisma/seed.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
     "db:studio": "prisma studio",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "lint": "eslint src"

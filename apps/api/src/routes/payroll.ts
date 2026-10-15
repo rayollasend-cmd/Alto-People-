@@ -780,7 +780,7 @@ payrollRouter.post('/runs', PROCESS, idempotent, async (req, res, next) => {
  * persists items/earnings/garnishments/reimbursements, prunes items whose
  * associate fell out of the projection, and refreshes run totals.
  */
-async function aggregateAndPersistRun(
+export async function aggregateAndPersistRun(
   tx: Prisma.TransactionClient,
   run: { id: string; clientId: string | null; periodStart: Date; periodEnd: Date },
   defaultRate: number,
