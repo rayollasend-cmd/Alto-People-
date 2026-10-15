@@ -5,6 +5,11 @@ import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import type { Prisma } from '@prisma/client';
+import { requireCapability } from '../middleware/auth.js';
+import { recordCriticalAudit } from '../lib/audit.js';
+import { MIN_RETENTION_YEARS, retentionYearsFor, verifyAuditChain } from '../lib/auditChain.js';
+import { createAuditSink } from '../lib/auditSink.js';
 
 export const auditRouter = Router();
 
@@ -138,3 +143,116 @@ auditRouter.get('/logs.csv', async (req, res, next) => {
 function csvEscape(v: string): string {
   return sharedCsvCell(v);
 }
+
+// ---------------------------------------------------------------------------
+// Brief 2-3 step 4 — audit depth: the full export, the hash chain, retention,
+// archives and the SIEM sink. Reads are view:audit (the router's gate);
+// changes are manage:org.
+// ---------------------------------------------------------------------------
+
+const MANAGE = requireCapability('manage:org');
+
+/**
+ * GET /audit/export.csv — every row matching the filters, uncapped, streamed
+ * in batches (an org admin's full extract). The chain columns ride along so
+ * the file can be checked against the chain.
+ */
+auditRouter.get('/export.csv', MANAGE, async (req, res) => {
+  const f = parseFilters(req);
+  const where = buildWhere(f);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="alto-audit-full-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.write('seq,createdAt,action,actorEmail,entityType,entityId,clientId,metadata,hash\n');
+  let cursor: { createdAt: Date; id: string } | null = null;
+  for (;;) {
+    const batch: Array<{ id: string; seq: bigint | null; createdAt: Date; action: string; entityType: string; entityId: string; clientId: string | null; metadata: unknown; hash: string | null; actorUser: { email: string } | null }> = await prisma.auditLog.findMany({
+      where: cursor ? { AND: [where, { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }] } : where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 5000,
+      include: { actorUser: { select: { email: true } } },
+    });
+    for (const r of batch) {
+      const cols = [r.seq === null ? '' : String(r.seq), r.createdAt.toISOString(), r.action, r.actorUser?.email ?? '', r.entityType, r.entityId, r.clientId ?? '', r.metadata ? JSON.stringify(r.metadata) : '', r.hash ?? ''].map(csvEscape);
+      if (!res.write(cols.join(',') + '\n')) await new Promise((resolve) => res.once('drain', resolve));
+    }
+    if (batch.length < 5000) break;
+    const last = batch[batch.length - 1]!;
+    cursor = { createdAt: last.createdAt, id: last.id };
+  }
+  res.end();
+});
+
+const bigintSafe = <T extends Record<string, unknown>>(r: T) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'bigint' ? String(v) : v]));
+
+/** GET /audit/integrity — the chain's last checks, retention, archives and the sink, for this tenant. */
+auditRouter.get('/integrity', async (_req, res) => {
+  const tenantId = tenantIdForWrite();
+  const [checks, retentionYears, archives, sink] = await Promise.all([
+    prisma.auditChainCheck.findMany({ where: { tenantId }, orderBy: { checkedAt: 'desc' }, take: 10 }),
+    retentionYearsFor(prisma, tenantId),
+    prisma.auditArchive.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, take: 20 }),
+    prisma.auditSink.findUnique({ where: { tenantId }, include: { deliveries: { orderBy: { createdAt: 'desc' }, take: 10 } } }),
+  ]);
+  res.json({
+    checks: checks.map(bigintSafe),
+    retentionYears,
+    minRetentionYears: MIN_RETENTION_YEARS,
+    archives: archives.map(bigintSafe),
+    sink: sink
+      ? {
+          id: sink.id,
+          url: sink.url,
+          enabled: sink.enabled,
+          cursorSeq: String(sink.cursorSeq),
+          failures: sink.failures,
+          nextAttemptAt: sink.nextAttemptAt,
+          lastDeliveredAt: sink.lastDeliveredAt,
+          lastError: sink.lastError,
+          deliveries: sink.deliveries.map(bigintSafe),
+        }
+      : null,
+  });
+});
+
+/** POST /audit/integrity/verify — check this tenant's chain now. */
+auditRouter.post('/integrity/verify', MANAGE, async (_req, res) => {
+  const tenantId = tenantIdForWrite();
+  const r = await verifyAuditChain(prisma, tenantId);
+  await prisma.auditChainCheck.create({ data: { tenantId, rows: r.rows, headSeq: r.headSeq, headHash: r.headHash, ok: r.breaks.length === 0, breaks: r.breaks as unknown as Prisma.InputJsonArray } });
+  res.json({ ok: r.breaks.length === 0, rows: r.rows, headSeq: r.headSeq === null ? null : String(r.headSeq), breaks: r.breaks });
+});
+
+/** PUT /audit/integrity/retention — { years }: never below the legal floor. */
+auditRouter.put('/integrity/retention', MANAGE, async (req, res) => {
+  const { years } = z.object({ years: z.number().int().min(MIN_RETENTION_YEARS).max(50) }).parse(req.body);
+  const tenantId = tenantIdForWrite();
+  const before = await retentionYearsFor(prisma, tenantId);
+  await prisma.tenant.update({ where: { id: tenantId }, data: { auditRetentionYears: years } });
+  await recordCriticalAudit({ actorUserId: req.user!.id, tenantId, action: 'audit.retention_changed', entityType: 'Tenant', entityId: tenantId, metadata: { before: { years: before }, after: { years } } }, 'audit.retention_changed');
+  res.json({ retentionYears: years });
+});
+
+/** PUT /audit/integrity/sink — { url }: start (or re-key) the SIEM stream; the signing secret is shown once. */
+auditRouter.put('/integrity/sink', MANAGE, async (req, res) => {
+  const { url } = z.object({ url: z.string().url().max(500).startsWith('https://') }).parse(req.body);
+  const tenantId = tenantIdForWrite();
+  let made: { id: string; secret: string };
+  try {
+    made = await createAuditSink(prisma, tenantId, url, req.user!.id);
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(400, 'unsafe_url', err instanceof Error ? err.message : 'That address cannot receive the stream.');
+  }
+  await recordCriticalAudit({ actorUserId: req.user!.id, tenantId, action: 'audit.sink_configured', entityType: 'AuditSink', entityId: made.id, metadata: { url } }, 'audit.sink_configured');
+  res.json({ id: made.id, secret: made.secret });
+});
+
+/** POST /audit/integrity/sink/disable — stop the stream (the cursor is kept). */
+auditRouter.post('/integrity/sink/disable', MANAGE, async (req, res) => {
+  const tenantId = tenantIdForWrite();
+  const sink = await prisma.auditSink.findUnique({ where: { tenantId } });
+  if (!sink) throw new HttpError(404, 'not_found', 'No sink is configured.');
+  await prisma.auditSink.update({ where: { id: sink.id }, data: { enabled: false } });
+  await recordCriticalAudit({ actorUserId: req.user!.id, tenantId, action: 'audit.sink_disabled', entityType: 'AuditSink', entityId: sink.id, metadata: { url: sink.url } }, 'audit.sink_disabled');
+  res.json({ ok: true });
+});

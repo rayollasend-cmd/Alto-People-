@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
 import type { AuditSearchEntry } from '@alto-people/shared';
@@ -35,6 +35,9 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDateTime } from '@/lib/format';
+
+// Brief 2-3 step 4: the chain, retention and SIEM panel, in its own chunk.
+const AuditIntegrity = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditIntegrity })));
 
 import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 
@@ -183,6 +186,10 @@ export function AuditHome() {
           </Button>
         }
       />
+
+      <Suspense fallback={null}>
+        <AuditIntegrity />
+      </Suspense>
 
       <Card className="mb-4">
         <CardHeader>

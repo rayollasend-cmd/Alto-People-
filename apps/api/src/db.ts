@@ -1,6 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { guardTenantQuery } from './lib/tenantGuard.js';
-import { markRequestAudited } from './lib/auditRequestContext.js';
+import { auditRequestStore, markRequestAudited, trackSideAudit } from './lib/auditRequestContext.js';
+import { AUDITED_MODELS, auditDiff, updatedFields } from './lib/auditDiff.js';
 
 // Singleton across `tsx watch` reloads — without this, dev mode opens a new
 // Prisma connection pool on every file change and exhausts Postgres slots.
@@ -72,28 +73,66 @@ function makeClient(): PrismaClient {
         args = guardTenantQuery(model, operation, args) as typeof args;
         // Brief 2-3 step 1: a direct audit insert counts as this request's audit row (the floor stands down).
         if (model === 'AuditLog' && (operation === 'create' || operation === 'createMany')) markRequestAudited();
-        const delays = [0, 800, 2000];
-        let lastErr: unknown;
-        for (let i = 0; i < delays.length; i++) {
-          const d = delays[i];
-          if (d > 0) await new Promise((r) => setTimeout(r, d));
-          try {
-            return await query(args);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (!/P1001|Can't reach database server|connection/i.test(msg)) throw err;
-            lastErr = err;
-            if (i === 0 && process.env.NODE_ENV !== 'test') {
-              console.warn(
-                `[db] transient connect failure on ${model ?? '?'}.${operation}; retrying`,
-              );
+        const exec = async (): Promise<unknown> => {
+          const delays = [0, 800, 2000];
+          let lastErr: unknown;
+          for (let i = 0; i < delays.length; i++) {
+            const d = delays[i];
+            if (d > 0) await new Promise((r) => setTimeout(r, d));
+            try {
+              return await query(args);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (!/P1001|Can't reach database server|connection/i.test(msg)) throw err;
+              lastErr = err;
+              if (i === 0 && process.env.NODE_ENV !== 'test') {
+                console.warn(
+                  `[db] transient connect failure on ${model ?? '?'}.${operation}; retrying`,
+                );
+              }
             }
           }
+          throw lastErr;
+        };
+        // Brief 2-3 step 4: a sensitive model's update carries its masked before/after.
+        if (operation === 'update' && model && model in AUDITED_MODELS) {
+          return auditedUpdate(model, args as { where: object; data: object }, exec);
         }
-        throw lastErr;
+        return exec();
       },
     },
   }) as unknown as PrismaClient;
+
+  async function auditedUpdate(model: string, args: { where: object; data: object }, run: () => Promise<unknown>): Promise<unknown> {
+    const fields = updatedFields(args.data);
+    const watch = AUDITED_MODELS[model];
+    if (!fields.some((f) => watch === null || watch?.includes(f))) return run();
+    const delegate = (base as unknown as Record<string, { findUnique(a: object): Promise<Record<string, unknown> | null> }>)[model[0]!.toLowerCase() + model.slice(1)]!;
+    const before = await delegate.findUnique({ where: args.where }).catch(() => null);
+    const result = (await run()) as Record<string, unknown> | null;
+    // A narrowed `select` may leave the fields out of the result; the update's own values fill in.
+    const after = result ? { ...before, ...Object.fromEntries(fields.filter((f) => !(f in result)).map((f) => [f, (args.data as Record<string, unknown>)[f]])), ...result } : null;
+    const diff = auditDiff(model, fields, before, after);
+    if (diff) {
+      const ctx = auditRequestStore.getStore();
+      const tenantId = (after?.tenantId ?? before?.tenantId ?? null) as string | null;
+      trackSideAudit(
+        base.auditLog
+          .create({
+            data: {
+              actorUserId: ctx?.actorUserId ?? null,
+              ...(tenantId ? { tenantId } : {}),
+              action: 'data.changed',
+              entityType: model,
+              entityId: String(after?.id ?? before?.id ?? ''),
+              metadata: { changed: diff.changed, before: diff.before, after: diff.after, requestId: ctx?.requestId ?? null } as Prisma.InputJsonObject,
+            },
+          })
+          .catch((err) => console.error(`[db] before/after audit for ${model} failed:`, err)),
+      );
+    }
+    return result;
+  }
 }
 
 export const prisma: PrismaClient = globalThis.__altoPrisma__ ?? makeClient();

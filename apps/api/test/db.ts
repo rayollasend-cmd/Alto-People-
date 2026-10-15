@@ -148,6 +148,10 @@ const TABLES = [
   'TenantRole',
   'ScimGroup',
   'ScimGroupRoleMap',
+  // Brief 2-3 step 4: the chain verifier's runs, archives and SIEM sinks.
+  'AuditChainCheck',
+  'AuditArchive',
+  'AuditSink',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

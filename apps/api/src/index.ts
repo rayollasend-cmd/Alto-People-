@@ -52,6 +52,7 @@ import { startLaborShadowCron } from './lib/laborRules/shadow.js';
 import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
 import { startBillingCron } from './lib/billing.js';
 import { startSecurityAlertsCron } from './lib/securityAlerts.js';
+import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
@@ -164,6 +165,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startBillingCron(prisma);
   // Brief 2-5 step 7: alerts from the audit trail to the security contact and the operator's admins.
   startSecurityAlertsCron(prisma);
+  // Brief 2-3 step 4: each tenant's SIEM sink, every minute.
+  startAuditSinkCron(prisma);
   void Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)]).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
   // quarter hour, so an import that bypassed the API still ends up owned.

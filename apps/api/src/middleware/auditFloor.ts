@@ -108,7 +108,7 @@ export function auditFloor(req: Request, res: Response, next: NextFunction): voi
     next();
     return;
   }
-  const state: AuditRequestState = { audited: false };
+  const state: AuditRequestState = { audited: false, actorUserId: req.user?.id ?? null, requestId: req.id ?? null };
   const originalEnd = res.end;
   let ending = false;
   let pending = false;

@@ -2,7 +2,7 @@ import type { Request } from 'express';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from './logger.js';
-import { markRequestAudited } from './auditRequestContext.js';
+import { markRequestAudited, sideAuditWrites } from './auditRequestContext.js';
 // Static, not a dynamic import: this runs on every sign-in, and a
 // deferred module load on a security-critical path buys nothing and adds
 // a first-call stall plus an init race. The graph is acyclic — nothing
@@ -86,8 +86,8 @@ export async function recordCriticalAudit(
 
 /** Test-only: resolves once every queued audit insert has settled. */
 export async function flushPendingAudits(): Promise<void> {
-  while (inFlight.size > 0) {
-    await Promise.allSettled(Array.from(inFlight));
+  while (inFlight.size > 0 || sideAuditWrites.size > 0) {
+    await Promise.allSettled([...inFlight, ...sideAuditWrites]);
   }
 }
 

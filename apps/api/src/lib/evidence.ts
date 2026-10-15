@@ -175,6 +175,8 @@ export async function runEvidenceSweep(db: Db = defaultPrisma, now: Date = new D
     ['tls-database', () => c.tlsDatabase(db)],
     ['blob-encryption', () => c.blobEncryption()],
     ['audit-log-immutability', () => c.auditLogImmutability(db)],
+    // Brief 2-3 step 4: every tenant's hash chain recomputed; a break is a FAIL and an alert.
+    ['audit-chain', async () => (await import('./auditChain.js')).auditChainEvidence(db)],
     // Brief 2-5 step 7: the alert rules are armed and what they raised was delivered.
     ['auth-anomaly-alerting', () => c.alertingResult(db, ['FAILED_SIGNINS_IP', 'LOCKED_ACCOUNT', 'MFA_OFF_ADMIN'], now)],
     ['privilege-change-alerting', () => c.alertingResult(db, ['PRIVILEGE_CHANGE'], now)],
@@ -186,6 +188,15 @@ export async function runEvidenceSweep(db: Db = defaultPrisma, now: Date = new D
     if (recent) continue;
     const id = await recordEvidence(control, 'evidenceSweep', await collect(), db);
     if (id) recorded.push(control);
+  }
+  // Brief 2-3 step 4: rows past each tenant's retention go to the encrypted archive (never deleted).
+  const { archiveAuditRows } = await import('./auditChain.js');
+  for (const t of await db.tenant.findMany({ select: { id: true } })) {
+    try {
+      if ((await archiveAuditRows(db, t.id, now)).archived) recorded.push(`audit-archive:${t.id}`);
+    } catch (err) {
+      console.error('[alto-people/api] audit archive failed:', err);
+    }
   }
   // Brief 2-5 step 6: the quarterly access review, once a quarter, waiting for its sign-off.
   const { runQuarterlyAccessReview } = await import('./accessReview.js');

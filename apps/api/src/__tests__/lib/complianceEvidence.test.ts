@@ -68,7 +68,7 @@ describe('the evidence record', () => {
 
   it('the sweep records each daily control once a day; the per-job secrets by name only', async () => {
     // Brief 2-5 step 4: the daily controls ride the same sweep.
-    expect((await runEvidenceSweep(prisma)).recorded).toEqual(['job-secrets-separated', 'field-encryption-inventory', 'tls-web', 'tls-database', 'blob-encryption', 'audit-log-immutability', 'auth-anomaly-alerting', 'privilege-change-alerting', 'export-alerting', 'access-review']);
+    expect((await runEvidenceSweep(prisma)).recorded).toEqual(['job-secrets-separated', 'field-encryption-inventory', 'tls-web', 'tls-database', 'blob-encryption', 'audit-log-immutability', 'audit-chain', 'auth-anomaly-alerting', 'privilege-change-alerting', 'export-alerting', 'access-review']);
     expect((await runEvidenceSweep(prisma)).recorded).toEqual([]);
     const row = await prisma.complianceEvidence.findFirstOrThrow({ where: { control: 'job-secrets-separated' } });
     expect(['PASS', 'WARN']).toContain(row.status);
