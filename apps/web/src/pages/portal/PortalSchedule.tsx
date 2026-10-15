@@ -7,7 +7,6 @@ import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtDayHeaderTz, fmtShiftRangeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +15,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CoverageHeatmap, DetailsTable, WeekFillChart, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
+import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
 
 /**
@@ -159,8 +159,9 @@ export function PortalSchedule() {
   const today = ymdLocal();
 
   return (
-    <div className="mx-auto space-y-4 print-area">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto space-y-4 print-area"
         title={data ? (data.store ? data.store.name : data.client.name) : t('portal.schedule')}
         topbarTitle={t('portal.schedule')}
         subtitle={
@@ -198,7 +199,7 @@ export function PortalSchedule() {
             {t('portal.print')}
           </Button>
         }
-      />
+    >
 
       <div className="sticky top-0 z-10 -mx-4 flex items-center justify-between gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
         <Button size="sm" variant="ghost" onClick={() => goWeek(-1)} aria-label={t('portal.prevWeek')}>
@@ -391,6 +392,6 @@ export function PortalSchedule() {
           </Card>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }

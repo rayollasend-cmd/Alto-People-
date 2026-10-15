@@ -3,9 +3,9 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import { PortalRequests, type ReqKind, type RequestPrefill } from './PortalRequests';
 
 /**
@@ -43,8 +43,9 @@ export function PortalRequestsPage() {
     return <EmptyState icon={MessageSquare} title={t('portal.noAccess')} description="" />;
   }
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-3xl space-y-4"
         title={t('portal.reqTitle')}
         subtitle={t('portal.reqDialogHint')}
         breadcrumbs={[{ label: t('portal.title'), to: '/portal' }]}
@@ -56,8 +57,8 @@ export function PortalRequestsPage() {
             </Link>
           </Button>
         }
-      />
+    >
       <PortalRequests prefill={prefill} />
-    </div>
+    </ListTemplate>
   );
 }

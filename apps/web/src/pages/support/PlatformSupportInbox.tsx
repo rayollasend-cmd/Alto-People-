@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Textarea } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { QueryError } from '@/components/ui/QueryError';
 
 /**
@@ -75,8 +75,11 @@ export function PlatformSupportInbox() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['support', 'inbox'], queryFn: () => apiFetch<{ requests: InboxRequest[] }>('/support/inbox') });
   return (
-    <div className="space-y-5">
-      <PageHeader title="Support inbox" subtitle="Every customer’s open requests, oldest first." breadcrumbs={[{ label: 'Platform' }, { label: 'Support inbox' }]} />
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
+        title="Support inbox" subtitle="Every customer’s open requests, oldest first." breadcrumbs={[{ label: 'Platform' }, { label: 'Support inbox' }]}
+    >
       {q.isError ? (
         <QueryError what="the support inbox" query={q} />
       ) : (
@@ -94,6 +97,6 @@ export function PlatformSupportInbox() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </ListTemplate>
   );
 }

@@ -39,7 +39,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -53,6 +52,7 @@ import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
+import { ListTemplate } from '@/components/templates';
 import { statusTone } from '@/lib/status';
 
 type Tab = 'osha' | 'wc' | 'eeo';
@@ -68,12 +68,13 @@ export function OshaWcEeoHome() {
   }, [clients]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="OSHA · WC · EEO-1"
         subtitle="OSHA injury log, Workers' Comp class codes, and EEO-1 race/gender/category reporting."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'OSHA · WC · EEO' }]}
-      />
+    >
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
           <span className="text-xs2 uppercase tracking-wider text-silver">Client</span>
@@ -106,7 +107,7 @@ export function OshaWcEeoHome() {
           {clientId && <EeoTab clientId={clientId} />}
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

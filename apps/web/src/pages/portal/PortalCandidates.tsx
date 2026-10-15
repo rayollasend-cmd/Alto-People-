@@ -23,8 +23,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { scopeParams } from './scope';
 
 /**
@@ -204,8 +204,9 @@ export function PortalCandidates() {
   );
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-3xl space-y-4"
         title={t('portal.candTitle')}
         subtitle={t('portal.candHint')}
         breadcrumbs={[{ label: t('portal.title'), to: '/portal' }]}
@@ -217,7 +218,7 @@ export function PortalCandidates() {
             </Link>
           </Button>
         }
-      />
+    >
 
       {!isPortal && <p className="text-xs text-silver/70">{t('portal.candPreview')}</p>}
 
@@ -298,6 +299,6 @@ export function PortalCandidates() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ListTemplate>
   );
 }

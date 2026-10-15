@@ -43,11 +43,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { AsOf } from '@/components/ui/AsOf';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE, HANDOVER_KIND_ICON, HANDOVER_KIND_LABEL, PERIOD_LABEL } from '../ops/opsVisuals';
+import { ListTemplate } from '@/components/templates';
 import { scopeParams, shiftDays } from './scope';
 
 /**
@@ -112,8 +112,9 @@ export function PortalOps() {
     return <EmptyState icon={ClipboardCheck} title="Store operations" description="Pick a client to preview." />;
   }
   return (
-    <div className="mx-auto max-w-6xl print-area">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-6xl print-area"
         title="Store operations"
         subtitle="Every department's SOP, shift by shift — what's late, what's unsafe, what got done."
         breadcrumbs={[{ label: 'My store', to: `/portal${scopeQs}` }]}
@@ -125,9 +126,9 @@ export function PortalOps() {
             </Link>
           </Button>
         }
-      />
+    >
       <StoreOps />
-    </div>
+    </ListTemplate>
   );
 }
 

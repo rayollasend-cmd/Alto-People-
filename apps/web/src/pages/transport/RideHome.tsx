@@ -40,7 +40,6 @@ import { SoundToggle } from '@/components/transport/SoundToggle';
 import { useRiderAlerts } from './useRiderAlerts';
 import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
 import { fmtWindow, shiftTargetIso, windowForShift } from './shiftTrips';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { Badge } from '@/components/ui/Badge';
@@ -55,6 +54,7 @@ import { TripMap, tripStage } from './TripMap';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { PickupPicker, type Pickup } from './PickupPicker';
+import { ListTemplate } from '@/components/templates';
 import {
   Dialog,
   DialogContent,
@@ -146,11 +146,12 @@ export function RideHome() {
   const riding = authorized && sortedLive(data!.rides, Date.now()).length > 0;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-3xl"
         title={t('ride.title')}
         subtitle={riding ? undefined : t('ride.subtitle')}
-        className={riding ? 'mb-3 md:mb-5' : undefined}
+        headerClassName={riding ? 'mb-3 md:mb-5' : undefined}
         secondaryActions={<SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />}
         primaryAction={
           canBook ? (
@@ -160,7 +161,7 @@ export function RideHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
       {me.isLoading || !data ? (
         me.isError ? (
           <QueryError what="your rides" query={me} />
@@ -207,7 +208,7 @@ export function RideHome() {
           onOpenChange={(o) => !o && setReporting(null)}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 
