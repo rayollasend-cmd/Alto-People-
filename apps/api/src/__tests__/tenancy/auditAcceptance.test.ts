@@ -67,7 +67,7 @@ describe('the scripted audit acceptance', () => {
     await one({ action: 'scim.user_deprovisioned', entityId: created.body.id });
 
     // 8. An admin changes a person's role: the permission change, with before/after.
-    expect((await a.patch(`/admin/users/${person.id}`).send({ role: 'MANAGER' })).status).toBe(200);
+    expect((await a.patch(`/admin/users/${person.id}`).send({ role: 'MANAGER' })).status).toBe(204);
     await one({ action: 'admin.user_updated', entityId: person.id, actorUserId: admin.id });
     const roleDiff = await one({ action: 'data.changed', entityType: 'User', entityId: person.id });
     expect(roleDiff.metadata).toMatchObject({ before: { role: 'ASSOCIATE' }, after: { role: 'MANAGER' } });
@@ -80,7 +80,7 @@ describe('the scripted audit acceptance', () => {
     expect(matrix.metadata).toMatchObject({ change: 'role.updated', before: { capabilities: ['view:dashboard'] }, added: ['view:my-team'] });
 
     // 10. An additional role granted.
-    expect((await a.patch(`/admin/users/${person.id}`).send({ additionalRoles: ['DRIVER'] })).status).toBe(200);
+    expect((await a.patch(`/admin/users/${person.id}`).send({ additionalRoles: ['DRIVER'] })).status).toBe(204);
     const extra = await one({ action: 'data.changed', entityType: 'User', entityId: person.id, metadata: { path: ['changed'], array_contains: ['additionalRoles'] } });
     expect(extra.metadata).toMatchObject({ after: { additionalRoles: ['DRIVER'] } });
 

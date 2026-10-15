@@ -6,6 +6,7 @@ import { setGeocoderForTests } from '../../lib/geocode.js';
 import { RIDE_AUTHORIZATION_VERSION } from '../../lib/rideAuthorizationContent.js';
 import { authorizationCovers, rideRateOn, setRideRate } from '../../lib/rideAuthorization.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 
 /**
  * Brief 1A-3 — ride deduction: keep it, fix it.
@@ -168,6 +169,7 @@ describe('the signed written authorization', () => {
     // Undo clears the stamp and is audited.
     const undone = await s.driverAgent.post(`/transport/driver/rides/${ride.id}/undo`);
     expect(undone.body.ride).toMatchObject({ status: 'SCHEDULED', owedCents: 0, authorized: false });
+    await flushPendingAudits();
     expect(await prisma.auditLog.findFirst({ where: { action: 'transport.mark_undone', entityId: ride.id } })).not.toBeNull();
   });
 });

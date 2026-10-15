@@ -201,6 +201,17 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
     step: 4,
     how: 'Daily probe: an UPDATE on a sentinel row inside a rolled-back transaction is refused by the trigger.',
   },
+  {
+    id: 'audit-chain',
+    title: 'The audit log’s hash chain verifies',
+    criteria: ['CC7.2', 'CC7.3'],
+    freshnessDays: 2,
+    ownerRole: 'HR_ADMINISTRATOR',
+    collection: 'job',
+    needsSignoff: false,
+    step: 4,
+    how: 'Nightly: every tenant’s chain is recomputed in the database with the insert trigger’s own function; a changed, removed or reordered row, or a cut tail, is a FAIL and raises an AUDIT_CHAIN alert (Brief 2-3 step 4).',
+  },
 ];
 
 export const COMPLIANCE_CONTROL_IDS = COMPLIANCE_CONTROLS.map((c) => c.id);

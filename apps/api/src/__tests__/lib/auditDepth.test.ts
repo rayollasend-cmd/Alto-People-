@@ -87,7 +87,7 @@ describe('before and after, masked', () => {
     const { user: admin } = await createUser({ role: 'OPERATIONS_MANAGER' });
     const { user: target } = await createUser({ role: 'ASSOCIATE' });
     const a = await loginAs(agent(), admin.email);
-    expect((await a.patch(`/admin/users/${target.id}`).send({ role: 'MANAGER' })).status).toBe(200);
+    expect((await a.patch(`/admin/users/${target.id}`).send({ role: 'MANAGER' })).status).toBe(204);
     await flushPendingAudits();
     const roleRow = await prisma.auditLog.findFirst({ where: { action: 'data.changed', entityType: 'User', entityId: target.id } });
     expect(roleRow?.actorUserId).toBe(admin.id);

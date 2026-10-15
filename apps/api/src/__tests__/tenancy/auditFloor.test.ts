@@ -61,7 +61,7 @@ describe('the floor', () => {
 
     // A write with no domain audit of its own: the floor row, with names, not values.
     const pins = await oneRequest(hr.id, () => admin.put('/auth/me/nav-pins').send({ pinned: ['scheduling'] }));
-    expect(pins.floor, JSON.stringify(pins.rows)).toHaveLength(1);
+    expect(pins.floor, JSON.stringify(pins.rows.map((r) => r.action))).toHaveLength(1);
     expect(pins.floor[0]).toMatchObject({ action: 'http.put', entityType: 'HttpRequest', tenantId: ALTO_TENANT_ID, actorUserId: hr.id });
     expect(pins.floor[0]!.metadata).toMatchObject({ method: 'PUT', route: '/auth/me/nav-pins', status: pins.res.status, fields: ['pinned'], via: 'session' });
     expect(JSON.stringify(pins.floor[0]!.metadata)).not.toContain('scheduling');

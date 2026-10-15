@@ -106,7 +106,7 @@ describe('holding a custom role', () => {
     const made = await a.post('/tenant-roles').send({ name: 'Lead', archetype: 'MANAGER', capabilities: ['view:dashboard'] });
     await a.put(`/tenant-roles/assign/${lead.id}`).send({ tenantRoleId: made.body.id });
     const res = await a.patch(`/admin/users/${lead.id}`).send({ role: 'WORKFORCE_MANAGER' });
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(204);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: lead.id } })).tenantRoleId).toBeNull();
   });
 
@@ -134,7 +134,7 @@ describe('module-hidden roles (gap 7)', () => {
     const custom = await a.post('/tenant-roles').send({ name: 'Van', archetype: 'DRIVER', capabilities: ['view:dashboard'] });
     expect(custom.status).toBe(400);
     await prisma.tenant.update({ where: { id: ALTO_TENANT_ID }, data: { modules: {} } });
-    expect((await a.patch(`/admin/users/${target.id}`).send({ role: 'DRIVER' })).status).toBe(200);
+    expect((await a.patch(`/admin/users/${target.id}`).send({ role: 'DRIVER' })).status).toBe(204);
   });
 });
 

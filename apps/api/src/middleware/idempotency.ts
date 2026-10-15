@@ -150,38 +150,51 @@ export async function idempotent(
       return originalJson(body);
     }) as Response['json'];
 
-    res.on('finish', () => {
-      void (async () => {
-        try {
-          const status = res.statusCode;
-          const tooBig =
-            bodyCaptured &&
-            Buffer.byteLength(JSON.stringify(capturedBody ?? null)) >
-              MAX_BODY_BYTES;
-          // updateMany/deleteMany so a row the TTL sweep (or a test
-          // truncation) already removed is a no-op, not a thrown error.
-          if (status >= 500 || tooBig) {
-            await prisma.idempotencyRecord.deleteMany({
-              where: where.userId_method_path_key,
-            });
-            return;
-          }
-          await prisma.idempotencyRecord.updateMany({
+    // Persist (or release) the record BEFORE the response bytes leave: a
+    // client that retries the moment it has the first answer must get the
+    // replay, never "still processing". (Persisting on 'finish' was a race
+    // the audit floor's awaited insert made visible — Brief 2-3 step 4.)
+    // Same shape as the floor's end wrapper, which sits beneath this one.
+    const persist = async () => {
+      try {
+        const status = res.statusCode;
+        const tooBig =
+          bodyCaptured &&
+          Buffer.byteLength(JSON.stringify(capturedBody ?? null)) >
+            MAX_BODY_BYTES;
+        // updateMany/deleteMany so a row the TTL sweep (or a test
+        // truncation) already removed is a no-op, not a thrown error.
+        if (status >= 500 || tooBig) {
+          await prisma.idempotencyRecord.deleteMany({
             where: where.userId_method_path_key,
-            data: {
-              responseStatus: status,
-              responseBody: bodyCaptured
-                ? ((capturedBody ?? Prisma.JsonNull) as Prisma.InputJsonValue)
-                : Prisma.JsonNull,
-            },
           });
-        } catch (err) {
-          // Never let bookkeeping break the request that already went
-          // out; the worst case is an in-flight row that expires in 24h.
-          logger.warn({ err }, 'idempotency: failed to persist response');
+          return;
         }
-      })();
-    });
+        await prisma.idempotencyRecord.updateMany({
+          where: where.userId_method_path_key,
+          data: {
+            responseStatus: status,
+            responseBody: bodyCaptured
+              ? ((capturedBody ?? Prisma.JsonNull) as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          },
+        });
+      } catch (err) {
+        // Never let bookkeeping break the request that is going out; the
+        // worst case is an in-flight row that expires in 24h.
+        logger.warn({ err }, 'idempotency: failed to persist response');
+      }
+    };
+    const originalEnd = res.end;
+    let ending = false;
+    res.end = function idempotentEnd(this: Response, ...args: unknown[]) {
+      if (ending) return (originalEnd as (...a: unknown[]) => Response).apply(this, args);
+      ending = true;
+      void persist().finally(() => {
+        (originalEnd as (...a: unknown[]) => Response).apply(this, args);
+      });
+      return this;
+    } as typeof res.end;
 
     next();
   } catch (err) {
