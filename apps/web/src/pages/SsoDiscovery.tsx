@@ -43,8 +43,11 @@ export default function SsoDiscovery({ email, slug, from, disabled }: { email: s
     staleTime: 5 * 60_000,
   });
 
+  // Brief 2-6 step 5 (decision 9): the hosted status page, linked from the sign-in page too.
+  const status = useQuery({ queryKey: ['support', 'config'], queryFn: () => apiFetch<{ statusPageUrl: string | null }>('/support/config'), retry: false, staleTime: 60 * 60_000 });
   const found = q.data?.connections ?? [];
-  if (!found.length) return null;
+  const statusUrl = status.data?.statusPageUrl ?? null;
+  if (!found.length && !statusUrl) return null;
   return (
     <div className="space-y-3">
       {found.map((c) => (
@@ -62,6 +65,13 @@ export default function SsoDiscovery({ email, slug, from, disabled }: { email: s
           {c.label}
         </Button>
       ))}
+      {statusUrl && (
+        <p className="text-center text-2xs text-silver/70">
+          <a className="underline-offset-2 hover:underline" href={statusUrl} target="_blank" rel="noreferrer">
+            System status
+          </a>
+        </p>
+      )}
     </div>
   );
 }

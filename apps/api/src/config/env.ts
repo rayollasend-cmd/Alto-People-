@@ -519,6 +519,8 @@ const EnvSchema = z.object({
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_LIVE_APPROVED: z.string().optional(),
+  // Brief 2-6 step 5 (decision 9): the hosted status page, linked from the help menu and the sign-in page.
+  STATUS_PAGE_URL: z.string().url().optional(),
   WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
 });
 

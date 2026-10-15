@@ -50,6 +50,7 @@ import { mcpRouter } from './routes/mcp.js';
 import { laborRulesRouter } from './routes/laborRules.js';
 import { identityRouter } from './routes/identity.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
+import { supportRouter } from './routes/support.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -396,6 +397,8 @@ export function createApp() {
   app.use('/identity', identityRouter);
   // Brief 2-6 step 4: usage by worker type and invoices.
   app.use('/billing', billingRouter);
+  // Brief 2-6 step 5: support requests to the platform inbox, and the status link.
+  app.use('/support', supportRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
   // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
   // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the

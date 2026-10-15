@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Keyboard, Sparkles } from 'lucide-react';
+import { BookOpen, Keyboard, LifeBuoy, Sparkles } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { helpFor } from '@/lib/help';
 import { useI18n } from '@/lib/i18n';
@@ -114,6 +114,13 @@ export function HelpSheet({
             <Link to="/whats-new" onClick={() => onOpenChange(false)}>
               <Sparkles className="mr-2 h-4 w-4" aria-hidden="true" />
               {t('help.whatsNew')}
+            </Link>
+          </Button>
+          {/* Brief 2-6 step 5: ask Alto People for help; the status page link lives on that page. */}
+          <Button variant="ghost" size="sm" className="w-full justify-start" asChild>
+            <Link to="/support" onClick={() => onOpenChange(false)}>
+              <LifeBuoy className="mr-2 h-4 w-4" aria-hidden="true" />
+              {t('help.contactSupport')}
             </Link>
           </Button>
         </section>

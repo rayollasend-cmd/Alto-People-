@@ -201,6 +201,8 @@ const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdm
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
 const SignInSettings = lazyNamed(() => import('@/pages/admin/SignInSettings'), 'SignInSettings');
+const SupportPage = lazyNamed(() => import('@/pages/support/SupportPage'), 'SupportPage');
+const PlatformSupportInbox = lazyNamed(() => import('@/pages/support/PlatformSupportInbox'), 'PlatformSupportInbox');
 const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
 const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
 const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
@@ -458,6 +460,9 @@ const LAYOUT_ROUTES = [
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
   { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },
+  // Brief 2-6 step 5: anyone signed in asks for help; the platform operator's admins answer.
+  { path: 'support', element: <SupportPage /> },
+  { path: 'platform/support', element: <RequireCapability cap="manage:org"><PlatformSupportInbox /></RequireCapability> },
   { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
   { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
   { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },

@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 
 export const releaseNotesRouter = Router();
 
@@ -21,6 +22,11 @@ export const releaseNotesRouter = Router();
  * Audience is derived from the reader's role on the server so a bullet
  * about kiosk PIN tools never reaches an associate's card, and a draft
  * (no publishedAt) is visible only to people who can write notes.
+ *
+ * Brief 2-6 step 5 (decision 10): a note is a tenant's own, or the
+ * platform's (tenantId NULL, written by the platform operator with
+ * `platform: true`) and shown to every tenant. A tenant reads its own and
+ * the platform's, newest first, and edits only its own.
  */
 
 const MANAGE = requireCapability('manage:org');
@@ -35,7 +41,27 @@ const InputSchema = z.object({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   items: z.array(ItemSchema).min(1).max(20),
   published: z.boolean(),
+  /** The platform operator writes a note for every tenant. */
+  platform: z.boolean().optional(),
 });
+
+/** This tenant's notes and the platform's: two reads, each naming its tenant column (the wall's enforce mode). */
+async function readableNotes(where: Prisma.ReleaseNoteWhereInput, take: number) {
+  const orderBy = [{ day: 'desc' as const }, { createdAt: 'desc' as const }];
+  const [own, platform] = await Promise.all([
+    prisma.releaseNote.findMany({ where: { ...where, tenantId: tenantIdForWrite() }, orderBy, take }),
+    prisma.releaseNote.findMany({ where: { ...where, tenantId: null }, orderBy, take }),
+  ]);
+  return [...own, ...platform].sort((a, b) => b.day.getTime() - a.day.getTime() || b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take);
+}
+
+/** A note this tenant may change: its own, or (the operator only) a platform note. */
+async function editableNote(id: string) {
+  const tenantId = tenantIdForWrite();
+  const row = (await prisma.releaseNote.findFirst({ where: { id, tenantId } })) ?? (tenantId === ALTO_TENANT_ID ? await prisma.releaseNote.findFirst({ where: { id, tenantId: null } }) : null);
+  if (!row) throw new HttpError(404, 'not_found', 'Release note not found');
+  return row;
+}
 
 /** Which audiences a role reads. ALL is everyone; the rest are exclusive. */
 export function audiencesFor(role: string): Set<ReleaseNoteAudience> {
@@ -68,11 +94,7 @@ releaseNotesRouter.get('/', requireAuth, async (req, res, next) => {
     const user = req.user!;
     const editor = canEdit(user.role);
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), MAX_NOTES);
-    const rows = await prisma.releaseNote.findMany({
-      where: editor ? {} : { publishedAt: { not: null } },
-      orderBy: [{ day: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
-    });
+    const rows = await readableNotes(editor ? {} : { publishedAt: { not: null } }, limit);
     const audiences = editor ? null : audiencesFor(user.role);
     res.json({
       notes: rows.map((r) => shape(r, audiences)).filter((n) => editor || n.items.length > 0),
@@ -88,11 +110,7 @@ releaseNotesRouter.get('/latest', requireAuth, async (req, res, next) => {
   try {
     const user = req.user!;
     const audiences = audiencesFor(user.role);
-    const rows = await prisma.releaseNote.findMany({
-      where: { publishedAt: { not: null } },
-      orderBy: [{ day: 'desc' }, { createdAt: 'desc' }],
-      take: 10,
-    });
+    const rows = await readableNotes({ publishedAt: { not: null } }, 10);
     const note = rows.map((r) => shape(r, audiences)).find((n) => n.items.length > 0) ?? null;
     res.json({ note });
   } catch (err) {
@@ -104,9 +122,11 @@ releaseNotesRouter.post('/', MANAGE, async (req, res, next) => {
   try {
     const parsed = InputSchema.safeParse(req.body);
     if (!parsed.success) throw new HttpError(400, 'invalid_body', 'Invalid release note', parsed.error.flatten());
-    const { day, items, published } = parsed.data;
+    const { day, items, published, platform } = parsed.data;
+    if (platform && tenantIdForWrite() !== ALTO_TENANT_ID) throw new HttpError(403, 'platform_only', 'Only the platform writes notes for every organization.');
     const row = await prisma.releaseNote.create({
       data: {
+        tenantId: platform ? null : tenantIdForWrite(),
         day: new Date(`${day}T00:00:00.000Z`),
         items: items as unknown as Prisma.InputJsonValue,
         publishedAt: published ? new Date() : null,
@@ -127,8 +147,7 @@ releaseNotesRouter.patch('/:id', MANAGE, async (req, res, next) => {
   try {
     const parsed = InputSchema.safeParse(req.body);
     if (!parsed.success) throw new HttpError(400, 'invalid_body', 'Invalid release note', parsed.error.flatten());
-    const existing = await prisma.releaseNote.findUnique({ where: { id: req.params.id } });
-    if (!existing) throw new HttpError(404, 'not_found', 'Release note not found');
+    const existing = await editableNote(req.params.id);
     const { day, items, published } = parsed.data;
     const row = await prisma.releaseNote.update({
       where: { id: existing.id },
@@ -157,8 +176,7 @@ releaseNotesRouter.patch('/:id', MANAGE, async (req, res, next) => {
 
 releaseNotesRouter.delete('/:id', MANAGE, async (req, res, next) => {
   try {
-    const existing = await prisma.releaseNote.findUnique({ where: { id: req.params.id } });
-    if (!existing) throw new HttpError(404, 'not_found', 'Release note not found');
+    const existing = await editableNote(req.params.id);
     await prisma.releaseNote.delete({ where: { id: existing.id } });
     enqueueAudit(
       { actorUserId: req.user!.id, action: 'release_note.deleted', entityType: 'ReleaseNote', entityId: existing.id, metadata: { day: existing.day.toISOString().slice(0, 10) } },

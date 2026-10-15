@@ -677,6 +677,7 @@ model User {
   nextStepsOwned                    DecisionNextStep[]            @relation("NextStepOwner")
   laborRuleSetsApproved             LaborRuleSet[]                @relation("LaborRuleSetApprover")
   identities                        UserIdentity[]                @relation("UserIdentities")
+  supportRequests                   SupportRequest[]              @relation("SupportRequester")
 
   @@index([role])
   @@index([clientId])
@@ -10916,4 +10917,31 @@ model BillingInvoice {
 
   @@unique([tenantId, month])
   @@index([stripeInvoiceId])
+}
+
+/// Brief 2-6 step 5 — "Contact Alto People support" from the help menu. It reaches the
+/// platform inbox (Alto staff, under the platform scope); the requester follows its status
+/// in the bell. No worker data is attached automatically.
+model SupportRequest {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  requesterUserId String    @db.Uuid
+  /// QUESTION | PROBLEM | BILLING | ACCOUNT | OTHER
+  category        String    @db.VarChar(10)
+  subject         String    @db.VarChar(160)
+  body            String    @db.VarChar(5000)
+  pageUrl         String?   @db.VarChar(500)
+  appVersion      String?   @db.VarChar(60)
+  /// OPEN | IN_PROGRESS | RESOLVED
+  status          String    @default("OPEN") @db.VarChar(12)
+  /// The platform's answer, shown to the requester.
+  reply           String?   @db.VarChar(5000)
+  resolvedAt      DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+
+  requester User @relation("SupportRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([status, createdAt])
 }
