@@ -359,7 +359,7 @@ export function RoleDecisionQueue({
             {visibleRest.map((d) => {
               const primary = primaryFor(d);
               return (
-                <li key={d.key} className="group/row flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-navy-secondary/30">
+                <li key={d.key} className="group/row flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md px-2 py-1.5 hover:bg-navy-secondary/30">
                   <span
                     className={`h-2 w-2 shrink-0 rounded-full ${SEV_DOT[d.severity]}`}
                     aria-hidden="true"
@@ -388,6 +388,9 @@ export function RoleDecisionQueue({
                       </span>
                     )}
                   </button>
+                  {/* On a phone the meta and the actions take a second row under the
+                      title, so the title keeps its words; from sm they share the line. */}
+                  <span className="flex w-full items-center justify-end gap-2 pl-[18px] sm:w-auto sm:pl-0">
                   <span className="flex shrink-0 items-center gap-2 text-2xs tabular-nums">
                     {d.stakes !== null && <span className="text-silver">{fmtMoney(d.stakes)}</span>}
                     {d.ageDays !== null && d.ageDays > 0 && (
@@ -421,6 +424,7 @@ export function RoleDecisionQueue({
                   >
                     {primary.label}
                   </Button>
+                  </span>
                 </li>
               );
             })}
