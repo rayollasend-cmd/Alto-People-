@@ -51,5 +51,8 @@ export async function coveringManagerIds(user: { id: string; associateId: string
 /** A Prisma `where` for "an associate on a team this user covers". */
 export async function teamScope(user: { id: string; associateId: string | null | undefined }): Promise<Prisma.AssociateWhereInput> {
   const ids = await coveringManagerIds(user);
-  return { managerId: ids.length > 0 ? { in: ids } : '__none__', deletedAt: null };
+  // No covered manager: match nothing. (`'__none__'` is not a UUID; Postgres
+  // refused it and every manager without an associate link saw "Malformed
+  // identifier" on their home — found by the design walk, 2026-10-15.)
+  return { managerId: ids.length > 0 ? { in: ids } : { in: [] }, deletedAt: null };
 }

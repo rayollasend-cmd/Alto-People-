@@ -51,7 +51,7 @@ jobs:
       - run: npm -w apps/web exec playwright install --with-deps chromium
       - name: Start API + web dev servers
         run: |
-          LOGIN_IP_LIMIT=500 npm -w apps/api run dev > api.log 2>&1 &
+          LOGIN_IP_LIMIT=500 LOGIN_EMAIL_LIMIT=500 npm -w apps/api run dev > api.log 2>&1 &
           npm -w apps/web run dev > web.log 2>&1 &
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:3001/health > /dev/null 2>&1 && break
@@ -66,6 +66,7 @@ jobs:
       - name: Walk every persona
         env:
           E2E_FULLSTACK: '1'
+          DESIGN_WALK: '1'
           E2E_BASE_URL: http://127.0.0.1:5173
         run: npm -w apps/web exec -- playwright test e2e/design-walk.spec.ts --workers=1 --reporter=line
       - name: Upload screenshots

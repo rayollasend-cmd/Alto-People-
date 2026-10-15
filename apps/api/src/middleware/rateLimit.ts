@@ -16,7 +16,11 @@ const IP_LIMIT =
 
 // Brute-force defense matters in prod and is exercised in tests; in
 // development it just gets in the way when iterating on the login flow.
-const EMAIL_LIMIT = process.env.NODE_ENV === 'development' ? 100_000 : 5;
+// LOGIN_EMAIL_LIMIT exists for the design walk's stack, which signs in as
+// each persona several times (desktop, phone, each theme); never set in
+// production.
+const EMAIL_LIMIT =
+  process.env.NODE_ENV === 'development' ? 100_000 : Number(process.env.LOGIN_EMAIL_LIMIT) || 5;
 
 /** 20 requests / minute / IP for /auth/login. */
 export const loginIpLimiter = rateLimit({

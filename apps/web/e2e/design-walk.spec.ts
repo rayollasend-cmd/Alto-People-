@@ -12,7 +12,10 @@ import { test, type Page } from '@playwright/test';
  * broken page never hides the rest of the walk.
  */
 
-test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server');
+// Its own switch, not E2E_FULLSTACK: the CI E2E job sets that for the
+// guards, and this walk (200 screenshots) is not a guard. design-walk.yml
+// sets DESIGN_WALK=1.
+test.skip(!process.env.E2E_FULLSTACK || !process.env.DESIGN_WALK, 'needs the API dev server and DESIGN_WALK=1');
 
 const ROOT = 'e2e-results/design-walk';
 mkdirSync(ROOT, { recursive: true });
@@ -135,11 +138,30 @@ async function shoot(page: Page, file: string, fullPage: boolean) {
   }
 }
 
+/**
+ * The first-run coachmark tour and the "New this week" card sit over every
+ * screen of a fresh account; a design review needs the screen. Dismiss
+ * whichever is showing (both remember the dismissal per account).
+ */
+async function settle(page: Page) {
+  for (const name of [/^skip$/i, /^got it$/i]) {
+    const btn = page.getByRole('button', { name }).first();
+    if (await btn.isVisible({ timeout: 400 }).catch(() => false)) {
+      await btn.click({ timeout: 2000 }).catch(() => undefined);
+      await page.waitForTimeout(300);
+    }
+  }
+}
+
 async function walk(page: Page, persona: Persona, form: 'desktop' | 'phone', theme: 'dark' | 'light') {
+  // The app defaults to the system theme, which a CI browser reports as
+  // light: every walk names its theme outright.
+  await setTheme(page, theme);
   for (const [route, name] of persona.routes) {
     try {
       await page.goto(route, { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(2500);
+      await settle(page);
     } catch (err) {
       console.log(`${persona.key} ${route}: ${err instanceof Error ? err.message : err}`);
     }
@@ -149,10 +171,12 @@ async function walk(page: Page, persona: Persona, form: 'desktop' | 'phone', the
 
 /** The admin's tabs that hide a whole surface behind a click. */
 async function adminTabs(page: Page, form: 'desktop' | 'phone', theme: 'dark' | 'light') {
+  await setTheme(page, theme);
   const clickShoot = async (route: string, label: RegExp, name: string) => {
     try {
       await page.goto(route, { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(2000);
+      await settle(page);
       await page.getByText(label).first().click({ timeout: 5000 });
       await page.waitForTimeout(2500);
     } catch (err) {

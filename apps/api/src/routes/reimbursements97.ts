@@ -103,8 +103,10 @@ reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
   const isAssociate = req.user!.role === 'ASSOCIATE';
   const myAssociateId = req.user!.associateId;
   const where: Prisma.ReimbursementWhereInput = {
+    // An associate with no linked record sees nothing (an empty `in`; a
+    // non-UUID literal here was refused by Postgres as a malformed id).
     ...(isAssociate
-      ? { associateId: myAssociateId ?? '__none__' }
+      ? { associateId: myAssociateId ? myAssociateId : { in: [] } }
       : associateId
         ? { associateId }
         : {}),
