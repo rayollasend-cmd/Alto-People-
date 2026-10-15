@@ -259,10 +259,11 @@ agentsRouter.get('/:id', VIEW, ownAgent, async (req, res, next) => {
 
 agentsRouter.post('/', MANAGE, async (req, res, next) => {
   try {
-    const input = AgentInputSchema.parse(req.body);
-    const agent = await createAgent(prisma, input, req.user!.id);
+    // Brief 2-6 step 1: catalog capabilities picked at registration (none = a custom agent acting through its scopes).
+    const { catalogCapabilities, ...input } = AgentInputSchema.extend({ catalogCapabilities: z.array(AgentCapabilityKeySchema).max(10).default([]) }).parse(req.body);
+    const agent = await createAgent(prisma, input, req.user!.id, new Date(), catalogCapabilities);
     enqueueAudit(
-      { actorUserId: req.user!.id, clientId: null, action: 'agent.registered', entityType: 'Worker', entityId: agent.id, workerId: agent.id, metadata: { name: agent.name, ownerUserId: input.ownerUserId, scopes: input.scopes, vendor: input.vendor, model: input.model, modelVersion: input.modelVersion } },
+      { actorUserId: req.user!.id, clientId: null, action: 'agent.registered', entityType: 'Worker', entityId: agent.id, workerId: agent.id, metadata: { name: agent.name, ownerUserId: input.ownerUserId, scopes: input.scopes, vendor: input.vendor, model: input.model, modelVersion: input.modelVersion, catalogCapabilities } },
       'agents',
     );
     res.status(201).json(agent);

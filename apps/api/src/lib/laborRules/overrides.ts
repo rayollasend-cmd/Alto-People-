@@ -42,7 +42,8 @@ export const ApprovalSchema = z.object({ note: z.string().trim().min(5).max(500)
 const D = (ymd: string) => new Date(`${ymd}T00:00:00Z`);
 
 async function ownRow(db: Db, tenantId: string, id: string) {
-  const row = await db.laborRuleSet.findFirst({ where: { id, OR: [{ tenantId }, { tenantId: null }] } });
+  // The tenant's own row, else a shipped pack; each read names its tenant column (see store.loadRulePool).
+  const row = (await db.laborRuleSet.findFirst({ where: { id, tenantId } })) ?? (await db.laborRuleSet.findFirst({ where: { id, tenantId: null } }));
   if (!row) throw new HttpError(404, 'rule_set_not_found', 'Rule set not found.');
   return row;
 }

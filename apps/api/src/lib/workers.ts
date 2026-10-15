@@ -15,6 +15,7 @@ import {
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { emitWorkerStatusChanged } from './webhookEvents.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * WORKERS — the data model stops assuming a person.
@@ -221,7 +222,8 @@ export async function getWorker(db: Db, id: string, now: Date = new Date()): Pro
 }
 
 async function assertOwner(db: Db, ownerUserId: string): Promise<void> {
-  const owner = await db.user.findFirst({ where: { id: ownerUserId, status: 'ACTIVE', deletedAt: null }, select: { id: true, role: true } });
+  // Brief 2-6 step 1: the owner is an active account of the same tenant.
+  const owner = await db.user.findFirst({ where: { id: ownerUserId, status: 'ACTIVE', deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, role: true } });
   if (!owner) throw new HttpError(400, 'owner_not_found', 'The accountable owner must be an active account.');
   if (owner.role === 'CLIENT_PORTAL' || owner.role === 'LIVE_ASN') {
     throw new HttpError(400, 'owner_not_eligible', 'A client portal account cannot own a worker.');
@@ -230,11 +232,12 @@ async function assertOwner(db: Db, ownerUserId: string): Promise<void> {
 
 export async function createWorker(db: Db, input: WorkerInput, actorUserId: string, now: Date = new Date()): Promise<WorkerSummary> {
   await assertOwner(db, input.ownerUserId);
-  if (input.locationId && !(await db.site.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } }))) {
+  if (input.locationId && !(await db.site.findFirst({ where: { id: input.locationId, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } }))) {
     throw new HttpError(400, 'site_not_found', 'No such site.');
   }
   const row = await db.worker.create({
     data: {
+      tenantId: tenantIdForWrite(),
       type: input.type,
       name: input.name,
       ownerUserId: input.ownerUserId,
@@ -277,7 +280,7 @@ export async function updateWorker(db: Db, id: string, input: WorkerUpdate, now:
 export async function assignWorkerToSite(db: Db, id: string, input: WorkerAssignmentInput, now: Date = new Date()): Promise<WorkerSummary> {
   const w = await db.worker.findUnique({ where: { id }, select: { type: true, associateId: true } });
   if (!w) throw new HttpError(404, 'worker_not_found', 'No such worker.');
-  const loc = await db.site.findFirst({ where: { id: input.locationId, deletedAt: null }, select: { id: true } });
+  const loc = await db.site.findFirst({ where: { id: input.locationId, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
   if (!loc) throw new HttpError(400, 'site_not_found', 'No such site.');
   const startedAt = atUtc(input.startedAt ?? ymd(now));
   if (w.type === 'PERSON' && w.associateId) {

@@ -75,6 +75,10 @@ async function seedTenantOne() {
   });
   const document = await prisma.documentRecord.create({ data: { associateId: associate.id, kind: 'ID', filename: 'one.pdf', mimeType: 'application/pdf', size: 10 } });
   const region = await prisma.region.create({ data: { name: 'Tenant One Region' } });
+  // Brief 2-6 step 1: the agent registry is the customer's; tenant one's agent must not reach tenant two.
+  const agentWorker = await prisma.worker.create({
+    data: { type: 'AGENT', name: 'Tenant One Agent', ownerUserId: user.id, status: 'ACTIVE', agent: { create: { purpose: 'Reads the schedule', vendor: 'Test', model: 'test', modelVersion: '1', scopes: ['view:scheduling'] } } },
+  });
   return {
     ids: {
       client: client.id,
@@ -90,6 +94,7 @@ async function seedTenantOne() {
       entry: timeEntry.id,
       document: document.id,
       region: region.id,
+      agent: agentWorker.id,
     } as Record<string, string>,
   };
 }
@@ -108,6 +113,7 @@ function idFor(param: string, routePath: string, ids: Record<string, string>): s
     [/entry|time/, 'timeEntry'],
     [/document|doc/, 'document'],
     [/region/, 'region'],
+    [/agent|worker/, 'agent'],
   ];
   for (const [re, key] of byName) if (re.test(p) && ids[key]) return ids[key]!;
   if (p === 'id') {
@@ -124,6 +130,7 @@ function idFor(param: string, routePath: string, ids: Record<string, string>): s
       [/^time|entries$/, 'timeEntry'],
       [/^documents?$/, 'document'],
       [/^regions?$/, 'region'],
+      [/^agents?$|^workers?$/, 'agent'],
     ];
     for (const [re, key] of byPath) if (re.test(seg) && ids[key]) return ids[key]!;
     return ids.associate!;

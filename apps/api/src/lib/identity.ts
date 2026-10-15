@@ -27,6 +27,12 @@ import { ALTO_TENANT_ID } from './tenant.js';
  *   person is refused and audited (the email-reuse takeover).
  *
  *   SCIM tokens: hashed, shown once; the token decides the tenant.
+ *
+ *   Tenancy note for the enforcing step (2-1 step four): discovery, the
+ *   SCIM token lookup and the subject lookup run BEFORE anyone's tenant is
+ *   known (a login page, a bearer), so they read across tenants by design
+ *   and name the tenant they find explicitly afterwards. When the wall
+ *   enforces, these lookups move under a narrow platform path.
  */
 
 type Db = PrismaClient;

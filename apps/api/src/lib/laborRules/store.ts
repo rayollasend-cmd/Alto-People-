@@ -85,12 +85,14 @@ const SELECT = {
 
 /** The shipped packs and this tenant's overrides (never another tenant's). */
 export async function loadRulePool(db: Db, tenantId: string): Promise<StoredRuleSet[]> {
-  const rows = await db.laborRuleSet.findMany({
-    where: { OR: [{ tenantId: null }, { tenantId }] },
-    select: SELECT,
-    orderBy: [{ jurisdiction: 'asc' }, { effectiveFrom: 'asc' }, { version: 'asc' }],
-  });
-  return rows.map(toDef);
+  // Two reads, each naming its tenant column outright: the tenant wall in enforce mode adds the
+  // caller's tenant to a where that names none, which would hide the shipped packs (tenantId NULL).
+  const orderBy = [{ jurisdiction: 'asc' as const }, { effectiveFrom: 'asc' as const }, { version: 'asc' as const }];
+  const [packs, own] = await Promise.all([
+    db.laborRuleSet.findMany({ where: { tenantId: null }, select: SELECT, orderBy }),
+    db.laborRuleSet.findMany({ where: { tenantId }, select: SELECT, orderBy }),
+  ]);
+  return [...packs, ...own].map(toDef);
 }
 
 /** The rules for one site on one date, from a loaded pool. */

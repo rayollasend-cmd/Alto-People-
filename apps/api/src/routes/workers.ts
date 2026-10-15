@@ -1,8 +1,10 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { WorkerAssignmentInputSchema, WorkerInputSchema, WorkerStatusSchema, WorkerTypeSchema, WorkerUpdateSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { assignWorkerToSite, createWorker, ensurePersonWorkers, getWorker, listWorkers, scheduleWorkerOnShift, updateWorker } from '../lib/workers.js';
 
@@ -22,10 +24,30 @@ const VIEW = requireCapability('view:org');
 const MANAGE = requireCapability('manage:org');
 const Id = z.string().uuid();
 
+/**
+ * Brief 2-6 step 1: the registry is the customer's. A worker (a person, an
+ * agent, a robot) and a shift named in the path must be the caller's
+ * tenant's; another tenant's id answers 404, as if it did not exist.
+ */
+async function ownWorker(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    const tenantId = tenantIdForWrite();
+    const w = await prisma.worker.findFirst({ where: { id: Id.parse(req.params.id), tenantId }, select: { id: true } });
+    if (!w) throw new HttpError(404, 'worker_not_found', 'Worker not found.');
+    if (req.params.shiftId) {
+      const s = await prisma.shift.findFirst({ where: { id: Id.parse(req.params.shiftId), tenantId }, select: { id: true } });
+      if (!s) throw new HttpError(404, 'shift_not_found', 'Shift not found.');
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 workersRouter.get('/', VIEW, async (req, res, next) => {
   try {
     const q = z.object({ type: WorkerTypeSchema.optional(), status: WorkerStatusSchema.optional() }).parse(req.query);
-    res.json(await listWorkers(prisma, q));
+    res.json(await listWorkers(prisma, { ...q, tenantId: tenantIdForWrite() }));
   } catch (err) {
     next(err);
   }
@@ -41,7 +63,7 @@ workersRouter.post('/ensure-people', MANAGE, async (req, res, next) => {
   }
 });
 
-workersRouter.get('/:id', VIEW, async (req, res, next) => {
+workersRouter.get('/:id', VIEW, ownWorker, async (req, res, next) => {
   try {
     res.json(await getWorker(prisma, Id.parse(req.params.id)));
   } catch (err) {
@@ -63,7 +85,7 @@ workersRouter.post('/', MANAGE, async (req, res, next) => {
   }
 });
 
-workersRouter.patch('/:id', MANAGE, async (req, res, next) => {
+workersRouter.patch('/:id', MANAGE, ownWorker, async (req, res, next) => {
   try {
     const id = Id.parse(req.params.id);
     const input = WorkerUpdateSchema.parse(req.body);
@@ -83,7 +105,7 @@ workersRouter.patch('/:id', MANAGE, async (req, res, next) => {
   }
 });
 
-workersRouter.post('/:id/assignments', MANAGE, async (req, res, next) => {
+workersRouter.post('/:id/assignments', MANAGE, ownWorker, async (req, res, next) => {
   try {
     const id = Id.parse(req.params.id);
     const input = WorkerAssignmentInputSchema.parse(req.body);
@@ -95,7 +117,7 @@ workersRouter.post('/:id/assignments', MANAGE, async (req, res, next) => {
   }
 });
 
-workersRouter.post('/:id/shifts/:shiftId', requireCapability('manage:scheduling'), async (req, res, next) => {
+workersRouter.post('/:id/shifts/:shiftId', requireCapability('manage:scheduling'), ownWorker, async (req, res, next) => {
   try {
     const id = Id.parse(req.params.id);
     const shiftId = Id.parse(req.params.shiftId);

@@ -70,7 +70,8 @@ export function getAgent(id: string): Promise<AgentDetail> {
   return apiFetch<AgentDetail>(`/agents/${encodeURIComponent(id)}`);
 }
 
-export function createAgent(body: AgentInput): Promise<AgentDetail> {
+/** Brief 2-6 step 1: catalog capabilities granted at registration (none = a custom agent). */
+export function createAgent(body: AgentInput & { catalogCapabilities?: string[] }): Promise<AgentDetail> {
   return apiFetch<AgentDetail>('/agents', { method: 'POST', body });
 }
 

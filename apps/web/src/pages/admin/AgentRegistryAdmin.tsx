@@ -63,6 +63,7 @@ import {
 import { PageHeader } from '@/components/ui/PageHeader';
 import { HugoPanel } from './HugoPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
+import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -1008,9 +1009,10 @@ function ProfileFields({ form, set, canManage, owner }: { form: ProfileForm; set
 
 function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
   const [form, setForm] = useState<ProfileForm>(emptyForm);
+  const [catalog, setCatalog] = useState<CatalogChoice>({ family: null, capabilities: [] });
   const [saving, setSaving] = useState(false);
   const set = <K extends keyof ProfileForm>(k: K, v: ProfileForm[K]) => setForm((f) => ({ ...f, [k]: v }));
-  const dirty = JSON.stringify(form) !== JSON.stringify(emptyForm());
+  const dirty = JSON.stringify(form) !== JSON.stringify(emptyForm()) || catalog.family !== null;
   const valid = formValid(form);
 
   const submit = async () => {
@@ -1030,6 +1032,8 @@ function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCrea
         status: form.status,
         capabilities: [],
         notes: form.notes.trim() || undefined,
+        family: catalog.family,
+        catalogCapabilities: catalog.capabilities,
       });
       toast.success(`${form.name.trim()} registered.`);
       await onCreated();
@@ -1054,6 +1058,7 @@ function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCrea
             void submit();
           }}
         >
+          <AgentCatalogPicker value={catalog} onChange={setCatalog} scopes={form.scopes} onScopes={(s) => set('scopes', s)} />
           <ProfileFields form={form} set={set} canManage owner={undefined} />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>

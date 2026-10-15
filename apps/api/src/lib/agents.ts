@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   AGENT_EXECUTABLE_ACTIONS,
   AGENT_GATED_ACTION_LABELS,
+  capabilityDef,
   rolesWithCapability,
   type AgentApprovalSummary,
   type AgentCredentialState,
@@ -30,6 +31,7 @@ import { allAgentsSuspended, certification, controlState, onModelVersionChanged,
 import { afterProposalApproved, grantCapability, seedCatalogScenarios, syncProposalWithApproval, tenantAgentsSuspended, tenantControlState } from './agentCapabilities.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { emitAgentApproval } from './webhookEvents.js';
+import { moduleOn } from './tenantProfile.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
 function registryTenant(tenantId?: string | null): string {
@@ -525,7 +527,18 @@ export async function getAgent(db: Db, workerId: string, now: Date = new Date())
   };
 }
 
-export async function createAgent(db: Db, input: AgentInput, actorUserId: string, now: Date = new Date()): Promise<AgentDetail> {
+export async function createAgent(db: Db, input: AgentInput, actorUserId: string, now: Date = new Date(), catalogCapabilities: readonly string[] = []): Promise<AgentDetail> {
+  // Brief 2-6 step 1: each catalog capability must be offered here (its modules on), be of the
+  // agent's family, and be covered by the scopes it is granted; checked before anything is written.
+  const tenantId = registryTenant();
+  for (const key of catalogCapabilities) {
+    const def = capabilityDef(key);
+    if (!def) throw new HttpError(400, 'capability_unknown', `No capability ${key} in the catalog.`);
+    if (input.family && def.family !== input.family) throw new HttpError(400, 'capability_wrong_family', `${def.label} belongs to the ${def.family} family.`);
+    for (const m of def.requiresModule) if (!(await moduleOn(m, tenantId))) throw new HttpError(400, 'capability_not_offered', `${def.label} is not offered here.`);
+    const missing = def.scopes.find((sc) => !input.scopes.includes(sc));
+    if (missing) throw new HttpError(400, 'capability_scope_missing', `${def.label} needs the scope ${missing}.`);
+  }
   const worker = await createWorker(db, { type: 'AGENT', name: input.name, ownerUserId: input.ownerUserId, status: input.status, capabilities: input.capabilities, notes: input.notes ?? null, locationId: null }, actorUserId, now);
   await db.agentProfile.create({
     data: {
@@ -547,6 +560,7 @@ export async function createAgent(db: Db, input: AgentInput, actorUserId: string
       ...(input.status === 'ACTIVE' ? { certifiedAt: now, certifiedModelVersion: input.modelVersion } : {}),
     },
   });
+  for (const key of catalogCapabilities) await db.agentCapability.create({ data: { workerId: worker.id, key, tenantId } });
   return getAgent(db, worker.id, now);
 }
 
