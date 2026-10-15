@@ -58,7 +58,7 @@ export const SCENARIOS: readonly Scenario[] = [
     auth: 'none',
     // Each connection is one kiosk punching one associate, a second apart
     // (the device throttle); the second punch of a pair is a clock-out.
-    body: (n: number, worker: number) => ({ deviceToken: LOAD_DEVICE_TOKEN(worker % LOAD_KIOSKS), pin: LOAD_PIN(worker % LOAD_KIOSKS), idempotencyKey: `load-${worker}-${n}` }),
+    body: (_n: number, worker: number) => ({ deviceToken: LOAD_DEVICE_TOKEN(worker % LOAD_KIOSKS), pin: LOAD_PIN(worker % LOAD_KIOSKS) }),
     connections: LOAD_KIOSKS,
     durationSeconds: 10,
     paceMs: 1100,
@@ -71,7 +71,7 @@ export const SCENARIOS: readonly Scenario[] = [
   { key: 'messages-send', title: 'Messages, send burst', method: 'POST', path: '/messages/conversations/{conversation}/messages', auth: 'admin', body: (n: number) => ({ body: `Load test message ${n}` }), connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, okStatuses: [200, 201], why: 'A store channel at shift change.' },
   { key: 'approvals', title: 'Approvals, walk-in queue', method: 'GET', path: '/time/admin/clock-in-requests?status=PENDING', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The desk the kiosk feeds.' },
   { key: 'people-directory', title: 'People directory', method: 'GET', path: '/people/directory', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The 50,000-row list behind the People page.' },
-  { key: 'control-room-workers', title: 'Control room poll: workers', method: 'GET', path: '/workers', auth: 'admin', connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The roster the control room refreshes.' },
+  { key: 'control-room-workers', title: 'Control room poll: one site', method: 'GET', path: '/control-room?locationId={site}', auth: 'admin', connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The roster the control room refreshes.' },
   { key: 'control-room-status', title: 'Control room poll: status', method: 'GET', path: '/status/public', auth: 'none', connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The public status page, cached 60 s; the cheap end of the poll.' },
 ];
 

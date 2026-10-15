@@ -57,6 +57,8 @@ interface Context {
   adminCookie: string;
   associateCookies: string[];
   conversationId: string;
+  /** The site the control room polls: the first one the admin may see. */
+  siteId: string;
 }
 
 async function prepare(): Promise<Context> {
@@ -76,7 +78,10 @@ async function prepare(): Promise<Context> {
   const conv = await jsonWith(adminCookie, 'POST', '/messages/conversations', { participantIds: [userId], body: 'Load test opens the channel.' });
   const conversationId = (conv.json as { conversation?: { id?: string }; id?: string } | null)?.conversation?.id ?? (conv.json as { id?: string } | null)?.id;
   if (!conversationId) throw new Error(`could not start a conversation: ${conv.status} ${JSON.stringify(conv.json).slice(0, 200)}`);
-  return { adminCookie, associateCookies, conversationId };
+  const sitesRes = await jsonWith(adminCookie, 'GET', '/control-room/sites');
+  const siteId = ((sitesRes.json as { sites?: Array<{ id?: string }> } | null)?.sites ?? [])[0]?.id;
+  if (!siteId) throw new Error(`the control room lists no site: ${sitesRes.status} ${JSON.stringify(sitesRes.json).slice(0, 200)}`);
+  return { adminCookie, associateCookies, conversationId, siteId };
 }
 
 function resolvePath(s: Scenario, n: number, ctx: Context): string {
@@ -86,7 +91,7 @@ function resolvePath(s: Scenario, n: number, ctx: Context): string {
     const to = new Date(from.getTime() + 6 * 86_400_000);
     p = `${p}?from=${ymd(from)}&to=${ymd(to)}`;
   }
-  return p.replace('{conversation}', ctx.conversationId);
+  return p.replace('{conversation}', ctx.conversationId).replace('{site}', ctx.siteId);
 }
 
 function resolveBody(s: Scenario, n: number, worker: number): unknown {

@@ -64,6 +64,9 @@ export interface Placement {
 }
 
 /** The company's window, read each call (cheap: one indexed row). */
+/** Ids per evidence query: well under Postgres's 65,535-parameter limit with room for the scope. */
+const ACTIVE_ID_BATCH = 10_000;
+
 export async function activeWindowDays(db: Db = defaultPrisma): Promise<number> {
   const row = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { activeWindowDays: true } });
   return row?.activeWindowDays ?? DEFAULT_ACTIVE_WINDOW_DAYS;
@@ -143,20 +146,27 @@ async function workedOrScheduled(ids: string[], scope: ActiveScope, since: Date,
       ? { clientId: scopeClientId }
       : {};
   const shiftScope: Prisma.ShiftWhereInput = scope.locationId ? { locationId: scope.locationId } : scopeClientId ? { clientId: scopeClientId } : {};
-  const [worked, scheduled] = await Promise.all([
-    db.timeEntry.findMany({
-      where: { associateId: { in: ids }, clockInAt: { gte: since, lte: now }, status: { not: 'REJECTED' }, ...entryScope },
-      select: { associateId: true },
-      distinct: ['associateId'],
-    }),
-    db.shift.findMany({
-      where: { assignedAssociateId: { in: ids }, startsAt: { gte: now }, status: 'ASSIGNED', ...shiftScope },
-      select: { assignedAssociateId: true },
-      distinct: ['assignedAssociateId'],
-    }),
-  ]);
-  for (const w of worked) out.add(w.associateId);
-  for (const s of scheduled) if (s.assignedAssociateId) out.add(s.assignedAssociateId);
+  // In batches: at tens of thousands of ids the negated status filter stops
+  // Prisma from splitting the id list itself and Postgres refuses the
+  // parameter count (seen at 50,000 associates in the load test).
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += ACTIVE_ID_BATCH) batches.push(ids.slice(i, i + ACTIVE_ID_BATCH));
+  for (const batch of batches) {
+    const [worked, scheduled] = await Promise.all([
+      db.timeEntry.findMany({
+        where: { associateId: { in: batch }, clockInAt: { gte: since, lte: now }, status: { not: 'REJECTED' }, ...entryScope },
+        select: { associateId: true },
+        distinct: ['associateId'],
+      }),
+      db.shift.findMany({
+        where: { assignedAssociateId: { in: batch }, startsAt: { gte: now }, status: 'ASSIGNED', ...shiftScope },
+        select: { assignedAssociateId: true },
+        distinct: ['assignedAssociateId'],
+      }),
+    ]);
+    for (const w of worked) out.add(w.associateId);
+    for (const s of scheduled) if (s.assignedAssociateId) out.add(s.assignedAssociateId);
+  }
   return out;
 }
 
