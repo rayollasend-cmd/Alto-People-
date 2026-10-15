@@ -129,8 +129,8 @@ type DirectoryRow = Prisma.AssociateGetPayload<{ select: typeof DIRECTORY_SELECT
 
 /** Rows → directory entries, with the live pay rate batch-fetched once. */
 async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[]> {
-  // Brief 1A-2: ACTIVE is the one definition of active.
-  const activeIds = await activeAssociateIds();
+  // Brief 1A-2: ACTIVE is the one definition of active — asked about this page's rows only.
+  const activeIds = await activeAssociateIds({ associateIds: associates.map((a) => a.id) });
   // One open compensation row per associate ⇒ batch-fetch and index.
   const ids = associates.map((a) => a.id);
   const liveComp =

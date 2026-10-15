@@ -48,6 +48,12 @@ export interface ActiveScope {
    * counts (today's behaviour, and every existing row is Alto HR's).
    */
   tenantId?: string | null;
+  /**
+   * Only these people. A page of a list asks about its own rows instead of
+   * the whole tenant (the people directory computed every associate's
+   * standing per request; at 50,000 that was five seconds a page).
+   */
+  associateIds?: string[];
 }
 
 export interface ActiveDefinitionOptions extends ActiveScope {
@@ -104,6 +110,7 @@ export async function placements(scope: ActiveScope = {}, db: Db = defaultPrisma
   const assigned = await db.associateAssignment.findMany({
     where: {
       endedAt: null,
+      ...(scope.associateIds ? { associateId: { in: scope.associateIds } } : {}),
       ...(scope.locationId ? { locationId: scope.locationId } : scopeClientId ? { location: { clientId: scopeClientId } } : {}),
       associate: { ...EMPLOYED_WHERE, ...(scope.tenantId ? { tenantId: scope.tenantId } : {}) },
     },
@@ -118,6 +125,7 @@ export async function placements(scope: ActiveScope = {}, db: Db = defaultPrisma
     where: {
       status: 'APPROVED',
       deletedAt: null,
+      ...(scope.associateIds ? { associateId: { in: scope.associateIds } } : {}),
       ...(scopeClientId ? { clientId: scopeClientId } : {}),
       ...(siteOnly ? { locationId: scope.locationId! } : scope.locationId ? { OR: [{ locationId: scope.locationId }, { locationId: null }] } : {}),
       associate: { ...EMPLOYED_WHERE, assignments: { none: { endedAt: null } }, ...(scope.tenantId ? { tenantId: scope.tenantId } : {}) },
