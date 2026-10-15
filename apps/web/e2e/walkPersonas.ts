@@ -31,6 +31,8 @@ export const ADMIN_ROUTES: Array<[string, string]> = [
   ['/agents', 'agents'],
   ['/workers', 'workers'],
   ['/robots', 'robots'],
+  ['/tasks', 'tasks'],
+  ['/forecast', 'forecast'],
   ['/relay', 'relay'],
   ['/ops', 'store-ops'],
   ['/clients', 'clients'],

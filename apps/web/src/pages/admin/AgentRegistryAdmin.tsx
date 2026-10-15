@@ -600,10 +600,6 @@ export function AgentRegistryAdmin() {
         </p>
       </section>
 
-      {/* Hugo: ask him, and see what the agents he routes to are doing (agent families step 3). */}
-      <HugoPanel />
-      <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} />
-      <McpCatalogPreview />
 
       {builtInMissing.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
@@ -655,6 +651,11 @@ export function AgentRegistryAdmin() {
         }}
       />
       )}
+
+      {/* Hugo: ask him, and see what the agents he routes to are doing (agent families step 3). */}
+      <HugoPanel />
+      <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} />
+      <McpCatalogPreview />
 
       {creating && (
         <CreateAgentDialog
