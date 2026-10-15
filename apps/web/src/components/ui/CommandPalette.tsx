@@ -23,6 +23,7 @@ import {
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules, applyTerms } from '@/lib/modules';
+import { useRecentModules } from '@/lib/navPersonalization';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
 import { usePeopleSearch, useUniversalSearch } from '@/lib/usePaletteSearch';
@@ -64,7 +65,7 @@ interface PaletteItem {
   hint?: string;
   icon: LucideIcon;
   keywords?: string;
-  group: 'Navigation' | 'Actions' | 'Account' | 'Help';
+  group: 'Recent' | 'Navigation' | 'Actions' | 'Account' | 'Help';
   perform: (ctx: PerformCtx) => Promise<void> | void;
 }
 
@@ -170,7 +171,31 @@ export function CommandPalette({
   // MODULES.filter().map() behind them) only depend on the signed-in
   // user's capability set — memoize so they aren't rebuilt on every
   // keystroke. Search-dependent results (people/clients) stay outside.
+  // Design system §4.1: the pages this person opened last come first, so the
+  // palette is a way back as much as a way in (the sidebar already shows them).
+  const recentKeys = useRecentModules();
+  const nav = useMemo(
+    () => applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
+    [user?.role, user?.regionId, can, tenant.modules, tenant.id, term],
+  );
   const items: PaletteItem[] = useMemo(() => [
+    ...recentKeys.slice(0, 5).flatMap<PaletteItem>((key) => {
+      const m = nav.find((x) => x.key === key);
+      return m
+        ? [{
+            id: `recent-${m.key}`,
+            label: m.label,
+            hint: m.description,
+            icon: MODULE_ICONS[m.key],
+            keywords: m.description,
+            group: 'Recent' as const,
+            perform: ({ navigate, close }) => {
+              navigate(m.path);
+              close();
+            },
+          }]
+        : [];
+    }),
     {
       id: 'nav-dashboard',
       label: DASHBOARD_NAV.label,
@@ -184,7 +209,7 @@ export function CommandPalette({
     // visibleModules, not a raw capability slice — the palette must offer
     // the same curated nav the sidebar shows (an associate was getting all
     // 25 HR modules here while their sidebar showed 14).
-    ...applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules).map<PaletteItem>((m) => ({
+    ...nav.map<PaletteItem>((m) => ({
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,
@@ -314,7 +339,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ], [can, user, onShowKeyboardShortcuts, tenant.modules, tenant.id, term]);
+  ], [can, user, onShowKeyboardShortcuts, tenant.modules, tenant.id, term, nav, recentKeys]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.
@@ -393,6 +418,7 @@ export function CommandPalette({
               </Command.Empty>
             )}
 
+            {renderStaticGroup('Recent', 'Recent')}
             {renderStaticGroup('Navigation', 'Pages')}
 
             {showPeopleGroup && (

@@ -26,6 +26,10 @@ export interface HomeTemplateProps {
   /** What the top bar shows once the greeting scrolls away ("Home"). */
   topbarTitle?: string;
   subtitle?: React.ReactNode;
+  /** A quiet line under the greeting: the date, the role, the clock. */
+  meta?: React.ReactNode;
+  /** At most one primary action in the header (the executive's board pack). */
+  actions?: React.ReactNode;
   /** Interrupting banners, above everything. */
   banners?: React.ReactNode;
   /** The one hero. */
@@ -43,11 +47,13 @@ export interface HomeTemplateProps {
   className?: string;
 }
 
-export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, banners, hero, decisions, changes, waysIn, assistant, children, className }: HomeTemplateProps) {
+export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, actions, banners, hero, decisions, changes, waysIn, assistant, children, className }: HomeTemplateProps) {
   return (
     <div className={cn('space-y-6', className)} data-template="home">
       {banners}
-      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} />
+      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} primaryAction={actions}>
+        {meta}
+      </PageHeader>
       <section aria-label="Today">{hero}</section>
       {decisions && (
         <section aria-labelledby="home-decisions">

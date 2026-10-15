@@ -52,6 +52,8 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
 import { MyPlanCard } from '@/components/MyPlanCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { ClockStrip } from '@/components/ClockStrip';
@@ -215,65 +217,68 @@ export function AdminDashboard() {
     (user?.email ? firstNameFromEmail(user.email) : 'there');
 
   return (
-    <div className="mx-auto space-y-8">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      {/* Greeting strip — calm, generous typography, time + role context. */}
-      <header>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
-            <Calendar className="h-3 w-3" aria-hidden="true" />
-            <LiveNow render={(now) => fmtDate(now)} />
+      {/* Design system §4.1 (UX upgrade step 2): the Home template. The ranked
+          decision queue is the hero; Hugo has his seat; every section keeps
+          its own heading beneath. */}
+      <HomeTemplate
+        title={
+          <>
+            <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+            <span className="text-accent">{greetingName}</span>.
+          </>
+        }
+        topbarTitle="Home"
+        subtitle={(role && SUBTITLE_BY_ROLE[role]) ?? "Here's what's happening across your workforce today."}
+        meta={
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
+              <Calendar className="h-3 w-3" aria-hidden="true" />
+              <LiveNow render={(now) => fmtDate(now)} />
+            </span>
+            {role && (
+              <Badge variant="accent" className="uppercase tracking-[0.18em]">
+                {roleLabel(role)}
+              </Badge>
+            )}
+            <ClockStrip />
           </div>
-          {role && (
-            <Badge variant="accent" className="uppercase tracking-widest">
-              {roleLabel(role)}
-            </Badge>
-          )}
-        </div>
-        <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
-          <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
-          <span className="text-gold">{greetingName}</span>.
-        </h1>
-        <p className="text-silver mt-2 text-sm md:text-base">
-          {(role && SUBTITLE_BY_ROLE[role]) ??
-            "Here's what's happening across your workforce today."}
-        </p>
-        <ClockStrip className="mt-2" />
-      </header>
-
-      {canAct && <WelcomeCard greetingName={greetingName} />}
-
-      <RoleDecisionQueue />
-      <MyPlanCard />
-      {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
-      <ProgramAlertsCard />
-
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-
-      {canAct && (
-        <ActionRequiredSection
-          kpis={kpis}
-          canManageOnboarding={can('manage:onboarding')}
-          canManageCompliance={canManageCompliance}
-          canManageDocuments={can('manage:documents')}
-          canProcessPayroll={canProcessPayroll}
-          ssnRecollectionOutstanding={ssnRecollectionOutstanding}
-          openIncidents={openIncidents}
-        />
-      )}
-
-      <KpiSection kpis={kpis} role={role} />
-
-      {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
-
-      {canSeeAudit && (
-        <ActivityFeed
-          entries={activity}
-          error={Boolean(activityQuery.error)}
-          onRetry={() => void activityQuery.refetch()}
-        />
-      )}
-    </div>
+        }
+        banners={
+          <>
+            {canAct && <WelcomeCard greetingName={greetingName} />}
+            {error && <ErrorBanner>{error}</ErrorBanner>}
+          </>
+        }
+        hero={<RoleDecisionQueue />}
+        assistant={<HugoSeat />}
+      >
+        {canAct && (
+          <ActionRequiredSection
+            kpis={kpis}
+            canManageOnboarding={can('manage:onboarding')}
+            canManageCompliance={canManageCompliance}
+            canManageDocuments={can('manage:documents')}
+            canProcessPayroll={canProcessPayroll}
+            ssnRecollectionOutstanding={ssnRecollectionOutstanding}
+            openIncidents={openIncidents}
+          />
+        )}
+        <KpiSection kpis={kpis} role={role} />
+        <MyPlanCard />
+        {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
+        <ProgramAlertsCard />
+        {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
+        {canSeeAudit && (
+          <ActivityFeed
+            entries={activity}
+            error={Boolean(activityQuery.error)}
+            onRetry={() => void activityQuery.refetch()}
+          />
+        )}
+      </HomeTemplate>
+    </>
   );
 }
 

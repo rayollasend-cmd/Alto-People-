@@ -38,7 +38,8 @@ import { Button } from '@/components/ui/Button';
 import { EmergencyBanner } from '@/components/EmergencyBanner';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Card, CardContent } from '@/components/ui/Card';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
 import {
   PullToRefreshIndicator,
   usePullToRefresh,
@@ -148,43 +149,41 @@ export function AssociateDashboard() {
     : '';
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.1 (UX upgrade step 2): the Home template, phone
+          first. Banners that interrupt, the greeting, the shift as the one
+          hero, then what needs them, their numbers, their pay and week,
+          Hugo, and the shortcuts. */}
+      <HomeTemplate
         title={t('dash.greeting', { name: greetingName })}
+        topbarTitle={t('tabs.home')}
         subtitle={
           place ? (
             <span className="flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5 shrink-0 text-silver/70" aria-hidden="true" />
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
               {place}
             </span>
           ) : (
             t('dash.subtitle')
           )
         }
-        // The hero is a greeting; the chrome should say the page name, not
-        // echo "Hey Maria 👋" right above its own h1.
-        topbarTitle={t('tabs.home')}
-      />
-
-      {/* A birthday/anniversary greeting beats a triage console. The old
-          layout stacked the admin Decision Console ("2 critical · $ at
-          stake", "Open room") and a knowledge-worker plan card here — for
-          an associate those only ever restated what OnboardingBanner and
-          ActionNeededCard below already say, in ops jargon. */}
-      {/* A storm outranks everything below: the one-tap check-in, only
-          while an emergency that includes this person is active. */}
-      <EmergencyBanner />
-      <CelebrationRibbon />
-      <OnboardingBanner />
-      {/* From the clock-in number to the first punch: where they work, who
-          runs the floor, and how to reach them. */}
-      <ReadyToWorkCard className="mb-4" />
-
-      {/* The hero: their shift, in the tone of the moment — on the clock,
-          late, coming up, or nothing scheduled. It replaced two cards
-          ("Clock" + "Next shift") that never told anyone they were late. */}
-      {activeQuery.isError || shiftsQuery.isError ? (
+        banners={
+          <>
+            {/* A storm outranks everything below: the one-tap check-in, only
+                while an emergency that includes this person is active. */}
+            <EmergencyBanner />
+            <CelebrationRibbon />
+            <OnboardingBanner />
+            {/* From the clock-in number to the first punch: where they work, who
+                runs the floor, and how to reach them. */}
+            <ReadyToWorkCard className="mb-4" />
+          </>
+        }
+        hero={
+          // Their shift, in the tone of the moment — on the clock, late, coming
+          // up, or nothing scheduled.
+          activeQuery.isError || shiftsQuery.isError ? (
         <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" />
       ) : (
         <MyShiftHero
@@ -206,39 +205,35 @@ export function AssociateDashboard() {
             )
           }
         />
-      )}
-
-      {/* Their van — the ride that's coming, or a one-tap ride for the
-          next shift that needs one. */}
-      <RideStrip />
-
-      <EnablePushCard />
-      <ActionNeededCard
-        shifts={shiftsQuery.isError ? null : shifts}
-      />
-
-      {/* The four numbers their week runs on — the supervisor's KPI strip,
-          for one person. */}
-      <MyNumbers
-        shifts={shifts}
-        paystub={latestPaystub}
-        payFailed={payQuery.isError}
-        balances={balances}
-        balanceFailed={balanceQuery.isError}
-        openShiftCount={openShiftCount}
-      />
-
-      <div className="mb-4 space-y-4">
-        <EarningsCard />
-        {/* New hires see their own relay lane — every "where's my check?"
-            this answers is a case that never gets filed. */}
-        <FirstPaycheckCard />
-      </div>
-
-      <MyWeekStrip shifts={shiftsQuery.isError ? null : shifts} />
-
-      <QuickActions />
-    </div>
+      )
+        }
+        assistant={<HugoSeat />}
+        waysIn={<QuickActions />}
+      >
+        {/* Their van — the ride that's coming, or a one-tap ride for the
+            next shift that needs one. */}
+        <RideStrip />
+        <EnablePushCard />
+        <ActionNeededCard shifts={shiftsQuery.isError ? null : shifts} />
+        {/* The four numbers their week runs on — the supervisor's KPI strip,
+            for one person. */}
+        <MyNumbers
+          shifts={shifts}
+          paystub={latestPaystub}
+          payFailed={payQuery.isError}
+          balances={balances}
+          balanceFailed={balanceQuery.isError}
+          openShiftCount={openShiftCount}
+        />
+        <div className="mb-4 space-y-4">
+          <EarningsCard />
+          {/* New hires see their own relay lane — every "where's my check?"
+              this answers is a case that never gets filed. */}
+          <FirstPaycheckCard />
+        </div>
+        <MyWeekStrip shifts={shiftsQuery.isError ? null : shifts} />
+      </HomeTemplate>
+    </>
   );
 }
 

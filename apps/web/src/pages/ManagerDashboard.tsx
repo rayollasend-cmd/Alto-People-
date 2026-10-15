@@ -42,6 +42,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -141,56 +143,58 @@ export function ManagerDashboard() {
   }, [activeEntries]);
 
   return (
-    <div className="mx-auto space-y-8">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      {/* Greeting */}
-      <header>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
-            <Calendar className="h-3 w-3" aria-hidden="true" />
-            <LiveNow render={(now) => fmtDate(now)} />
-          </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-2xs uppercase tracking-widest text-white">
-            Manager view
-          </span>
-        </div>
-        <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
-          <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
-          <span className="text-gold">{greetingName}</span>.
-        </h1>
-        <p className="text-silver mt-2 text-sm md:text-base">
-          {summary && summary.directReports > 0
+      {/* Design system §4.1 (UX upgrade step 2): the Home template. */}
+      <HomeTemplate
+        title={
+          <>
+            <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+            <span className="text-accent">{greetingName}</span>.
+          </>
+        }
+        topbarTitle="Home"
+        subtitle={
+          summary && summary.directReports > 0
             ? `You have ${summary.directReports} direct ${summary.directReports === 1 ? 'report' : 'reports'} on your team.`
-            : 'Your team-scoped overview.'}
-        </p>
-      </header>
-
-      <RoleDecisionQueue />
-      <MyPlanCard />
-
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-
-      <ApprovalsSection
-        pendingTimesheets={pendingTimesheets}
-        pendingPto={pendingPto}
-        error={approvalsError}
-        onRetry={retryApprovals}
-      />
-
-      <TeamSnapshot
-        summary={summary}
-        activeCount={activeByReport.size}
-        activeError={Boolean(activeQuery.error)}
-        onRetryActive={() => void activeQuery.refetch()}
-      />
-
-      <TeamRoster
-        reports={reports}
-        activeByReport={activeByReport}
-        pendingPto={pendingPto}
-        approvedPto={approvedPto}
-      />
-    </div>
+            : 'Your team-scoped overview.'
+        }
+        meta={
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
+              <Calendar className="h-3 w-3" aria-hidden="true" />
+              <LiveNow render={(now) => fmtDate(now)} />
+            </span>
+            <Badge variant="info" className="uppercase tracking-[0.18em]">
+              Manager view
+            </Badge>
+          </div>
+        }
+        banners={error ? <ErrorBanner>{error}</ErrorBanner> : undefined}
+        hero={<RoleDecisionQueue />}
+        assistant={<HugoSeat />}
+      >
+        <MyPlanCard />
+        <ApprovalsSection
+          pendingTimesheets={pendingTimesheets}
+          pendingPto={pendingPto}
+          error={approvalsError}
+          onRetry={retryApprovals}
+        />
+        <TeamSnapshot
+          summary={summary}
+          activeCount={activeByReport.size}
+          activeError={Boolean(activeQuery.error)}
+          onRetryActive={() => void activeQuery.refetch()}
+        />
+        <TeamRoster
+          reports={reports}
+          activeByReport={activeByReport}
+          pendingPto={pendingPto}
+          approvedPto={approvedPto}
+        />
+      </HomeTemplate>
+    </>
   );
 }
 
