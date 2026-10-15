@@ -13,6 +13,8 @@ import { axe } from 'vitest-axe';
 const SUMMARY = { weeklyOvertimeHours: 40, dailyOvertimeHours: null, doubleTimeHours: null, seventhDayRule: false, minimumWageCents: 1500, mealRequiredAfterHours: null, restPerHours: null, restBetweenShiftsHours: null, predictiveNoticeDays: null, minorBands: 4 };
 
 vi.mock('@/lib/laborRulesApi', () => ({
+  listLaborShadowRuns: vi.fn(async () => ({ runs: [{ id: 'r1', payrollRunId: 'p1', periodStart: '2026-09-26', periodEnd: '2026-10-09', associates: 12, differences: 0, amountDifference: 0, penaltyHours: 0, ranAt: '2026-10-10T05:00:00Z' }] })),
+  getLaborShadowRun: vi.fn(async () => ({ id: 'r1', periodStart: '2026-09-26', periodEnd: '2026-10-09', associates: 12, differences: [] })),
   listLaborRuleSites: vi.fn(async () => ({
     date: '2026-10-15',
     sites: [{ id: 's1', name: 'Destin Store', city: 'Destin', state: 'FL', active: true, jurisdictions: ['FEDERAL', 'US-FL', 'US-FL-DESTIN'], layers: ['FEDERAL 2009-07-24 v1', 'US-FL 2026-09-30 v1'], payable: false, fingerprint: 'abc', summary: SUMMARY }],
@@ -49,6 +51,7 @@ describe('LaborRulesPage', () => {
     const { container } = renderPage();
     expect((await screen.findAllByText('Destin Store')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('$15.00').length).toBeGreaterThan(0);
+    expect(await screen.findByText(/No differences so far/)).toBeTruthy();
     const results = await axe(container, { rules: { 'color-contrast': { enabled: false }, region: { enabled: false } } });
     expect(results.violations).toHaveLength(0);
 

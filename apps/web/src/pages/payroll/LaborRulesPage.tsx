@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getLaborRuleSite, listLaborRuleSites, type LaborRuleSite, type LaborRuleSummary } from '@/lib/laborRulesApi';
+import { getLaborRuleSite, getLaborShadowRun, listLaborRuleSites, listLaborShadowRuns, type LaborRuleSite, type LaborRuleSummary, type LaborShadowRun } from '@/lib/laborRulesApi';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -149,7 +149,96 @@ export function LaborRulesPage() {
           )}
         </CardContent>
       </Card>
+      <LaborShadowSection />
       {open && <SiteDrawer id={open} date={date} onClose={() => setOpen(null)} />}
     </div>
+  );
+}
+
+/* Brief 2-2 step 3 — the engine in shadow: each finalized run recomputed beside what it paid. */
+
+function ShadowRunDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+  const q = useQuery({ queryKey: ['labor-rules', 'shadow', id], queryFn: () => getLaborShadowRun(id) });
+  const d = q.data;
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>{d ? `Pay period ${d.periodStart} – ${d.periodEnd}` : 'Shadow run'}</DrawerTitle>
+        <DrawerDescription>What the rules engine would have paid, beside what was paid. Nothing here changes pay.</DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody className="space-y-3">
+        {q.isError ? (
+          <QueryError what="this shadow run" query={q} />
+        ) : !d ? (
+          <SkeletonRows count={3} />
+        ) : d.differences.length === 0 ? (
+          <p className="text-sm text-silver">No differences for the {d.associates} people paid in this period.</p>
+        ) : (
+          d.differences.map((x) => (
+            <div key={x.associateId} className="rounded-md border border-navy-secondary p-3 text-sm">
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="font-medium text-white">{x.name}</span>
+                <span className={x.amountDifference > 0 ? 'text-warning' : 'text-silver'}>{fmtMoney(x.amountDifference)}</span>
+              </div>
+              <p className="mt-1 text-xs text-silver">
+                Paid {x.paid.regularHours} h + {x.paid.overtimeHours} h overtime · engine {x.engine.regularHours} h + {x.engine.overtimeHours} h overtime
+                {x.engine.doubleTimeHours ? ` + ${x.engine.doubleTimeHours} h double time` : ''} at {fmtMoney(x.hourlyRate)}/h
+                {x.penaltyHours ? ` · ${x.penaltyHours} premium h shown, not paid` : ''}
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-xs text-silver">
+                {x.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </DrawerBody>
+    </Drawer>
+  );
+}
+
+export function LaborShadowSection() {
+  const [open, setOpen] = useState<string | null>(null);
+  const q = useQuery({ queryKey: ['labor-rules', 'shadow'], queryFn: () => listLaborShadowRuns() });
+  const runs = q.data?.runs;
+  const total = runs?.reduce((a, r) => a + r.differences, 0) ?? 0;
+  return (
+    <section aria-labelledby="shadow-title" className="space-y-2">
+      <h2 id="shadow-title" className="text-base font-semibold text-white">Engine in shadow</h2>
+      <p className="text-sm text-silver">
+        Each finalized pay run is recomputed under these rules beside what it paid. Pay switches to the rules engine only after the owner signs a dry run with no differences.
+        {runs && runs.length > 0 && (total === 0 ? ' No differences so far.' : ` ${total} difference${total === 1 ? '' : 's'} to review.`)}
+      </p>
+      <Card>
+        <CardContent className="p-0">
+          {q.isError ? (
+            <div className="p-6"><QueryError what="the shadow runs" query={q} /></div>
+          ) : !runs ? (
+            <div className="p-6"><SkeletonRows count={3} /></div>
+          ) : runs.length === 0 ? (
+            <p className="p-6 text-sm text-silver">No finalized pay runs shadowed yet; each one is recomputed within the hour after it is finalized.</p>
+          ) : (
+            <DataGrid<LaborShadowRun>
+              id="labor-rules-shadow"
+              caption="Pay runs recomputed by the rules engine"
+              rows={runs}
+              rowKey={(r) => r.id}
+              urlState={false}
+              search={false}
+              onRowClick={(r) => setOpen(r.id)}
+              columns={[
+                { key: 'period', header: 'Pay period', accessor: (r) => r.periodStart, sortable: true, primary: true, cell: (r) => `${r.periodStart} – ${r.periodEnd}` },
+                { key: 'people', header: 'People paid', accessor: (r) => r.associates, sortable: true },
+                { key: 'diffs', header: 'Differences', accessor: (r) => r.differences, sortable: true, cell: (r) => <Badge variant={r.differences ? 'pending' : 'success'} size="sm">{r.differences}</Badge> },
+                { key: 'amount', header: 'Engine − paid', accessor: (r) => r.amountDifference, sortable: true, cell: (r) => fmtMoney(r.amountDifference) },
+                { key: 'premium', header: 'Premium hours shown', accessor: (r) => r.penaltyHours, sortable: true },
+              ]}
+            />
+          )}
+        </CardContent>
+      </Card>
+      {open && <ShadowRunDrawer id={open} onClose={() => setOpen(null)} />}
+    </section>
   );
 }

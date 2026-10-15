@@ -11,3 +11,4 @@ export * from './packs.js';
 export * from './resolve.js';
 export * from './evaluate.js';
 export * from './store.js';
+export * from './shadow.js';

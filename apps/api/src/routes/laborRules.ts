@@ -14,6 +14,8 @@ import { tenantIdForWrite } from '../lib/tenant.js';
  *   GET /labor-rules/sets         every pack and this tenant's overrides, with citation and status
  *   GET /labor-rules/sites        each site: its jurisdictions and the rules in force on a date
  *   GET /labor-rules/sites/:id    one site, with which set set each value
+ *   GET /labor-rules/shadow       step 3: finalized runs recomputed by the engine, with their differences
+ *   GET /labor-rules/shadow/:id   one run's differences by person, with the engine's reasons
  */
 
 export const laborRulesRouter = Router();
@@ -99,5 +101,50 @@ laborRulesRouter.get('/sites/:id', VIEW, async (req, res) => {
     origin: r.origin,
     summary: summary(r),
     sets: setsInForce(pool.filter((s) => keys.has(s.jurisdiction)), date).map((s) => setOut(s as StoredRuleSet)),
+  });
+});
+
+/* --------------------------------------------------------------- shadow */
+
+/** Step 3: each finalized run recomputed by the engine beside what it paid. */
+laborRulesRouter.get('/shadow', VIEW, async (_req, res) => {
+  const rows = await prisma.laborShadowRun.findMany({ where: { tenantId: tenantIdForWrite() }, orderBy: { periodEnd: 'desc' }, take: 52 });
+  res.json({
+    runs: rows.map((r) => ({
+      id: r.id,
+      payrollRunId: r.payrollRunId,
+      periodStart: r.periodStart.toISOString().slice(0, 10),
+      periodEnd: r.periodEnd.toISOString().slice(0, 10),
+      associates: r.associates,
+      differences: r.differences,
+      amountDifference: Number(r.amountDifference),
+      penaltyHours: Number(r.penaltyHours),
+      ranAt: r.ranAt.toISOString(),
+    })),
+  });
+});
+
+laborRulesRouter.get('/shadow/:id', VIEW, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const run = await prisma.laborShadowRun.findFirst({
+    where: { id, tenantId: tenantIdForWrite() },
+    include: { diffs: { include: { associate: { select: { firstName: true, lastName: true } } }, orderBy: { amountDifference: 'desc' } } },
+  });
+  if (!run) throw new HttpError(404, 'shadow_run_not_found', 'Shadow run not found.');
+  res.json({
+    id: run.id,
+    periodStart: run.periodStart.toISOString().slice(0, 10),
+    periodEnd: run.periodEnd.toISOString().slice(0, 10),
+    associates: run.associates,
+    differences: run.diffs.map((d) => ({
+      associateId: d.associateId,
+      name: `${d.associate.firstName} ${d.associate.lastName}`.trim(),
+      paid: { regularHours: Number(d.paidRegular), overtimeHours: Number(d.paidOvertime) },
+      engine: { regularHours: Number(d.engineRegular), overtimeHours: Number(d.engineOvertime), doubleTimeHours: Number(d.engineDouble) },
+      hourlyRate: Number(d.hourlyRate),
+      amountDifference: Number(d.amountDifference),
+      penaltyHours: Number(d.penaltyHours),
+      reasons: d.reasons,
+    })),
   });
 });

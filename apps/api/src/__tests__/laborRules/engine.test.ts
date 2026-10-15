@@ -13,6 +13,8 @@ import {
   resolveFor,
   resolveRules,
   setsInForce,
+  shadowAssociate,
+  type ShadowEntry,
   type ResolvedRules,
   type RuleSetDef,
   type WorkEntry,
@@ -267,4 +269,18 @@ describe('helpers', () => {
     expect(minimumWageShortfall(1500, fl)).toEqual({ shortCents: 0, reason: null });
     expect(minimumWageShortfall(1400, fl)).toEqual({ shortCents: 100, reason: 'Below minimum wage: $14.00 < $15.00, US-FL 2026-09-30 v1' });
   });
+});
+
+// Brief 2-2 step 3: the dry run's gate, on the fixtures.
+describe('the golden fixtures in shadow', () => {
+  for (const a of GOLDEN_ASSOCIATES) {
+    it(`${a.key}: no difference`, () => {
+      const entries: ShadowEntry[] = a.entries
+        .filter((e) => e.status === 'APPROVED')
+        .map((e) => ({ associateId: a.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: { id: GOLDEN_SITES[e.site].id, state: GOLDEN_SITES[e.site].state, city: null, timezone: GOLDEN_SITES[e.site].timezone } }));
+      const r = shadowAssociate(SHIPPED_PACKS, a.id, entries, 15);
+      expect(r.differs, r.reasons.join('\n')).toBe(false);
+      expect(r.amountDifference).toBe(0);
+    });
+  }
 });

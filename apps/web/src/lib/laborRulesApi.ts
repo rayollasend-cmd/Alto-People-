@@ -61,3 +61,33 @@ export interface LaborRuleSiteDetail {
 export const listLaborRuleSites = (date: string) => apiFetch<{ date: string; sites: LaborRuleSite[] }>(`/labor-rules/sites?date=${date}`);
 
 export const getLaborRuleSite = (id: string, date: string) => apiFetch<LaborRuleSiteDetail>(`/labor-rules/sites/${id}?date=${date}`);
+
+// Brief 2-2 step 3 — the engine in shadow beside each finalized run.
+
+export interface LaborShadowRun {
+  id: string;
+  payrollRunId: string;
+  periodStart: string;
+  periodEnd: string;
+  associates: number;
+  differences: number;
+  amountDifference: number;
+  penaltyHours: number;
+  ranAt: string;
+}
+
+export interface LaborShadowDifference {
+  associateId: string;
+  name: string;
+  paid: { regularHours: number; overtimeHours: number };
+  engine: { regularHours: number; overtimeHours: number; doubleTimeHours: number };
+  hourlyRate: number;
+  amountDifference: number;
+  penaltyHours: number;
+  reasons: string[];
+}
+
+export const listLaborShadowRuns = () => apiFetch<{ runs: LaborShadowRun[] }>('/labor-rules/shadow');
+
+export const getLaborShadowRun = (id: string) =>
+  apiFetch<{ id: string; periodStart: string; periodEnd: string; associates: number; differences: LaborShadowDifference[] }>(`/labor-rules/shadow/${id}`);

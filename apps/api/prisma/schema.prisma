@@ -2059,6 +2059,7 @@ model Associate {
   opsTasksDone             OpsTask[]                 @relation("OpsTaskDoneBy")
   // Tier-2 — manual earning lines attached to draft runs.
   payrollRunAddOns         PayrollRunAddOn[]
+  laborShadowDiffs         LaborShadowDiff[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3477,6 +3478,7 @@ model PayrollRun {
   addOns                   PayrollRunAddOn[]
   createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
+  laborShadowRun           LaborShadowRun?
 
   @@index([clientId, periodStart])
   @@index([status, disbursedAt])
@@ -10585,4 +10587,52 @@ model LaborRuleSet {
 
   @@index([tenantId, status])
   @@index([jurisdiction, effectiveFrom])
+}
+
+/// Brief 2-2 step 3 — the engine in shadow: each finalized payroll run is
+/// recomputed through the labor rules engine beside what it paid. Nothing is
+/// paid from here; the differences are the evidence for the switch (step 4).
+model LaborShadowRun {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollRunId     String   @unique @db.Uuid
+  periodStart      DateTime @db.Date
+  periodEnd        DateTime @db.Date
+  associates       Int
+  differences      Int
+  /// What the engine would have paid minus what was paid, across the run (penalties excluded).
+  amountDifference Decimal  @db.Decimal(12, 2)
+  /// Premium hours the engine computes (meal, rest, rest between shifts): shown, never paid until signed.
+  penaltyHours     Decimal  @db.Decimal(10, 2)
+  ranAt            DateTime @default(now()) @db.Timestamptz(6)
+
+  payrollRun PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  diffs      LaborShadowDiff[]
+
+  @@index([tenantId, ranAt])
+}
+
+/// One associate whose engine result differs from what the run paid.
+model LaborShadowDiff {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  shadowRunId      String   @db.Uuid
+  associateId      String   @db.Uuid
+  paidRegular      Decimal  @db.Decimal(10, 2)
+  paidOvertime     Decimal  @db.Decimal(10, 2)
+  engineRegular    Decimal  @db.Decimal(10, 2)
+  engineOvertime   Decimal  @db.Decimal(10, 2)
+  engineDouble     Decimal  @db.Decimal(10, 2)
+  hourlyRate       Decimal  @db.Decimal(10, 2)
+  amountDifference Decimal  @db.Decimal(12, 2)
+  penaltyHours     Decimal  @db.Decimal(10, 2)
+  /// The engine's reason lines.
+  reasons          Json
+  fingerprints     String[]
+
+  shadowRun LaborShadowRun @relation(fields: [shadowRunId], references: [id], onDelete: Cascade)
+  associate Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([shadowRunId])
+  @@index([associateId])
 }
