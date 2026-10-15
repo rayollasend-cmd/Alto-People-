@@ -1,0 +1,181 @@
+# UX upgrade investigation: a Fortune 500 product, premium for every user
+
+Reported 2026-10-15. The owner's direction, same day: "it should be polished and remember this is a Fortune 500 company. All users should feel premium." The standard set on 2026-10-13 stands: surpass Workday, do not match it.
+
+## 1. Summary
+
+The product works and is tested (295 API test files, 146 web, three browser suites), and it carries three things no competitor has on screen: a hash-chained audit trail with an automated-decision record, agents that propose while people decide, and one roster for people, agents and robots. The interface does not yet say any of that. It says how the product was built: 93 modules in a seven-group menu, 23 admin surfaces that each landed as a tab or panel on whichever page the brief touched, twelve different page-title styles, 173 hand-written "nothing yet" messages beside 54 proper empty states, and light mode held together by 400 lines of class overrides. Nothing is broken. It is unfinished in the way a house is unfinished the day the last trade leaves: everything is in, and nothing has been brought together.
+
+The upgrade is five moves, in order: a written design system with page templates (the thing that makes the other four cheap), role homes that put decisions before menus, one Settings & Trust area, a Trust Center, and the hybrid roster as the center of gravity; then a sweep that brings all 93 modules onto the templates. Each lands as a brief with acceptance, measured with the product analytics the app already collects.
+
+## 2. What exists
+
+| Area | State | Where |
+|---|---|---|
+| Tokens and themes | Brand-named tokens (navy, gold, silver, steel, teal, alert, success, warning, muted) in dark and light; charts have their own three steps; elevation ladder `elev-1/2/3`; motion keyframes; `coarse:`/`fine:`/`standalone:` variants; a compact density mode. Light mode works by overriding `.text-white`, `.bg-navy` and friends in `index.css` (about lines 275–660): `text-fg` is used 0 times, `text-white` 1,643 times. | `apps/web/src/index.css`, `tailwind.config.js`, `src/lib/theme.tsx` |
+| Type | Geist Variable for text, Cormorant Garamond Variable for display; custom sizes 3xs/2xs/xs2 and hero/hero-lg | `src/main.tsx`, `tailwind.config.js` |
+| UI kit | 34 components with a stated purpose each (DataGrid "the one way a list of records is shown", PageHeader "every page uses this", FilterBar "the single canonical filter row"); the 44-px touch floor and 16-px inputs are enforced in Button, Select, Tabs, SegmentedControl, DropdownMenu and by lint | `src/components/ui/*`, `eslint.config.js` |
+| Shell | Sidebar with core, pinned, recent and seven collapsible groups; Topbar with search, scope bar, bell, help, role switch; BottomTabBar with four tabs per role; command palette (no recents); coachmarks; What's new | `src/components/Layout.tsx`, `Sidebar.tsx`, `Topbar.tsx`, `BottomTabBar.tsx` |
+| Navigation model | 93 modules in `modules.ts`: core 12, workforce-management 37, operations 2, compliance 11, payroll-finance 14, client-services 4, platform 13; hidden by capability, tenant module switch, platform-only flag and a curated list per role; labels renamed per tenant | `src/lib/modules.ts` |
+| Role homes | Thirteen dashboards chosen by role at `/`: associate (hero = my shift), manager, supervisor (my floor), executive (margin), portal store and region (floor vs contracted), finance (payday), workforce (store board), recruiter, driver, transportation director, admin (greeting, decision queue, plan, KPIs) | `src/pages/Dashboard.tsx` and the `*Dashboard.tsx` files |
+| Decision surfaces | RoleDecisionQueue on four homes, Approvals, the relay board with batons, desks (compliance, verifier), agent approval queue, support inbox | `src/pages/approvals`, `relay`, `agents` |
+| Admin and trust surfaces | Users & access (Accounts, Access report, Roles & permissions), Sign-in (OIDC, SAML, domains, SCIM), Organization profile, Billing, Compliance evidence (with Access review and Security contact), Audit (with Integrity: chain, retention, SIEM, full export), Agents (gates, decision record, catalog, MCP preview), Workers, Developers, Integrations, Reliability, Product analytics, Support and the platform inbox, Labor rules | `src/pages/admin/*`, `audit`, `agents`, `developers`, `payroll/LaborRulesPage` |
+| Phone | BottomTabBar in flow, sheets with drag handle and pinned footer, Back closes overlays, pull to refresh, haptics, safe areas, EN/ES/TR | `src/components/ui/Dialog.tsx`, `src/lib/haptics.ts`, `useOverlayBackButton` |
+| Quality gates | Token contrast test, axe sweep, overflow guard, grid-layout guard, size budget (main 189.7/209 KB after the schema change today), lint rules against raw selects, textareas, hand-rolled gold buttons and `toLocaleDateString` | `src/__tests__/a11y`, `e2e/*`, `size-budget.json` |
+| Screenshot walks | `visual-walk`, `polish-walk`, `tablet-shots` (associate and admin, a few routes) and now `design-walk` (every seeded persona, every surface, desktop and phone, dark and light), all needing the full stack; run in GitHub Actions by `design-walk.yml`, PNGs as the artifact | `apps/web/e2e/design-walk.spec.ts`, `.github/workflows/design-walk.yml` |
+| Design documentation | None. No design-system document, no Storybook, no page templates written down. The rules live in component comments, lint, tests and this repository's memory. | — |
+
+## 3. What a Fortune 500 buyer and a stockroom associate both notice
+
+Counted across the 284 page files on 2026-10-15.
+
+1. **Titles.** Twelve distinct `<h1>` class strings in 21 files; the admin home uses display 3xl, the executive home `text-xl font-semibold` with the email's local part as the name, the associate home has no h1. Forty-two distinct `<h2>` styles; SectionTitle, the intended standard, is used in four files.
+2. **Empty states.** 173 ad-hoc "No … yet" strings in 113 files; EmptyState (icon, title, description, action) in 54.
+3. **Errors.** ErrorBanner in 149 files, QueryError in 38, split even between sibling admin pages.
+4. **Badges.** Badge in 163 files and 22 hand-rolled pills beside it.
+5. **Micro-labels.** `tracking-wider` 239 times, `tracking-widest` 178.
+6. **Colour.** 73 inline hex values in 15 files (ProductAnalytics 16, LiveMap 10, SeasonPlanner 6, Avatar 6). Light mode depends on overrides because the tokens are named for the dark brand, not for their job.
+7. **Radii.** `rounded-md` 483, `rounded` 263, `rounded-lg` 223, plus xl and 2xl.
+8. **Terms.** 148 literal "Associate(s)", 86 "Client(s)", 29 "Store(s)" in pages while `useTerm` is called in 23 files; the BottomTabBar mixes translated keys and raw English.
+9. **Icons.** The executive's tabs: Analytics is a dollar sign, Clients a calendar, Compliance a timer.
+10. **Where things are.** Roles & permissions, the Access report, Security contact, Access review, Integrity, Gates, the Decision record and the MCP preview are each a tab or panel inside another page. An IT admin evaluating us finds trust features by accident.
+11. **The menu.** 37 of 93 modules sit under one group. The command palette has no recents. Nothing on any home says "these three things need you"; the decision queue is one card among eight.
+12. **The roster.** People, agents and robots are three places (`/people`, `/agents`, `/workers`), and `/workers` is hidden unless the robotics module is on.
+
+Screenshots of every persona and surface, desktop and phone, dark and light, are produced by the design walk (section 2); the findings from the first run are added below when it completes.
+
+### 3.1 From the screenshots
+
+_Pending the first run of `design-walk.yml`._
+
+## 4. Competitors
+
+- **Workday.** Reviewers describe the interface as confusing and unintuitive, with complicated navigation, a steep learning curve and updates that add complexity; a 2026 Change Job redesign was needed because the old flow was "an unnecessary start page, then a seemingly endless series of fields" (sources below). Its Agent System of Record (Rising 2025, general availability 2026) is a governance console for agents: identity, roles, permissions, oversight, with Entra Agent ID integration. That is the direct competitor to our registry, gates and decision record. Workday shows governance as configuration; we can show it as evidence.
+- **Rippling.** Rated 4.8 against Workday's 4.1 on G2; reviewers name intuitive navigation, ease of setup (9.3 vs 8.3) and an app "designed for employees." Its model is one record, one system, clean screens. It has no frontline, multilingual or agent story.
+- **UKG Pro.** 4.3 on Capterra; the employee app is praised for one dashboard for pay and time off and criticised for glitches, a mobile experience that lags desktop and hard-to-find menus.
+- **Deel.** Consistently positive on the employee app: tabs that make modules easy to find, fast payments. No shift or clock-in depth.
+- **Gusto Wallet.** Pay, early access and savings in one app; clock-in sits inside the wallet. Vendor-authored material only.
+- **What "premium" means in the products people name** (Linear, Stripe, Vercel): restraint in colour with one accent used as punctuation, typography as the brand, density that respects the power user, crafted micro-states (hover, focus, disabled, loading), and responsiveness. The consensus is that what can be copied is the process, not the hex values.
+- **Trust centers** (Vanta, Drata, Slack as the model): badges with expiry dates, live control status, sub-processors, gated downloads, progressive disclosure, a hybrid public/gated access model, and subscription to changes. None shows a verifiable audit chain; ours can.
+
+The field to win is the one Rippling and Workday do not serve well: the frontline worker on a phone in three languages, the supervisor on a floor, and a buyer who needs to trust agents acting in payroll and compliance.
+
+## 5. Design
+
+### 5.1 Principles (the ones we test for)
+
+1. **The system does the work; the person sees decisions.** Every home opens with what needs that person today, drawn from the queues and desks that exist. Navigation is how you get elsewhere, never the first thing you read.
+2. **Premium for every user.** The associate's phone screens are designed to the same standard as the executive's board pack: the same type, spacing, motion and care. No plainer tier.
+3. **Restraint.** Gold is the brand's punctuation, not a fill. One hero per surface. Money in the heavy sans, never the display serif. Secondary data behind Details. (These rules exist; they become the written standard.)
+4. **Trust you can see.** Evidence, chain status, decision records and gates are first-class surfaces with their own home, not panels.
+5. **One language.** Tenant terms, EN/ES/TR, icons that mean what their labels say, one word for one thing across the product.
+6. **Nothing hand-rolled twice.** A pattern used on two pages becomes a component with a documented state set (empty, loading, error, disabled, offline).
+
+### 5.2 The design system (built first)
+
+A document and a code package, both in the repository, both tested:
+
+- **Tokens by job, not by brand.** `surface`, `surface-raised`, `text`, `text-muted`, `border`, `accent`, `accent-on`, `positive`, `caution`, `negative`, `info`, mapped from the brand palette in both themes, so light mode stops needing overrides. Brand names stay as aliases while pages are migrated; a lint rule retires `text-white` on new code.
+- **Type scale.** Six sizes with jobs (hero, title, section, body, caption, micro), one display face for titles and greetings only, tabular numerals for money and time.
+- **Spacing, radius, elevation, motion.** One radius ladder (sm, md, lg), the existing elevation ladder, duration and easing tokens, reduced-motion honoured everywhere.
+- **Page templates (five).** Home (hero, decisions, changes, ways in), List (FilterBar + DataGrid + Drawer), Record (header, tabs, timeline), Settings (left rail, sections, status), Desk (queue, item, action, closure). Every page names its template in a comment; the walk screenshots are grouped by template so a reviewer compares like with like.
+- **Component states.** Every component documents and renders its states; EmptyState, QueryError, Skeleton and Badge become mandatory through lint where a hand-rolled version is found.
+- **Iconography.** One set, one weight, a table of icon-to-meaning so a dollar sign is never Analytics.
+- **Voice.** The copy rules already followed (short sentences, specifics, the tenant's words, no jargon, three languages) written down with examples.
+- **Published.** As a Markdown document in `docs/design-system.md` and as a living page in the app for designers and engineers (behind `view:product-analytics`), rendered from the same tokens so it cannot drift.
+
+### 5.3 Role homes
+
+Six homes replace the thirteen dashboards' independent structures while keeping each hero that already earns its place:
+
+| Person | Opens with | Then |
+|---|---|---|
+| Associate (phone first) | The shift (on the clock, late, next, none) and this week's pay estimate | Things that need me (documents, acknowledgements, rides to confirm), my week, Hugo |
+| Supervisor | My floor against the line, right now | Decisions (approvals, swaps, no-shows, agent proposals), today shift by shift, the next seven days |
+| HR / operations admin | Today's decisions: approvals, desk items, agent proposals, alerts, counted and ranked | What changed since yesterday, the pipelines, ways in |
+| Client manager (portal) | The floor against the contracted line, hour by hour | Requests, schedule, history, the Message button |
+| Executive | Margin and its week-over-week change | Decision queue, the board pack, the pulse, the charts |
+| IT / compliance admin | Trust status: chain verified, controls passing, sign-ins healthy, agents certified | Settings & Trust rail |
+
+Hugo sits in the same place on every home, offered only what is on for that tenant and role. Navigation collapses to the six Products as groups, with search and recents in the palette and the sidebar; the 93 modules remain as destinations reached from a decision or a search.
+
+### 5.4 Settings & Trust
+
+One area with a left rail and one page template:
+
+Organization · Sites and org units · Users & access · Roles & permissions · Sign-in & provisioning (OIDC, SAML, domains, SCIM, groups) · Audit & integrity (viewer, chain, retention, archive, SIEM, export) · Security & compliance (evidence, controls, access review, security contact, dependency scan, backups) · Agents & gates (registry, gates, decision record, certification, MCP) · Billing · Developers & integrations · Branding & terminology.
+
+Every page in it shows status the same way (a badge with the last check and its time), has the same header, the same two-column layout, and the same place for danger. Nothing moves in the API; this is routing and templates.
+
+### 5.5 Trust Center
+
+One page in two variants, built from data the app already collects:
+
+- **In-app (IT/compliance admin):** chain verified at a time, with the head; the daily controls and their last result; the quarterly access review; agents and their certification; the decision record count and its last counsel review; retention and archives; sinks delivering.
+- **Public (prospects, gated downloads):** what we are (the positioning), the controls and their status, SOC 2 progress, sub-processors, data residency and retention, responsible-AI commitments (the gates and the decision record), the security contact, and a subscription to changes. Downloads behind a request.
+
+### 5.6 The roster
+
+`/people`, `/agents` and `/workers` become views of one roster: every worker (person, agent, robot) with type, owner, status, site, capabilities and scorecard; filters by type; the record page's tabs differ by type (a person's employment and pay; an agent's gates, decision record and certification). The Agents page keeps its registration flow and controls as the agent record's tabs. Hidden-by-module stays for robots until Phase 3 ships them.
+
+### 5.7 The sweep
+
+Every one of the 93 modules is scored against its template (title, header, filter row, grid, drawer, empty, loading, error, mobile, terms, icons, light theme) in a table kept in the repository; a module is brought in line when touched or in the sweep, the score moves, and the walk screenshots are the proof.
+
+## 6. Measurement
+
+Product analytics already collects route usage, errors and web vitals. Add three events and read them before and after each step: time from sign-in to the first decision taken (approve, assign, acknowledge), decisions per session by role, and searches that end on a settings page (a proxy for "I could not find it"). Axe, the overflow guard, the contrast test and the size budget remain gates; the walk runs on every design brief.
+
+## 7. Rollout
+
+| Step | Content | Size |
+|---|---|---|
+| 0. Walk and score | Run the design walk; read every screenshot; fill section 3.1; score the 93 modules against the templates | 2 days |
+| 1. Design system | Tokens by job with aliases, type and spacing scales, five templates, component states, icon table, voice; `docs/design-system.md` and the in-app page; lint for `text-white`, hand-rolled pills and empty text on new code | 1.5 weeks |
+| 2. Role homes | The six homes on the Home template; Products as groups; recents in palette and sidebar; the decision strip from the existing queues | 2 weeks |
+| 3. Settings & Trust | The area, the rail, the Settings template; eleven pages moved by routing; status badges unified | 1 week |
+| 4. Trust Center | In-app and public variants from existing data; gated downloads; subscription | 1 week |
+| 5. The roster | One worker list and record with type-specific tabs; `/agents` and `/workers` as views | 1 week |
+| 6. The sweep | The 93 modules onto the templates, highest-traffic first by product analytics; empty, loading and error states; terms; icons | 3 weeks, in slices |
+
+Each step: tests, the walk, acceptance reported before the next.
+
+## 8. Risks
+
+1. **A repaint without a restructure.** Mitigation: steps 2 to 5 change where things are; step 1 changes what they look like; neither ships alone.
+2. **Breaking muscle memory.** Admins know where things are today. Mitigation: old routes redirect, the palette finds everything, "What's new" explains each move, pins survive.
+3. **Bundle budget.** New shells cost bytes. Mitigation: the schema change today freed 19 KB of the main chunk; templates are shared code, so a sweep should shrink pages, not grow them; the budget stays a gate.
+4. **Light mode migration.** Retiring the overrides page by page risks a half-themed screen. Mitigation: aliases keep the old classes working; the walk shoots light mode on every step.
+5. **Terms and languages.** Every moved string must stay translated and termized. Mitigation: the i18n lint and the ES/TR walk screens.
+6. **Scope.** 93 modules invite a never-ending sweep. Mitigation: the score table and traffic ranking decide the order; the sweep is sliced and each slice is a brief.
+
+## 9. Owner decisions
+
+1. **Order: design system first, then homes, Settings & Trust, Trust Center, roster, sweep.** Recommendation: yes; the system makes every later step cheaper and keeps 93 modules from drifting again.
+2. **Tokens by job, brand names kept as aliases during migration.** Recommendation: yes; it is what fixes light mode for good.
+3. **Products as the navigation groups (six), modules reached from decisions and search.** Recommendation: yes; it is the taxonomy the owner set on 2026-10-13.
+4. **One Settings & Trust area; old routes redirect.** Recommendation: yes.
+5. **A public Trust Center with gated downloads.** Recommendation: yes, with the owner approving the public text and the sub-processor list before it goes live.
+6. **One roster for people, agents and robots, with `/agents` kept as a view.** Recommendation: yes.
+7. **Measure with three new product-analytics events.** Recommendation: yes.
+8. **The display serif stays for titles and greetings only; gold stays the single accent.** Recommendation: yes; both are the brand, and restraint is what reads as premium.
+
+## 10. Acceptance mapping
+
+| Standard | Proven by |
+|---|---|
+| Every user feels premium | The walk: every persona, desktop and phone, dark and light, EN/ES/TR, reviewed against the templates; zero ad-hoc empty, loading or error states on walked screens; axe and contrast clean |
+| Decisions before menus | Time to first decision and decisions per session improve for admin, supervisor and manager after step 2 |
+| Trust you can see | Settings & Trust and the Trust Center render chain, controls, review, agents and retention from live data; a prospect can be sent the public page |
+| One roster | A person, an agent and a robot appear in one list with owner and status; the agent's gates and decision record are its tabs |
+| Nothing drifts again | `docs/design-system.md` and the in-app page exist; lint fails new `text-white`, hand-rolled pills and empty text; every page names its template |
+
+## Sources
+
+- Workday interface criticism: [DevX](https://www.devx.com/daily-news/workdays-user-interface-criticized-despite-popularity/), [KillerStartups](https://killerstartups.com/workdays-software-criticized-for-complexity/), [Capterra reviews](https://www.capterra.com/p/66908/Workday-HCM/reviews/?page=23), [Change Job redesign (Syssero)](https://syssero.com/insights/why-workdays-change-job-ui-overhaul-is-a-win-for-everyone-a-consultants-perspective/)
+- Workday Agent System of Record: [Futurum on Rising 2025](https://futurumgroup.com/insights/workday-rising-2025-ai-agents-data-cloud-and-flex-credits-unveiled), [TechTarget](https://www.techtarget.com/searchhrsoftware/news/366625056/Workday-adds-seven-agents-to-Illuminate-platform), [CIO](https://cio.com/article/3821624/workday-aims-to-manage-ai-agents-like-employees.html)
+- Rippling vs Workday: [G2 comparison](https://www.g2.com/compare/rippling-vs-workday-hcm), [People Managing People](https://peoplemanagingpeople.com/tools/rippling-vs-workday/)
+- UKG Pro and Deel employee apps: [Capterra UKG Pro](https://www.capterra.com/p/480/UKG-Pro/reviews/), [GetApp Deel](https://www.getapp.com/hr-employee-management-software/a/deel/reviews/), [Gusto Wallet](https://gusto.com/wallet)
+- Frontline app criteria: [Darwinbox ESS roundup](https://darwinbox.com/blog/10-best-employee-self-service-ess-software-enterprise-hr), [Guideflow](https://www.guideflow.com/blog/frontline-worker-software)
+- Premium design principles: [Mantlr on Stripe, Linear, Vercel](https://mantlr.com/blog/stripe-linear-vercel-premium-ui), [OpenDesigner](https://opendesigner.io/blog/recreating-stripe-linear-vercel-design-systems-with-design-md)
+- Trust centers: [Vanta guide](https://help.vanta.com/en/articles/11487960-vanta-trust-center-implementation-guide), [Webstacks examples](https://www.webstacks.com/blog/trust-center-examples), [Procurize](https://www.procurize.ai/blog/how-to-build-a-trust-page), [Orbiq](https://orbiqhq.com/blog/the-ultimate-guide-to-trust-centers)

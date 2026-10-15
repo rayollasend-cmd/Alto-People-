@@ -162,8 +162,19 @@ async function adminTabs(page: Page, form: 'desktop' | 'phone', theme: 'dark' | 
   };
   await clickShoot('/admin/users', /roles & permissions/i, 'users-roles');
   await clickShoot('/admin/users', /access report/i, 'users-access-report');
-  await clickShoot('/agents', /decision record/i, 'agents-decision-record');
-  await clickShoot('/admin/billing', /invoices/i, 'billing-invoices');
+  // An agent's record and its compliance (decision) record: open the first built-in agent.
+  try {
+    await page.goto('/agents', { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    await page.getByText(/^Workforce( agent)?$/i).first().click({ timeout: 5000 });
+    await page.waitForTimeout(2000);
+    await shoot(page, `admin/${form}-${theme}-agents-record`, form === 'phone');
+    await page.getByRole('tab', { name: /compliance record/i }).click({ timeout: 5000 });
+    await page.waitForTimeout(2000);
+  } catch (err) {
+    console.log(`agent record: ${err instanceof Error ? err.message : err}`);
+  }
+  await shoot(page, `admin/${form}-${theme}-agents-decision-record`, form === 'phone');
 }
 
 test.describe('desktop', () => {
