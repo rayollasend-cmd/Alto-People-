@@ -1,0 +1,1038 @@
+{
+  "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
+  "totals": {
+    "brand-text": 1596,
+    "raw-heading": 160,
+    "loading-text": 4,
+    "empty-text": 39,
+    "hex": 58,
+    "pill": 38
+  },
+  "files": {
+    "src/pages/AcceptInvite.tsx": {
+      "brand-text": 3,
+      "raw-heading": 3
+    },
+    "src/pages/admin/AccessReport.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/admin/AccessReviewPanel.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/AgentCatalogPicker.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/admin/AgentDecisionRecordTab.tsx": {
+      "brand-text": 6,
+      "loading-text": 1
+    },
+    "src/pages/admin/AgentGatesPanel.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/AgentRegistryAdmin.tsx": {
+      "brand-text": 25,
+      "empty-text": 2,
+      "loading-text": 1
+    },
+    "src/pages/admin/BillingHome.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/admin/BrandingHome.tsx": {
+      "hex": 3
+    },
+    "src/pages/admin/ComplianceEvidenceHome.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/admin/EmployersAdmin.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/admin/HugoPanel.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/admin/McpCatalogPreview.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/admin/OrgUnitsAdmin.tsx": {
+      "brand-text": 3,
+      "empty-text": 1
+    },
+    "src/pages/admin/RegionsAdmin.tsx": {
+      "brand-text": 1,
+      "empty-text": 1
+    },
+    "src/pages/admin/RolesMatrix.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/admin/SecondRoleDialog.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/SignInSettings.tsx": {
+      "brand-text": 18
+    },
+    "src/pages/admin/SitesAdmin.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/SupervisorShiftDialog.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/TenantProfileHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/admin/UsersAdmin.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/admin/WorkerTypesAdmin.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/AdminDashboard.tsx": {
+      "brand-text": 5,
+      "raw-heading": 3
+    },
+    "src/pages/agreements/AgreementsHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/analytics/AnalyticsHome.tsx": {
+      "brand-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/analytics/ProductAnalytics.tsx": {
+      "brand-text": 1,
+      "hex": 19
+    },
+    "src/pages/analytics/ReliabilityHome.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/analytics/RetentionSection.tsx": {
+      "brand-text": 2,
+      "empty-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/approvals/ApprovalsHome.tsx": {
+      "brand-text": 6,
+      "pill": 1,
+      "empty-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/assets/AssetsHome.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/associate/MyShiftHero.tsx": {
+      "brand-text": 7,
+      "raw-heading": 1
+    },
+    "src/pages/AssociateDashboard.tsx": {
+      "brand-text": 6,
+      "raw-heading": 1
+    },
+    "src/pages/audit/AuditHome.tsx": {
+      "brand-text": 7,
+      "raw-heading": 1
+    },
+    "src/pages/audit/AuditIntegrity.tsx": {
+      "brand-text": 3,
+      "raw-heading": 1
+    },
+    "src/pages/benefits/BenefitsHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/benefits/BenefitsLifecycle.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/career/CareerHome.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/careers/CareersPage.tsx": {
+      "brand-text": 10,
+      "raw-heading": 4
+    },
+    "src/pages/celebrations/CelebrationsHome.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/clients/BenefitsPlansSection.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/clients/ClientsHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/clients/ClientStatementsRollup.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/clients/JobsSection.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/clients/LocationsSection.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/clients/PipelineSection.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/clients/PortalAccessSection.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/clients/QuickbooksSection.tsx": {
+      "brand-text": 7
+    },
+    "src/pages/clients/RateDefaultsSection.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/clients/StatementsSection.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/communications/AdminCommsView.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/communications/AssociateInboxView.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/communications/WhatsAppAdmin.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/compensation/CompensationHome.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/compliance/AuditPacketTab.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/compliance/BackgroundTab.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/compliance/ComplianceDonut.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/compliance/ComplianceScorecard.tsx": {
+      "brand-text": 21,
+      "empty-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/compliance/DirectorateShell.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/compliance/DrugTestTab.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/compliance/EVerifyTab.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/compliance/I9Tab.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/compliance/J1Tab.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/compliance/OshaWcEeoHome.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/compliance/RequirementsTab.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/ConfirmEmailChange.tsx": {
+      "brand-text": 3,
+      "raw-heading": 4
+    },
+    "src/pages/dirComms/DirCommsHome.tsx": {
+      "brand-text": 11
+    },
+    "src/pages/discipline/DisciplineHome.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/documents/AdminDocumentsView.tsx": {
+      "brand-text": 9
+    },
+    "src/pages/documents/AssociateDocumentsView.tsx": {
+      "brand-text": 7,
+      "raw-heading": 2
+    },
+    "src/pages/emergency/EmergencyHome.tsx": {
+      "brand-text": 1,
+      "empty-text": 2
+    },
+    "src/pages/equity/EquityHome.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/ExecutiveDashboard.tsx": {
+      "brand-text": 37,
+      "pill": 2,
+      "empty-text": 1,
+      "raw-heading": 2
+    },
+    "src/pages/expirations/ExpirationsHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/fieldglass/FieldglassQueue.tsx": {
+      "brand-text": 1,
+      "pill": 2
+    },
+    "src/pages/fieldglass/FieldglassSetup.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/finance/FinanceCockpit.tsx": {
+      "brand-text": 14,
+      "pill": 1,
+      "raw-heading": 4
+    },
+    "src/pages/FinanceDashboard.tsx": {
+      "brand-text": 7,
+      "pill": 1,
+      "raw-heading": 4
+    },
+    "src/pages/ForgotPassword.tsx": {
+      "brand-text": 4,
+      "raw-heading": 3
+    },
+    "src/pages/headcount/HeadcountHome.tsx": {
+      "brand-text": 13,
+      "raw-heading": 1
+    },
+    "src/pages/holidays/HolidaysHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/hotline/HotlineAdmin.tsx": {
+      "brand-text": 6,
+      "empty-text": 1
+    },
+    "src/pages/hotline/HotlinePage.tsx": {
+      "brand-text": 7,
+      "raw-heading": 1
+    },
+    "src/pages/hrCases/HrCasesHome.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/Install.tsx": {
+      "brand-text": 4,
+      "raw-heading": 3
+    },
+    "src/pages/integrations/ApiClientsTab.tsx": {
+      "brand-text": 5
+    },
+    "src/pages/integrations/DevelopersPage.tsx": {
+      "brand-text": 9,
+      "raw-heading": 2
+    },
+    "src/pages/integrations/IntegrationsHome.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/internalJobs/InternalJobsHome.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/kb/KbHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/kiosk/KioskAdmin.tsx": {
+      "brand-text": 31
+    },
+    "src/pages/kiosk/KioskInstallButton.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/kiosk/KioskPage.tsx": {
+      "brand-text": 18,
+      "raw-heading": 1
+    },
+    "src/pages/learning/LearningHome.tsx": {
+      "brand-text": 7,
+      "raw-heading": 2
+    },
+    "src/pages/learningPaths/LearningPathsHome.tsx": {
+      "brand-text": 7,
+      "empty-text": 1
+    },
+    "src/pages/Login.tsx": {
+      "brand-text": 8,
+      "hex": 2,
+      "raw-heading": 3
+    },
+    "src/pages/ManagerDashboard.tsx": {
+      "brand-text": 5,
+      "pill": 1,
+      "raw-heading": 2
+    },
+    "src/pages/marketplace/MarketplaceHome.tsx": {
+      "brand-text": 5,
+      "raw-heading": 1
+    },
+    "src/pages/me/MeHome.tsx": {
+      "brand-text": 10
+    },
+    "src/pages/me/MyDiscipline.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/mentorship/MentorshipHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/messages/MessagesHome.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/ModulePlaceholder.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/NotFound.tsx": {
+      "brand-text": 1,
+      "empty-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/offer/OfferLetterPage.tsx": {
+      "brand-text": 9,
+      "raw-heading": 3
+    },
+    "src/pages/onboarding/ApplicationDetail.tsx": {
+      "brand-text": 18,
+      "raw-heading": 2
+    },
+    "src/pages/onboarding/ApplicationsList.tsx": {
+      "brand-text": 11
+    },
+    "src/pages/onboarding/AssociateChecklist.tsx": {
+      "brand-text": 4,
+      "raw-heading": 1
+    },
+    "src/pages/onboarding/BulkApproveDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/onboarding/CancelInviteDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/onboarding/CsvImportDialog.tsx": {
+      "pill": 1
+    },
+    "src/pages/onboarding/EsignSection.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/onboarding/InPersonOnboarding.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/onboarding/NewApplicationDialog.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/onboarding/OnboardingAnalytics.tsx": {
+      "brand-text": 2,
+      "empty-text": 1
+    },
+    "src/pages/onboarding/tasks/BackgroundCheckTask.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/onboarding/tasks/DirectDepositTask.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/onboarding/tasks/DocumentUploadTask.tsx": {
+      "brand-text": 5
+    },
+    "src/pages/onboarding/tasks/EsignTask.tsx": {
+      "brand-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/onboarding/tasks/I9Task.tsx": {
+      "brand-text": 13,
+      "raw-heading": 3
+    },
+    "src/pages/onboarding/tasks/J1DocsTask.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/onboarding/tasks/PolicyAckTask.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/onboarding/tasks/ProfileInfoTask.tsx": {
+      "brand-text": 3,
+      "raw-heading": 1
+    },
+    "src/pages/onboarding/tasks/W4Task.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/onboarding/TemplateEditor.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/onboarding/TemplatesList.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/ops/OpsBoard.tsx": {
+      "brand-text": 8,
+      "empty-text": 1
+    },
+    "src/pages/ops/OpsFloorFeed.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/ops/OpsHistory.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/ops/OpsLibrary.tsx": {
+      "brand-text": 7,
+      "pill": 2
+    },
+    "src/pages/ops/OpsProduction.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/ops/OpsReportButton.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/ops/OpsRunner.tsx": {
+      "brand-text": 21,
+      "empty-text": 1
+    },
+    "src/pages/ops/OpsShiftRecord.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/ops/OpsStandards.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/ops/StoreShiftSops.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/org/CustomFieldsTab.tsx": {
+      "brand-text": 4,
+      "pill": 1,
+      "raw-heading": 1
+    },
+    "src/pages/org/OrgChart.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/org/OrgHome.tsx": {
+      "brand-text": 8,
+      "empty-text": 1,
+      "raw-heading": 5
+    },
+    "src/pages/org/PositionsTab.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/payroll/AdminPayrollView.tsx": {
+      "brand-text": 18,
+      "pill": 1
+    },
+    "src/pages/payroll/AmendPayrollWizard.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payroll/AssociatePayrollView.tsx": {
+      "brand-text": 12,
+      "hex": 1
+    },
+    "src/pages/payroll/BranchEnrollmentDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payroll/FinancialChangesQueue.tsx": {
+      "brand-text": 5,
+      "empty-text": 1
+    },
+    "src/pages/payroll/GarnishmentsView.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payroll/LaborOverridesSection.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/payroll/LaborRulesPage.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/payroll/PayrollCompliance.tsx": {
+      "brand-text": 7
+    },
+    "src/pages/payroll/PayrollConfigView.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/payroll/PayrollReadiness.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/payroll/PayrollYearEndClose.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payroll/PaySchedulesView.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payroll/RunPayrollWizard.tsx": {
+      "brand-text": 7
+    },
+    "src/pages/payroll/W4SsnRecollection.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/payroll/WebhookHealthTile.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/payrollTax/PayrollTaxHome.tsx": {
+      "brand-text": 12
+    },
+    "src/pages/payrules/PayRulesHome.tsx": {
+      "brand-text": 13
+    },
+    "src/pages/people/PeopleDirectory.tsx": {
+      "brand-text": 26,
+      "empty-text": 1,
+      "raw-heading": 1,
+      "loading-text": 1
+    },
+    "src/pages/people/ProgramSection.tsx": {
+      "brand-text": 1,
+      "loading-text": 1
+    },
+    "src/pages/performance/AdminReviewsView.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/performance/AssociateReviewsView.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/performance/PerformanceExtras.tsx": {
+      "brand-text": 13,
+      "empty-text": 1
+    },
+    "src/pages/planner/SeasonPlannerHome.tsx": {
+      "brand-text": 3,
+      "hex": 6
+    },
+    "src/pages/platform/DesignSystemPage.tsx": {
+      "empty-text": 1
+    },
+    "src/pages/portal/ClientPortalHome.tsx": {
+      "brand-text": 25,
+      "raw-heading": 9
+    },
+    "src/pages/portal/PortalCandidates.tsx": {
+      "brand-text": 3,
+      "raw-heading": 2
+    },
+    "src/pages/portal/portalCharts.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/portal/PortalHistory.tsx": {
+      "brand-text": 17,
+      "raw-heading": 6
+    },
+    "src/pages/portal/PortalOps.tsx": {
+      "brand-text": 20,
+      "raw-heading": 2
+    },
+    "src/pages/portal/PortalRequests.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/portal/PortalSchedule.tsx": {
+      "brand-text": 5,
+      "raw-heading": 2
+    },
+    "src/pages/portal/PortalToday.tsx": {
+      "brand-text": 7,
+      "raw-heading": 2
+    },
+    "src/pages/portal/ServiceReportDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/probation/ProbationHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/programs/ProgramsHome.tsx": {
+      "brand-text": 6,
+      "empty-text": 1
+    },
+    "src/pages/pulse/PulseHome.tsx": {
+      "brand-text": 7,
+      "empty-text": 1
+    },
+    "src/pages/ramp/RampHome.tsx": {
+      "brand-text": 3,
+      "empty-text": 1
+    },
+    "src/pages/RecruiterDashboard.tsx": {
+      "brand-text": 11,
+      "empty-text": 1,
+      "raw-heading": 2
+    },
+    "src/pages/recruiting/CandidateBoard.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/recruiting/CandidateDetailDrawer.tsx": {
+      "brand-text": 7,
+      "pill": 1
+    },
+    "src/pages/recruiting/CandidateWorkPanels.tsx": {
+      "brand-text": 8,
+      "empty-text": 1
+    },
+    "src/pages/recruiting/RecruitingAnalytics.tsx": {
+      "brand-text": 7,
+      "empty-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/recruiting/RecruitingExtras.tsx": {
+      "brand-text": 11
+    },
+    "src/pages/recruiting/RecruitingHome.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/region/RegionHome.tsx": {
+      "brand-text": 19,
+      "raw-heading": 4
+    },
+    "src/pages/reimbursements/ReimbursementsHome.tsx": {
+      "brand-text": 10
+    },
+    "src/pages/relay/LaneDrawer.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/relay/RelayBatons.tsx": {
+      "brand-text": 4,
+      "pill": 1
+    },
+    "src/pages/relay/RelayBoard.tsx": {
+      "brand-text": 3,
+      "raw-heading": 1
+    },
+    "src/pages/relay/RelayFiles.tsx": {
+      "brand-text": 3,
+      "pill": 1
+    },
+    "src/pages/relay/RelayParts.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/relay/RelayPipeline.tsx": {
+      "brand-text": 5,
+      "pill": 1
+    },
+    "src/pages/relay/RelayRail.tsx": {
+      "brand-text": 2,
+      "empty-text": 1
+    },
+    "src/pages/relay/RelayRequests.tsx": {
+      "brand-text": 6,
+      "empty-text": 1
+    },
+    "src/pages/relay/RelayRequestsWaves.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/reports/ReportsHome.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/ResetPassword.tsx": {
+      "brand-text": 4,
+      "raw-heading": 3
+    },
+    "src/pages/RouterErrorPage.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/scheduling/AdminApprovalPanels.tsx": {
+      "brand-text": 3,
+      "pill": 1,
+      "raw-heading": 1
+    },
+    "src/pages/scheduling/AdminSchedulingView.tsx": {
+      "brand-text": 35
+    },
+    "src/pages/scheduling/AssociateScheduleCalendar.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/scheduling/AssociateScheduleView.tsx": {
+      "brand-text": 9,
+      "raw-heading": 2
+    },
+    "src/pages/scheduling/AvailabilityEditor.tsx": {
+      "brand-text": 6,
+      "raw-heading": 1
+    },
+    "src/pages/scheduling/DayCalendarView.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/scheduling/DraftsDialog.tsx": {
+      "brand-text": 1,
+      "empty-text": 1
+    },
+    "src/pages/scheduling/LaborCostsHome.tsx": {
+      "brand-text": 27,
+      "hex": 5,
+      "pill": 2,
+      "raw-heading": 1
+    },
+    "src/pages/scheduling/MobileScheduleList.tsx": {
+      "brand-text": 5
+    },
+    "src/pages/scheduling/MonthCalendarView.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/scheduling/SelectionToolbar.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/scheduling/ShiftCard.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/scheduling/ShiftContextMenu.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/scheduling/ShiftHoverCard.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/scheduling/ShiftTeamsDialog.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/scheduling/shiftTile.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/scheduling/SwapMarketplace.tsx": {
+      "brand-text": 6,
+      "raw-heading": 1
+    },
+    "src/pages/scheduling/TemplatesRail.tsx": {
+      "brand-text": 2,
+      "empty-text": 1
+    },
+    "src/pages/scheduling/TimeGridWeekView.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/scheduling/WeekCalendarView.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/separation/SeparationHome.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/Settings.tsx": {
+      "brand-text": 14,
+      "hex": 2,
+      "empty-text": 2
+    },
+    "src/pages/skills/SkillsHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/succession/SuccessionHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/SupervisorDashboard.tsx": {
+      "brand-text": 11,
+      "raw-heading": 3
+    },
+    "src/pages/support/PlatformSupportInbox.tsx": {
+      "brand-text": 1,
+      "empty-text": 1
+    },
+    "src/pages/support/SupportPage.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/team/TeamHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/templates/TemplatesHome.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/time/AdminTimeView.tsx": {
+      "brand-text": 24
+    },
+    "src/pages/time/AssociateTimeView.tsx": {
+      "brand-text": 7,
+      "raw-heading": 1
+    },
+    "src/pages/time/AttendanceCard.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/time/FieldglassDesk.tsx": {
+      "brand-text": 7
+    },
+    "src/pages/time/MyTimesheet.tsx": {
+      "brand-text": 4,
+      "pill": 1
+    },
+    "src/pages/time/MyWeekHours.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/time/ShiftTimeline.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/time/TimeHome.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/pages/time/TimesheetHistory.tsx": {
+      "brand-text": 16,
+      "raw-heading": 2
+    },
+    "src/pages/time/TimesheetsView.tsx": {
+      "brand-text": 20,
+      "pill": 3
+    },
+    "src/pages/time/TimesheetWeeks.tsx": {
+      "brand-text": 3,
+      "pill": 2
+    },
+    "src/pages/timeoff/AdminTimeOffEntitlementsView.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/timeoff/AdminTimeOffView.tsx": {
+      "brand-text": 3,
+      "pill": 2
+    },
+    "src/pages/timeoff/AssociateTimeOffView.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/timeoff/BulkEntitlementDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/pages/transport/DriverHome.tsx": {
+      "brand-text": 32,
+      "hex": 1,
+      "pill": 4,
+      "raw-heading": 3
+    },
+    "src/pages/transport/PickupPicker.tsx": {
+      "brand-text": 6
+    },
+    "src/pages/transport/RideHome.tsx": {
+      "brand-text": 25,
+      "hex": 3,
+      "raw-heading": 5
+    },
+    "src/pages/transport/RideStrip.tsx": {
+      "brand-text": 3,
+      "pill": 1
+    },
+    "src/pages/transport/ShiftMap.tsx": {
+      "brand-text": 4
+    },
+    "src/pages/transport/TransportHome.tsx": {
+      "brand-text": 35,
+      "hex": 1,
+      "pill": 2,
+      "empty-text": 2,
+      "raw-heading": 5
+    },
+    "src/pages/transport/TripMap.tsx": {
+      "brand-text": 2
+    },
+    "src/pages/tuition/TuitionHome.tsx": {
+      "brand-text": 5
+    },
+    "src/pages/vaccinations/VaccinationsHome.tsx": {
+      "brand-text": 3
+    },
+    "src/pages/vto/VtoHome.tsx": {
+      "brand-text": 8
+    },
+    "src/pages/WhatsNewPage.tsx": {
+      "brand-text": 1,
+      "raw-heading": 1
+    },
+    "src/pages/workflows/WorkflowsHome.tsx": {
+      "brand-text": 2,
+      "empty-text": 1
+    },
+    "src/pages/WorkforceDashboard.tsx": {
+      "brand-text": 16,
+      "pill": 1,
+      "raw-heading": 8
+    },
+    "src/pages/worktags/WorktagsHome.tsx": {
+      "brand-text": 2
+    },
+    "src/components/AuditTimeline.tsx": {
+      "brand-text": 1,
+      "empty-text": 1
+    },
+    "src/components/CelebrationRibbon.tsx": {
+      "brand-text": 1
+    },
+    "src/components/Coachmarks.tsx": {
+      "brand-text": 1
+    },
+    "src/components/DecisionRoom.tsx": {
+      "brand-text": 10,
+      "empty-text": 1
+    },
+    "src/components/DocumentCapture.tsx": {
+      "brand-text": 1
+    },
+    "src/components/DocumentCropDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/components/DocumentPreview.tsx": {
+      "brand-text": 4
+    },
+    "src/components/DocumentViewer.tsx": {
+      "brand-text": 2
+    },
+    "src/components/EarningsCard.tsx": {
+      "brand-text": 3
+    },
+    "src/components/EmergencyBanner.tsx": {
+      "brand-text": 5,
+      "raw-heading": 1
+    },
+    "src/components/FirstPaycheckCard.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/components/FloorTeam.tsx": {
+      "brand-text": 7,
+      "raw-heading": 2
+    },
+    "src/components/GlobalErrorBoundary.tsx": {
+      "brand-text": 1
+    },
+    "src/components/InstallPrompt.tsx": {
+      "brand-text": 3
+    },
+    "src/components/KeyboardShortcutsDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/components/Layout.tsx": {
+      "brand-text": 1
+    },
+    "src/components/MobileNav.tsx": {
+      "brand-text": 5
+    },
+    "src/components/MyPlanCard.tsx": {
+      "brand-text": 4
+    },
+    "src/components/NotificationsBell.tsx": {
+      "brand-text": 2
+    },
+    "src/components/OutOfOfficeCard.tsx": {
+      "brand-text": 2
+    },
+    "src/components/ProgramAlertsCard.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/components/PushPrompt.tsx": {
+      "brand-text": 1
+    },
+    "src/components/ReadyToScheduleCard.tsx": {
+      "brand-text": 2,
+      "raw-heading": 1
+    },
+    "src/components/ReadyToWorkCard.tsx": {
+      "brand-text": 4,
+      "raw-heading": 1
+    },
+    "src/components/ReadyToWorkLine.tsx": {
+      "brand-text": 1
+    },
+    "src/components/RejectDocumentDialog.tsx": {
+      "brand-text": 1
+    },
+    "src/components/RoleDecisionQueue.tsx": {
+      "brand-text": 3
+    },
+    "src/components/ShiftLeadsCard.tsx": {
+      "brand-text": 4,
+      "pill": 2,
+      "raw-heading": 1
+    },
+    "src/components/Sidebar.tsx": {
+      "brand-text": 7
+    },
+    "src/components/templates/RecordTemplate.tsx": {
+      "raw-heading": 1
+    },
+    "src/components/Topbar.tsx": {
+      "brand-text": 7,
+      "raw-heading": 1
+    },
+    "src/components/transport/LiveMap.tsx": {
+      "hex": 15
+    },
+    "src/components/VanArrivals.tsx": {
+      "brand-text": 3,
+      "raw-heading": 1
+    },
+    "src/components/WhatsAppCard.tsx": {
+      "brand-text": 2
+    },
+    "src/components/WorkThreadPanel.tsx": {
+      "brand-text": 2
+    }
+  }
+}

@@ -160,6 +160,40 @@
   --color-on-solid:       255 255 255;
 }
 
+/* Design system step 1 (2026-10-15, docs/design-system.md): tokens named
+   for their JOB, in terms of the brand tokens above, so they flip with the
+   theme by construction and new code never needs the light-mode override
+   rules below. The brand names stay as aliases while pages migrate.
+
+     surface-sunken  the app background        (midnight)
+     surface         a card, a panel, a sheet   (navy)
+     surface-raised  a hover, a selected row    (navy-secondary)
+     line            borders and dividers       (navy-secondary)
+     ink             primary text               (fg)
+     ink-muted       secondary text, captions   (silver)
+     ink-subtle      placeholders, disabled     (muted)
+     accent          the one brand accent       (gold, as text)
+     accent-fill     the accent as a fill       (gold-fill, carries accent-on ink)
+     accent-on       ink on an accent fill      (on-accent)
+     positive / caution / negative / info       (success / warning / alert / steel)
+     on-solid        ink on a saturated fill    (on-solid) */
+:root {
+  --color-surface-sunken: var(--color-midnight);
+  --color-surface:        var(--color-navy);
+  --color-surface-raised: var(--color-navy-secondary);
+  --color-line:           var(--color-navy-secondary);
+  --color-ink:            var(--color-fg);
+  --color-ink-muted:      var(--color-silver);
+  --color-ink-subtle:     var(--color-muted);
+  --color-accent:         var(--color-gold);
+  --color-accent-fill:    var(--color-gold-fill);
+  --color-accent-on:      var(--color-on-accent);
+  --color-positive:       var(--color-success);
+  --color-caution:        var(--color-warning);
+  --color-negative:       var(--color-alert);
+  --color-info:           var(--color-steel);
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;

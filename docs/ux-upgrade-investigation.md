@@ -170,6 +170,10 @@ Each step: tests, the walk, acceptance reported before the next.
 | One roster | A person, an agent and a robot appear in one list with owner and status; the agent's gates and decision record are its tabs |
 | Nothing drifts again | `docs/design-system.md` and the in-app page exist; lint fails new `text-white`, hand-rolled pills and empty text; every page names its template |
 
+## Owner approval
+
+**Approved 2026-10-15, every decision as recommended** ("go ahead … build it"), with the standard restated: a Fortune 500 product; every user, associate to executive, feels premium; polish is part of done. Building proceeds in the rollout order; each step lands with its tests and the design walk, and is reported before the next.
+
 ## Sources
 
 - Workday interface criticism: [DevX](https://www.devx.com/daily-news/workdays-user-interface-criticized-despite-popularity/), [KillerStartups](https://killerstartups.com/workdays-software-criticized-for-complexity/), [Capterra reviews](https://www.capterra.com/p/66908/Workday-HCM/reviews/?page=23), [Change Job redesign (Syssero)](https://syssero.com/insights/why-workdays-change-job-ui-overhaul-is-a-win-for-everyone-a-consultants-perspective/)

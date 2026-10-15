@@ -11,6 +11,7 @@ export type ModuleKey =
   | 'org-units'
   | 'sites'
   | 'product-analytics'
+  | 'design-system'
   | 'reliability'
   | 'compliance-evidence'
   | 'emergency'
@@ -1402,6 +1403,14 @@ export const MODULES: ModuleNav[] = [
     label: 'Product usage',
     description:
       'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
+    requires: 'view:product-analytics',
+    group: 'platform',
+  },
+  {
+    key: 'design-system',
+    path: '/design-system',
+    label: 'Design system',
+    description: 'The written standard the product follows: tokens, type, components and their states, the five page templates, and the design debt the sweep pays down.',
     requires: 'view:product-analytics',
     group: 'platform',
   },

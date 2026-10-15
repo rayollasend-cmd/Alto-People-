@@ -9,6 +9,7 @@
       "@/*": ["src/*"]
     },
     "types": ["vite/client"],
+    "resolveJsonModule": true,
     "noEmit": true
   },
   "include": ["src"],

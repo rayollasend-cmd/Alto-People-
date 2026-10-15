@@ -51,6 +51,10 @@ jobs:
       # debt (the warning count is the burndown metric) but any ERROR —
       # including parse failures — fails the job.
       - run: npm -w apps/web run lint
+      # Design lint (design system step 1): the per-file counts of retired
+      # patterns (text-white, inline hex, hand-rolled pills, bare empty and
+      # loading text, raw headings) may only fall; a rise fails the commit.
+      - run: npm -w apps/web run lint:design
       # Correctness lint for the API and the shared package (typescript-eslint
       # recommended + ESLint recommended). Held at zero findings.
       - run: npm -w apps/api run lint

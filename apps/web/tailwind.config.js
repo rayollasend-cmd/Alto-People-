@@ -42,6 +42,30 @@ export default {
         // white on saturated fills (alert/steel/success).
         'on-accent': 'rgb(var(--color-on-accent) / <alpha-value>)',
         'on-solid': 'rgb(var(--color-on-solid) / <alpha-value>)',
+        // Design system step 1: tokens by JOB (index.css defines them in
+        // terms of the brand tokens, so they follow the theme). New code
+        // uses these; the brand names above stay as aliases while pages
+        // migrate. See docs/design-system.md.
+        surface: {
+          DEFAULT: 'rgb(var(--color-surface) / <alpha-value>)',
+          sunken: 'rgb(var(--color-surface-sunken) / <alpha-value>)',
+          raised: 'rgb(var(--color-surface-raised) / <alpha-value>)',
+        },
+        line: 'rgb(var(--color-line) / <alpha-value>)',
+        ink: {
+          DEFAULT: 'rgb(var(--color-ink) / <alpha-value>)',
+          muted: 'rgb(var(--color-ink-muted) / <alpha-value>)',
+          subtle: 'rgb(var(--color-ink-subtle) / <alpha-value>)',
+        },
+        accent: {
+          DEFAULT: 'rgb(var(--color-accent) / <alpha-value>)',
+          fill: 'rgb(var(--color-accent-fill) / <alpha-value>)',
+          on: 'rgb(var(--color-accent-on) / <alpha-value>)',
+        },
+        positive: 'rgb(var(--color-positive) / <alpha-value>)',
+        caution: 'rgb(var(--color-caution) / <alpha-value>)',
+        negative: 'rgb(var(--color-negative) / <alpha-value>)',
+        info: 'rgb(var(--color-info) / <alpha-value>)',
       },
       fontFamily: {
         // Variable fonts loaded from @fontsource-variable/*. The "Variable"

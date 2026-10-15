@@ -211,6 +211,7 @@ const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'Billin
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
 const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
+const DesignSystemPage = lazyNamed(() => import('@/pages/platform/DesignSystemPage'), 'DesignSystemPage');
 const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHome'), 'ReliabilityHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
@@ -447,6 +448,7 @@ const LAYOUT_ROUTES = [
   { path: 'recruiting', element: <RecruitingHome /> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
+  { path: 'design-system', element: <RequireCapability cap="view:product-analytics"><DesignSystemPage /></RequireCapability> },
   { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><ReliabilityHome /></RequireCapability> },
   // `settings` is universal — every authenticated user manages their own
   // profile / password / preferences here. RequireAuth above is enough.
