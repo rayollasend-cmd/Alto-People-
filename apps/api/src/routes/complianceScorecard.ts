@@ -1730,12 +1730,22 @@ const SHIFTS_WEIGHT = 10;
 const SAFETY_WEIGHT = 8;
 const STATUTORY_OVERDUE_PENALTY = 10;
 
-export function computeWeightedScore(bundle: ScorecardBundle): number {
+const CRITICAL_ACTION_PENALTY = 5;
+const CRITICAL_ACTION_PENALTY_CAP = 20;
+
+/**
+ * @param openCriticalCount Open critical actions on the desk (an overdue
+ * insurance attestation, a blown statutory deadline, a fatality or
+ * days-away incident). Each costs 5 points, 20 at most, so a scorecard
+ * never reads "100 / grade A" beside a red row.
+ */
+export function computeWeightedScore(bundle: ScorecardBundle, openCriticalCount = 0): number {
   const { onboarding, expirations, shifts, training, safety } = bundle;
   const total = onboarding.activeAssociateCount;
+  const criticalPenalty = Math.min(CRITICAL_ACTION_PENALTY_CAP, Math.max(0, openCriticalCount) * CRITICAL_ACTION_PENALTY);
 
-  // Empty org = nothing out of compliance. 100, not NaN.
-  if (total === 0) return 100;
+  // Empty org = nothing out of compliance, except what the desk still owes.
+  if (total === 0) return Math.max(0, 100 - criticalPenalty);
 
   let score = 0;
 
@@ -1771,6 +1781,7 @@ export function computeWeightedScore(bundle: ScorecardBundle): number {
 
   const anyStatutoryOverdue = onboarding.signals.some((s) => (s.overdueCount ?? 0) > 0);
   if (anyStatutoryOverdue) score -= STATUTORY_OVERDUE_PENALTY;
+  score -= criticalPenalty;
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -1956,7 +1967,7 @@ export async function buildActionsTile(
     actions: withState.slice(0, 200),
     criticalCount,
     warnCount,
-    score: computeWeightedScore(bundle),
+    score: computeWeightedScore(bundle, criticalCount),
     truncated: withState.length > 200,
     totalActionCount: withState.length,
     generatedAt: new Date().toISOString(),
@@ -2122,7 +2133,8 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
         : Promise.resolve(null),
     ]);
     const { onboarding, expirations, shifts, billing, training, safety } = bundle;
-    const score = computeWeightedScore(bundle);
+    const openActions = await buildActionsTile(clientId, bundle);
+    const score = computeWeightedScore(bundle, openActions.criticalCount);
     const grade = scorecardGrade(score);
     const scopeLabel = client?.name ?? 'All clients';
 

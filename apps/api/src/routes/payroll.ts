@@ -4022,11 +4022,14 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
     let detail: string;
     if (provider === 'STUB') {
       health = 'stub';
+      // Product copy, not an operator's note: the environment variable that
+      // switches the provider is documented for the deployer, never shown
+      // to a payroll person.
       detail =
-        'Disbursement provider is STUB. Runs marked "disbursed" are NOT actually paid out. Set PAYROLL_DISBURSEMENT_PROVIDER=BRANCH (or WISE) before processing real payroll.';
+        'No disbursement provider is connected, so runs marked disbursed move no money. Connect Branch or Wise before a real payroll run.';
     } else if (provider !== 'BRANCH') {
       health = 'unconfigured';
-      detail = `Disbursement provider is ${provider}, not BRANCH. Webhook health is N/A.`;
+      detail = `Payments go out through ${provider}, which does not report back by webhook.`;
     } else if (errors24h > 0) {
       health = 'erroring';
       detail = `${errors24h} error event(s) in the last 7 days. Latest: ${latestError?.notes ?? 'unknown'}`;

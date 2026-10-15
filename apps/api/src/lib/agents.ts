@@ -169,7 +169,7 @@ export const BUILT_IN_AGENTS = [
     capability: 'Payday, ride and schedule answers on WhatsApp; supervisor handoff',
     purpose: "Answers payday, ride and schedule questions on WhatsApp from the associate's own records and hands anything else to their supervisor (Brief 1C-4). Runs inside the API; every reply is logged under this record.",
     vendor: 'Alto People',
-    model: 'Rule-based assistant (lib/whatsappAssistant)',
+    model: 'Alto rules engine · assistant',
     modelVersion: '1',
     environment: 'PRODUCTION',
     scopes: ['view:scheduling', 'view:time', 'view:transport', 'manage:communications'] as AgentScope[],
@@ -183,7 +183,7 @@ export const BUILT_IN_AGENTS = [
     capability: 'Fill open shifts: propose a named person after the open-shift broadcast goes unanswered; a supervisor approves',
     purpose: 'Proposes one named person for each open shift the open-shift broadcast did not fill (step 1), for each shift approved leave, a separation or an emergency stand-down leaves uncovered, and for a high-risk holder who says no or goes silent past the cut-off when asked the day before (step 2), from the people placed there, free and within the scheduling rules. Nothing is assigned until a supervisor approves; it then assigns through the same rules a supervisor does.',
     vendor: 'Alto People',
-    model: 'Rule-based agent (lib/workforceAgent)',
+    model: 'Alto rules engine · workforce',
     modelVersion: '1',
     environment: 'PRODUCTION',
     scopes: ['view:scheduling', 'view:org', 'manage:scheduling', 'view:time', 'manage:communications', 'view:analytics'] as AgentScope[],
@@ -200,7 +200,7 @@ export const BUILT_IN_AGENTS = [
     capability: 'Chase expiring documents and keep I-9 Section 2 on time: each person hears in their language; the desk gets a worklist',
     purpose: 'Chases each person whose document or authorization expires within 30 days (in their language, with the upload link; again at 14 and 3 days; to HR at expiry; never a waived item), and keeps the verifier desk on the I-9 Section 2 clock (three business days from the start date) with the E-Verify readiness reason, climbing to HR the day before (agent families step 4). It completes nothing itself: a person uploads, a person verifies.',
     vendor: 'Alto People',
-    model: 'Rule-based agent (lib/complianceAgent)',
+    model: 'Alto rules engine · compliance',
     modelVersion: '1',
     environment: 'PRODUCTION',
     scopes: ['view:compliance', 'manage:compliance', 'manage:communications', 'view:org', 'open:hr-case'] as AgentScope[],
@@ -288,10 +288,16 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
   // Agent families step 1: a built-in holds its catalog capabilities, and its
   // certification scenarios come from the catalog's fixtures.
   for (const b of BUILT_IN_AGENTS) {
+    const p = await db.agentProfile.findFirst({ where: { builtInKey: b.key, tenantId }, select: { workerId: true, scopes: true, model: true } });
+    if (!p) continue;
+    // A built-in's model name is product copy. A row an earlier boot wrote
+    // with a code path in it ("Rule-based agent (lib/…)") takes the name
+    // the build gives it now; a name a person edited is left alone.
+    if (p.model !== b.model && /\(lib\//.test(p.model)) {
+      await db.agentProfile.update({ where: { workerId: p.workerId }, data: { model: b.model, vendor: b.vendor } });
+    }
     const grants = 'grants' in b ? (b.grants as readonly string[]) : [];
     if (!grants.length) continue;
-    const p = await db.agentProfile.findFirst({ where: { builtInKey: b.key, tenantId }, select: { workerId: true, scopes: true } });
-    if (!p) continue;
     const worker = await db.worker.findUnique({ where: { id: p.workerId }, select: { status: true } });
     // A capability the built-in gains brings the scopes it needs (on the trail).
     const needed = (b.scopes as readonly string[]).filter((sc) => !p.scopes.includes(sc));

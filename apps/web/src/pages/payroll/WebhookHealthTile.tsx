@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, CircleDashed, ServerCrash, ShieldAlert } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from 'lucide-react';
 import {
   getDisbursementWebhookStatus,
   type DisbursementWebhookStatus,
@@ -7,75 +8,47 @@ import {
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
+import { Badge } from '@/components/ui/Badge';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { cn } from '@/lib/cn';
 
 const POLL_INTERVAL_MS = 60_000;
 
 /**
- * Status pill style triplet. We carry the tinted background (token/15)
- * separately from the saturated text (token) and the matching ring
- * (token/30) so the badge is visible against the navy card without
- * collapsing into a single block of colour. Previously the file used
- * Tailwind light-mode ramps (`text-success-700 bg-success-50`) which
- * a bulk token replace flattened to `text-success bg-success` — same
- * value on text and bg, invisible.
+ * One line per health state: the badge, the icon and the ring. The words
+ * are product copy — a payroll person reads "Simulated", never a mode name
+ * or an environment variable.
  */
 const STYLE: Record<
   WebhookHealth,
   {
     label: string;
-    chip: string;
+    badge: 'success' | 'outline' | 'pending' | 'destructive' | 'default';
     iconBox: string;
     ring: string;
     Icon: typeof CheckCircle2;
   }
 > = {
-  healthy: {
-    label: 'Healthy',
-    chip: 'text-success bg-success/15 border border-success/30',
-    iconBox: 'bg-success/15 text-success',
-    ring: 'ring-success/30',
-    Icon: CheckCircle2,
-  },
-  idle: {
-    label: 'Idle',
-    chip: 'text-silver bg-navy-secondary/40 border border-navy-secondary',
-    iconBox: 'bg-navy-secondary/40 text-silver',
-    ring: 'ring-navy-secondary',
-    Icon: CircleDashed,
-  },
-  stale: {
-    label: 'Stale',
-    chip: 'text-warning bg-warning/15 border border-warning/30',
-    iconBox: 'bg-warning/15 text-warning',
-    ring: 'ring-warning/30',
-    Icon: AlertTriangle,
-  },
-  erroring: {
-    label: 'Erroring',
-    chip: 'text-alert bg-alert/15 border border-alert/30',
-    iconBox: 'bg-alert/15 text-alert',
-    ring: 'ring-alert/30',
-    Icon: ServerCrash,
-  },
-  unconfigured: {
-    label: 'N/A',
-    chip: 'text-silver bg-navy-secondary/40 border border-navy-secondary',
-    iconBox: 'bg-navy-secondary/40 text-silver',
-    ring: 'ring-navy-secondary',
-    Icon: ShieldAlert,
-  },
-  stub: {
-    label: 'STUB MODE',
-    chip: 'text-alert bg-alert/15 border border-alert/30',
-    iconBox: 'bg-alert/15 text-alert',
-    ring: 'ring-alert/30',
-    Icon: ShieldAlert,
-  },
+  healthy: { label: 'Healthy', badge: 'success', iconBox: 'bg-success/15 text-success', ring: 'ring-success/30', Icon: CheckCircle2 },
+  idle: { label: 'Idle', badge: 'outline', iconBox: 'bg-navy-secondary/40 text-silver', ring: 'ring-navy-secondary', Icon: CircleDashed },
+  stale: { label: 'Stale', badge: 'pending', iconBox: 'bg-warning/15 text-warning', ring: 'ring-warning/30', Icon: AlertTriangle },
+  erroring: { label: 'Erroring', badge: 'destructive', iconBox: 'bg-alert/15 text-alert', ring: 'ring-alert/30', Icon: ServerCrash },
+  unconfigured: { label: 'Not applicable', badge: 'outline', iconBox: 'bg-navy-secondary/40 text-silver', ring: 'ring-navy-secondary', Icon: ShieldAlert },
+  stub: { label: 'Simulated', badge: 'default', iconBox: 'bg-info/15 text-info', ring: 'ring-info/30', Icon: Info },
 };
 
-export function WebhookHealthTile() {
+/**
+ * The disbursement rail's health.
+ *
+ * On the Payroll page (`surface="payroll"`) it speaks only when the payroll
+ * person has something to do: a stale or erroring webhook is the tile, a
+ * simulated provider is one calm line pointing at Integrations, and a
+ * healthy, idle or not-applicable rail says nothing at all — that state
+ * lives on Settings & Trust › Integrations (`surface="integrations"`),
+ * where the whole tile always renders.
+ */
+export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'integrations' }) {
   const statusQuery = useQuery({
     queryKey: ['WebhookHealthTile', 'status'],
     queryFn: () => getDisbursementWebhookStatus(),
@@ -85,10 +58,12 @@ export function WebhookHealthTile() {
     staleTime: 0,
   });
   const data: DisbursementWebhookStatus | null = statusQuery.data ?? null;
+  // 403 = this person doesn't hold payroll; the rail is not theirs to watch.
+  if (statusQuery.error instanceof ApiError && statusQuery.error.status === 403) return null;
   const error = statusQuery.error
     ? statusQuery.error instanceof ApiError
       ? statusQuery.error.message
-      : "Couldn't load webhook status."
+      : "Couldn't load the disbursement status."
     : null;
 
   if (error) {
@@ -96,6 +71,7 @@ export function WebhookHealthTile() {
     return <ErrorBanner severity="warning">{error}</ErrorBanner>;
   }
   if (!data) {
+    if (surface === 'payroll') return null;
     return (
       <div className="rounded-lg border border-navy-secondary bg-navy elev-1 p-3 flex items-start gap-3">
         <Skeleton className="h-8 w-8 rounded-full shrink-0" />
@@ -107,28 +83,43 @@ export function WebhookHealthTile() {
     );
   }
 
+  if (surface === 'payroll') {
+    if (data.health === 'healthy' || data.health === 'idle' || data.health === 'unconfigured') return null;
+    if (data.health === 'stub') {
+      return (
+        <p
+          role="status"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-info/30 bg-info/[0.06] px-3 py-2 text-sm text-silver"
+        >
+          <Info className="h-4 w-4 shrink-0 text-info" aria-hidden="true" />
+          <span className="text-ink">Payments are simulated.</span>
+          <span>Runs marked disbursed move no money until a disbursement provider is connected.</span>
+          <Link to="/integrations" className="font-medium text-gold hover:underline">
+            Connect a provider
+          </Link>
+        </p>
+      );
+    }
+  }
+
   const style = STYLE[data.health];
   const Icon = style.Icon;
   return (
     <div
-      className={`rounded-lg border border-navy-secondary bg-navy p-3 ring-1 ${style.ring} elev-1 flex items-start gap-3`}
+      className={cn('rounded-lg border border-navy-secondary bg-navy p-3 ring-1 elev-1 flex items-start gap-3', style.ring)}
       role="status"
-      aria-label={`Disbursement webhook is ${style.label}`}
+      aria-label={`Payroll disbursement is ${style.label.toLowerCase()}`}
     >
-      <span className={`rounded-full p-2 ${style.iconBox}`}>
+      <span className={cn('rounded-full p-2', style.iconBox)}>
         <Icon className="h-4 w-4" aria-hidden />
       </span>
-      {/* min-w-0 + break-words: the detail carries unbroken env tokens
-          (PAYROLL_DISBURSEMENT_PROVIDER=…) that pushed off a phone screen. */}
       <div className="min-w-0 flex-1 break-words text-sm">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-white">Disbursement webhook</span>
-          <span
-            className={`rounded px-1.5 py-0.5 text-2xs uppercase tracking-widest font-medium ${style.chip}`}
-          >
+          <span className="font-medium text-ink">Payroll disbursement</span>
+          <Badge variant={style.badge} size="sm">
             {style.label}
-          </span>
-          <span className="text-xs text-silver">· {data.provider}</span>
+          </Badge>
+          {data.health !== 'stub' && <span className="text-xs text-silver">· {data.provider}</span>}
         </div>
         <p className="mt-0.5 text-silver">{data.detail}</p>
         {data.health === 'erroring' && data.latestError?.notes && (
@@ -137,11 +128,13 @@ export function WebhookHealthTile() {
             {data.latestError.notes}
           </p>
         )}
-        <p className="mt-1 text-xs text-silver">
-          {data.eventsLast24h} event(s) in the last 24h ·{' '}
-          {data.errorsLast7d} error(s) in the last 7 days ·{' '}
-          {data.pendingFinalizedItems} item(s) awaiting disbursement
-        </p>
+        {data.health !== 'stub' && data.health !== 'unconfigured' && (
+          <p className="mt-1 text-xs text-silver">
+            {data.eventsLast24h} event(s) in the last 24h ·{' '}
+            {data.errorsLast7d} error(s) in the last 7 days ·{' '}
+            {data.pendingFinalizedItems} item(s) awaiting disbursement
+          </p>
+        )}
       </div>
     </div>
   );

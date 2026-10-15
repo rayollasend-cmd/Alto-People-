@@ -139,7 +139,7 @@ export function ForgotPassword() {
         )}
 
         <p className="text-center text-xs text-silver/70 mt-6">
-          Alto Etho LLC d/b/a Alto HR · v0.1.0
+          © {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR
         </p>
       </div>
     </div>

@@ -10,6 +10,7 @@ import {
   type WorkerStatus,
   type WorkerSummary,
   type WorkerType,
+  capabilityDef,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant } from '@/lib/auth';
@@ -67,6 +68,8 @@ const STATUS_VARIANT: Record<WorkerStatus, 'pending' | 'success' | 'destructive'
 };
 const TYPE_VARIANT: Record<WorkerType, 'default' | 'info' | 'accent'> = { PERSON: 'default', AGENT: 'info', ROBOT: 'accent' };
 const CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => [c.code, c.label]));
+/** A worker-type capability by its code, else an agent catalog capability by its key; the raw key only when neither knows it. */
+const capLabel = (c: string): string => CAP_LABEL.get(c) ?? capabilityDef(c)?.label ?? c;
 
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -191,14 +194,14 @@ export function WorkerTypesAdmin() {
       {
         key: 'capabilities',
         header: 'Capabilities',
-        accessor: (w) => w.capabilities.map((c) => CAP_LABEL.get(c) ?? c).join(', '),
+        accessor: (w) => w.capabilities.map(capLabel).join(', '),
         searchable: true,
         cell: (w) =>
           w.capabilities.length ? (
             <span className="flex flex-wrap gap-1">
               {w.capabilities.map((c) => (
                 <Badge key={c} variant="outline" size="sm">
-                  {CAP_LABEL.get(c) ?? c}
+                  {capLabel(c)}
                 </Badge>
               ))}
             </span>

@@ -206,6 +206,7 @@ export function ComplianceScorecard() {
           refreshing={refreshing}
           onRefresh={refresh}
           clientId={clientId}
+          clientName={clients.find((c) => c.id === clientId)?.name ?? null}
         />
 
         {/* Client scope — the same filter every tile respects. Only shown
@@ -265,11 +266,14 @@ function HeroStrip({
   refreshing,
   onRefresh,
   clientId,
+  clientName,
 }: {
   refreshEpoch: number;
   refreshing: boolean;
   onRefresh: () => void;
   clientId: string;
+  /** The client in scope, for the subtitle; null = every client. */
+  clientName: string | null;
 }) {
   const fetchActions = useCallback(
     () => getScorecardActions(clientId || undefined),
@@ -295,10 +299,10 @@ function HeroStrip({
           <div className="flex-1 min-w-[260px]">
             <h1 className="text-xl text-white flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-gold" />
-              Walmart Contract Compliance Scorecard
+              Contract compliance scorecard
             </h1>
             <p className="text-xs text-silver mt-0.5">
-              Live state against Walmart MSA / SOW / MTSA. Auto-refreshes every 15 minutes.{' '}
+              Live against {clientName ? `the ${clientName} contract` : 'every client contract'}: MSA, SOW and MTSA. Refreshes every 15 minutes.{' '}
               <Link to="/compliance?tab=audit" className="text-gold hover:underline">
                 Audit evidence →
               </Link>
@@ -1037,7 +1041,7 @@ function ShiftsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
   return (
     <TileShell
       icon={<TrendingUp className="h-4 w-4" />}
-      title="Shift compliance (ASN Nexus)"
+      title="Shift compliance"
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}

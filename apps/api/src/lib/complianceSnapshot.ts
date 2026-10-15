@@ -57,7 +57,7 @@ export async function runComplianceSnapshot(
       data: {
         day,
         clientId,
-        score: computeWeightedScore(bundle),
+        score: computeWeightedScore(bundle, actions.criticalCount),
         criticalCount: actions.criticalCount,
         warnCount: actions.warnCount,
         activeAssociateCount: bundle.onboarding.activeAssociateCount,

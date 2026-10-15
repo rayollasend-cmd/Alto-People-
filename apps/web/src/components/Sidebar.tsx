@@ -601,7 +601,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
     }
     return (
       <div className="px-4 py-3 border-t border-navy-secondary text-2xs uppercase tracking-widest text-silver/70">
-        Alto Etho LLC · v0.1.0
+        © {new Date().getFullYear()} Alto Etho LLC
       </div>
     );
   }

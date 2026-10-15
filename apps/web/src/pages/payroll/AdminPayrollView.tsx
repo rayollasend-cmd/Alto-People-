@@ -742,7 +742,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
           {canProcess && (
             <div className="mb-4">
-              <WebhookHealthTile />
+              <WebhookHealthTile surface="payroll" />
             </div>
           )}
 

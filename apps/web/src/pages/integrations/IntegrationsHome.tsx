@@ -56,6 +56,9 @@ type Tab = 'clients' | 'keys' | 'webhooks';
 /** Every outbound webhook event: the one list in @alto-people/shared (Brief 2-4). */
 const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
 
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
+
 export function IntegrationsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:integrations') : false;
@@ -69,6 +72,14 @@ export function IntegrationsHome() {
         subtitle="OAuth clients for the public API, legacy API keys, and outbound webhooks for event delivery."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations' }]}
     >
+      {/* What the platform is connected to. The disbursement rail comes
+          first: money is the connection a buyer asks about, and the Payroll
+          page only speaks about it when something is wrong. */}
+      <section aria-label="Connections" className="space-y-2">
+        <SectionTitle title="Connections" />
+        <WebhookHealthTile surface="integrations" />
+      </section>
+
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="clients">
