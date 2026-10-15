@@ -152,7 +152,6 @@ import {
   Input,
   Label,
   MetricCard,
-  PageHeader,
   SearchInput,
   Select,
   Skeleton,
@@ -164,6 +163,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { StatusBadge, statusLabel } from '@/lib/status';
@@ -533,8 +533,8 @@ export function PeopleDirectory() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="People directory"
         subtitle={`Every ${term('worker').toLowerCase()} on record — active, pending onboarding, and inactive — with workplace, pay, and contact in one row.`}
         breadcrumbs={[{ label: 'Workforce' }, { label: 'People' }]}
@@ -557,157 +557,207 @@ export function PeopleDirectory() {
             {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
         }
-      />
-
-      {/* KPI strip. Counts cover the pages loaded so far; the "+" is the
-          honest signal that more exist beyond the fetch horizon (status
-          is derived server-side per page, so exact totals would need a
-          full walk on every filter change). */}
-      {stats && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <MetricCard
-            label={hasNextPage ? 'Total (loaded)' : 'Total'}
-            value={hasNextPage ? `${stats.total}+` : stats.total}
-          />
-          <MetricCard label="Active" value={hasNextPage ? `${stats.ACTIVE}+` : stats.ACTIVE} />
-          {/* Interactive tile: toggles the Pending status filter. Wrapped
-              outside MetricCard so the canonical tile stays presentational. */}
-          <button
-            type="button"
-            onClick={() => setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))}
-            aria-pressed={status === 'PENDING'}
-            title={
-              status === 'PENDING'
-                ? 'Clear filter'
-                : 'Filter to pending onboarding'
-            }
-            className={cn(
-              'text-left rounded-lg transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-              status === 'PENDING' && 'ring-1 ring-gold/40',
+        summary={
+              <>
+          {/* KPI strip. Counts cover the pages loaded so far; the "+" is the
+              honest signal that more exist beyond the fetch horizon (status
+              is derived server-side per page, so exact totals would need a
+              full walk on every filter change). */}
+          {stats && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <MetricCard
+                label={hasNextPage ? 'Total (loaded)' : 'Total'}
+                value={hasNextPage ? `${stats.total}+` : stats.total}
+              />
+              <MetricCard label="Active" value={hasNextPage ? `${stats.ACTIVE}+` : stats.ACTIVE} />
+              {/* Interactive tile: toggles the Pending status filter. Wrapped
+                  outside MetricCard so the canonical tile stays presentational. */}
+              <button
+                type="button"
+                onClick={() => setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))}
+                aria-pressed={status === 'PENDING'}
+                title={
+                  status === 'PENDING'
+                    ? 'Clear filter'
+                    : 'Filter to pending onboarding'
+                }
+                className={cn(
+                  'text-left rounded-lg transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  status === 'PENDING' && 'ring-1 ring-gold/40',
+                )}
+              >
+                <MetricCard
+                  label="Pending onboarding"
+                  value={hasNextPage ? `${stats.PENDING}+` : stats.PENDING}
+                  accent={stats.PENDING > 0}
+                  className="h-full"
+                />
+              </button>
+              <MetricCard
+                label="Inactive"
+                value={hasNextPage ? `${stats.INACTIVE}+` : stats.INACTIVE}
+              />
+            </div>
+          )}
+          {/* Reserve the strip's height on first load — the row used to be
+              absent and then shove the FilterBar + table ~90px down. */}
+          {!stats && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-[88px] rounded-lg" />
+              ))}
+            </div>
+          )}
+              </>
+        }
+        filters={
+          <FilterBar>
+            <div className="w-full sm:w-64">
+              <SearchInput
+                size="sm"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name or email"
+                aria-label="Search people"
+              />
+            </div>
+            {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
+              <FilterChip
+                key={s}
+                active={status === s}
+                onClick={() => setStatus(status === s ? '' : s)}
+              >
+                {statusLabel(s)}
+              </FilterChip>
+            ))}
+            <Select
+              size="sm"
+              value={clientId}
+              onChange={(e) => {
+                // Changing the workplace drops any location filter — a store
+                // from the previous client would match nothing here.
+                setClientId(e.target.value);
+                setLocationId('');
+              }}
+              aria-label="Filter by workplace"
+              className="w-auto"
+            >
+              <option value="">All workplaces</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            {clientId && locations.length > 0 && (
+              <Select
+                size="sm"
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+                aria-label="Filter by location"
+                className="w-auto"
+              >
+                <option value="">All locations</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
             )}
-          >
-            <MetricCard
-              label="Pending onboarding"
-              value={hasNextPage ? `${stats.PENDING}+` : stats.PENDING}
-              accent={stats.PENDING > 0}
-              className="h-full"
-            />
-          </button>
-          <MetricCard
-            label="Inactive"
-            value={hasNextPage ? `${stats.INACTIVE}+` : stats.INACTIVE}
-          />
-        </div>
-      )}
-      {/* Reserve the strip's height on first load — the row used to be
-          absent and then shove the FilterBar + table ~90px down. */}
-      {!stats && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-[88px] rounded-lg" />
-          ))}
-        </div>
-      )}
+            {departments.length > 0 && (
+              <Select
+                size="sm"
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                aria-label="Filter by department"
+                className="w-auto"
+              >
+                <option value="">All departments</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Select
+              size="sm"
+              value={employmentType}
+              onChange={(e) =>
+                setEmploymentType(e.target.value as EmploymentTypeFilter | '')
+              }
+              aria-label="Filter by employment type"
+              className="w-auto"
+            >
+              <option value="">All employment types</option>
+              <option value="W2_EMPLOYEE">W-2</option>
+              <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
+              <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
+            </Select>
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={clearAllFilters}
+                className="ml-auto"
+              >
+                <X className="h-3.5 w-3.5" />
+                Clear filters
+              </Button>
+            )}
+          </FilterBar>
+        }
+        drawer={
 
-      {/* Filter row */}
-      <FilterBar>
-        <div className="w-full sm:w-64">
-          <SearchInput
-            size="sm"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name or email"
-            aria-label="Search people"
-          />
-        </div>
-        {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
-          <FilterChip
-            key={s}
-            active={status === s}
-            onClick={() => setStatus(status === s ? '' : s)}
+          <Drawer
+            open={target !== null}
+            onOpenChange={(o) => !o && closeDrawer()}
+            width="max-w-2xl"
           >
-            {statusLabel(s)}
-          </FilterChip>
-        ))}
-        <Select
-          size="sm"
-          value={clientId}
-          onChange={(e) => {
-            // Changing the workplace drops any location filter — a store
-            // from the previous client would match nothing here.
-            setClientId(e.target.value);
-            setLocationId('');
-          }}
-          aria-label="Filter by workplace"
-          className="w-auto"
-        >
-          <option value="">All workplaces</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
-        {clientId && locations.length > 0 && (
-          <Select
-            size="sm"
-            value={locationId}
-            onChange={(e) => setLocationId(e.target.value)}
-            aria-label="Filter by location"
-            className="w-auto"
-          >
-            <option value="">All locations</option>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </Select>
-        )}
-        {departments.length > 0 && (
-          <Select
-            size="sm"
-            value={departmentId}
-            onChange={(e) => setDepartmentId(e.target.value)}
-            aria-label="Filter by department"
-            className="w-auto"
-          >
-            <option value="">All departments</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </Select>
-        )}
-        <Select
-          size="sm"
-          value={employmentType}
-          onChange={(e) =>
-            setEmploymentType(e.target.value as EmploymentTypeFilter | '')
-          }
-          aria-label="Filter by employment type"
-          className="w-auto"
-        >
-          <option value="">All employment types</option>
-          <option value="W2_EMPLOYEE">W-2</option>
-          <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
-          <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
-        </Select>
-        {hasActiveFilters && (
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={clearAllFilters}
-            className="ml-auto"
-          >
-            <X className="h-3.5 w-3.5" />
-            Clear filters
-          </Button>
-        )}
-      </FilterBar>
+            {target && (
+              <DirectoryDrawer
+                associate={target}
+                returnTo={returnTo}
+                onClose={closeDrawer}
+                onAssociateChange={(patch) => {
+                  // Deactivated out of an ACTIVE-filtered list — remember to
+                  // explain on close (reactivation cancels the note).
+                  if (patch.status === 'INACTIVE' && status === 'ACTIVE') {
+                    inactiveNoteOnClose.current = true;
+                  } else if (patch.status === 'ACTIVE') {
+                    inactiveNoteOnClose.current = false;
+                  }
+                  const updated = { ...target, ...patch };
+                  setTarget(updated);
+                  // This key holds useInfiniteQuery's InfiniteData ({pages,
+                  // pageParams}), NOT a flat array — treating it as one threw
+                  // a TypeError inside the updater, which surfaced as a false
+                  // "Could not save/transfer" toast on writes that had already
+                  // succeeded server-side (and tempted a duplicate retry).
+                  queryClient.setQueryData<{
+                    pages: Array<{ associates: DirectoryEntry[] } & Record<string, unknown>>;
+                    pageParams: unknown[];
+                  }>(['directory', filters], (old) =>
+                    old
+                      ? {
+                          ...old,
+                          pages: old.pages.map((p) => ({
+                            ...p,
+                            associates: p.associates.map((r) =>
+                              r.id === updated.id ? updated : r,
+                            ),
+                          })),
+                        }
+                      : old,
+                  );
+                }}
+              />
+            )}
+          </Drawer>
 
-
+        }
+      >
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!rows && !error && <SkeletonRows count={8} rowHeight="h-14" />}
@@ -767,52 +817,7 @@ export function PeopleDirectory() {
         </div>
       )}
 
-      <Drawer
-        open={target !== null}
-        onOpenChange={(o) => !o && closeDrawer()}
-        width="max-w-2xl"
-      >
-        {target && (
-          <DirectoryDrawer
-            associate={target}
-            returnTo={returnTo}
-            onClose={closeDrawer}
-            onAssociateChange={(patch) => {
-              // Deactivated out of an ACTIVE-filtered list — remember to
-              // explain on close (reactivation cancels the note).
-              if (patch.status === 'INACTIVE' && status === 'ACTIVE') {
-                inactiveNoteOnClose.current = true;
-              } else if (patch.status === 'ACTIVE') {
-                inactiveNoteOnClose.current = false;
-              }
-              const updated = { ...target, ...patch };
-              setTarget(updated);
-              // This key holds useInfiniteQuery's InfiniteData ({pages,
-              // pageParams}), NOT a flat array — treating it as one threw
-              // a TypeError inside the updater, which surfaced as a false
-              // "Could not save/transfer" toast on writes that had already
-              // succeeded server-side (and tempted a duplicate retry).
-              queryClient.setQueryData<{
-                pages: Array<{ associates: DirectoryEntry[] } & Record<string, unknown>>;
-                pageParams: unknown[];
-              }>(['directory', filters], (old) =>
-                old
-                  ? {
-                      ...old,
-                      pages: old.pages.map((p) => ({
-                        ...p,
-                        associates: p.associates.map((r) =>
-                          r.id === updated.id ? updated : r,
-                        ),
-                      })),
-                    }
-                  : old,
-              );
-            }}
-          />
-        )}
-      </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

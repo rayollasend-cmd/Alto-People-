@@ -61,9 +61,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Input } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
@@ -717,8 +717,8 @@ export function ApplicationsList() {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="Onboarding"
         subtitle="Active applications and their checklist progress."
         secondaryActions={
@@ -768,130 +768,131 @@ export function ApplicationsList() {
             </Button>
           ) : undefined
         }
-      />
-
-      {/* KPI strip — always visible (empty-zero state is fine). */}
-      {canInvite && statsData && statsData.total > 0 && (
-        <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
-          <Kpi label="Total" value={String(stats.total)} />
-          <Kpi label="In flight" value={String(stats.inFlight)} />
-          <Kpi
-            label="Avg. complete"
-            value={`${stats.avgPercent}%`}
-            tone={
-              stats.avgPercent >= 75
-                ? 'text-success'
-                : stats.avgPercent >= 50
-                  ? 'text-warning'
-                  : 'text-silver'
-            }
-          />
-          <Kpi
-            label={`Stuck > ${STALE_DAYS}d`}
-            value={String(stats.stale)}
-            tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
-            // Same jump-off as the stale banner's "Review": most stuck
-            // applicants are invited-but-unfinished (SUBMITTED). Only wired
-            // when there's something to review.
-            active={stats.stale > 0 && status === 'SUBMITTED'}
-            onClick={
-              stats.stale > 0 ? () => setStatus('SUBMITTED') : undefined
-            }
-          />
-          <Kpi
-            label="Email bounced"
-            value={String(stats.bounced)}
-            tone={stats.bounced > 0 ? 'text-alert' : 'text-silver'}
-          />
-          <Kpi
-            label="Approved"
-            value={String(stats.byStatus.APPROVED ?? 0)}
-            tone="text-success"
-          />
-        </div>
-      )}
-
-      {/* Email-bounce banner — fires when at least one in-flight invite/nudge
-          came back FAILED from the provider. Distinct from the stale banner
-          (which is just "old"); a bounce is *actionable* (fix the email). */}
-      {canInvite && stats.bounced > 0 && (
-        <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
-          <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="font-medium text-white">
-              {stats.bounced} invite{stats.bounced === 1 ? '' : 's'} bounced —
-              recipient never received the email
+        summary={
+              <>
+          {/* KPI strip — always visible (empty-zero state is fine). */}
+          {canInvite && statsData && statsData.total > 0 && (
+            <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
+              <Kpi label="Total" value={String(stats.total)} />
+              <Kpi label="In flight" value={String(stats.inFlight)} />
+              <Kpi
+                label="Avg. complete"
+                value={`${stats.avgPercent}%`}
+                tone={
+                  stats.avgPercent >= 75
+                    ? 'text-success'
+                    : stats.avgPercent >= 50
+                      ? 'text-warning'
+                      : 'text-silver'
+                }
+              />
+              <Kpi
+                label={`Stuck > ${STALE_DAYS}d`}
+                value={String(stats.stale)}
+                tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
+                // Same jump-off as the stale banner's "Review": most stuck
+                // applicants are invited-but-unfinished (SUBMITTED). Only wired
+                // when there's something to review.
+                active={stats.stale > 0 && status === 'SUBMITTED'}
+                onClick={
+                  stats.stale > 0 ? () => setStatus('SUBMITTED') : undefined
+                }
+              />
+              <Kpi
+                label="Email bounced"
+                value={String(stats.bounced)}
+                tone={stats.bounced > 0 ? 'text-alert' : 'text-silver'}
+              />
+              <Kpi
+                label="Approved"
+                value={String(stats.byStatus.APPROVED ?? 0)}
+                tone="text-success"
+              />
             </div>
-            <div className="text-silver text-xs mt-0.5">
-              {stats.bouncedSamples.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && ' · '}
-                  <Link
-                    to={`/onboarding/applications/${a.id}`}
-                    className="text-gold hover:text-gold-bright"
-                  >
-                    {a.associateName}
-                  </Link>
-                </span>
-              ))}
-              {stats.bounced > stats.bouncedSamples.length && (
-                <span className="text-silver/70">
-                  {' '}+ {stats.bounced - stats.bouncedSamples.length} more
-                </span>
-              )}
-              <span className="text-silver/70 ml-2">
-                · Open the application to see the provider error and fix the
-                email address.
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Stale-application banner — only when there's something to nudge about. */}
-      {canInvite && stats.stale > 0 && (
-        <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
-          <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="font-medium text-white">
-              {stats.stale} application{stats.stale === 1 ? '' : 's'} stuck for more
-              than {STALE_DAYS} days
-            </div>
-            <div className="text-silver text-xs mt-0.5">
-              {stats.staleSamples.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && ' · '}
-                  <Link
-                    to={`/onboarding/applications/${a.id}`}
-                    className="text-gold hover:text-gold-bright"
-                  >
-                    {a.associateName}
-                  </Link>{' '}
-                  <span className="text-silver/70 tabular-nums">
-                    ({daysSince(a.invitedAt, now)}d)
+          {/* Email-bounce banner — fires when at least one in-flight invite/nudge
+              came back FAILED from the provider. Distinct from the stale banner
+              (which is just "old"); a bounce is *actionable* (fix the email). */}
+          {canInvite && stats.bounced > 0 && (
+            <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+              <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-white">
+                  {stats.bounced} invite{stats.bounced === 1 ? '' : 's'} bounced —
+                  recipient never received the email
+                </div>
+                <div className="text-silver text-xs mt-0.5">
+                  {stats.bouncedSamples.map((a, i) => (
+                    <span key={a.id}>
+                      {i > 0 && ' · '}
+                      <Link
+                        to={`/onboarding/applications/${a.id}`}
+                        className="text-gold hover:text-gold-bright"
+                      >
+                        {a.associateName}
+                      </Link>
+                    </span>
+                  ))}
+                  {stats.bounced > stats.bouncedSamples.length && (
+                    <span className="text-silver/70">
+                      {' '}+ {stats.bounced - stats.bouncedSamples.length} more
+                    </span>
+                  )}
+                  <span className="text-silver/70 ml-2">
+                    · Open the application to see the provider error and fix the
+                    email address.
                   </span>
-                </span>
-              ))}
-              {stats.stale > stats.staleSamples.length && (
-                <span className="text-silver/70">
-                  {' '}+ {stats.stale - stats.staleSamples.length} more
-                </span>
-              )}
+                </div>
+              </div>
             </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setStatus('SUBMITTED')}
-            className="shrink-0"
-          >
-            Review
-          </Button>
-        </div>
-      )}
+          )}
 
-      {/* Filter row: search input + status pills */}
-      {canInvite && (
+          {/* Stale-application banner — only when there's something to nudge about. */}
+          {canInvite && stats.stale > 0 && (
+            <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+              <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-white">
+                  {stats.stale} application{stats.stale === 1 ? '' : 's'} stuck for more
+                  than {STALE_DAYS} days
+                </div>
+                <div className="text-silver text-xs mt-0.5">
+                  {stats.staleSamples.map((a, i) => (
+                    <span key={a.id}>
+                      {i > 0 && ' · '}
+                      <Link
+                        to={`/onboarding/applications/${a.id}`}
+                        className="text-gold hover:text-gold-bright"
+                      >
+                        {a.associateName}
+                      </Link>{' '}
+                      <span className="text-silver/70 tabular-nums">
+                        ({daysSince(a.invitedAt, now)}d)
+                      </span>
+                    </span>
+                  ))}
+                  {stats.stale > stats.staleSamples.length && (
+                    <span className="text-silver/70">
+                      {' '}+ {stats.stale - stats.staleSamples.length} more
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStatus('SUBMITTED')}
+                className="shrink-0"
+              >
+                Review
+              </Button>
+            </div>
+          )}
+
+              </>
+        }
+        filters={canInvite && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           {/* Phone: search gets its own row (basis-full) — sharing one with
               the client picker left it three letters wide. */}
@@ -1006,6 +1007,44 @@ export function ApplicationsList() {
         </div>
       )}
 
+        drawer={
+
+          <Drawer
+            open={!!drawerTarget}
+            onOpenChange={(o) => {
+              if (!o) {
+                setDrawerTarget(null);
+                // Refresh in case the drawer mutated (skip task / resend).
+                refresh();
+                refreshStats();
+              }
+            }}
+            width="max-w-2xl"
+          >
+            {drawerTarget && (
+              <>
+                <DrawerHeader>
+                  <DrawerTitle>{drawerTarget.associateName}</DrawerTitle>
+                  <DrawerDescription>
+                    {whereLine(drawerTarget)}
+                  </DrawerDescription>
+                </DrawerHeader>
+                <DrawerBody>
+                  <ApplicationDetailBody
+                    applicationId={drawerTarget.id}
+                    mode="drawer"
+                    onCancelled={(r, next) => {
+                      setDrawerTarget(null);
+                      handleCancelled(r, next);
+                    }}
+                  />
+                </DrawerBody>
+              </>
+            )}
+          </Drawer>
+
+        }
+      >
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!items && !error && (
@@ -1428,40 +1467,7 @@ export function ApplicationsList() {
         </div>
       )}
 
-      <Drawer
-        open={!!drawerTarget}
-        onOpenChange={(o) => {
-          if (!o) {
-            setDrawerTarget(null);
-            // Refresh in case the drawer mutated (skip task / resend).
-            refresh();
-            refreshStats();
-          }
-        }}
-        width="max-w-2xl"
-      >
-        {drawerTarget && (
-          <>
-            <DrawerHeader>
-              <DrawerTitle>{drawerTarget.associateName}</DrawerTitle>
-              <DrawerDescription>
-                {whereLine(drawerTarget)}
-              </DrawerDescription>
-            </DrawerHeader>
-            <DrawerBody>
-              <ApplicationDetailBody
-                applicationId={drawerTarget.id}
-                mode="drawer"
-                onCancelled={(r, next) => {
-                  setDrawerTarget(null);
-                  handleCancelled(r, next);
-                }}
-              />
-            </DrawerBody>
-          </>
-        )}
-      </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

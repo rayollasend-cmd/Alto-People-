@@ -49,10 +49,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   Input,
-  PageHeader,
   Select,
   Skeleton,
 } from '@/components/ui';
+import { ListTemplate } from '@/components/templates';
 import { DataGrid } from '@/components/ui/DataGrid';
 
 /** Saturday 00:00 (local) that starts the Sat→Fri week containing `d`. */
@@ -399,142 +399,418 @@ export function TimesheetsView() {
   }, [allRows, search]);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="Fieldglass timesheets"
         subtitle="Fieldglass-ready weekly hours (Saturday → Friday). Approved time only, net of unpaid breaks."
-      />
-
-      {/* Week picker + actions */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex items-center rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setWeekStart((w) => addDays(w, -7))}
-            title="Previous week"
-            aria-label="Previous week"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
-            {/* Prefer the SERVER's week bounds once loaded. The rows are
-                bucketed in the store timezone (America/New_York) server-side,
-                while weekStart/weekEnd here are browser-local — for a viewer
-                east of US Eastern, the browser's Saturday can fall in the
-                PREVIOUS store-local week, and this header used to claim a
-                different week than the data below it. The browser dates
-                remain only as a pre-load placeholder and for navigation. */}
-            {data
-              ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
-              : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setWeekStart((w) => addDays(w, 7))}
-            title="Next week"
-            aria-label="Next week"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setWeekStart(lastCompletedWeekStart(new Date()))}
-          title="Jump to the last completed week"
-        >
-          Last completed week
-        </Button>
-        {!moduleOn('clientPortal') ? null : boundedClient ? (
-          <div
-            className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
-            title="Your account is scoped to this client"
-          >
-            {boundedClient.name}
-          </div>
-        ) : (
-          <Select
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            className="h-8 w-auto text-sm"
-            title="File one Fieldglass client/SOW at a time"
-            aria-label="Client filter"
-          >
-            <option value="">All clients</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        )}
-        <div className="relative w-56">
-          <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
-          <Input
-            placeholder={`Search ${term('worker').toLowerCase()} or ${term('site').toLowerCase()}…`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 h-8 text-sm"
-            aria-label={`Search ${term('workers').toLowerCase()}`}
-          />
-        </div>
-
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            variant={showSchedule ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setShowSchedule((v) => !v)}
-            disabled={!data || data.scheduleComparison.length === 0}
-            title="Compare published schedule vs hours actually worked"
-          >
-            <CalendarClock className="h-3.5 w-3.5" />
-            Scheduled vs actual
-            {scheduleFlags.length > 0 && (
-              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-xs2 text-gold">
-                {scheduleFlags.length}
+        filters={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setWeekStart((w) => addDays(w, -7))}
+                title="Previous week"
+                aria-label="Previous week"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
+                {/* Prefer the SERVER's week bounds once loaded. The rows are
+                    bucketed in the store timezone (America/New_York) server-side,
+                    while weekStart/weekEnd here are browser-local — for a viewer
+                    east of US Eastern, the browser's Saturday can fall in the
+                    PREVIOUS store-local week, and this header used to claim a
+                    different week than the data below it. The browser dates
+                    remain only as a pre-load placeholder and for navigation. */}
+                {data
+                  ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
+                  : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
               </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setWeekStart((w) => addDays(w, 7))}
+                title="Next week"
+                aria-label="Next week"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setWeekStart(lastCompletedWeekStart(new Date()))}
+              title="Jump to the last completed week"
+            >
+              Last completed week
+            </Button>
+            {!moduleOn('clientPortal') ? null : boundedClient ? (
+              <div
+                className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+                title="Your account is scoped to this client"
+              >
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                className="h-8 w-auto text-sm"
+                title="File one Fieldglass client/SOW at a time"
+                aria-label="Client filter"
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
             )}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => void load()} loading={weekQuery.isFetching}>
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCopy}
-            disabled={allRows.length === 0}
-            title="Copy the grid (tab-separated) for pasting into Fieldglass"
-          >
-            <ClipboardCopy className="h-3.5 w-3.5" />
-            Copy
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onDownload}
-            loading={downloading}
-            disabled={allRows.length === 0}
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Export .xlsx
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onMarkFiled}
-            loading={filingBusy}
-            disabled={!data || allRows.length === 0}
-            title="Record a snapshot of this week's hours as filed into Fieldglass"
-          >
-            {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-            {data?.filing ? 'Re-file' : 'Mark filed'}
-          </Button>
-        </div>
-      </div>
+            <div className="relative w-56">
+              <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
+              <Input
+                placeholder={`Search ${term('worker').toLowerCase()} or ${term('site').toLowerCase()}…`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 h-8 text-sm"
+                aria-label={`Search ${term('workers').toLowerCase()}`}
+              />
+            </div>
 
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                variant={showSchedule ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setShowSchedule((v) => !v)}
+                disabled={!data || data.scheduleComparison.length === 0}
+                title="Compare published schedule vs hours actually worked"
+              >
+                <CalendarClock className="h-3.5 w-3.5" />
+                Scheduled vs actual
+                {scheduleFlags.length > 0 && (
+                  <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-xs2 text-gold">
+                    {scheduleFlags.length}
+                  </span>
+                )}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void load()} loading={weekQuery.isFetching}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onCopy}
+                disabled={allRows.length === 0}
+                title="Copy the grid (tab-separated) for pasting into Fieldglass"
+              >
+                <ClipboardCopy className="h-3.5 w-3.5" />
+                Copy
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onDownload}
+                loading={downloading}
+                disabled={allRows.length === 0}
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                Export .xlsx
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={onMarkFiled}
+                loading={filingBusy}
+                disabled={!data || allRows.length === 0}
+                title="Record a snapshot of this week's hours as filed into Fieldglass"
+              >
+                {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {data?.filing ? 'Re-file' : 'Mark filed'}
+              </Button>
+            </div>
+          </div>
+        }
+        drawer={
+
+          <Drawer
+            open={detailOpen}
+            onOpenChange={(o) => {
+              if (!o) {
+                setDetailOpen(false);
+                setDetailAssociateId(null);
+              }
+            }}
+            width="max-w-3xl"
+          >
+            <DrawerHeader>
+              <DrawerTitle>
+                <AssociateLink associateId={detailAssociateId}>
+                  {detail?.worker ?? 'Timesheet'}
+                </AssociateLink>
+              </DrawerTitle>
+              <DrawerDescription>
+                {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
+                {detailAssociateId && (
+                  <Link
+                    to={`/time-attendance/timesheets/history/${detailAssociateId}`}
+                    className="ml-2 inline-flex items-center gap-1 text-gold hover:underline"
+                  >
+                    <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                    Full timesheet history
+                  </Link>
+                )}
+              </DrawerDescription>
+            </DrawerHeader>
+            <DrawerBody>
+              {detailLoading || !detail ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-6 w-48" />
+                  <Skeleton className="h-40 w-full" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                    <span>
+                      <span className="text-silver/60">Status: </span>
+                      <Badge variant={detail.status === 'PENDING' ? 'pending' : 'success'}>
+                        {detail.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
+                      </Badge>
+                    </span>
+                    <span>
+                      <span className="text-silver/60">Total worked: </span>
+                      <span className="font-semibold text-white tabular-nums">
+                        {detail.totalHours.toFixed(2)}h
+                      </span>
+                    </span>
+                  </div>
+
+                  {detail.pendingCount > 0 && (
+                    <div className="flex items-start gap-2 rounded-md border border-gold/40 bg-gold/10 p-2.5 text-xs text-gold">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {detail.pendingCount}{' '}
+                        {detail.pendingCount === 1 ? 'entry is' : 'entries are'} still pending approval
+                        and excluded from the totals below.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto rounded-md border border-navy-secondary">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-navy-secondary/40">
+                          <th className="p-2 text-left font-medium text-silver/70 whitespace-nowrap">
+                            Time in / time out
+                          </th>
+                          {detail.days.map((d) => (
+                            <th key={d.date} className="p-2 text-center whitespace-nowrap">
+                              <div className="font-semibold text-white">{d.weekday}</div>
+                              <div className="text-xs2 tabular-nums text-silver/60">{d.monthDay}</div>
+                            </th>
+                          ))}
+                          <th className="p-2 text-center font-semibold text-white">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Which shift each day fulfilled — named and color-
+                            coded so the week's pattern reads at a glance. */}
+                        {detail.days.some((d) => (d.shifts ?? []).length > 0) && (
+                          <tr className="border-t border-navy-secondary">
+                            <td className="p-2 text-silver/70">Shift</td>
+                            {detail.days.map((d) => (
+                              <td key={d.date} className="p-2 text-center align-top">
+                                {(d.shifts ?? []).length === 0 ? (
+                                  <span className="text-silver/40">—</span>
+                                ) : (
+                                  <div className="flex flex-col items-center gap-1">
+                                    {(d.shifts ?? []).map((name, i) => (
+                                      <span
+                                        key={i}
+                                        className={`inline-flex max-w-[9rem] items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs2 font-medium ${
+                                          name === null
+                                            ? 'bg-warning/15 text-warning'
+                                            : shiftChipClass(name)
+                                        }`}
+                                        title={name ?? 'No scheduled shift matched this punch (walk-in or manual entry)'}
+                                      >
+                                        {name ?? 'unscheduled'}
+                                      </span>
+                                    ))}
+                                    {d.overnight && (
+                                      <span
+                                        className="text-xs2 text-sky/80"
+                                        title="This shift crossed midnight — it ends the next calendar day but belongs to this day's timesheet column."
+                                      >
+                                        ☾ overnight
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            ))}
+                            <td />
+                          </tr>
+                        )}
+                        <tr className="border-t border-navy-secondary">
+                          <td className="p-2 text-silver/70">Time In</td>
+                          {detail.days.map((d) => (
+                            <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
+                              {d.timeIn ?? '—'}
+                            </td>
+                          ))}
+                          <td />
+                        </tr>
+                        <tr className="border-t border-navy-secondary">
+                          <td className="p-2 text-silver/70">Meal Break</td>
+                          {detail.days.map((d) => (
+                            <td key={d.date} className="p-2 text-center text-xs2 text-silver/80 whitespace-nowrap">
+                              {d.breaks.length > 0
+                                ? d.breaks.map((b, i) => <div key={i}>{b}</div>)
+                                : '—'}
+                            </td>
+                          ))}
+                          <td />
+                        </tr>
+                        <tr className="border-t border-navy-secondary">
+                          <td className="p-2 text-silver/70">Time Out</td>
+                          {detail.days.map((d) => (
+                            <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
+                              {d.timeOut ?? '—'}
+                            </td>
+                          ))}
+                          <td />
+                        </tr>
+                        <tr className="border-t border-navy-secondary bg-navy-secondary/30">
+                          <td className="p-2 font-medium text-white">Total Worked</td>
+                          {detail.days.map((d) => (
+                            <td key={d.date} className="p-2 text-center tabular-nums font-medium text-white">
+                              {d.netHours.toFixed(2)}
+                            </td>
+                          ))}
+                          <td className="p-2 text-center tabular-nums font-semibold text-white">
+                            {detail.totalHours.toFixed(2)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Shift legend — the week's distinct shifts with their colors,
+                      so the chip bands read without hovering. */}
+                  {(() => {
+                    const named = [
+                      ...new Set(
+                        detail.days.flatMap((d) =>
+                          (d.shifts ?? []).filter((s): s is string => s !== null),
+                        ),
+                      ),
+                    ];
+                    const anyUnscheduled = detail.days.some((d) =>
+                      (d.shifts ?? []).some((s) => s === null),
+                    );
+                    if (named.length === 0 && !anyUnscheduled) return null;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs2">
+                        <span className="text-silver/60">Shifts:</span>
+                        {named.map((name) => (
+                          <span
+                            key={name}
+                            className={`rounded-full px-2 py-0.5 font-medium ${shiftChipClass(name)}`}
+                          >
+                            {name}
+                          </span>
+                        ))}
+                        {anyUnscheduled && (
+                          <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning">
+                            unscheduled — no shift matched the punch
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* Punches are formatted server-side on each SITE's wall clock —
+                      the same clock the associate punched on — not the viewer's. */}
+                  <p className="text-xs2 text-silver/60">
+                    Times shown in each work site's local time.
+                  </p>
+
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-white">Accounting (USD)</h3>
+                    <div className="overflow-x-auto rounded-md border border-navy-secondary">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-navy-secondary/40 text-silver/70">
+                            <th className="p-2 text-left font-medium">Rates</th>
+                            <th className="p-2 text-right font-medium">Pay Rate</th>
+                            {showBill && <th className="p-2 text-right font-medium">Rate</th>}
+                            <th className="p-2 text-right font-medium">Quantity</th>
+                            <th className="p-2 text-right font-medium">Days</th>
+                            {showBill && <th className="p-2 text-right font-medium">Amount (USD)</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-navy-secondary">
+                            <td className="p-2 text-silver whitespace-nowrap">{detail.rateLabel}</td>
+                            <td className="p-2 text-right tabular-nums text-silver">
+                              {/* Null = no comp record on file. A dash, not a
+                                  default — the old $15 fallback put a fabricated
+                                  rate on a billing-adjacent sheet. */}
+                              {detail.payRate != null ? detail.payRate.toFixed(2) : '—'}
+                            </td>
+                            {showBill && (
+                              <td className="p-2 text-right tabular-nums text-silver">
+                                {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}
+                              </td>
+                            )}
+                            <td className="p-2 text-right tabular-nums text-silver">
+                              {detail.totalHours.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right text-silver/60">—</td>
+                            {showBill && (
+                              <td className="p-2 text-right tabular-nums text-white">
+                                {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                              </td>
+                            )}
+                          </tr>
+                          <tr className="border-t border-navy-secondary bg-navy-secondary/30 font-medium">
+                            <td className="p-2 text-white">Subtotal</td>
+                            <td className="p-2" />
+                            {showBill && <td className="p-2" />}
+                            <td className="p-2 text-right tabular-nums text-white">
+                              {detail.totalHours.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right text-silver/60">—</td>
+                            {showBill && (
+                              <td className="p-2 text-right tabular-nums text-white">
+                                {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                              </td>
+                            )}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {showBill && detail.billRate == null && (
+                      <p className="text-xs text-gold/80">
+                        Set this client&rsquo;s <strong>Fieldglass bill rate</strong> (client → Basics)
+                        to compute the Amount.
+                      </p>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-silver/60">
+                    Times shown in {detail.timeZone}. Overnight shifts appear under their clock-in day.
+                    Meal breaks are unpaid and excluded from Total Worked. Pay Rate is what Alto pays the
+                    associate{showBill ? '; Rate is the client bill rate' : ''}.
+                  </p>
+                </div>
+              )}
+            </DrawerBody>
+          </Drawer>
+
+        }
+      >
       {data && (
         <FieldglassStrip
           data={data}
@@ -811,279 +1087,6 @@ export function TimesheetsView() {
       )}
 
       {/* Fieldglass individual-timesheet drill-down */}
-      <Drawer
-        open={detailOpen}
-        onOpenChange={(o) => {
-          if (!o) {
-            setDetailOpen(false);
-            setDetailAssociateId(null);
-          }
-        }}
-        width="max-w-3xl"
-      >
-        <DrawerHeader>
-          <DrawerTitle>
-            <AssociateLink associateId={detailAssociateId}>
-              {detail?.worker ?? 'Timesheet'}
-            </AssociateLink>
-          </DrawerTitle>
-          <DrawerDescription>
-            {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
-            {detailAssociateId && (
-              <Link
-                to={`/time-attendance/timesheets/history/${detailAssociateId}`}
-                className="ml-2 inline-flex items-center gap-1 text-gold hover:underline"
-              >
-                <HistoryIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                Full timesheet history
-              </Link>
-            )}
-          </DrawerDescription>
-        </DrawerHeader>
-        <DrawerBody>
-          {detailLoading || !detail ? (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-40 w-full" />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                <span>
-                  <span className="text-silver/60">Status: </span>
-                  <Badge variant={detail.status === 'PENDING' ? 'pending' : 'success'}>
-                    {detail.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
-                  </Badge>
-                </span>
-                <span>
-                  <span className="text-silver/60">Total worked: </span>
-                  <span className="font-semibold text-white tabular-nums">
-                    {detail.totalHours.toFixed(2)}h
-                  </span>
-                </span>
-              </div>
-
-              {detail.pendingCount > 0 && (
-                <div className="flex items-start gap-2 rounded-md border border-gold/40 bg-gold/10 p-2.5 text-xs text-gold">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    {detail.pendingCount}{' '}
-                    {detail.pendingCount === 1 ? 'entry is' : 'entries are'} still pending approval
-                    and excluded from the totals below.
-                  </span>
-                </div>
-              )}
-
-              <div className="overflow-x-auto rounded-md border border-navy-secondary">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-navy-secondary/40">
-                      <th className="p-2 text-left font-medium text-silver/70 whitespace-nowrap">
-                        Time in / time out
-                      </th>
-                      {detail.days.map((d) => (
-                        <th key={d.date} className="p-2 text-center whitespace-nowrap">
-                          <div className="font-semibold text-white">{d.weekday}</div>
-                          <div className="text-xs2 tabular-nums text-silver/60">{d.monthDay}</div>
-                        </th>
-                      ))}
-                      <th className="p-2 text-center font-semibold text-white">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Which shift each day fulfilled — named and color-
-                        coded so the week's pattern reads at a glance. */}
-                    {detail.days.some((d) => (d.shifts ?? []).length > 0) && (
-                      <tr className="border-t border-navy-secondary">
-                        <td className="p-2 text-silver/70">Shift</td>
-                        {detail.days.map((d) => (
-                          <td key={d.date} className="p-2 text-center align-top">
-                            {(d.shifts ?? []).length === 0 ? (
-                              <span className="text-silver/40">—</span>
-                            ) : (
-                              <div className="flex flex-col items-center gap-1">
-                                {(d.shifts ?? []).map((name, i) => (
-                                  <span
-                                    key={i}
-                                    className={`inline-flex max-w-[9rem] items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs2 font-medium ${
-                                      name === null
-                                        ? 'bg-warning/15 text-warning'
-                                        : shiftChipClass(name)
-                                    }`}
-                                    title={name ?? 'No scheduled shift matched this punch (walk-in or manual entry)'}
-                                  >
-                                    {name ?? 'unscheduled'}
-                                  </span>
-                                ))}
-                                {d.overnight && (
-                                  <span
-                                    className="text-xs2 text-sky/80"
-                                    title="This shift crossed midnight — it ends the next calendar day but belongs to this day's timesheet column."
-                                  >
-                                    ☾ overnight
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        ))}
-                        <td />
-                      </tr>
-                    )}
-                    <tr className="border-t border-navy-secondary">
-                      <td className="p-2 text-silver/70">Time In</td>
-                      {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
-                          {d.timeIn ?? '—'}
-                        </td>
-                      ))}
-                      <td />
-                    </tr>
-                    <tr className="border-t border-navy-secondary">
-                      <td className="p-2 text-silver/70">Meal Break</td>
-                      {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center text-xs2 text-silver/80 whitespace-nowrap">
-                          {d.breaks.length > 0
-                            ? d.breaks.map((b, i) => <div key={i}>{b}</div>)
-                            : '—'}
-                        </td>
-                      ))}
-                      <td />
-                    </tr>
-                    <tr className="border-t border-navy-secondary">
-                      <td className="p-2 text-silver/70">Time Out</td>
-                      {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
-                          {d.timeOut ?? '—'}
-                        </td>
-                      ))}
-                      <td />
-                    </tr>
-                    <tr className="border-t border-navy-secondary bg-navy-secondary/30">
-                      <td className="p-2 font-medium text-white">Total Worked</td>
-                      {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center tabular-nums font-medium text-white">
-                          {d.netHours.toFixed(2)}
-                        </td>
-                      ))}
-                      <td className="p-2 text-center tabular-nums font-semibold text-white">
-                        {detail.totalHours.toFixed(2)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              {/* Shift legend — the week's distinct shifts with their colors,
-                  so the chip bands read without hovering. */}
-              {(() => {
-                const named = [
-                  ...new Set(
-                    detail.days.flatMap((d) =>
-                      (d.shifts ?? []).filter((s): s is string => s !== null),
-                    ),
-                  ),
-                ];
-                const anyUnscheduled = detail.days.some((d) =>
-                  (d.shifts ?? []).some((s) => s === null),
-                );
-                if (named.length === 0 && !anyUnscheduled) return null;
-                return (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs2">
-                    <span className="text-silver/60">Shifts:</span>
-                    {named.map((name) => (
-                      <span
-                        key={name}
-                        className={`rounded-full px-2 py-0.5 font-medium ${shiftChipClass(name)}`}
-                      >
-                        {name}
-                      </span>
-                    ))}
-                    {anyUnscheduled && (
-                      <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning">
-                        unscheduled — no shift matched the punch
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
-              {/* Punches are formatted server-side on each SITE's wall clock —
-                  the same clock the associate punched on — not the viewer's. */}
-              <p className="text-xs2 text-silver/60">
-                Times shown in each work site's local time.
-              </p>
-
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-white">Accounting (USD)</h3>
-                <div className="overflow-x-auto rounded-md border border-navy-secondary">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-navy-secondary/40 text-silver/70">
-                        <th className="p-2 text-left font-medium">Rates</th>
-                        <th className="p-2 text-right font-medium">Pay Rate</th>
-                        {showBill && <th className="p-2 text-right font-medium">Rate</th>}
-                        <th className="p-2 text-right font-medium">Quantity</th>
-                        <th className="p-2 text-right font-medium">Days</th>
-                        {showBill && <th className="p-2 text-right font-medium">Amount (USD)</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-t border-navy-secondary">
-                        <td className="p-2 text-silver whitespace-nowrap">{detail.rateLabel}</td>
-                        <td className="p-2 text-right tabular-nums text-silver">
-                          {/* Null = no comp record on file. A dash, not a
-                              default — the old $15 fallback put a fabricated
-                              rate on a billing-adjacent sheet. */}
-                          {detail.payRate != null ? detail.payRate.toFixed(2) : '—'}
-                        </td>
-                        {showBill && (
-                          <td className="p-2 text-right tabular-nums text-silver">
-                            {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}
-                          </td>
-                        )}
-                        <td className="p-2 text-right tabular-nums text-silver">
-                          {detail.totalHours.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-right text-silver/60">—</td>
-                        {showBill && (
-                          <td className="p-2 text-right tabular-nums text-white">
-                            {detail.amount != null ? detail.amount.toFixed(2) : '—'}
-                          </td>
-                        )}
-                      </tr>
-                      <tr className="border-t border-navy-secondary bg-navy-secondary/30 font-medium">
-                        <td className="p-2 text-white">Subtotal</td>
-                        <td className="p-2" />
-                        {showBill && <td className="p-2" />}
-                        <td className="p-2 text-right tabular-nums text-white">
-                          {detail.totalHours.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-right text-silver/60">—</td>
-                        {showBill && (
-                          <td className="p-2 text-right tabular-nums text-white">
-                            {detail.amount != null ? detail.amount.toFixed(2) : '—'}
-                          </td>
-                        )}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                {showBill && detail.billRate == null && (
-                  <p className="text-xs text-gold/80">
-                    Set this client&rsquo;s <strong>Fieldglass bill rate</strong> (client → Basics)
-                    to compute the Amount.
-                  </p>
-                )}
-              </div>
-
-              <p className="text-xs text-silver/60">
-                Times shown in {detail.timeZone}. Overnight shifts appear under their clock-in day.
-                Meal breaks are unpaid and excluded from Total Worked. Pay Rate is what Alto pays the
-                associate{showBill ? '; Rate is the client bill rate' : ''}.
-              </p>
-            </div>
-          )}
-        </DrawerBody>
-      </Drawer>
-    </div>
+    </ListTemplate>
   );
 }

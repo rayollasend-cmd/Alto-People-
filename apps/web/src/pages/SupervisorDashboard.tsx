@@ -665,7 +665,7 @@ export function SupervisorDashboard() {
       >
         {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
         {watchOnly ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
             <TileLink to="/today">
               <StatTile
                 className="h-full"
@@ -717,7 +717,7 @@ export function SupervisorDashboard() {
             </TileLink>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
             <StatTile
               label="Fill rate · this week"
               value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
