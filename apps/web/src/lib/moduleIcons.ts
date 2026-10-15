@@ -8,6 +8,7 @@ import {
   CalendarOff,
   ClipboardCheck,
   ClipboardList,
+  ListTodo,
   DollarSign,
   FileText,
   HeartPulse,
@@ -132,6 +133,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'design-system': DesignSystemIcon,
   'trust-center': ShieldCheck,
   'reliability': HeartPulse,
+  'tasks': ListTodo,
   'reports': ReportsIcon,
   'integrations': IntegrationsIcon,
 };
@@ -147,6 +149,7 @@ export {
   Calendar,
   CalendarOff,
   ClipboardList,
+  ListTodo,
   DollarSign,
   FileText,
   HeartPulse,

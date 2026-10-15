@@ -36,6 +36,11 @@ const TABLES = [
   'IntegrationSyncError',
   'IntegrationSyncRun',
   'IntegrationConnection',
+  // Brief 3-2: tasks cascade from Task; the policy has no FK into the graph.
+  'WorkTaskEvent',
+  'WorkTaskAssignment',
+  'WorkTask',
+  'WorkTaskPolicy',
   // Emergency's FKs all SET NULL on delete (declarer, destination), so no
   // cascade from User or Location clears it; its sites and check-ins do
   // cascade from it.

@@ -60,6 +60,7 @@ import { runForEachTenant } from './lib/tenantJobs.js';
 import { installEventSync, runScheduledSyncs } from './lib/integrations/sync.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
+import { startTaskHandoffSweep } from './lib/tasks/sweep.js';
 import { onPlatformScope } from './lib/tenant.js';
 import { enqueueAudit } from './lib/audit.js';
 import { BUILD_VERSION } from './routes/health.js';
@@ -194,6 +195,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   const sweepIntegrations = () =>
     runForEachTenant('integrations', (tenantId) => runScheduledSyncs(tenantId)).catch((err) => logger.warn({ err }, 'integration sweep failed'));
   setInterval(sweepIntegrations, 5 * 60_000).unref();
+  // Brief 3-2: a machine's stalled task goes to a person after the policy's seconds.
+  startTaskHandoffSweep();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
   // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.

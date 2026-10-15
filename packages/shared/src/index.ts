@@ -15,3 +15,4 @@ export * from './integrations.js';
 export * from './agentCapabilities.js';
 export * from './publicApi.js';
 export * from './forecast.js';
+export * from './tasks.js';

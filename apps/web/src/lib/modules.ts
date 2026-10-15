@@ -14,6 +14,7 @@ export type ModuleKey =
   | 'design-system'
   | 'trust-center'
   | 'reliability'
+  | 'tasks'
   | 'compliance-evidence'
   | 'emergency'
   | 'programs'
@@ -721,6 +722,14 @@ export const MODULES: ModuleNav[] = [
       'People, AI agents and robots in one roster: who owns each worker, what it can do, where it is in its lifecycle, and the record behind it.',
     requires: 'view:org',
     group: 'workforce-management',
+  },
+  {
+    key: 'tasks',
+    path: '/tasks',
+    label: 'Tasks',
+    description: 'Every unit of work at a site in a time window, who holds it (a person, an agent or a robot) and why; a machine that stalls hands its task to a person.',
+    requires: 'view:scheduling',
+    group: 'operations',
   },
   {
     key: 'agents',

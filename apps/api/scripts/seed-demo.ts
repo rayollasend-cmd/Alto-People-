@@ -32,6 +32,7 @@ import { ensureBuiltInAgents, payloadHash } from '../src/lib/agents.js';
 import { ensureStoreChannels } from '../src/lib/messaging.js';
 import { getCurrentPeriod } from '../src/lib/payrollSchedule.js';
 import { preloadPayrollTaxConfig } from '../src/lib/payrollTax.js';
+import { autoAssign, recordEvent } from '../src/lib/tasks/engine.js';
 import { aggregateAndPersistRun } from '../src/routes/payroll.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from '../src/lib/timeAnomalies.js';
 import { ATTENDANCE_POINTS } from '../src/lib/attendance.js';
@@ -847,6 +848,56 @@ async function main() {
     await prisma.message.create({ data: { conversationId: direct.id, senderId, body, createdAt: minutes(now, -minsAgo) } });
   }
   count('messages', 3);
+
+  // ---- Tasks (Brief 3-2): today's work at Front Beach, through the real engine ----
+  // Each task is created and then assigned by the engine itself, so the board
+  // shows real rankings and reasons, not invented ones. One needs a capability
+  // only a robot holds, so it waits for a person; one was handed off.
+  {
+    const dayStart = utcInstantOfLocalMidnight(todayKey, frontBeach.tz);
+    const at = (h: number, m = 0) => minutes(dayStart, h * 60 + m);
+    const crewWorkers = frontBeachCrew.map((p) => workerOf.get(p.id)).filter((id): id is string => !!id);
+    // Certify the crew for the work the site does (the roster's capability list).
+    for (const [i, workerId] of crewWorkers.entries()) {
+      const caps = i % 3 === 0 ? ['stocking', 'unloading', 'floor-care'] : i % 3 === 1 ? ['stocking', 'food-service'] : ['stocking', 'unloading'];
+      await prisma.worker.update({ where: { id: workerId }, data: { capabilities: caps } });
+    }
+    const specs: Array<{ type: string; area: string; start: [number, number]; end: [number, number]; capability: string; risk: 'LOW' | 'MEDIUM' | 'HIGH'; minutes: number; reference: string | null; then?: 'STARTED' | 'DONE' | 'FAILED' }> = [
+      { type: 'Unload the 6 AM truck', area: 'Receiving dock', start: [6, 0], end: [8, 0], capability: 'unloading', risk: 'HIGH', minutes: 90, reference: 'Truck 4471', then: 'DONE' },
+      { type: 'Stock dairy and frozen', area: 'Aisles 1–4', start: [8, 0], end: [11, 0], capability: 'stocking', risk: 'LOW', minutes: 120, reference: null, then: 'DONE' },
+      { type: 'Scrub the front entrance', area: 'Entrance', start: [13, 0], end: [15, 0], capability: 'floor-care', risk: 'LOW', minutes: 45, reference: null, then: 'STARTED' },
+      { type: 'Face the center aisles', area: 'Aisles 5–9', start: [14, 0], end: [18, 0], capability: 'stocking', risk: 'LOW', minutes: 60, reference: null },
+      { type: 'Unload the afternoon produce truck', area: 'Receiving dock', start: [15, 0], end: [17, 0], capability: 'unloading', risk: 'HIGH', minutes: 75, reference: 'Truck 4502' },
+      { type: 'Scan aisle 7 for out-of-stocks', area: 'Aisle 7', start: [16, 0], end: [18, 0], capability: 'shelf-scanning', risk: 'LOW', minutes: 30, reference: null },
+      { type: 'Deli case breakdown', area: 'Deli', start: [20, 0], end: [22, 0], capability: 'food-service', risk: 'MEDIUM', minutes: 40, reference: null },
+      { type: 'Overnight floor scrub', area: 'Sales floor', start: [23, 0], end: [23, 59], capability: 'floor-care', risk: 'LOW', minutes: 120, reference: null },
+    ];
+    let tasksMade = 0;
+    for (const spec of specs) {
+      const row = await prisma.workTask.create({
+        data: {
+          type: spec.type,
+          locationId: frontBeach.id,
+          area: spec.area,
+          windowStart: at(spec.start[0], spec.start[1]),
+          windowEnd: at(spec.end[0], spec.end[1]),
+          capability: spec.capability,
+          risk: spec.risk,
+          estimatedMinutes: spec.minutes,
+          reference: spec.reference,
+          createdByUserId: dana.id,
+          createdAt: minutes(dayStart, 5 * 60 + 30),
+        },
+      });
+      const detail = await autoAssign(prisma, row.id, dana.id);
+      if (spec.then && detail.assignment) {
+        if (spec.then === 'STARTED' || spec.then === 'DONE') await recordEvent(prisma, row.id, 'STARTED', null, null);
+        if (spec.then === 'DONE') await recordEvent(prisma, row.id, 'DONE', null, null);
+      }
+      tasksMade += 1;
+    }
+    count('tasks', tasksMade);
+  }
 
   // ---- The bell: what each desk was told ---------------------------------------
   const notes: Prisma.NotificationCreateManyInput[] = [
