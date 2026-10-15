@@ -285,6 +285,93 @@ describe('helpers', () => {
   });
 });
 
+/*
+ * Brief 2-2 step 5 — the California, New York City and Chicago packs. Values are the
+ * statutes' as encoded in packs.ts, every one DRAFT until counsel confirms it; these
+ * tests hold the engine to them.
+ */
+describe('California: the fixed week (acceptance line 2)', () => {
+  // Sat 3 – Fri 9 Oct 2026, a Los Angeles site, seven consecutive days.
+  const ca = (date: string) => rulesForSite({ state: 'CA', city: 'Los Angeles' }, date);
+  const week = () => [
+    entry('2026-10-03', '07:00', '17:30', [meal('2026-10-03', '11:00', '11:30'), rest('2026-10-03', '09:00', '09:10'), rest('2026-10-03', '13:00', '13:10'), rest('2026-10-03', '15:30', '15:40')]), // 10 h
+    entry('2026-10-04', '06:00', '20:00', [meal('2026-10-04', '10:00', '10:30'), meal('2026-10-04', '15:00', '15:30'), rest('2026-10-04', '08:00', '08:10'), rest('2026-10-04', '12:30', '12:40'), rest('2026-10-04', '17:00', '17:10')]), // 13 h
+    entry('2026-10-05', '09:00', '13:00', [rest('2026-10-05', '11:00', '11:10')]), // 4 h
+    entry('2026-10-06', '09:00', '15:30', [meal('2026-10-06', '15:00', '15:30'), rest('2026-10-06', '11:00', '11:10'), rest('2026-10-06', '13:00', '13:10')]), // 6 h, meal at hour 6: late
+    entry('2026-10-07', '09:00', '13:00', [rest('2026-10-07', '11:00', '11:10')]), // 4 h
+    entry('2026-10-08', '09:00', '13:00', [rest('2026-10-08', '11:00', '11:10')]), // 4 h
+    entry('2026-10-09', '08:00', '17:30', [meal('2026-10-09', '12:00', '12:30'), rest('2026-10-09', '10:00', '10:10'), rest('2026-10-09', '14:30', '14:40')]), // 9 h, the seventh day
+  ];
+
+  it('daily overtime, double time past 12, the seventh day and a late meal, each with its reason', () => {
+    const out = evaluateTime(week(), { rulesFor: (_e, date) => ca(date), weekStart: startOfWeekForSite });
+    // Paid rests are worked time (≤ 20 min): 10 + 13 + 4 + 6 + 4 + 4 + 9 = 50 h.
+    // Sat 10: 8 + 2 OT. Sun 13: 8 + 4 OT + 1 DT. Mon–Thu 18 regular (34 so far). Fri, the seventh day: 8 OT + 1 DT.
+    expect(out).toMatchObject({ regularHours: 34, overtimeHours: 14, doubleTimeHours: 2, overtimeMultiplier: 1.5, doubleMultiplier: 2 });
+    const reasons = out.weeks[0]!.reasons;
+    expect(reasons).toContain('Overtime applied 2026-10-03: 10.00 h > 8 (daily), US-CA 2026-01-01 v1');
+    expect(reasons).toContain('Double time applied 2026-10-04: 13.00 h > 12 (daily), US-CA 2026-01-01 v1');
+    expect(reasons).toContain('Seventh consecutive day 2026-10-09: 8.00 h at overtime, 1.00 h double time, US-CA 2026-01-01 v1');
+    expect(out.penalties).toEqual([expect.objectContaining({ kind: 'MEAL', date: '2026-10-06', hours: 1, payable: false })]);
+    expect(out.penalties[0]!.reason).toBe('Meal premium 2026-10-06: 6.00 h worked without a 30-minute meal starting by hour 5, 1 h, US-CA 2026-01-01 v1');
+  });
+
+  it('the minimum wage steps on 1 January', () => {
+    expect(ca('2025-12-31').params.minimumWage?.rateCents).toBe(1650);
+    expect(ca('2026-01-01').params.minimumWage?.rateCents).toBe(1690);
+  });
+});
+
+describe('New York City and Chicago', () => {
+  const nyc = rulesForSite({ state: 'NY', city: 'Brooklyn' }, '2026-10-15');
+  const chi = rulesForSite({ state: 'IL', city: 'Chicago' }, '2026-10-15');
+  const base = { weekStart: startOfWeekForSite, isSchoolDay: () => true, age: 30, existing: [] as Array<{ startsAt: Date; endsAt: Date; timezone: string }> };
+  const at = (iso: string) => new Date(iso);
+
+  it('New York City: the city’s minimum wage over the state’s, a clopening owes $100, a late cut owes by notice band', () => {
+    expect(nyc.params.minimumWage?.rateCents).toBe(1700);
+    expect(nyc.origin['minimumWage.rateCents']).toBe('US-NY-NYC 2026-01-01 v1');
+    const close = { clockInAt: at('2026-10-05T19:00:00-04:00'), clockOutAt: at('2026-10-06T00:00:00-04:00'), timezone: 'America/New_York' };
+    const open = { clockInAt: at('2026-10-06T07:00:00-04:00'), clockOutAt: at('2026-10-06T12:00:00-04:00'), timezone: 'America/New_York' };
+    const out = evaluateTime([close, open], ctxWith(nyc));
+    expect(out.penalties).toEqual([expect.objectContaining({ kind: 'REST_BETWEEN_SHIFTS', cents: 10000, hours: 0 })]);
+
+    const draft = { startsAt: at('2026-10-20T09:00:00-04:00'), endsAt: at('2026-10-20T17:00:00-04:00'), timezone: 'America/New_York' };
+    const tenDays = evaluateSchedule(draft, { ...base, rules: nyc, now: at('2026-10-10T09:00:00-04:00'), change: 'reduced' });
+    expect(tenDays).toEqual([expect.objectContaining({ rule: 'PREDICTIVE_NOTICE', premiumCents: 2000 })]);
+    const threeDays = evaluateSchedule(draft, { ...base, rules: nyc, now: at('2026-10-17T09:00:00-04:00'), change: 'added' });
+    expect(threeDays[0]).toMatchObject({ premiumCents: 1500 });
+  });
+
+  it('Chicago: hours inside the 10-hour rest at 1.25×; an hour of predictability pay; half the hours cut inside 24 hours', () => {
+    expect(chi.params.minimumWage?.rateCents).toBe(1660);
+    const close = { clockInAt: at('2026-10-05T15:00:00-05:00'), clockOutAt: at('2026-10-05T23:00:00-05:00'), timezone: 'America/Chicago' };
+    const open = { clockInAt: at('2026-10-06T06:00:00-05:00'), clockOutAt: at('2026-10-06T14:00:00-05:00'), timezone: 'America/Chicago' };
+    // 7 h of rest: the first 3 h of the opening shift fall inside the 10-hour rest → 3 × 0.25 = 0.75 h premium.
+    const out = evaluateTime([close, open], ctxWith(chi));
+    expect(out.penalties).toEqual([expect.objectContaining({ kind: 'REST_BETWEEN_SHIFTS', hours: 0.75 })]);
+
+    const draft = { startsAt: at('2026-10-20T09:00:00-05:00'), endsAt: at('2026-10-20T17:00:00-05:00'), timezone: 'America/Chicago' };
+    expect(evaluateSchedule(draft, { ...base, rules: chi, now: at('2026-10-12T09:00:00-05:00'), change: 'moved' })[0]).toMatchObject({ premiumHours: 1 });
+    expect(evaluateSchedule(draft, { ...base, rules: chi, now: at('2026-10-19T20:00:00-05:00'), change: 'cancelled', hoursLost: 8 })[0]).toMatchObject({ premiumHours: 4 });
+  });
+
+  it('Illinois: the meal law reaches only a day of 7.5 hours, and owes no premium pay', () => {
+    expect(chi.params.meal).toMatchObject({ requiredAfterHours: 5, minMinutes: 20, minimumDayHours: 7.5, penaltyHours: 0 });
+  });
+});
+
+describe('short breaks (29 CFR 785.18)', () => {
+  it('a break of 20 minutes or less is worked time; the engine says so where today’s pay docked it', () => {
+    const e = { ...entry('2026-10-05', '08:00', '16:00', [rest('2026-10-05', '10:00', '10:15'), meal('2026-10-05', '12:00', '12:30')]), timezone: 'America/New_York' };
+    const today = splitWeeklyOvertime([{ status: 'APPROVED', clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, location: { timezone: e.timezone } }]);
+    const out = evaluateTime([e], ctxWith(rulesForSite({ state: 'FL' }, '2026-10-05')));
+    expect(today.regularHours).toBe(7.25);
+    expect(out.regularHours).toBe(7.5);
+    expect(out.weeks[0]!.reasons).toEqual(['Short breaks counted as worked 2026-10-05: 15 min (≤ 20 min each), FEDERAL 2009-07-24 v1']);
+  });
+});
+
 // Brief 2-2 step 3: the dry run's gate, on the fixtures.
 describe('the golden fixtures in shadow', () => {
   for (const a of GOLDEN_ASSOCIATES) {

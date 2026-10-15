@@ -44,6 +44,8 @@ export const MealSchema = z
     penaltyHours: z.number().min(0).max(4),
     /** A meal may be waived by the person within the law's conditions. */
     waiverAllowed: z.boolean(),
+    /** The meal is owed only on a day at least this long (Illinois: 7.5 h); 0 or absent: any day past requiredAfterHours. */
+    minimumDayHours: hours,
   })
   .partial();
 
@@ -64,8 +66,10 @@ export const RestBetweenShiftsSchema = z
     minHours: hours.nullable(),
     /** Hours of pay owed for a short rest (a premium), 0 if the law only warns. */
     premiumHours: z.number().min(0).max(8),
-    /** Pay the premium at this multiple of the regular rate for the hours worked inside the gap (Chicago 1.25), 0: none. */
+    /** Pay the hours worked inside the gap at this multiple of the regular rate (Chicago 1.25), 0: none. */
     premiumMultiplierInGap: z.number().min(0).max(4),
+    /** A flat premium in cents (NYC fast food "clopening": $100), 0: none. */
+    premiumCents: z.number().int().min(0).max(100_000),
   })
   .partial();
 
@@ -101,10 +105,31 @@ export const PredictiveSchema = z
   .object({
     /** Days of advance notice the schedule needs; null: no predictive law. */
     noticeDays: z.number().int().min(0).max(31).nullable(),
-    /** Premium hours owed per change, by notice band: changes made with fewer than `withinDays` days' notice. */
-    changePremiums: z.array(z.object({ withinDays: z.number().min(0).max(31), premiumHours: z.number().min(0).max(8), kind: z.enum(['added', 'reduced', 'cancelled', 'moved']).array() })),
+    /**
+     * The premium a change owes, by notice band: changes made with fewer than `withinDays` days'
+     * notice. In hours of pay (Chicago: 1 h), a share of the hours cut (Chicago: 0.5 of the hours
+     * lost inside 24 h) or flat cents (NYC fast food: $10, $20, $75).
+     */
+    changePremiums: z.array(
+      z.object({
+        withinDays: z.number().min(0).max(31),
+        premiumHours: z.number().min(0).max(8),
+        shareOfHoursLost: z.number().min(0).max(1).optional(),
+        premiumCents: z.number().int().min(0).max(100_000).optional(),
+        kind: z.enum(['added', 'reduced', 'cancelled', 'moved']).array(),
+      }),
+    ),
+    /** Who the law covers, as the city words it (industries, employer size): whether a tenant is covered is a decision, not assumed. */
+    coverage: z.string().max(300),
     /** Whether the law requires a good-faith estimate of hours at hire. */
     goodFaithEstimate: z.boolean(),
+  })
+  .partial();
+
+export const BreaksSchema = z
+  .object({
+    /** A break this short or shorter is paid time, whatever its type (29 CFR 785.18: 20 minutes). null: every break is unpaid. */
+    paidUpToMinutes: z.number().int().min(0).max(60).nullable(),
   })
   .partial();
 
@@ -135,6 +160,7 @@ export const RuleParamsSchema = z
     restBetweenShifts: RestBetweenShiftsSchema,
     minors: MinorsSchema,
     predictive: PredictiveSchema,
+    breaks: BreaksSchema,
     minimumWage: MinimumWageSchema,
     severity: SeveritySchema,
     custom: CustomSchema,

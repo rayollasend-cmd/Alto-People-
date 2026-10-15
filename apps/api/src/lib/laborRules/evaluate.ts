@@ -43,6 +43,8 @@ export interface PenaltyOutcome extends Reasoned {
   /** The local work date it belongs to. */
   date: string;
   hours: number;
+  /** A flat premium in cents, where the law sets one (NYC). */
+  cents?: number;
   entryId?: string;
   /** False until every set behind it is signed ACTIVE (decision 8): computed and shown, not paid. */
   payable: boolean;
@@ -89,13 +91,19 @@ export function localParts(d: Date, timezone: string): { date: string; minutes: 
   return { date: `${get('year')}-${get('month')}-${get('day')}`, minutes: Number(get('hour')) * 60 + Number(get('minute')), weekday };
 }
 
-/** Paid milliseconds of an entry: identical to payroll.payableMs. */
-export function paidMs(e: WorkEntry): number {
+/**
+ * Paid milliseconds of an entry. With no short-break rule it is identical to
+ * payroll.payableMs (every break docked); under one (federal: 20 minutes), a
+ * break that short is worked time and is not docked.
+ */
+export function paidMs(e: WorkEntry, paidUpToMinutes: number | null = null): number {
   const end = e.clockOutAt.getTime();
   let ms = end - e.clockInAt.getTime();
   for (const b of e.breaks ?? []) {
     const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-    ms -= Math.max(0, bEnd - b.startedAt.getTime());
+    const len = Math.max(0, bEnd - b.startedAt.getTime());
+    if (paidUpToMinutes !== null && len <= paidUpToMinutes * 60_000) continue;
+    ms -= len;
   }
   return Math.max(0, ms);
 }
@@ -116,11 +124,15 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
   let otMult = 0;
   let dtMult = 0;
 
+  const breakReasons: Array<{ weekKey: string; reason: string }> = [];
   for (const e of closed) {
-    const ms = paidMs(e);
-    if (ms <= 0) continue;
     const { date } = localParts(e.clockInAt, e.timezone);
     const rules = ctx.rulesFor(e, date);
+    const paidUpTo = rules.params.breaks?.paidUpToMinutes ?? null;
+    const ms = paidMs(e, paidUpTo);
+    if (ms <= 0) continue;
+    const counted = ms - paidMs(e);
+    if (counted > 0) breakReasons.push({ weekKey: String(ctx.weekStart(e.clockInAt, e.timezone).getTime()), reason: `Short breaks counted as worked ${date}: ${Math.round(counted / 60_000)} min (≤ ${paidUpTo} min each), ${by(rules, 'breaks.paidUpToMinutes')}` });
     fingerprints.add(rules.fingerprint);
     payable &&= rules.payable;
     otMult = Math.max(otMult, rules.params.overtime?.weeklyMultiplier ?? 1.5, rules.params.overtime?.dailyThreshold != null ? (rules.params.overtime?.dailyMultiplier ?? 1.5) : 0);
@@ -147,7 +159,7 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
       return t !== null && (acc.t === null || t < acc.t) ? { t, r } : acc;
     }, { t: null, r: null });
     const daily = w.rules.some((r) => r.params.overtime?.dailyThreshold != null || r.params.overtime?.dailyDoubleThreshold != null || r.params.overtime?.seventhDayRule);
-    const reasons: string[] = [];
+    const reasons: string[] = breakReasons.filter((b) => b.weekKey === String(w.start.getTime())).map((b) => b.reason);
     let wr = 0;
     let wo = 0;
     let wd = 0;
@@ -232,12 +244,12 @@ function penalties(entries: readonly WorkEntry[], ctx: TimeContext): PenaltyOutc
   for (const e of entries) {
     const { date } = localParts(e.clockInAt, e.timezone);
     const rules = ctx.rulesFor(e, date);
-    const h = paidMs(e) / HOUR;
+    const h = paidMs(e, rules.params.breaks?.paidUpToMinutes ?? null) / HOUR;
     const breaks = e.breaks ?? [];
     const lenMin = (b: WorkBreak) => ((b.endedAt ?? e.clockOutAt).getTime() - b.startedAt.getTime()) / 60_000;
 
     const meal = rules.params.meal;
-    if (meal?.requiredAfterHours != null && (meal.penaltyHours ?? 0) > 0 && h > meal.requiredAfterHours && !(e.mealWaived && meal.waiverAllowed)) {
+    if (meal?.requiredAfterHours != null && (meal.penaltyHours ?? 0) > 0 && h > meal.requiredAfterHours && h >= (meal.minimumDayHours ?? 0) && !(e.mealWaived && meal.waiverAllowed)) {
       const due = (after: number) => breaks.some((b) => b.type === 'MEAL' && lenMin(b) >= (meal.minMinutes ?? 30) && b.startedAt.getTime() <= e.clockInAt.getTime() + after * HOUR);
       const qualifying = breaks.filter((b) => b.type === 'MEAL' && lenMin(b) >= (meal.minMinutes ?? 30));
       const firstOk = due(meal.requiredAfterHours);
@@ -264,10 +276,23 @@ function penalties(entries: readonly WorkEntry[], ctx: TimeContext): PenaltyOutc
     }
 
     const rb = rules.params.restBetweenShifts;
-    if (prev && rb?.minHours != null && (rb.premiumHours ?? 0) > 0) {
+    if (prev && rb?.minHours != null && ((rb.premiumHours ?? 0) > 0 || (rb.premiumCents ?? 0) > 0 || (rb.premiumMultiplierInGap ?? 0) > 1)) {
       const gap = (e.clockInAt.getTime() - prev.clockOutAt.getTime()) / HOUR;
       if (gap >= 0 && gap < rb.minHours) {
-        add({ kind: 'REST_BETWEEN_SHIFTS', date, hours: rb.premiumHours!, entryId: e.id, payable: rules.payable, reason: `Rest-between-shifts premium ${date}: ${fmt(gap)} h since the last shift < ${rb.minHours}, ${rb.premiumHours} h, ${by(rules, 'restBetweenShifts.minHours')}` });
+        // Chicago: the hours worked inside the protected rest are paid at the multiple; the extra share is the premium.
+        const inGap = Math.min(h, rb.minHours - gap);
+        const extra = (rb.premiumMultiplierInGap ?? 0) > 1 ? inGap * (rb.premiumMultiplierInGap! - 1) : 0;
+        const hoursOwed = round2((rb.premiumHours ?? 0) + extra);
+        const parts = [hoursOwed ? `${fmt(hoursOwed)} h` : '', rb.premiumCents ? `$${(rb.premiumCents / 100).toFixed(2)}` : ''].filter(Boolean).join(' + ');
+        add({
+          kind: 'REST_BETWEEN_SHIFTS',
+          date,
+          hours: hoursOwed,
+          ...(rb.premiumCents ? { cents: rb.premiumCents } : {}),
+          entryId: e.id,
+          payable: rules.payable,
+          reason: `Rest-between-shifts premium ${date}: ${fmt(gap)} h since the last shift < ${rb.minHours}, ${parts}, ${by(rules, 'restBetweenShifts.minHours')}`,
+        });
       }
     }
     prev = e;
@@ -286,8 +311,10 @@ export interface ScheduleShift {
 export interface ScheduleFinding extends Reasoned {
   rule: 'OVERTIME_WEEKLY' | 'OVERTIME_DAILY' | 'REST_BETWEEN_SHIFTS' | 'MINOR_DAILY' | 'MINOR_WEEKLY' | 'MINOR_HOURS_OF_DAY' | 'MINOR_UNDER_AGE' | 'PREDICTIVE_NOTICE';
   severity: Severity;
-  /** Premium hours the change would owe (predictive), when the rules set one. */
+  /** Premium hours the change would owe (predictive, short rest), when the rules set one. */
   premiumHours?: number;
+  /** A flat premium in cents (NYC), when the rules set one. */
+  premiumCents?: number;
 }
 
 export interface ScheduleContext {
@@ -303,6 +330,8 @@ export interface ScheduleContext {
   now: Date;
   /** The draft changes an already published schedule (predictive premiums apply to changes). */
   change?: 'added' | 'reduced' | 'cancelled' | 'moved';
+  /** Hours the change takes away from the person (a cut or cancellation), for a share-of-hours premium. */
+  hoursLost?: number;
 }
 
 const hoursOf = (s: ScheduleShift) => (s.endsAt.getTime() - s.startsAt.getTime()) / HOUR;
@@ -345,7 +374,13 @@ export function evaluateSchedule(draft: ScheduleShift, ctx: ScheduleContext): Sc
     for (const s of ctx.existing) {
       const gap = s.endsAt <= draft.startsAt ? (draft.startsAt.getTime() - s.endsAt.getTime()) / HOUR : draft.endsAt <= s.startsAt ? (s.startsAt.getTime() - draft.endsAt.getTime()) / HOUR : null;
       if (gap !== null && gap < rb.minHours) {
-        out.push({ rule: 'REST_BETWEEN_SHIFTS', severity: sev('restBetweenShifts'), premiumHours: rb.premiumHours || undefined, reason: `Short rest: ${fmt(gap)} h between shifts < ${rb.minHours}, ${by(ctx.rules, 'restBetweenShifts.minHours')}` });
+        out.push({
+          rule: 'REST_BETWEEN_SHIFTS',
+          severity: sev('restBetweenShifts'),
+          ...(rb.premiumHours ? { premiumHours: rb.premiumHours } : {}),
+          ...(rb.premiumCents ? { premiumCents: rb.premiumCents } : {}),
+          reason: `Short rest: ${fmt(gap)} h between shifts < ${rb.minHours}${rb.premiumMultiplierInGap && rb.premiumMultiplierInGap > 1 ? `, hours inside it at ${rb.premiumMultiplierInGap}×` : ''}, ${by(ctx.rules, 'restBetweenShifts.minHours')}`,
+        });
         break;
       }
     }
@@ -357,12 +392,16 @@ export function evaluateSchedule(draft: ScheduleShift, ctx: ScheduleContext): Sc
   if (pr?.noticeDays != null) {
     const noticeDays = (draft.startsAt.getTime() - ctx.now.getTime()) / (24 * HOUR);
     if (noticeDays < pr.noticeDays) {
+      // The narrowest band the change falls in decides what it owes.
       const band = ctx.change ? (pr.changePremiums ?? []).filter((c) => noticeDays < c.withinDays && c.kind.includes(ctx.change!)).sort((a, b) => a.withinDays - b.withinDays)[0] : undefined;
+      const hoursOwed = band ? round2(band.premiumHours + (band.shareOfHoursLost ?? 0) * (ctx.hoursLost ?? 0)) : 0;
+      const owes = band ? [hoursOwed ? `${fmt(hoursOwed)} h` : '', band.premiumCents ? `$${(band.premiumCents / 100).toFixed(2)}` : ''].filter(Boolean).join(' + ') : '';
       out.push({
         rule: 'PREDICTIVE_NOTICE',
         severity: sev('predictive'),
-        premiumHours: band?.premiumHours,
-        reason: `Short notice: ${noticeDays.toFixed(1)} days < ${pr.noticeDays}${band ? `, owes ${band.premiumHours} h premium` : ''}, ${by(ctx.rules, 'predictive.noticeDays')}`,
+        ...(hoursOwed ? { premiumHours: hoursOwed } : {}),
+        ...(band?.premiumCents ? { premiumCents: band.premiumCents } : {}),
+        reason: `Short notice: ${noticeDays.toFixed(1)} days < ${pr.noticeDays}${owes ? `, owes ${owes} premium` : ''}, ${by(ctx.rules, 'predictive.noticeDays')}`,
       });
     }
   }
