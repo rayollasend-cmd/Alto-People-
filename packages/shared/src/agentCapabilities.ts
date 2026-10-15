@@ -66,6 +66,24 @@ const SHIFT_FILL_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
 };
 
+const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
+  name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
+  world: {
+    sites: [{ ref: 'hotel', name: 'The Grand Hotel', timezone: 'America/Chicago' }],
+    people: [
+      { ref: 'lena', firstName: 'Lena', lastName: 'Away', placedAt: 'hotel' },
+      { ref: 'tess', firstName: 'Tess', lastName: 'Free', placedAt: 'hotel' },
+      { ref: 'omar', firstName: 'Omar', lastName: 'Busy', placedAt: 'hotel' },
+    ],
+    shifts: [
+      { ref: 'cover', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1440, hours: 8, assigneeRef: 'lena' },
+      { ref: 'omarShift', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1380, hours: 8, assigneeRef: 'omar' },
+    ],
+  },
+  input: { shiftRef: 'cover', replacesRef: 'lena' },
+  expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
+};
+
 export const AGENT_CAPABILITIES = [
   // Workforce
   {
@@ -96,7 +114,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:scheduling', 'view:org', 'manage:scheduling'],
     gate: 'SHIFT_ASSIGN',
     metrics: ['shiftsUncovered', 'proposalsMade', 'repairedBeforeStart'],
-    scenarios: [],
+    scenarios: [SCHEDULE_REPAIR_FIXTURE],
   },
   {
     key: 'coverage.forecast',

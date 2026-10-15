@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { releaseFutureShifts } from '../lib/deactivation.js';
+import { repairSoon } from '../lib/scheduleRepair.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { maybeNotifyFinanceDeparture } from '../lib/fieldglassNotify.js';
 import { notifyAllAdmins, notifyManager, trackNotificationWork } from '../lib/notify.js';
@@ -271,6 +272,7 @@ separation119Router.post(
     // approved application) and their login kept working even though the
     // completion notice claimed "access revoked".
     const disabledUserIds: string[] = [];
+    let releasedShiftIds: string[] = [];
     await prisma.$transaction(async (tx) => {
       await tx.separation.update({
         where: { id },
@@ -301,7 +303,7 @@ separation119Router.post(
       // Off every shift still ahead of them — completing a separation used
       // to leave the person assigned on the schedule indefinitely (same
       // rule as deactivation).
-      await releaseFutureShifts(tx, existing.associateId, new Date(), 'Associate separated.');
+      ({ releasedShiftIds } = await releaseFutureShifts(tx, existing.associateId, new Date(), 'Associate separated.'));
       // Actually revoke access: disable the login and kill live sessions.
       const users = await tx.user.findMany({
         where: { associateId: existing.associateId, deletedAt: null, status: { not: 'DISABLED' } },
@@ -316,6 +318,8 @@ separation119Router.post(
       }
     });
     for (const uid of disabledUserIds) invalidateUserCache(uid);
+    // The Workforce agent proposes cover for the shifts the separation opened (fire-and-forget).
+    repairSoon(releasedShiftIds, { kind: 'separation', associateId: existing.associateId });
     // Phase 131 follow-up â€” when the offboarding completes, drop the
     // associate's selfies and face reference immediately rather than
     // waiting for the 90-day retention sweep. Punch rows stay for HR

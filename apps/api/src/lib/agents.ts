@@ -176,14 +176,14 @@ export const BUILT_IN_AGENTS = [
     name: 'Workforce agent',
     family: 'workforce',
     capability: 'Fill open shifts: propose a named person after the open-shift broadcast goes unanswered; a supervisor approves',
-    purpose: 'Proposes one named person for each open shift the open-shift broadcast did not fill, from the people placed there, free and within the scheduling rules. Nothing is assigned until a supervisor approves; it then assigns through the same rules a supervisor does (agent families step 1).',
+    purpose: 'Proposes one named person for each open shift the open-shift broadcast did not fill (step 1), and for each shift approved leave, a separation or an emergency stand-down leaves uncovered (step 2), from the people placed there, free and within the scheduling rules. Nothing is assigned until a supervisor approves; it then assigns through the same rules a supervisor does.',
     vendor: 'Alto People',
     model: 'Rule-based agent (lib/workforceAgent)',
     modelVersion: '1',
     environment: 'PRODUCTION',
     scopes: ['view:scheduling', 'view:org', 'manage:scheduling'] as AgentScope[],
-    capabilities: ['shift.fill'],
-    grants: ['shift.fill'],
+    capabilities: ['shift.fill', 'schedule.repair'],
+    grants: ['shift.fill', 'schedule.repair'],
     // Agent controls (1D-3): a new agent starts ONBOARDING and goes ACTIVE only by passing
     // its certification scenarios on the Agents page. Deploying never switches it on.
     status: 'ONBOARDING',
@@ -272,9 +272,18 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
     if (!grants.length) continue;
     const p = await db.agentProfile.findFirst({ where: { builtInKey: b.key, tenantId }, select: { workerId: true } });
     if (!p) continue;
+    const worker = await db.worker.findUnique({ where: { id: p.workerId }, select: { status: true } });
     for (const key of grants) {
+      const had = await db.agentCapability.findUnique({ where: { workerId_key: { workerId: p.workerId, key } }, select: { id: true } });
       await grantCapability(db, p.workerId, key, tenantId);
       await seedCatalogScenarios(db, p.workerId, key, tenantId);
+      // Agent families step 2: a capability added to an agent already certified and
+      // running arrives suspended. Its owner runs its scenario, then resumes it.
+      if (!had && worker?.status === 'ACTIVE') {
+        const reason = 'Added after this agent was certified: run its scenario on the Agents page, then resume it.';
+        await db.agentCapability.updateMany({ where: { workerId: p.workerId, key }, data: { suspendedAt: new Date(), suspendReason: reason } });
+        enqueueAudit({ actorUserId: null, clientId: null, workerId: p.workerId, action: 'agent.capability_suspended', entityType: 'AgentCapability', entityId: p.workerId, metadata: { key, reason } }, 'agents');
+      }
     }
   }
   const bare = await db.worker.findMany({ where: { type: 'AGENT', agent: null, tenantId }, select: { id: true } });

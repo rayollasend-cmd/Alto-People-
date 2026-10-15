@@ -22,6 +22,7 @@ import {
 import { geocode } from './geocode.js';
 import { send } from './notifications.js';
 import { notifyAssociate, notifyClientSupervisors, notifyUser } from './notify.js';
+import { repairSoon } from './scheduleRepair.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 
@@ -519,6 +520,9 @@ export async function standDownEmergency(
   }
 
   const e = await getEmergency(db, id);
+  // Back on the schedule: the Workforce agent proposes cover for any that came
+  // back open, or held by someone who can no longer work them (fire-and-forget).
+  repairSoon(restored.map((s) => s.id), { kind: 'emergency_stand_down', emergencyId: id, title: e.title }, now);
   const people = await associatesInScope(db, e);
   const words = {
     title: e.title,

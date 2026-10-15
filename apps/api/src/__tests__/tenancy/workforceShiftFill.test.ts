@@ -234,7 +234,8 @@ describe('shift.fill: certification', () => {
     const admin = await loginAs(agent(), hr.email);
     const run = await admin.post(`/agents/${workerId}/scenarios/run`).send({});
     expect(run.status, JSON.stringify(run.body)).toBe(200);
-    expect(run.body).toMatchObject({ ran: 1, passed: 1 });
+    // Both of the Workforce agent's capabilities carry a fixture (shift.fill, schedule.repair).
+    expect(run.body).toMatchObject({ ran: 2, passed: 2 });
     // Nothing of the fixture's world is left behind.
     expect(await prisma.associate.count({ where: { email: { endsWith: '@fixture.invalid' } } })).toBe(0);
   });

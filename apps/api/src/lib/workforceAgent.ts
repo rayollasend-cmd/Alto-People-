@@ -46,6 +46,10 @@ import { maybeNotifyFinanceNewWorker } from './fieldglassNotify.js';
 type Db = Prisma.TransactionClient | PrismaClient;
 
 export const SHIFT_FILL = 'shift.fill';
+/** Agent families step 2 (lib/scheduleRepair): the same assign, proposed the moment an event un-covers a shift. */
+export const SCHEDULE_REPAIR = 'schedule.repair';
+/** The capabilities whose proposals assign a shift: one live proposal per shift across them, one executor. */
+export const ASSIGN_CAPABILITIES: readonly string[] = [SHIFT_FILL, SCHEDULE_REPAIR];
 export const WORKFORCE_AGENT_KEY = 'workforce-agent' as const;
 const BROADCAST_CATEGORY = 'shift_autofill';
 const CLOSURE_CATEGORY = 'agent_shift_fill';
@@ -57,7 +61,7 @@ export const BROADCAST_WINDOW_MS = 2 * 3_600_000;
 const SHORT_NOTICE_MS = 4 * 3_600_000;
 const SHORT_WINDOW_MS = 30 * 60_000;
 
-type FillShift = {
+export type FillShift = {
   id: string;
   clientId: string | null;
   locationId: string | null;
@@ -69,7 +73,7 @@ type FillShift = {
   client?: { name: string } | null;
 };
 
-const SHIFT_SELECT = {
+export const SHIFT_SELECT = {
   id: true,
   clientId: true,
   locationId: true,
@@ -179,11 +183,11 @@ export async function pickFillCandidate(db: Db, shift: FillShift, now: Date, opt
   return null;
 }
 
-function siteName(shift: FillShift & { location?: string | null }): string {
+export function siteName(shift: FillShift & { location?: string | null }): string {
   return shift.locationRel?.name ?? shift.client?.name ?? shift.location ?? 'the site';
 }
 
-function shiftWhen(shift: FillShift): string {
+export function shiftWhen(shift: FillShift): string {
   const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
   return `${formatDateInZone(shift.startsAt, tz)} ${formatTimeInZone(shift.startsAt, tz)}–${formatTimeInZone(shift.endsAt, tz)}`;
 }
@@ -193,6 +197,63 @@ export function shiftDeepLink(shift: FillShift): string {
   const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(shift.startsAt);
   return `/scheduling?week=${day}${shift.locationId ? `&location=${shift.locationId}` : ''}`;
+}
+
+/**
+ * Why the person holding a shift cannot work it, as a phrase ("separated"),
+ * or null when they can: off the books, or approved time off / a declared
+ * day off over it (the same wall assignWithinRules keeps).
+ */
+export async function holderCannotWork(db: Db, shift: { startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null }, associateId: string): Promise<string | null> {
+  const a = await db.associate.findUnique({ where: { id: associateId }, select: { deletedAt: true, erasedAt: true, separatedAt: true, deactivatedAt: true } });
+  if (!a || a.deletedAt || a.erasedAt) return 'is no longer on file';
+  if (a.separatedAt) return 'separated';
+  if (a.deactivatedAt) return 'was deactivated';
+  const blocked = await blockedForWindow([associateId], shift.startsAt, shift.endsAt, shift.locationRel?.timezone ?? DEFAULT_TIMEZONE, db);
+  return blocked.size > 0 ? 'is on approved time off or a declared day off' : null;
+}
+
+/**
+ * Does an assign proposal still apply? The reason it does not, or null.
+ * A fill (no `replaces`) needs the shift open; a repair needs it open or
+ * still held by the person it covers for, who still cannot work it.
+ */
+export async function assignProposalMoot(
+  db: Db,
+  shift: { status: string; assignedAssociateId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null } | null,
+  replaces: string | null,
+): Promise<string | null> {
+  if (!shift) return 'the shift no longer exists';
+  if (shift.status === 'CANCELLED') return 'the shift was cancelled';
+  if (shift.status !== 'OPEN' && shift.status !== 'ASSIGNED') return 'the shift is no longer open';
+  if (shift.assignedAssociateId && shift.assignedAssociateId !== replaces) return 'the shift was filled another way';
+  if (shift.assignedAssociateId && !(await holderCannotWork(db, shift, shift.assignedAssociateId))) return 'the person it covered for can work it again';
+  return null;
+}
+
+/** The person a proposal would replace on the shift (schedule.repair), or null for a fill. */
+export function replacesOf(payload: unknown): string | null {
+  const v = (payload as Record<string, unknown> | null)?.replacesAssociateId;
+  return typeof v === 'string' ? v : null;
+}
+
+/**
+ * The assign proposals already made for a shift, under either capability:
+ * one waiting at a time; someone a person turned down, or whose assign
+ * failed, is not proposed for that shift again. `executed`: the agent
+ * already filled it once (a fill does not try twice; a repair answers a
+ * new event and may).
+ */
+export async function earlierAssignProposals(db: Db, tenantId: string, shiftId: string): Promise<{ pending: boolean; executed: boolean; turnedDown: string[] }> {
+  const rows = await db.agentProposal.findMany({ where: { tenantId, capabilityKey: { in: [...ASSIGN_CAPABILITIES] }, subjectId: shiftId }, select: { status: true, payload: true } });
+  return {
+    pending: rows.some((e) => e.status === 'PROPOSED' || e.status === 'APPROVED'),
+    executed: rows.some((e) => e.status === 'EXECUTED'),
+    turnedDown: rows
+      .filter((e) => e.status === 'REJECTED' || e.status === 'FAILED')
+      .map((e) => (e.payload as Record<string, unknown> | null)?.associateId)
+      .filter((v): v is string => typeof v === 'string'),
+  };
 }
 
 export interface ShiftFillRun {
@@ -219,8 +280,8 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
   // 1. Proposals in flight: moot ones leave the queue, held approvals run.
   const inflight = await db.agentProposal.findMany({ where: { tenantId, workerId: agent.workerId, capabilityKey: SHIFT_FILL, status: { in: ['PROPOSED', 'APPROVED'] } } });
   for (const pr of inflight) {
-    const shift = pr.subjectId ? await db.shift.findFirst({ where: { id: pr.subjectId, tenantId }, select: { status: true, assignedAssociateId: true } }) : null;
-    const moot = !shift ? 'the shift no longer exists' : shift.status === 'CANCELLED' ? 'the shift was cancelled' : shift.assignedAssociateId ? 'the shift was filled another way' : null;
+    const shift = pr.subjectId ? await db.shift.findFirst({ where: { id: pr.subjectId, tenantId }, select: SHIFT_SELECT }) : null;
+    const moot = await assignProposalMoot(db, shift, replacesOf(pr.payload));
     if (moot) {
       await supersedeProposal(db, pr, moot, now);
       out.superseded += 1;
@@ -238,14 +299,10 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
   });
   for (const shift of shifts) {
     if (!broadcastWindowPassed(shift, now)) continue;
-    const earlier = await db.agentProposal.findMany({ where: { tenantId, capabilityKey: SHIFT_FILL, subjectId: shift.id }, select: { status: true, payload: true } });
-    // One live proposal per shift; someone a person already turned down is not proposed again for it.
-    if (earlier.some((e) => e.status === 'PROPOSED' || e.status === 'APPROVED' || e.status === 'EXECUTED')) continue;
-    const exclude = earlier
-      .filter((e) => e.status === 'REJECTED' || e.status === 'FAILED')
-      .map((e) => (e.payload as Record<string, unknown> | null)?.associateId)
-      .filter((v): v is string => typeof v === 'string');
-    const candidate = await pickFillCandidate(db, shift, now, { tenantId, exclude });
+    const earlier = await earlierAssignProposals(db, tenantId, shift.id);
+    // One live proposal per shift; a shift the agent already filled once is not proposed again.
+    if (earlier.pending || earlier.executed) continue;
+    const candidate = await pickFillCandidate(db, shift, now, { tenantId, exclude: earlier.turnedDown });
     if (!candidate) continue;
     await createProposal(
       db,
@@ -265,18 +322,22 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
 }
 
 /**
- * The executor: a person approved a shift.fill proposal. The agent claims
- * the approval (exactly once, the payload as approved) and assigns through
- * the supervisor's rules. False when it did not run now (a switch is on,
- * or the proposal is not this agent's to carry out); the next tick retries.
+ * The executor for both assign capabilities: a person approved a shift.fill
+ * or schedule.repair proposal. The agent claims the approval (exactly once,
+ * the payload as approved) and assigns through the supervisor's rules; a
+ * repair takes the shift over from the person it covers for, who hears it
+ * is covered when they are still on the books. False when it did not run
+ * now (a switch is on, or the proposal is not this agent's to carry out);
+ * the next tick retries.
  */
-export async function executeShiftFill(proposal: { id: string; workerId: string; approvalId: string | null; capabilityKey: string; subjectId: string | null; tenantId: string | null; status: string }, now: Date = new Date()): Promise<boolean> {
+export async function executeAssignProposal(proposal: { id: string; workerId: string; approvalId: string | null; capabilityKey: string; subjectId: string | null; tenantId: string | null; status: string }, now: Date = new Date()): Promise<boolean> {
   const db = defaultPrisma;
-  if (proposal.capabilityKey !== SHIFT_FILL || !proposal.approvalId || proposal.status !== 'APPROVED') return false;
+  const key = proposal.capabilityKey;
+  if (!ASSIGN_CAPABILITIES.includes(key) || !proposal.approvalId || proposal.status !== 'APPROVED') return false;
   const tenantId = proposal.tenantId ?? ALTO_TENANT_ID;
   const agent = await inProcessAgent(db, WORKFORCE_AGENT_KEY, tenantId);
   if (!agent || agent.workerId !== proposal.workerId) return false;
-  const cap = await db.agentCapability.findFirst({ where: { workerId: agent.workerId, key: SHIFT_FILL, tenantId } });
+  const cap = await db.agentCapability.findFirst({ where: { workerId: agent.workerId, key, tenantId } });
   if (!cap || !cap.enabled || cap.suspendedAt) return false;
   if (!(await moduleOn('scheduling', tenantId))) return false;
 
@@ -284,32 +345,37 @@ export async function executeShiftFill(proposal: { id: string; workerId: string;
   if (!approval || approval.status !== 'APPROVED') return false;
   const payload = (approval.payload as Record<string, unknown>) ?? {};
   const associateId = typeof payload.associateId === 'string' ? payload.associateId : null;
+  const replaces = replacesOf(payload);
   const shift = proposal.subjectId
     ? await db.shift.findFirst({ where: { id: proposal.subjectId, tenantId }, select: SHIFT_SELECT })
     : null;
-  if (!shift || shift.status !== 'OPEN' || shift.assignedAssociateId) {
-    await supersedeProposal(db, proposal, !shift ? 'the shift no longer exists' : shift.status === 'CANCELLED' ? 'the shift was cancelled' : 'the shift was filled another way', now);
+  const moot = await assignProposalMoot(db, shift, replaces);
+  if (moot || !shift) {
+    await supersedeProposal(db, proposal, moot ?? 'the shift no longer exists', now);
     return false;
   }
   const associate = associateId ? await db.associate.findFirst({ where: { id: associateId, tenantId, deletedAt: null } }) : null;
+  const holder = shift.assignedAssociateId ? await db.associate.findUnique({ where: { id: shift.assignedAssociateId }, select: { id: true, firstName: true, lastName: true, separatedAt: true, deactivatedAt: true, deletedAt: true } }) : null;
+  const repair = key === SCHEDULE_REPAIR;
+  const via = repair ? 'agent_schedule_repair' : 'agent_shift_fill';
 
   // Carried out exactly once, as approved.
   await claimApproval(db, agent, approval.id, 'SHIFT_ASSIGN', payload, now);
-  const def = capabilityDef(SHIFT_FILL)!;
+  const def = capabilityDef(key)!;
   const link = shiftDeepLink(shift);
   let updated;
   try {
     if (!associate) throw new HttpError(404, 'associate_not_found', 'The proposed person is no longer on file.');
-    updated = await assignWithinRules(db, shift, associate, { actorUserId: null, via: 'agent_shift_fill' });
+    updated = await assignWithinRules(db, shift, associate, { actorUserId: null, via });
   } catch (err) {
     const code = err instanceof HttpError ? err.code : 'assign_failed';
     const message = err instanceof Error ? err.message : String(err);
     await syncProposalWithApproval(db, approval.id, 'FAILED', now, { code, message, shiftId: shift.id, associateId });
-    logAgentAction(agent, { action: 'agent.shift_fill_failed', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId, code, message, status: 409 } });
+    logAgentAction(agent, { action: repair ? 'agent.schedule_repair_failed' : 'agent.shift_fill_failed', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId, replacesAssociateId: replaces, code, message, status: 409 } });
     if (approval.decidedById) {
       await notifyUser(approval.decidedById, {
-        subject: `Shift fill not carried out: ${shift.position} at ${siteName(shift)}`,
-        body: `${message} The shift is still open; assign it from the schedule.`,
+        subject: `${repair ? 'Cover' : 'Shift fill'} not carried out: ${shift.position} at ${siteName(shift)}`,
+        body: `${message} ${holder ? 'The shift is still uncovered' : 'The shift is still open'}; assign it from the schedule.`,
         category: CLOSURE_CATEGORY,
         linkUrl: link,
       });
@@ -317,24 +383,34 @@ export async function executeShiftFill(proposal: { id: string; workerId: string;
     return true;
   }
 
-  await syncProposalWithApproval(db, approval.id, 'EXECUTED', now, { shiftId: shift.id, associateId: associate.id, assignedAt: now.toISOString(), startsAt: shift.startsAt.toISOString() });
+  await syncProposalWithApproval(db, approval.id, 'EXECUTED', now, { shiftId: shift.id, associateId: associate.id, replacesAssociateId: holder?.id ?? null, assignedAt: now.toISOString(), startsAt: shift.startsAt.toISOString() });
   // The shift event is the agent's, citing the approval and who gave it.
-  logAgentAction(agent, { action: 'shift.assigned', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId: associate.id, approvedBy: approval.decidedById, via: 'agent_shift_fill' } });
+  logAgentAction(agent, { action: 'shift.assigned', entityType: 'Shift', entityId: shift.id, scopes: [...def.scopes], approvalId: approval.id, metadata: { associateId: associate.id, replacesAssociateId: holder?.id ?? null, approvedBy: approval.decidedById, via } });
   void maybeNotifyFinanceNewWorker(associate.id);
+  const line = formatShiftLine({ position: updated.position, clientName: updated.client?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null });
   if (updated.publishedAt) {
     void notifyShift(db, {
       associateId: associate.id,
       subject: 'New shift assigned',
-      body: `You've been assigned: ${formatShiftLine({ position: updated.position, clientName: updated.client?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null })}`,
+      body: `You've been assigned: ${line}`,
       category: 'shift_assigned',
       ...(approval.decidedById ? { senderUserId: approval.decidedById } : {}),
       wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
     });
   }
+  // The person it covers for, still on the books (time off), hears it is off their schedule.
+  if (holder && !holder.separatedAt && !holder.deactivatedAt && !holder.deletedAt) {
+    void notifyShift(db, {
+      associateId: holder.id,
+      subject: 'Your shift is covered',
+      body: `${line} is covered while you are away. It is off your schedule.`,
+      category: 'shift_unassigned',
+    });
+  }
   // Closure to the desk that approved (handoff spine).
   if (approval.decidedById) {
     await notifyUser(approval.decidedById, {
-      subject: `Shift filled: ${associate.firstName} ${associate.lastName}`,
+      subject: holder ? `Shift covered: ${associate.firstName} ${associate.lastName} for ${holder.firstName} ${holder.lastName}` : `Shift filled: ${associate.firstName} ${associate.lastName}`,
       body: `${shift.position} at ${siteName(shift)}, ${shiftWhen(shift)}. Assigned by the Workforce agent on your approval.`,
       category: CLOSURE_CATEGORY,
       linkUrl: link,
@@ -342,6 +418,9 @@ export async function executeShiftFill(proposal: { id: string; workerId: string;
   }
   return true;
 }
+
+/** Step 1's name for the executor. */
+export const executeShiftFill = executeAssignProposal;
 
 /* ---- Registration: the executor, certification and the scorecard ------- */
 

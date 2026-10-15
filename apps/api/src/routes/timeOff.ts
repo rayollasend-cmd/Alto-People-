@@ -41,6 +41,7 @@ import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { promptShiftHandover } from '../lib/floorLeads.js';
+import { repairAfterTimeOff } from '../lib/scheduleRepair.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 
@@ -549,6 +550,8 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
           // approveRequest owns the balance CAS — stays per-id.
           await approveRequest(prisma, id, user.id, input.note ?? null);
           void trackNotificationWork(notifyCoverageImpact(row));
+          // The Workforce agent proposes cover for the shifts the leave runs over (schedule.repair).
+          repairAfterTimeOff(row);
           void trackNotificationWork(promptShiftHandover(row).catch(() => undefined));
         } else {
           if (row.status !== 'PENDING') {
@@ -668,6 +671,8 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
         endDate: updated.endDate,
       }),
     );
+    // The Workforce agent proposes cover for the shifts the leave runs over (schedule.repair).
+    repairAfterTimeOff({ associateId: updated.associateId, category: updated.category, startDate: updated.startDate, endDate: updated.endDate });
     // A shift supervisor going out: who runs their SOP those days?
     void trackNotificationWork(promptShiftHandover(updated).catch(() => undefined));
     res.json(

@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { invalidateUserCache } from '../middleware/auth.js';
+import { repairSoon } from './scheduleRepair.js';
 
 /**
  * The one deactivation transaction — shared by the manual "Deactivate"
@@ -36,7 +37,12 @@ export async function releaseFutureShifts(
   associateId: string,
   now: Date,
   note: string,
-): Promise<{ releasedShifts: number; expiredClaims: number }> {
+): Promise<{ releasedShifts: number; expiredClaims: number; releasedShiftIds: string[] }> {
+  // The published ones go back to OPEN: their ids are what schedule.repair covers.
+  const reopened = await tx.shift.findMany({
+    where: { assignedAssociateId: associateId, status: 'ASSIGNED', startsAt: { gt: now } },
+    select: { id: true },
+  });
   const published = await tx.shift.updateMany({
     where: { assignedAssociateId: associateId, status: 'ASSIGNED', startsAt: { gt: now } },
     data: { status: 'OPEN', assignedAssociateId: null, assignedAt: null },
@@ -49,11 +55,13 @@ export async function releaseFutureShifts(
     where: { associateId, status: 'PENDING' },
     data: { status: 'EXPIRED', decisionNote: note },
   });
-  return { releasedShifts: published.count + drafts.count, expiredClaims: expired.count };
+  return { releasedShifts: published.count + drafts.count, expiredClaims: expired.count, releasedShiftIds: reopened.map((r) => r.id) };
 }
 
 export interface DeactivationResult {
   releasedShifts: number;
+  /** The published shifts it reopened (handed to schedule.repair). */
+  releasedShiftIds: string[];
   expiredClaims: number;
   disabledUserIds: string[];
 }
@@ -71,6 +79,7 @@ export async function executeDeactivation(
   const disabledUserIds: string[] = [];
   let releasedShifts = 0;
   let expiredClaims = 0;
+  let releasedShiftIds: string[] = [];
   await prisma.$transaction(async (tx) => {
     await tx.associate.update({
       where: { id: opts.associateId },
@@ -82,7 +91,7 @@ export async function executeDeactivation(
     });
     // Drafts assigned to them used to survive deactivation and keep the
     // person on next week's schedule; the shared rule releases both.
-    ({ releasedShifts, expiredClaims } = await releaseFutureShifts(
+    ({ releasedShifts, expiredClaims, releasedShiftIds } = await releaseFutureShifts(
       tx,
       opts.associateId,
       now,
@@ -106,5 +115,7 @@ export async function executeDeactivation(
     }
   });
   for (const uid of disabledUserIds) invalidateUserCache(uid);
-  return { releasedShifts, expiredClaims, disabledUserIds };
+  // The Workforce agent proposes cover for what the release opened (fire-and-forget).
+  repairSoon(releasedShiftIds, { kind: 'deactivation', associateId: opts.associateId }, now);
+  return { releasedShifts, releasedShiftIds, expiredClaims, disabledUserIds };
 }
