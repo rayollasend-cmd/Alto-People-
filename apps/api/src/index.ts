@@ -58,6 +58,7 @@ import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
+import { startTaskHandoffSweep } from './lib/tasks/sweep.js';
 import { onPlatformScope } from './lib/tenant.js';
 import { enqueueAudit } from './lib/audit.js';
 import { BUILD_VERSION } from './routes/health.js';
@@ -183,6 +184,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   void sweepAgents();
   setInterval(sweepAgents, 15 * 60_000).unref();
   startAgentDriftCron();
+  // Brief 3-2: a machine's stalled task goes to a person after the policy's seconds.
+  startTaskHandoffSweep();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
   // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.

@@ -1,0 +1,133 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { WorkTaskDetailView, WorkTaskSummary, WorkTaskView } from '@alto-people/shared';
+
+vi.mock('@/lib/auth', async () => {
+  const React = await import('react');
+  const auth = { user: { id: 'u1', role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' }, can: () => true };
+  return { AuthContext: React.createContext(auth), useAuth: () => auth, useTerm: () => (k: string) => (k === 'site' ? 'Site' : k), useTenant: () => ({ modules: {}, terminology: {} }) };
+});
+vi.mock('@/lib/useOrgSites', () => ({ useOrgSites: () => [{ id: 'loc-1', name: 'Front Beach 218' }] }));
+vi.mock('@/lib/tasksApi', () => ({
+  listTasks: vi.fn(),
+  getTaskSummary: vi.fn(),
+  getTask: vi.fn(),
+  handOffTask: vi.fn(),
+  autoAssignTask: vi.fn(),
+  recordTaskEvent: vi.fn(),
+  createTask: vi.fn(),
+}));
+
+import { listTasks, getTaskSummary, getTask } from '@/lib/tasksApi';
+import { TasksBoard } from '@/pages/tasks/TasksBoard';
+
+/**
+ * Brief 3-2: the board shows every task with who holds it, says why a
+ * queued one waits, and the drawer reads the assignment's reasons.
+ */
+
+const base = {
+  locationId: 'loc-1',
+  locationName: 'Front Beach 218',
+  area: 'Dock 3',
+  windowStart: '2026-10-16T14:00:00.000Z',
+  windowEnd: '2026-10-16T18:00:00.000Z',
+  capability: 'unloading',
+  risk: 'HIGH' as const,
+  estimatedMinutes: 45,
+  reference: 'Truck 4471',
+  notes: null,
+  queuedReason: null,
+  createdAt: '2026-10-16T12:00:00.000Z',
+  updatedAt: '2026-10-16T12:00:00.000Z',
+};
+
+const assigned: WorkTaskView = {
+  ...base,
+  id: 't-1',
+  type: 'Unload the morning truck',
+  status: 'ASSIGNED',
+  assignment: {
+    id: 'a-1',
+    workerId: 'w-cal',
+    workerType: 'PERSON',
+    workerName: 'Cal Ortega',
+    state: 'ACTIVE',
+    decidedBy: 'ENGINE',
+    decidedByUserId: null,
+    score: 90,
+    costCents: 1125,
+    reasons: [
+      { factor: 'capability', points: 40, note: 'Certified for unloading' },
+      { factor: 'availability', points: 30, note: 'On shift 2:00 PM–10:00 PM as GM floor associate' },
+      { factor: 'risk', points: 0, note: 'High-risk work: a person may hold it' },
+      { factor: 'cost', points: 20, note: '$11.25 for this task' },
+      { factor: 'load', points: 0, note: 'No other task in the window' },
+    ],
+    ranking: [],
+    createdAt: '2026-10-16T12:00:01.000Z',
+    releasedAt: null,
+  },
+};
+
+const queued: WorkTaskView = {
+  ...base,
+  id: 't-2',
+  type: 'Scan aisle 7 shelves',
+  capability: 'shelf-scanning',
+  risk: 'LOW',
+  status: 'QUEUED',
+  assignment: null,
+  queuedReason: 'No certified worker is free in the window (6 weighed)',
+};
+
+const summary: WorkTaskSummary = { open: 0, queued: 1, assigned: 1, inProgress: 0, exceptions: 0, doneToday: 3 };
+
+function renderBoard(initial = '/tasks') {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={[initial]}>
+        <TasksBoard />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.mocked(listTasks).mockResolvedValue({ tasks: [assigned, queued] });
+  vi.mocked(getTaskSummary).mockResolvedValue(summary);
+  vi.mocked(getTask).mockResolvedValue({ ...assigned, events: [{ id: 'e-1', kind: 'ASSIGNED', at: '2026-10-16T12:00:01.000Z', note: 'Certified for unloading', byUserId: null, workerId: 'w-cal' }], history: [] } as WorkTaskDetailView);
+});
+
+describe('<TasksBoard>', () => {
+  it('lists live tasks with who holds them, and the counts above', async () => {
+    renderBoard();
+    expect(await screen.findByText('Unload the morning truck')).toBeInTheDocument();
+    expect(screen.getByText('Cal Ortega')).toBeInTheDocument();
+    // The queued task is not live; it waits under its own state.
+    expect(screen.queryByText('Scan aisle 7 shelves')).not.toBeInTheDocument();
+    expect(await screen.findByText('Done · 24h')).toBeInTheDocument();
+  });
+
+  it('shows why a queued task waits for a person', async () => {
+    renderBoard();
+    await screen.findByText('Unload the morning truck');
+    await userEvent.click(screen.getByRole('radio', { name: 'Waiting for a person' }));
+    expect(await screen.findByText('Scan aisle 7 shelves')).toBeInTheDocument();
+    expect(screen.getByText('No certified worker is free in the window (6 weighed)')).toBeInTheDocument();
+  });
+
+  it('opens the task from the URL and reads the assignment’s reasons', async () => {
+    renderBoard('/tasks?task=t-1');
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('Certified for unloading')).toBeInTheDocument();
+    expect(within(drawer).getByText('High-risk work: a person may hold it')).toBeInTheDocument();
+    expect(within(drawer).getByText(/Assigned by the engine/)).toBeInTheDocument();
+    // A person holds it, so there is nothing to hand off.
+    expect(within(drawer).queryByRole('button', { name: /Hand to a person/ })).not.toBeInTheDocument();
+    expect(within(drawer).getByRole('button', { name: /Done/ })).toBeInTheDocument();
+  });
+});

@@ -1,0 +1,158 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { WorkTaskAssignSchema, WorkTaskCreateSchema, WorkTaskEventCreateSchema, WorkTaskPolicyUpdateSchema, WORKER_CAPABILITIES, type WorkTaskPolicyView } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
+import { prisma } from '../db.js';
+import { HttpError } from '../middleware/error.js';
+import { requireCapability } from '../middleware/auth.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { assignByPerson, autoAssign, handOffToPerson, listTasks, policyFor, recordEvent, taskDetail, taskSummary } from '../lib/tasks/engine.js';
+
+/**
+ * Brief 3-2: tasks and their assignment.
+ *
+ *   GET    /tasks                      the board: by site, window and status
+ *   GET    /tasks/summary              counts for the board's strip
+ *   GET    /tasks/policy[?locationId]  the engine's rules in force
+ *   PUT    /tasks/policy               set them (tenant-wide or for one site)
+ *   POST   /tasks                      create; the engine assigns or queues at once
+ *   GET    /tasks/:id                  the task, its assignment and reasons, its timeline
+ *   POST   /tasks/:id/assign           a person picks the worker (recorded as such)
+ *   POST   /tasks/:id/auto             ask the engine again (a queued task)
+ *   POST   /tasks/:id/handoff          hand a machine's task to a person now
+ *   POST   /tasks/:id/events           started / stalled / failed / done / cancelled
+ *
+ * Reads need view:scheduling; writes need manage:scheduling. The policy
+ * needs manage:org. Everything is the caller's tenant only.
+ */
+export const tasksRouter = Router();
+
+const read = requireCapability('view:scheduling');
+const write = requireCapability('manage:scheduling');
+const admin = requireCapability('manage:org');
+
+const dateParam = (v: unknown) => (typeof v === 'string' && v ? new Date(v) : null);
+
+tasksRouter.get('/', read, async (req, res) => {
+  const q = z.object({ locationId: z.string().uuid().optional(), from: z.string().optional(), to: z.string().optional(), status: z.string().optional() }).parse(req.query);
+  const tasks = await listTasks(prisma, { locationId: q.locationId ?? null, from: dateParam(q.from), to: dateParam(q.to), status: q.status ?? null });
+  res.json({ tasks });
+});
+
+tasksRouter.get('/summary', read, async (req, res) => {
+  const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
+  res.json(await taskSummary(prisma, q.locationId ?? null));
+});
+
+tasksRouter.get('/policy', read, async (req, res) => {
+  const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
+  res.json(await policyFor(prisma, q.locationId ?? null));
+});
+
+tasksRouter.put('/policy', admin, async (req, res) => {
+  const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
+  const input = WorkTaskPolicyUpdateSchema.parse(req.body);
+  const tenantId = tenantIdForWrite();
+  const locationId = q.locationId ?? null;
+  const existing = await prisma.workTaskPolicy.findFirst({ where: { tenantId, locationId } });
+  const data: Prisma.WorkTaskPolicyUncheckedUpdateInput = {
+    ...(input.handoffSeconds !== undefined ? { handoffSeconds: input.handoffSeconds } : {}),
+    ...(input.maxAutoAssignCents !== undefined ? { maxAutoAssignCents: input.maxAutoAssignCents } : {}),
+    ...(input.highRiskPolicy !== undefined ? { highRiskPolicy: input.highRiskPolicy } : {}),
+    ...(input.robotCostPerTaskCents !== undefined ? { robotCostPerTaskCents: input.robotCostPerTaskCents } : {}),
+    ...(input.robotDefaultCostCents !== undefined ? { robotDefaultCostCents: input.robotDefaultCostCents } : {}),
+    ...(input.agentCostPerTaskCents !== undefined ? { agentCostPerTaskCents: input.agentCostPerTaskCents } : {}),
+    ...(input.maxRobotsPerCrewLead !== undefined ? { maxRobotsPerCrewLead: input.maxRobotsPerCrewLead } : {}),
+    updatedByUserId: req.user!.id,
+  };
+  if (existing) await prisma.workTaskPolicy.update({ where: { id: existing.id }, data });
+  else await prisma.workTaskPolicy.create({ data: { tenantId, locationId, ...(data as Prisma.WorkTaskPolicyUncheckedCreateInput) } });
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'task.policy.updated', entityType: 'WorkTaskPolicy', entityId: existing?.id ?? 'new', metadata: { locationId, ...input } }, 'tasks');
+  const view: WorkTaskPolicyView = await policyFor(prisma, locationId);
+  res.json(view);
+});
+
+tasksRouter.post('/', write, async (req, res) => {
+  const input = WorkTaskCreateSchema.parse(req.body);
+  if (!WORKER_CAPABILITIES.some((c) => c.code === input.capability)) throw new HttpError(400, 'unknown_capability', `No capability "${input.capability}" in the catalog.`);
+  const start = new Date(input.windowStart);
+  const end = new Date(input.windowEnd);
+  if (!(end > start)) throw new HttpError(400, 'window_invalid', 'The window must end after it starts.');
+  const tenantId = tenantIdForWrite();
+  const site = await prisma.site.findFirst({ where: { id: input.locationId, tenantId, deletedAt: null }, select: { id: true } });
+  if (!site) throw new HttpError(404, 'site_not_found', 'No such site.');
+  const row = await prisma.workTask.create({
+    data: {
+      tenantId,
+      type: input.type,
+      locationId: input.locationId,
+      area: input.area ?? null,
+      windowStart: start,
+      windowEnd: end,
+      capability: input.capability,
+      risk: input.risk,
+      estimatedMinutes: input.estimatedMinutes,
+      reference: input.reference ?? null,
+      notes: input.notes ?? null,
+      createdByUserId: req.user!.id,
+    },
+  });
+  const detail = await autoAssign(prisma, row.id, req.user!.id);
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'task.created', entityType: 'WorkTask', entityId: row.id, metadata: { capability: input.capability, risk: input.risk, assignedTo: detail.assignment?.workerName ?? null, queued: detail.status === 'QUEUED' } }, 'tasks');
+  res.status(201).json(detail);
+});
+
+async function ownTask(id: string) {
+  const t = await prisma.workTask.findFirst({ where: { id, tenantId: tenantIdForWrite() }, select: { id: true, status: true } });
+  if (!t) throw new HttpError(404, 'not_found', 'No such task.');
+  return t;
+}
+
+tasksRouter.get('/:id', read, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  await ownTask(id);
+  res.json(await taskDetail(prisma, id));
+});
+
+tasksRouter.post('/:id/assign', write, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const t = await ownTask(id);
+  if (t.status === 'DONE' || t.status === 'CANCELLED') throw new HttpError(409, 'task_closed', 'This task is closed.');
+  const input = WorkTaskAssignSchema.parse(req.body);
+  let detail;
+  try {
+    detail = await assignByPerson(prisma, id, input.workerId, req.user!.id, input.note ?? null);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'worker_not_found') throw new HttpError(404, 'worker_not_found', 'No such worker on the roster.');
+    throw err;
+  }
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: tenantIdForWrite(), action: 'task.assigned_by_person', entityType: 'WorkTask', entityId: id, metadata: { workerId: input.workerId } }, 'tasks');
+  res.json(detail);
+});
+
+tasksRouter.post('/:id/auto', write, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const t = await ownTask(id);
+  if (t.status !== 'OPEN' && t.status !== 'QUEUED') throw new HttpError(409, 'task_not_open', 'Only an open or queued task is assigned by the engine.');
+  res.json(await autoAssign(prisma, id, req.user!.id));
+});
+
+tasksRouter.post('/:id/handoff', write, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const t = await ownTask(id);
+  if (!['ASSIGNED', 'IN_PROGRESS', 'STALLED', 'FAILED', 'HANDED_OFF'].includes(t.status)) throw new HttpError(409, 'task_not_held', 'Nothing holds this task.');
+  const kind = t.status === 'FAILED' ? 'FAILED' : 'STALLED';
+  await handOffToPerson(prisma, id, req.user!.id, kind);
+  res.json(await taskDetail(prisma, id));
+});
+
+tasksRouter.post('/:id/events', write, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const t = await ownTask(id);
+  if (t.status === 'DONE' || t.status === 'CANCELLED') throw new HttpError(409, 'task_closed', 'This task is closed.');
+  const input = WorkTaskEventCreateSchema.parse(req.body);
+  const detail = await recordEvent(prisma, id, input.kind, req.user!.id, input.note ?? null);
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: tenantIdForWrite(), action: `task.${input.kind.toLowerCase()}`, entityType: 'WorkTask', entityId: id, metadata: { note: input.note ?? null } }, 'tasks');
+  res.json(detail);
+});

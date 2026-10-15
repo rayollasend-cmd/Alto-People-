@@ -206,6 +206,8 @@ const PlatformSupportInbox = lazyNamed(() => import('@/pages/support/PlatformSup
 const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
 const OrgUnitsAdmin = lazyNamed(() => import('@/pages/admin/OrgUnitsAdmin'), 'OrgUnitsAdmin');
 const SitesAdmin = lazyNamed(() => import('@/pages/admin/SitesAdmin'), 'SitesAdmin');
+const TasksBoard = lazyNamed(() => import('@/pages/tasks/TasksBoard'), 'TasksBoard');
+const TaskPolicyPage = lazyNamed(() => import('@/pages/tasks/TaskPolicyPage'), 'TaskPolicyPage');
 const ComplianceEvidenceHome = lazyNamed(() => import('@/pages/admin/ComplianceEvidenceHome'), 'ComplianceEvidenceHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
@@ -276,6 +278,7 @@ registerPrefetch('/admin/organization', () => import('@/pages/admin/TenantProfil
 registerPrefetch('/admin/employers', () => import('@/pages/admin/EmployersAdmin'));
 registerPrefetch('/admin/org-units', () => import('@/pages/admin/OrgUnitsAdmin'));
 registerPrefetch('/admin/sites', () => import('@/pages/admin/SitesAdmin'));
+registerPrefetch('/tasks', () => import('@/pages/tasks/TasksBoard'));
 registerPrefetch('/admin/billing', () => import('@/pages/admin/BillingHome'));
 registerPrefetch('/reports', () => import('@/pages/reports/ReportsHome'));
 // Public, no-auth routes. Prefetched from any link that points at them
@@ -452,6 +455,8 @@ const LAYOUT_ROUTES = [
   { path: 'performance', element: <RequireCapability cap="view:performance"><PerformanceHome /></RequireCapability> },
   { path: 'recruiting', element: <RecruitingHome /> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
+  // Brief 3-2: tasks and their assignment.
+  { path: 'tasks', element: <RequireCapability cap="view:scheduling"><TasksBoard /></RequireCapability> },
   { path: 'support', element: <SupportPage /> },
   // UX upgrade step 3: Settings & Trust — one area (rail + eyebrow) around the pages
   // an organization configures and an auditor checks. Paths unchanged.
@@ -472,6 +477,7 @@ const LAYOUT_ROUTES = [
     { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
     { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
     { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
+    { path: 'admin/task-policy', element: <RequireCapability cap="view:scheduling"><TaskPolicyPage /></RequireCapability> },
     { path: 'admin/compliance-evidence', element: <RequireCapability cap="view:org"><ComplianceEvidenceHome /></RequireCapability> },
     { path: 'admin/billing', element: <RequireCapability cap="manage:org" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
     { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },

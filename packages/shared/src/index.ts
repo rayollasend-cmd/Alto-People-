@@ -13,3 +13,4 @@ export * from './trust.js';
 export * from './status.js';
 export * from './agentCapabilities.js';
 export * from './publicApi.js';
+export * from './tasks.js';

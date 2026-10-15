@@ -18,6 +18,7 @@ import {
   Store,
   Users,
   Workflow,
+  ListTodo,
   Briefcase,
 } from 'lucide-react';
 import { useAuth, useTenant } from '@/lib/auth';
@@ -40,6 +41,7 @@ export function SettingsArea() {
       // Organization
       { key: 'organization', label: 'Organization', to: '/admin/organization', icon: Building2, section: 'Organization', show: can('view:hr-admin') },
       { key: 'sites', label: 'Sites', to: '/admin/sites', icon: Store, section: 'Organization', show: can('view:org') },
+      { key: 'task-policy', label: 'Task assignment', to: '/admin/task-policy', icon: ListTodo, section: 'Organization', show: can('view:scheduling') },
       { key: 'org-units', label: 'Organizational tree', to: '/admin/org-units', icon: Network, section: 'Organization', show: can('view:org') },
       { key: 'regions', label: 'Regions', to: '/admin/regions', icon: Map, section: 'Organization', show: can('view:org') && tenant.modules.clientPortal },
       { key: 'employers', label: 'Employers of record', to: '/admin/employers', icon: Briefcase, section: 'Organization', show: can('view:org') },
