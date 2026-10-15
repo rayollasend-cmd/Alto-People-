@@ -498,7 +498,10 @@ describe('capability proposals wait for a person (agent families step 0)', () =>
     expect(b.status).toBe(202);
     const { computeRoleDecisions } = await import('../../lib/roleDecisions.js');
     const items = await computeRoleDecisions(prisma, { id: sup.id, role: 'SHIFT_SUPERVISOR', clientId: w.client.id, associateId: null });
-    expect(items.find((d) => d.key.startsWith('agents:shift-assign'))?.label).toMatch(/^1 shift fill proposed by an agent/);
+    // A handful shows one item per proposal (agent families step 1): only this client's.
+    const fills = items.filter((d) => d.key.startsWith('agents:shift-fill:'));
+    expect(fills.map((d) => d.key)).toEqual([`agents:shift-fill:${a.body.approvalId}`]);
+    expect(fills[0]).toMatchObject({ label: 'Assign the bench lead', quickAction: 'Approve', declineAction: 'Reject' });
     expect((await asSup.post(`/agents/approvals/${b.body.approvalId}/approve`).send({})).status).toBe(403);
     expect((await asSup.post(`/agents/approvals/${a.body.approvalId}/approve`).send({})).status).toBe(200);
     // A case is not the scheduling desk's to decide.

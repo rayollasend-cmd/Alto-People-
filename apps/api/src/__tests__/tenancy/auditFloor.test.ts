@@ -27,20 +27,22 @@ afterAll(async () => {
 
 type Agent = Awaited<ReturnType<typeof loginAs>>;
 
-/** The audit rows a request left, written by this actor after `since`. */
-async function rowsOf(actorUserId: string, since: Date) {
-  await flushPendingAudits();
-  return prisma.auditLog.findMany({ where: { actorUserId, createdAt: { gte: since } }, orderBy: { createdAt: 'asc' } });
+/** The ids of this actor's audit rows so far. */
+async function idsOf(actorUserId: string): Promise<Set<string>> {
+  const rows = await prisma.auditLog.findMany({ where: { actorUserId }, select: { id: true } });
+  return new Set(rows.map((r) => r.id));
 }
 
 async function oneRequest(actorUserId: string, send: () => Promise<{ status: number }>) {
   // Domain audits are fire-and-forget: let the previous request's land before
-  // this window opens, and this request's land before it closes.
+  // the window opens, and this request's land before it closes. The window is
+  // the rows that did not exist before (a clock window caught the previous
+  // request's floor row, written milliseconds before its response ended).
   await flushPendingAudits();
-  const since = new Date(Date.now() - 5);
+  const before = await idsOf(actorUserId);
   const res = await send();
   await flushPendingAudits();
-  const rows = await rowsOf(actorUserId, since);
+  const rows = (await prisma.auditLog.findMany({ where: { actorUserId }, orderBy: { createdAt: 'asc' } })).filter((r) => !before.has(r.id));
   const floor = rows.filter((r) => r.action.startsWith('http.'));
   const domain = rows.filter((r) => !r.action.startsWith('http.'));
   return { res, rows, floor, domain };

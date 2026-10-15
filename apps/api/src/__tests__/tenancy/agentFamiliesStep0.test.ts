@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_CAPABILITIES, capabilitiesFor, defaultTenantProfile, type CapabilityScenarioFixture } from '@alto-people/shared';
 import { agent, loginAs } from '../../../test/http.js';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
-import { builtInAgentId, ensureBuiltInAgents, resetAgentRateLimits } from '../../lib/agents.js';
+import { BUILT_IN_AGENTS, builtInAgentId, ensureBuiltInAgents, resetAgentRateLimits } from '../../lib/agents.js';
 import { grantCapability, registerCapabilityRunner, runCapabilityFixture, unregisterCapabilityRunnerForTests, type CapabilityFixtureContext } from '../../lib/agentCapabilities.js';
 import { runForEachTenant } from '../../lib/tenantJobs.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
@@ -129,7 +129,7 @@ describe('built-in agents per tenant (test 3)', () => {
       expect(r.created).toEqual([]);
     });
     expect(again.failed).toBe(0);
-    expect(await prisma.agentProfile.count({ where: { builtInKey: { not: null } } })).toBe(6);
+    expect(await prisma.agentProfile.count({ where: { builtInKey: { not: null } } })).toBe(2 * BUILT_IN_AGENTS.length);
 
     // Risk ruling 3: the partial index refuses a second built-in with the same key in a tenant.
     const w = await prisma.worker.create({ data: { type: 'AGENT', name: 'Impostor', ownerUserId: two.user.id, tenantId: T2 } });
