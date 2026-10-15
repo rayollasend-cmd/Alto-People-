@@ -25,16 +25,19 @@ for (const f of targets) {
   // return ( <div className="…"> <PageHeader …/>  — the header is the root's first child.
   // The header's own close: `/>` on its own line at the header's indent, or a one-liner ` />`.
   // Root div (className optional), an optional pull-to-refresh indicator, then the header.
-  const re = /return \(\n( +)<div(?: className="([^"]*)")?>\n(?:\1  (<PullToRefreshIndicator state=\{pullState\} \/>)\n)?(\1  )<PageHeader\b(?:([^\n]*?) \/>|([\s\S]*?)\n\4\/>)\n/g;
+  // Root div (className optional, a string or an expression), an optional pull-to-refresh
+  // indicator, an optional one-line comment, then the header.
+  const re = /return \(\n( +)<div( className=(?:"[^"]*"|\{[^\n]*\}))?>\n(?:\1  (<PullToRefreshIndicator state=\{pullState\} \/>)\n)?(?:\1  (\{\/\*[^\n]*\*\/\})\n)?(\1  )<PageHeader\b(?:([^\n]*?) \/>|([\s\S]*?)\n\5\/>)\n/g;
   let m;
   let changed = false;
   let out = text;
   let offset = 0;
   while ((m = re.exec(text))) {
     const indent = m[1];
-    const rootClass = m[2];
+    const rootClass = m[2]?.trim();
     const pull = m[3];
-    let props = m[5] ?? m[6];
+    const note = m[4];
+    let props = m[6] ?? m[7];
     const start = m.index + offset;
     const closeNeedle = `\n${indent}</div>\n${indent.slice(2)});\n`;
     const closeAt = out.indexOf(closeNeedle, start + m[0].length);
@@ -44,13 +47,15 @@ for (const f of targets) {
     props = props.replace(new RegExp(`(\\n${indent}    )className=`), '$1headerClassName=');
     // One-line `<PageHeader title="…" />` leaves props starting with a space.
     const propsText = props.trimEnd();
-    const classProp = rootClass ? `\n${indent}    className="${rootClass}"` : '';
+    const classProp = rootClass ? `\n${indent}    ${rootClass}` : '';
     const propsBlock = `${classProp}${propsText.startsWith('\n') ? propsText : `\n${indent}    ${propsText.trim()}`}`;
     const comment = 'Design system §4.2 (UX upgrade step 6, the sweep): the List template.';
+    // A comment that sat above the header stays with the content.
+    const kept = note ? `${indent}  ${note}\n` : '';
     // With a pull-to-refresh indicator the page is a fragment: the indicator, then the template.
     const head = pull
-      ? `return (\n${indent}<>\n${indent}  ${pull}\n${indent}  {/* ${comment} */}\n${indent}  <ListTemplate${propsBlock}\n${indent}  >\n`
-      : `return (\n${indent}// ${comment}\n${indent}<ListTemplate${propsBlock}\n${indent}>\n`;
+      ? `return (\n${indent}<>\n${indent}  ${pull}\n${indent}  {/* ${comment} */}\n${indent}  <ListTemplate${propsBlock}\n${indent}  >\n${kept}`
+      : `return (\n${indent}// ${comment}\n${indent}<ListTemplate${propsBlock}\n${indent}>\n${kept}`;
     const before = out.slice(0, start);
     const middle = out.slice(start + m[0].length, closeAt);
     const after = out.slice(closeAt + closeNeedle.length);

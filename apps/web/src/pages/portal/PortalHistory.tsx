@@ -8,7 +8,6 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtHours, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +17,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
 import { scopeParams, shiftDays } from './scope';
+import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
 
 /**
@@ -257,8 +257,9 @@ export function PortalHistory() {
       : null;
 
   return (
-    <div className={cn('mx-auto space-y-4 print-area', query.isFetching && data && 'opacity-80 transition-opacity')}>
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className={cn('mx-auto space-y-4 print-area', query.isFetching && data && 'opacity-80 transition-opacity')}
         title={t('portal.historyNav')}
         topbarTitle={t('portal.historyNav')}
         subtitle={
@@ -287,7 +288,7 @@ export function PortalHistory() {
             />
           </>
         }
-      />
+    >
 
       {/* ---- Range: one row, above everything it scopes ---------------- */}
       <div className="sticky top-0 z-10 -mx-4 bg-navy/95 px-4 py-2 backdrop-blur print:hidden md:mx-0 md:px-0">
@@ -664,6 +665,6 @@ export function PortalHistory() {
           </div>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }

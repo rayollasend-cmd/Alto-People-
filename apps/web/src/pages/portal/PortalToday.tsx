@@ -17,7 +17,6 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +27,7 @@ import { groupWaves, waveName, wavePresent, type Wave, type WaveName, type WaveR
 import { ServiceReportDialog } from './ServiceReportDialog';
 import { FocusToggle } from './FocusToggle';
 import { clockInInWindows, crewOnFloor, inWindows, summarize, useShiftFocus, windowOf } from './shiftFocus';
+import { ListTemplate } from '@/components/templates';
 import { scopeParams, shiftDays } from './scope';
 
 /**
@@ -140,8 +140,9 @@ export function PortalToday() {
       : fmtDate(parseYmd(date));
 
   return (
-    <div className={cn('mx-auto max-w-5xl space-y-4 print-area', switching && 'opacity-70 transition-opacity')}>
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className={cn('mx-auto max-w-5xl space-y-4 print-area', switching && 'opacity-70 transition-opacity')}
         title={dayLabel}
         topbarTitle={t('portal.todayNav')}
         subtitle={
@@ -219,7 +220,7 @@ export function PortalToday() {
             )}
           </>
         }
-      />
+    >
 
       {/* ---- Date control: one row, above everything it scopes ---------- */}
       <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
@@ -302,7 +303,7 @@ export function PortalToday() {
           {isToday && <OffScheduleCard data={data} windows={mine ? myWindows : null} />}
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

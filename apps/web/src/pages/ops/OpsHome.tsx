@@ -3,11 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { useClientBounded } from '@/lib/useClientBounded';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { OpsRunner } from './OpsRunner';
 import { OpsBoard } from './OpsBoard';
 import { OpsLibrary } from './OpsLibrary';
+import { ListTemplate } from '@/components/templates';
 import { StoreOps } from '../portal/PortalOps';
 
 /**
@@ -65,16 +65,16 @@ export function OpsHome() {
   };
 
   return (
-    <div>
-      {/* Mid-checklist the page is the checklist: no explainer above it. */}
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="Store Ops"
         subtitle={
           searchParams.get('shift')
             ? undefined
             : 'The floor, on the record — SOP checklists, live shifts, handover, and the standard behind them.'
         }
-      />
+    >
+      {/* Mid-checklist the page is the checklist: no explainer above it. */}
       {tabs.length > 1 && (
         <Tabs value={tab} onValueChange={setTab} className="mb-4">
           <TabsList>
@@ -90,6 +90,6 @@ export function OpsHome() {
       {tab === 'store' && canStore && <StoreOps />}
       {tab === 'board' && canBoard && <OpsBoard />}
       {tab === 'library' && canLibrary && <OpsLibrary />}
-    </div>
+    </ListTemplate>
   );
 }
