@@ -48,7 +48,6 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -58,6 +57,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'bands' | 'cycles';
@@ -122,12 +122,13 @@ export function CompensationHome() {
   }, [clients]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Compensation"
         subtitle="Pay bands tied to job profiles, effective-dated history, and merit-cycle planning."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Compensation' }]}
-      />
+    >
 
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
@@ -199,7 +200,7 @@ export function CompensationHome() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

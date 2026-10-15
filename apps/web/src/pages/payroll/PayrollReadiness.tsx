@@ -25,9 +25,9 @@ import {
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { toast } from '@/components/ui/Toaster';
 
 /**
@@ -53,13 +53,14 @@ export function PayrollReadiness() {
   const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : 'Failed to load.' : null;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Payroll readiness"
         subtitle="Every active associate, with the five data points payroll needs. Fix any red flags before creating a run."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Readiness' }]}
         secondaryActions={<CensusExportDialog />}
-      />
+    >
 
       {error && (
         <Card>
@@ -212,7 +213,7 @@ export function PayrollReadiness() {
           })()}
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

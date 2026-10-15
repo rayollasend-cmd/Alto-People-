@@ -16,7 +16,6 @@ import {
   withdrawOpenShiftClaim,
 } from '@/lib/schedulingApi';
 import { ApiError, apiFetch } from '@/lib/api';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -55,6 +54,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { MyShiftHero } from '@/pages/associate/MyShiftHero';
+import { ListTemplate } from '@/components/templates';
 import { workweekStart } from '@/lib/workweek';
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
@@ -369,9 +369,13 @@ export function AssociateScheduleView() {
   const hasOlder = history === null || historyNextBefore !== null;
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader title={t('sched.title')} subtitle={t('sched.subtitle')} />
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="mx-auto"
+        title={t('sched.title')} subtitle={t('sched.subtitle')}
+      >
 
       {offlineAt !== null && (
         <div
@@ -608,7 +612,8 @@ export function AssociateScheduleView() {
         <SwapMarketplace refreshToken={swapVersion} />
         <AvailabilityEditor />
       </div>
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

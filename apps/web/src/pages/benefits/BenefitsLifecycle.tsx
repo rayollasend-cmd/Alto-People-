@@ -48,7 +48,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -60,6 +59,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'oe' | 'qle' | 'cobra' | 'aca';
@@ -105,12 +105,13 @@ export function BenefitsLifecycle() {
   const [tab, setTab] = useState<Tab>('oe');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Benefits lifecycle"
         subtitle="Open enrollment, qualifying life events, COBRA offers, and ACA 1095-C reporting."
         breadcrumbs={[{ label: 'Benefits' }, { label: 'Lifecycle' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="oe">
@@ -131,7 +132,7 @@ export function BenefitsLifecycle() {
         <TabsContent value="cobra"><CobraTab canManage={canManage} /></TabsContent>
         <TabsContent value="aca"><AcaTab /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

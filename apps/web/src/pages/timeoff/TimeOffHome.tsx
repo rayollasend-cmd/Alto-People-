@@ -3,7 +3,7 @@ import { useAuth } from '@/lib/auth';
 import { AssociateTimeOffView } from './AssociateTimeOffView';
 import { AdminTimeOffView } from './AdminTimeOffView';
 import { AdminTimeOffEntitlementsView } from './AdminTimeOffEntitlementsView';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 type Tab = 'requests' | 'entitlements' | 'mine';
@@ -22,11 +22,12 @@ export function TimeOffHome() {
     return <AssociateTimeOffView />;
   }
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Time off"
         subtitle="Approve requests and manage entitlement balances by policy."
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="requests">Requests</TabsTrigger>
@@ -45,6 +46,6 @@ export function TimeOffHome() {
           </TabsContent>
         )}
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }

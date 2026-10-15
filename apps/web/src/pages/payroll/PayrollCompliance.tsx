@@ -27,10 +27,10 @@ import {
   CardContent,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 /**
@@ -47,12 +47,13 @@ type Tab = 'deposits' | 'remittances' | 'newhire';
 export function PayrollCompliance() {
   const [tab, setTab] = useState<Tab>('deposits');
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Payroll compliance"
         subtitle="Federal tax deposits, garnishment remittances, and state new-hire reporting — every deadline in one place."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Compliance' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="deposits">
@@ -75,7 +76,7 @@ export function PayrollCompliance() {
           <NewHireTab />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

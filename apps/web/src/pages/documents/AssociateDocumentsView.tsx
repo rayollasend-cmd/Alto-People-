@@ -39,7 +39,6 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -47,6 +46,7 @@ import { DocumentPreview } from '@/components/DocumentPreview';
 import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { ListTemplate } from '@/components/templates';
 import { useTenant } from '@/lib/auth';
 
 const KIND_VALUES: DocumentKind[] = [
@@ -312,9 +312,11 @@ export function AssociateDocumentsView() {
   };
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="mx-auto"
         title={t('docs.title')}
         subtitle={t('docs.subtitle')}
         primaryAction={
@@ -323,7 +325,7 @@ export function AssociateDocumentsView() {
             {t('docs.upload')}
           </Button>
         }
-      />
+      >
 
       {!rescanSeen && docs !== null && docs.length > 0 && (
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3">
@@ -652,7 +654,8 @@ export function AssociateDocumentsView() {
         doc={previewDoc}
         onOpenChange={(o) => !o && setPreviewDoc(null)}
       />
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

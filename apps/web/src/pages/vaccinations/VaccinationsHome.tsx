@@ -33,7 +33,6 @@ import {
   ErrorBanner,
   Input,
   MetricCard,
-  PageHeader,
   SegmentedControl,
   Select,
   Skeleton,
@@ -42,6 +41,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 
 export function VaccinationsHome() {
@@ -96,12 +96,13 @@ export function VaccinationsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Vaccinations & medical"
         subtitle="Proof of vaccination and TB tests. Required by many client SLAs."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Vaccinations' }]}
-      />
+    >
 
       {/* Reserve the strip while loading; note failure instead of quietly
           vanishing (an absent row read as "no coverage data exists"). */}
@@ -377,7 +378,7 @@ export function VaccinationsHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

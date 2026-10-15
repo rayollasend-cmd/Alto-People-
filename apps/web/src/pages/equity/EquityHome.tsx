@@ -39,7 +39,6 @@ import {
   ErrorBanner,
   Input,
   MetricCard,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   type SegmentedControlOption,
@@ -49,6 +48,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import {
   AssociatePicker,
   type PickedAssociate,
@@ -197,12 +197,13 @@ export function EquityHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Equity"
         subtitle="Stock and option grants. Vesting tranches generated at grant time — cliff plus monthly until fully vested."
         breadcrumbs={[{ label: 'Total rewards' }, { label: 'Equity' }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl<'mine' | 'admin'>
@@ -417,7 +418,7 @@ export function EquityHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

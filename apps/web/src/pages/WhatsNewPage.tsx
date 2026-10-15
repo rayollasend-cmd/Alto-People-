@@ -15,9 +15,9 @@ import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerTitle } from '@/c
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
+import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -85,8 +85,9 @@ export function WhatsNewPage() {
   const draftValid = draft !== null && draft.items.length > 0 && draft.items.every((i) => i.en.trim().length > 0);
 
   return (
-    <div className="space-y-4">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-4"
         title={t('whatsnew.pageTitle')}
         subtitle={t('whatsnew.pageSubtitle')}
         secondaryActions={
@@ -96,7 +97,7 @@ export function WhatsNewPage() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {notes.isError ? (
         <QueryError what="release notes" query={notes} />
@@ -254,6 +255,6 @@ export function WhatsNewPage() {
           </>
         )}
       </Drawer>
-    </div>
+    </ListTemplate>
   );
 }

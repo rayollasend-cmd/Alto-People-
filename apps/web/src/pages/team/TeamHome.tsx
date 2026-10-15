@@ -33,7 +33,6 @@ import {
   CardContent,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   SkeletonRows,
@@ -45,6 +44,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
+import { ListTemplate } from '@/components/templates';
 import { usePrompt } from '@/lib/confirm';
 
 // Query keys are tuples so invalidateQueries({ queryKey: ['team'] }) can
@@ -76,12 +76,13 @@ export function TeamHome() {
   const error = dashboardQ.error ?? reportsQ.error;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="My team"
         subtitle="Direct reports, pending timesheet reviews, and time-off decisions awaiting your sign-off."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'My team' }]}
-      />
+    >
 
       {dashboard && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -197,7 +198,7 @@ export function TeamHome() {
           <TimeOffTab />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

@@ -64,13 +64,13 @@ import {
   ErrorBanner,
   Field,
   Input,
-  PageHeader,
   Select,
   Skeleton,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { ListTemplate } from '@/components/templates';
 import { ViewToggle } from '@/components/ui/ViewToggle';
 
 const STAGES: CandidateStage[] = [
@@ -679,8 +679,9 @@ export function RecruitingHome() {
     });
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Recruiting"
         subtitle={
           canManage
@@ -708,7 +709,7 @@ export function RecruitingHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {kpiError && !kpis ? (
         <ErrorBanner
@@ -1141,7 +1142,7 @@ export function RecruitingHome() {
           ) : null
         }
       />
-    </div>
+    </ListTemplate>
   );
 }
 

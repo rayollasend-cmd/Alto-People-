@@ -11,11 +11,11 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 
 import { fmtDateTime, fmtMoney, fmtPercent } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 
 const fmtPct = (rate: number) => fmtPercent(rate, { fromFraction: true, decimals: 2 });
 
@@ -35,11 +35,12 @@ export function PayrollConfigView() {
   const error = configQuery.error ? configQuery.error instanceof ApiError ? configQuery.error.message : 'Could not load payroll config.' : null;
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Payroll tax config"
         subtitle="Reference data driving the federal withholding engine. Read-only."
-      />
+    >
 
       {error && (
         <ErrorBanner className="mb-4">
@@ -107,7 +108,7 @@ export function PayrollConfigView() {
           </p>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

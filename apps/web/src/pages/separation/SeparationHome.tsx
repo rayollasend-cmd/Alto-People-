@@ -39,7 +39,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   Select,
   Skeleton,
@@ -47,6 +46,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 // Deliberate departure from the shared vocabulary: an IN_PROGRESS offboarding
@@ -177,12 +177,13 @@ export function SeparationHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Separations"
         subtitle="Plan, process, and complete associate departures. Capture exit-interview feedback."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Separations' }]}
-      />
+    >
 
       {/* Reserved while loading; explicit note on failure — an absent KPI
           row read as "zero separations". */}
@@ -387,7 +388,7 @@ export function SeparationHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

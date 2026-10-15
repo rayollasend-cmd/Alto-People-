@@ -34,7 +34,6 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   SkeletonRows,
   Tabs,
   TabsContent,
@@ -56,6 +55,7 @@ import {
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'open' | 'claims' | 'catalog';
@@ -74,12 +74,13 @@ export function MarketplaceHome() {
   );
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('mk.title')}
         subtitle={t('mk.subtitle')}
         breadcrumbs={[{ label: t('mk.crumbSection') }, { label: t('mk.title') }]}
-      />
+    >
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         {/* An associate has one view — a lone "Available" tab was chrome. */}
@@ -101,7 +102,7 @@ export function MarketplaceHome() {
           <TabsContent value="catalog"><CatalogTab /></TabsContent>
         )}
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

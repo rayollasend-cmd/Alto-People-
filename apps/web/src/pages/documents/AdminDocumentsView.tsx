@@ -73,7 +73,6 @@ import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
   type TableSortState,
@@ -84,6 +83,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { ListTemplate } from '@/components/templates';
 import { useSelection } from '@/lib/useSelection';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
@@ -760,8 +760,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Document vault"
         subtitle={
           canManage
@@ -777,7 +778,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {/* KPI strip */}
       {canManage && stats.total > 0 && (
@@ -1962,7 +1963,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ListTemplate>
   );
 }
 

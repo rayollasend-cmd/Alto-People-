@@ -33,13 +33,13 @@ import {
   DrawerTitle,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { fmtDate, ymdLocal } from '@/lib/format';
 
 /**
@@ -210,12 +210,13 @@ export function ExpirationsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Expirations"
         subtitle="Qualifications and certifications expiring soon — chase renewals before they lapse."
         breadcrumbs={[{ label: 'Expirations' }]}
-      />
+    >
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-silver">Within:</span>
         <SegmentedControl
@@ -393,7 +394,7 @@ export function ExpirationsHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

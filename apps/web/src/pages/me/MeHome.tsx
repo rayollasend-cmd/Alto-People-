@@ -49,7 +49,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -62,6 +61,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 const TAB_VALUES = [
@@ -224,9 +224,11 @@ export function MeHome() {
   const pullState = usePullToRefresh(refresh);
 
   return (
-    <div className="space-y-5">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="space-y-5"
         title={t('me.title')}
         subtitle={t('me.subtitle')}
         // No "Workforce" breadcrumb — that's internal HR taxonomy, and it
@@ -237,7 +239,7 @@ export function MeHome() {
             <Link to="/settings">{t('me.settingsLink')}</Link>
           </Button>
         }
-      />
+      >
 
       {error && (
         <ErrorBanner
@@ -316,7 +318,8 @@ export function MeHome() {
           />
         </TabsContent>
       </Tabs>
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

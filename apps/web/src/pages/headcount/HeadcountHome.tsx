@@ -10,7 +10,6 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -18,6 +17,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Input } from '@/components/ui/Input';
+import { ListTemplate } from '@/components/templates';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 
 /**
@@ -68,8 +68,11 @@ export function HeadcountHome() {
     : undefined;
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Headcount" subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: 'Headcount' }]} />
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-6"
+        title="Headcount" subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: 'Headcount' }]}
+    >
 
       {overview.isError && <QueryError what="the headcount" query={overview} />}
 
@@ -136,7 +139,7 @@ export function HeadcountHome() {
           />
         </div>
       </section>
-    </div>
+    </ListTemplate>
   );
 }
 

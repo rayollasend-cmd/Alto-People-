@@ -1,9 +1,10 @@
+import { ListTemplate } from '@/components/templates';
 import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardContent, ErrorBanner, PageHeader, SkeletonRows } from '@/components/ui';
+import { Badge, Button, Card, CardContent, ErrorBanner, SkeletonRows } from '@/components/ui';
 import { SearchInput } from '@/components/ui/FilterBar';
 
 /**
@@ -146,8 +147,9 @@ export function DevelopersPage() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="API reference"
         subtitle="The public API: OAuth 2 client credentials, cursor pagination, an Idempotency-Key on every POST, signed webhooks."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations', to: '/integrations' }, { label: 'API reference' }]}
@@ -156,7 +158,7 @@ export function DevelopersPage() {
             <Download className="mr-1.5 h-3.5 w-3.5" /> OpenAPI document
           </Button>
         }
-      />
+    >
 
       <Card>
         <CardContent className="space-y-3 p-4">
@@ -248,6 +250,6 @@ export function DevelopersPage() {
           </section>
         ))
       )}
-    </div>
+    </ListTemplate>
   );
 }

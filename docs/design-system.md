@@ -68,7 +68,7 @@ Every page is one of these and says so (`data-template` on the root; `src/compon
 Banners that interrupt · greeting · **one hero** · decisions ("Needs you", counted) · what changed · Hugo's seat · ways in. On it today: associate, supervisor, manager, admin, executive, driver, recruiter, workforce, finance. Still on their own order, for the sweep: the portal's store and region homes (the transport director's page is a Desk). The greeting word comes from `useGreeting()` in `lib/greeting.ts` (EN/ES/TR), never a page-local copy. The aside takes its column only when Hugo rendered something; a queue card under the "Needs you" title runs headless (`title={null}` / `headless`) so the section is titled once.
 
 ### 4.2 List (`ListTemplate`)
-`PageHeader` · optional summary strip · **one `FilterBar`** · `DataGrid` · the record in a `Drawer`. The list never leaves the screen when a record opens.
+`PageHeader` · optional summary strip · **one `FilterBar`** · `DataGrid` · the record in a `Drawer`. The list never leaves the screen when a record opens. A page with tabs is a List whose tabs are its lists, each with its own filter row (Time & attendance, Payroll, Scheduling); a page with a print-only header passes `headerClassName="no-print"`. Seventy pages declare it after the sweep's long-tail codemod; where a page keeps its drawer as a child rather than in the `drawer` slot the screen is the same, and the slot is used as pages are next touched.
 
 ### 4.3 Record (`RecordTemplate`)
 Breadcrumb · identity + title + status + actions · optional summary · `Tabs` for the facets · an aside for the timeline. A person's "Employment" and an agent's "Compliance record" read alike.

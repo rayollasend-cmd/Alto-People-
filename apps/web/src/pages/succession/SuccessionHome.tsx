@@ -37,7 +37,6 @@ import {
   FilterChip,
   Input,
   MetricCard,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
@@ -46,6 +45,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { ymdLocal } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { downloadCsv } from '@/lib/csv';
 
 const READINESS_VARIANT: Record<
@@ -215,8 +215,9 @@ export function SuccessionHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Succession planning"
         subtitle="Designate successors for each position. Track who's ready now, in 1–2 years, or beyond."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Succession' }]}
@@ -232,7 +233,7 @@ export function SuccessionHome() {
             Export CSV
           </Button>
         }
-      />
+    >
 
       {summaryError ? (
         <ErrorBanner>
@@ -399,7 +400,7 @@ export function SuccessionHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

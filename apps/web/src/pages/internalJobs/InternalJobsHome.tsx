@@ -38,7 +38,6 @@ import {
   FilterBar,
   FilterChip,
   Input,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   Select,
@@ -46,6 +45,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtMoney } from '@/lib/format';
 
 // Domain-only codes the shared vocabulary doesn't carry: UNDER_REVIEW is a
@@ -156,12 +156,13 @@ export function InternalJobsHome() {
   }, [jobs, search, locationFilter]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Internal jobs"
         subtitle="Open roles across the company. Apply directly — your manager and the hiring manager will see it."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Internal jobs' }]}
-      />
+    >
 
       <SegmentedControl<'browse' | 'mine'>
         ariaLabel="Internal jobs view"
@@ -446,7 +447,7 @@ export function InternalJobsHome() {
           onChanged={refresh}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

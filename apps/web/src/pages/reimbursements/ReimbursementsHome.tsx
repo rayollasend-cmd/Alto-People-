@@ -39,7 +39,6 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
@@ -48,6 +47,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { FormHint, Label } from '@/components/ui/Label';
 import { downloadDocumentUrl, uploadMyDocument } from '@/lib/documentsApi';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 /**
@@ -220,8 +220,9 @@ export function ReimbursementsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('rmb.title')}
         subtitle={
           // Admins keep the fuller workflow line; associates get their own voice.
@@ -230,7 +231,7 @@ export function ReimbursementsHome() {
             : t('rmb.subtitle')
         }
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
-      />
+    >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">
           {t('rmb.totalPending')}{' '}
@@ -367,7 +368,7 @@ export function ReimbursementsHome() {
           onChanged={refresh}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

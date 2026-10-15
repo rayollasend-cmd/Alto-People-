@@ -40,8 +40,8 @@ const RetentionSection = lazy(() =>
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -124,8 +124,9 @@ export function AnalyticsHome() {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Analytics"
         subtitle="Live operational and financial KPIs across all clients."
         primaryAction={
@@ -134,7 +135,7 @@ export function AnalyticsHome() {
             Export CSV
           </Button>
         }
-      />
+    >
 
       <div className="flex items-center gap-2 mb-6 text-sm">
         <span className="text-silver">Window:</span>
@@ -310,7 +311,7 @@ export function AnalyticsHome() {
         <Activity className="h-3 w-3 inline mr-1 -mt-0.5" />
         Numbers are live — refresh to recompute.
       </p>
-    </div>
+    </ListTemplate>
   );
 }
 

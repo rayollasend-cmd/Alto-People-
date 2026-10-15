@@ -24,7 +24,6 @@ import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import {
   Card,
   CardContent,
@@ -46,6 +45,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 
 type Category = TimeOffCategory;
@@ -225,9 +225,11 @@ export function AssociateTimeOffView() {
   };
 
   return (
-    <div className="space-y-6">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="space-y-6"
         title={t('timeoff.title')}
         subtitle={t('timeoff.subtitle')}
         primaryAction={
@@ -236,7 +238,7 @@ export function AssociateTimeOffView() {
             {t('timeoff.request')}
           </Button>
         }
-      />
+      >
 
       {/* A failed load used to leave the balance tiles + request rows
           shimmering forever with only a transient toast — no way back
@@ -357,7 +359,8 @@ export function AssociateTimeOffView() {
           refresh();
         }}
       />
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

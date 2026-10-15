@@ -32,7 +32,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
@@ -41,6 +40,7 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { statusTone } from '@/lib/status';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 // Ramp-only milestone codes the shared vocabulary doesn't carry: ON_TRACK is
@@ -95,12 +95,13 @@ export function RampHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Ramp plans"
         subtitle="30/60/90-day milestones for new hires. Manager updates status as the new hire progresses."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Ramp plans' }]}
-      />
+    >
 
       <div className="flex flex-wrap items-center gap-2 justify-end">
         <Input
@@ -235,7 +236,7 @@ export function RampHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

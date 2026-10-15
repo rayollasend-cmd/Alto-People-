@@ -37,7 +37,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   Select,
   SkeletonRows,
@@ -45,6 +44,7 @@ import {
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
 
 // Domain-only codes the shared vocabulary doesn't carry: PENDING_SIGNATURE
@@ -162,12 +162,13 @@ export function AgreementsHome() {
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['AgreementsHome'] });
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('agr.title')}
         subtitle={t('agr.subtitle')}
         breadcrumbs={[{ label: t('agr.crumbSection') }, { label: t('agr.title') }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl
@@ -479,7 +480,7 @@ export function AgreementsHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

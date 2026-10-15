@@ -47,7 +47,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   Select,
   Skeleton,
@@ -56,6 +55,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 /** "How to request PTO?" → "how-to-request-pto". */
@@ -187,12 +187,13 @@ export function KbHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('kb.title')}
         subtitle={t('kb.subtitle')}
         breadcrumbs={[{ label: t('kb.crumbSection') }, { label: t('kb.title') }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl
@@ -475,7 +476,7 @@ export function KbHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

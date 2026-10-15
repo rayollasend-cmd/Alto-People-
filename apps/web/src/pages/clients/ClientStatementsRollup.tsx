@@ -24,11 +24,11 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
+import { ListTemplate } from '@/components/templates';
 import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
 
 /**
@@ -219,8 +219,9 @@ export function ClientStatementsRollup() {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Weekly close — statements"
         subtitle="Every client's recent statements in one place: generate the week's drafts, finalize in bulk, and record payments."
         breadcrumbs={[
@@ -240,7 +241,7 @@ export function ClientStatementsRollup() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {error && (
         <ErrorBanner
@@ -414,6 +415,6 @@ export function ClientStatementsRollup() {
           if (payTarget) void markPaid(payTarget, ref);
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }

@@ -17,9 +17,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
+import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -59,8 +59,9 @@ export function EmergencyHome() {
   if (list.isError) return <QueryError what="emergencies" query={list} />;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Emergency mode"
         subtitle="One switch for a storm: shifts suspended without penalty, everyone told in their language, a live check-in board, evacuation vans."
         primaryAction={
@@ -71,7 +72,7 @@ export function EmergencyHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {list.isLoading ? (
         <Skeleton className="h-40" />
@@ -121,7 +122,7 @@ export function EmergencyHome() {
       </Card>
 
       {declaring && <DeclareDialog onClose={() => setDeclaring(false)} />}
-    </div>
+    </ListTemplate>
   );
 }
 

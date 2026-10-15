@@ -31,11 +31,11 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { DataGrid } from '@/components/ui/DataGrid';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
+import { ListTemplate } from '@/components/templates';
 import { PipelineSection } from './PipelineSection';
 
 const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
@@ -200,8 +200,9 @@ export function ClientsHome() {
   }, [searchParams, setSearchParams]);
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Clients' }]}
@@ -223,7 +224,7 @@ export function ClientsHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {error && (
         <ErrorBanner className="mb-4">
@@ -478,7 +479,7 @@ export function ClientsHome() {
         onOpenChange={setShowNew}
         onCreated={() => refresh()}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

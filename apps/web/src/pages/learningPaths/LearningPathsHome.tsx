@@ -38,7 +38,6 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
@@ -47,6 +46,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Input, Textarea } from '@/components/ui/Input';
 import { fmtDate } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 /** Shared load-failure block: message + Retry. Never fake an empty state. */
@@ -97,12 +97,13 @@ export function LearningPathsHome() {
   );
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Learning paths"
         subtitle="Sequence courses into ordered tracks. Associates work through them in order."
         breadcrumbs={[{ label: 'Learning' }, { label: 'Paths' }]}
-      />
+    >
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           className="h-8 w-64"
@@ -254,7 +255,7 @@ export function LearningPathsHome() {
           }
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

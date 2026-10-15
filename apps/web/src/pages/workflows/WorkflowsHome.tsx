@@ -34,7 +34,6 @@ import {
   ErrorBanner,
   Field,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -44,6 +43,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 const TRIGGERS: WorkflowTrigger[] = [
@@ -163,8 +163,9 @@ export function WorkflowsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Workflows"
         subtitle="Trigger-condition-action automation. Replaces hard-coded chains in route handlers — define once, fire on every matching event."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Workflows' }]}
@@ -176,7 +177,7 @@ export function WorkflowsHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {error && (
         <ErrorBanner
@@ -315,7 +316,7 @@ export function WorkflowsHome() {
           />
         )}
       </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

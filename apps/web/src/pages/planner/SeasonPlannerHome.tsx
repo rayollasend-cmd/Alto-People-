@@ -42,10 +42,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { DetailsTable, PortalTooltip, SERIES } from '@/pages/portal/portalCharts';
 
 /**
@@ -109,8 +109,9 @@ function PlansList() {
   const plans = q.data?.plans ?? [];
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Season planner"
         subtitle="Demand by store, shift and week becomes associates, beds, van seats and recruiting targets. Save scenarios and compare them side by side."
         primaryAction={
@@ -121,7 +122,7 @@ function PlansList() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       {q.isError ? (
         <QueryError what="season plans" query={q} />
@@ -195,7 +196,7 @@ function PlansList() {
       )}
 
       {creating && <CreatePlanDialog onClose={() => setCreating(false)} />}
-    </div>
+    </ListTemplate>
   );
 }
 
@@ -333,8 +334,9 @@ function PlanView({ id }: { id: string }) {
   if (q.isError) return <QueryError what="the season plan" query={q} />;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={plan?.name ?? 'Season plan'}
         subtitle={
           plan
@@ -384,7 +386,7 @@ function PlanView({ id }: { id: string }) {
             </>
           ) : undefined
         }
-      />
+    >
 
       {q.isLoading || !plan ? (
         <Skeleton className="h-64" />
@@ -518,7 +520,7 @@ function PlanView({ id }: { id: string }) {
           <PlanSettings plan={plan} canManage={canManage} saving={save.isPending} onSave={(body) => save.mutate(body)} />
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 
@@ -815,8 +817,9 @@ function CompareView({ a, b }: { a: string; b: string }) {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Compare scenarios"
         subtitle={q.data ? `${q.data.a.name} vs ${q.data.b.name}` : undefined}
         topbarTitle="Season planner"
@@ -827,7 +830,7 @@ function CompareView({ a, b }: { a: string; b: string }) {
             Back to plans
           </Button>
         }
-      />
+    >
       {q.isLoading || !q.data ? (
         <Skeleton className="h-64" />
       ) : (
@@ -860,6 +863,6 @@ function CompareView({ a, b }: { a: string; b: string }) {
           </Card>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }

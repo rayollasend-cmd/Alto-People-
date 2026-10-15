@@ -18,13 +18,13 @@ import {
   FilterChip,
   Input,
   Label,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   Select,
   Skeleton,
 } from '@/components/ui';
 import { FieldglassQueueList, type FieldglassQueueRow } from './FieldglassQueue';
+import { ListTemplate } from '@/components/templates';
 import { STATUS_CHIP } from '../time/FieldglassDesk';
 
 /**
@@ -205,8 +205,9 @@ export function FieldglassSetup() {
   }, [data, queue, roster]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Fieldglass setup"
         subtitle="Register new associates in Fieldglass, move transfers to their new client, close out separations — and keep every Worker ID on file."
         secondaryActions={
@@ -217,7 +218,7 @@ export function FieldglassSetup() {
             </Link>
           </Button>
         }
-      />
+    >
       {q.isError && <ErrorBanner>{q.error instanceof ApiError ? q.error.message : 'Couldn’t load Fieldglass setup.'}</ErrorBanner>}
       {q.isLoading || !data ? (
         <div className="space-y-3">
@@ -366,7 +367,7 @@ export function FieldglassSetup() {
           )}
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

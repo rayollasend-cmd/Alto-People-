@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/Input';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { useClients } from '@/lib/useClients';
 
 const KIND_LABEL: Record<BenefitsPlanKind, string> = {
@@ -140,12 +141,13 @@ export function BenefitsHome() {
   }
 
   return (
-    <div className="mx-auto space-y-6">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto space-y-6"
         title="Benefits"
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
         secondaryActions={lifecycleLink}
-      />
+    >
 
       {(error || clientsError) && (
         <ErrorBanner
@@ -294,7 +296,7 @@ export function BenefitsHome() {
           refresh();
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

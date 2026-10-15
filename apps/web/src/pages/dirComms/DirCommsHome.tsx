@@ -59,7 +59,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
@@ -71,6 +70,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'directory' | 'broadcasts' | 'surveys';
@@ -146,12 +146,13 @@ export function DirCommsHome() {
   const [tab, setTab] = useState<Tab>('directory');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Directory & comms"
         subtitle="Search the people directory, send broadcasts, and run pulse / eNPS surveys."
         breadcrumbs={[{ label: 'Insights' }, { label: 'Directory & comms' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="directory">Directory</TabsTrigger>
@@ -166,7 +167,7 @@ export function DirCommsHome() {
           <TabsContent value="surveys"><SurveysTab canManage={canManage} /></TabsContent>
         )}
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

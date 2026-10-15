@@ -67,7 +67,6 @@ import {
   ErrorBanner,
   Field,
   Input,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
@@ -78,6 +77,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'shift-positions' | 'people' | 'custom-fields';
@@ -170,12 +170,13 @@ export function OrgHome() {
   }, [clients, pageClientId, setPageClientId]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Org structure"
         subtitle="Departments, cost centers, job profiles, and the people-to-org assignments that hold dimensional reporting and approval routing together."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Org' }]}
-      />
+    >
 
       {clientsError && (
         <ErrorBanner>
@@ -285,7 +286,7 @@ export function OrgHome() {
           <CustomFieldsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

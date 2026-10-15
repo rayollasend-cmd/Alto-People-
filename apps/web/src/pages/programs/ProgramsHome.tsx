@@ -49,10 +49,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 /**
@@ -102,8 +102,9 @@ export function ProgramsHome() {
   };
 
   return (
-    <div className="mx-auto space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto space-y-5"
         title="Programs"
         subtitle="J-1 and H-2B participants, their sponsors, the dates that fire alerts, and the season's transition calendar."
         secondaryActions={
@@ -111,7 +112,7 @@ export function ProgramsHome() {
             <Link to="/compliance?tab=j1">J-1 compliance tab</Link>
           </Button>
         }
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="participants">Participants</TabsTrigger>
@@ -132,7 +133,7 @@ export function ProgramsHome() {
           <SettingsTab canManage={canManage} />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

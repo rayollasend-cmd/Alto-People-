@@ -34,7 +34,6 @@ import {
   ErrorBanner,
   Input,
   MetricCard,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   Select,
@@ -45,6 +44,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
 
 // MATCHED is domain-only (not in the shared vocabulary): a matched entry is
@@ -209,12 +209,13 @@ export function VtoHome() {
       : null;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Volunteer time"
         subtitle="Log volunteer hours and request employer match. Approved hours roll into your annual cap."
         breadcrumbs={[{ label: 'Total rewards' }, { label: 'Volunteer' }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl<'mine' | 'queue'>
@@ -565,7 +566,7 @@ export function VtoHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

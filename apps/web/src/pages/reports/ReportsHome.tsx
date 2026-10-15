@@ -51,12 +51,12 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 const ENTITIES: ReportEntity[] = [
@@ -206,12 +206,13 @@ export function ReportsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Reports"
         subtitle="Build, save, and schedule reports across associates, time, payroll, applications, and candidates."
         breadcrumbs={[{ label: 'Insights' }, { label: 'Reports' }]}
-      />
+    >
       <div className="flex flex-wrap items-center gap-2">
         {rows !== null && rows.length > 0 && (
           <>
@@ -365,7 +366,7 @@ export function ReportsHome() {
           onClose={() => setRunning(null)}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

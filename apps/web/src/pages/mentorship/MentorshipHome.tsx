@@ -31,7 +31,6 @@ import {
   ErrorBanner,
   FilterBar,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
@@ -40,6 +39,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { downloadCsv } from '@/lib/csv';
 
 const STATUSES: MentorshipStatus[] = [
@@ -123,8 +123,9 @@ export function MentorshipHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Mentorship"
         subtitle="Pair experienced associates with juniors. Status tracks the lifecycle from proposal to completion."
         breadcrumbs={[{ label: 'Mentorship' }]}
@@ -151,7 +152,7 @@ export function MentorshipHome() {
             </Button>
           </>
         }
-      />
+    >
       <FilterBar>
         <Input
           placeholder="Search mentor or mentee…"
@@ -331,7 +332,7 @@ export function MentorshipHome() {
           }
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

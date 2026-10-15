@@ -4,9 +4,9 @@ import { Briefcase, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import { ApplicationsList } from './ApplicationsList';
 
 export function OnboardingHome() {
@@ -39,14 +39,17 @@ function AssociateRedirect() {
 
   if (error) {
     return (
-      <div className="mx-auto">
-        <PageHeader title="Onboarding" />
+      // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+      <ListTemplate
+          className="mx-auto"
+          title="Onboarding"
+      >
         <EmptyState
           icon={AlertCircle}
           title="Couldn't load onboarding"
           description={error}
         />
-      </div>
+      </ListTemplate>
     );
   }
 
@@ -71,14 +74,17 @@ function AssociateRedirect() {
 
   if (applicationId === null) {
     return (
-      <div className="mx-auto">
-        <PageHeader title="Onboarding" />
+      // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+      <ListTemplate
+          className="mx-auto"
+          title="Onboarding"
+      >
         <EmptyState
           icon={Briefcase}
           title="No active onboarding"
           description="Once HR creates an application for you, it'll show up here with a checklist of what to complete."
         />
-      </div>
+      </ListTemplate>
     );
   }
 

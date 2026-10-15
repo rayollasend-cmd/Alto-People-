@@ -26,7 +26,6 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -39,6 +38,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Input } from '@/components/ui/Input';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'categories' | 'values';
@@ -57,12 +57,13 @@ export function WorktagsHome() {
   const [tab, setTab] = useState<Tab>('categories');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Worktags"
         subtitle="Multi-dimensional categorical tags for spend tracking and reporting (Department, Project, GL Account, Region)."
         breadcrumbs={[{ label: 'Finance' }, { label: 'Worktags' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="categories">Categories</TabsTrigger>
@@ -75,7 +76,7 @@ export function WorktagsHome() {
           <ValuesTab canManage={canManage} />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

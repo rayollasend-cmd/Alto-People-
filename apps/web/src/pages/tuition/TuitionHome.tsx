@@ -37,7 +37,6 @@ import {
   ErrorBanner,
   Input,
   MetricCard,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   type SegmentedControlOption,
@@ -46,6 +45,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 const GRADE_OPTIONS = [
@@ -244,12 +244,13 @@ export function TuitionHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Tuition reimbursement"
         subtitle="Submit course expenses for reimbursement. After grades land, attach them to your request."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Tuition' }]}
-      />
+    >
 
       <div className="flex items-center justify-between">
         <SegmentedControl<'mine' | 'queue'>
@@ -488,7 +489,7 @@ export function TuitionHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

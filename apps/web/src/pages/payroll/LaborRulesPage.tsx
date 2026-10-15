@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getLaborRuleSite, getLaborShadowRun, listLaborRuleSites, listLaborShadowRuns, type LaborRuleSite, type LaborRuleSummary, type LaborShadowRun } from '@/lib/laborRulesApi';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
@@ -10,6 +9,7 @@ import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { fmtMoney } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { LaborOverridesSection } from './LaborOverridesSection';
 
 /**
@@ -105,12 +105,13 @@ export function LaborRulesPage() {
   const q = useQuery({ queryKey: ['labor-rules', 'sites', date], queryFn: () => listLaborRuleSites(date), enabled: /^\d{4}-\d{2}-\d{2}$/.test(date) });
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Labor rules"
         subtitle="The overtime, meal, rest, minors’ and minimum-wage rules in force at each site — federal, then the site’s state and city."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Labor rules' }]}
-      />
+    >
       <div className="flex flex-wrap items-end gap-3">
         <label className="text-sm text-silver">
           In force on
@@ -155,7 +156,7 @@ export function LaborRulesPage() {
       <LaborOverridesSection sites={q.data?.sites ?? []} />
       <LaborShadowSection />
       {open && <SiteDrawer id={open} date={date} onClose={() => setOpen(null)} />}
-    </div>
+    </ListTemplate>
   );
 }
 

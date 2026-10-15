@@ -40,12 +40,12 @@ import {
   FilterBar,
   FilterChip,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 
 const LEVEL_VARIANT: Record<SkillLevel, 'pending' | 'accent' | 'success' | 'destructive'> = {
   BEGINNER: 'pending',
@@ -91,8 +91,9 @@ export function CareerHome() {
   }, [ladders, search, familyFilter]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Career ladders"
         subtitle="Progression paths through your job family. See what level you're at, what skills the next rung needs."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Career' }]}
@@ -103,7 +104,7 @@ export function CareerHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       <FilterBar>
         {families.map((f) => (
@@ -220,7 +221,7 @@ export function CareerHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

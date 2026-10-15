@@ -9,13 +9,13 @@ import {
   Card,
   CardContent,
   ErrorBanner,
-  PageHeader,
   Skeleton,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { useSelection } from '@/lib/useSelection';
+import { ListTemplate } from '@/components/templates';
 import {
   emailW4Recollection,
   getW4Recollection,
@@ -69,11 +69,12 @@ export function W4SsnRecollection() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-6"
         title="W-4 SSN re-collection"
         subtitle="Each affected associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
-      />
+    >
 
       {query.error && (
         <ErrorBanner
@@ -269,7 +270,7 @@ export function W4SsnRecollection() {
           </CardContent>
         </Card>
       ) : null}
-    </div>
+    </ListTemplate>
   );
 }
 

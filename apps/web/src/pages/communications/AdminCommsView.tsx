@@ -44,13 +44,13 @@ import {
   ErrorBanner,
   Field,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
   type PickedAssociate,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 
 function statusVariant(
   s: Notification['status'],
@@ -263,8 +263,9 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
 
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Communications"
         subtitle={
           canManage
@@ -287,7 +288,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       <Card>
         <CardHeader className="pb-3">
@@ -421,7 +422,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
       >
         {drawerTarget && <NotificationDetailPanel n={drawerTarget} />}
       </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

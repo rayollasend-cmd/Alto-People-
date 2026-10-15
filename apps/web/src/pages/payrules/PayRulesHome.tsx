@@ -48,7 +48,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -59,6 +58,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'projects' | 'premium' | 'tips';
@@ -82,8 +82,9 @@ export function PayRulesHome() {
   }, [clients]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Pay rules"
         subtitle="Project codes, premium-pay differentials (OT, night, holiday), and tip pools."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Pay rules' }]}
@@ -97,7 +98,7 @@ export function PayRulesHome() {
             </Button>
           ) : undefined
         }
-      />
+    >
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <label
@@ -148,7 +149,7 @@ export function PayRulesHome() {
           {clientId && <TipsTab clientId={clientId} />}
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

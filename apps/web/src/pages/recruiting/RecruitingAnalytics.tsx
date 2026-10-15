@@ -30,7 +30,6 @@ import {
   Field,
   Input,
   MetricCard,
-  PageHeader,
   SegmentedControl,
   Select,
   Skeleton,
@@ -42,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { CANDIDATE_SOURCES, SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels';
 
 /**
@@ -330,8 +330,9 @@ export function RecruitingAnalytics() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-6xl space-y-4"
         title="Recruiting analytics"
         subtitle="How the pipeline converts, how fast roles fill, what each source costs, and who stays."
         breadcrumbs={[{ label: 'Recruiting', to: '/recruiting' }]}
@@ -343,7 +344,7 @@ export function RecruitingAnalytics() {
             </Link>
           </Button>
         }
-      />
+    >
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl options={PRESETS} value={preset} onChange={setPreset} ariaLabel="Date range" />
@@ -602,6 +603,6 @@ export function RecruitingAnalytics() {
           seenSources={(data?.sources ?? []).flatMap((s) => (s.source ? [s.source] : []))}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }

@@ -40,7 +40,6 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   SegmentedControl,
   Select,
   SkeletonRows,
@@ -51,6 +50,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 /**
@@ -88,12 +88,13 @@ export function PulseHome() {
   );
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Pulse"
         subtitle="One-question check-ins. Anonymous — only the score and comment are stored, never the responder."
         breadcrumbs={[{ label: 'Pulse' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="me">For me</TabsTrigger>
@@ -108,7 +109,7 @@ export function PulseHome() {
           </TabsContent>
         )}
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

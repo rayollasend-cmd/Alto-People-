@@ -74,7 +74,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -86,6 +85,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'garnishments' | 'taxforms';
@@ -96,8 +96,9 @@ export function PayrollTaxHome() {
   const [tab, setTab] = useState<Tab>('garnishments');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Tax forms & garnishments"
         subtitle="Garnishment orders and federal tax forms (941, 940, W-2, 1099-NEC, W-3)."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax forms' }]}
@@ -106,7 +107,7 @@ export function PayrollTaxHome() {
             <Link to="/payroll/config">Tax rate tables</Link>
           </Button>
         }
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="garnishments">
@@ -123,7 +124,7 @@ export function PayrollTaxHome() {
           <TaxFormsTab canManage={canManage} />
         </TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

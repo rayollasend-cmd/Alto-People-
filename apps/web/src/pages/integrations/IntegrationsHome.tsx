@@ -36,7 +36,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   Select,
   SkeletonRows,
@@ -49,6 +48,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'clients' | 'keys' | 'webhooks';
@@ -62,12 +62,13 @@ export function IntegrationsHome() {
   const [tab, setTab] = useState<Tab>('clients');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Integrations"
         subtitle="OAuth clients for the public API, legacy API keys, and outbound webhooks for event delivery."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="clients">
@@ -84,7 +85,7 @@ export function IntegrationsHome() {
         <TabsContent value="keys"><KeysTab canManage={canManage} /></TabsContent>
         <TabsContent value="webhooks"><WebhooksTab canManage={canManage} /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

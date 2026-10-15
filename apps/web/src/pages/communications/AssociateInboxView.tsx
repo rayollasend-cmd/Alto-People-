@@ -14,9 +14,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SearchInput } from '@/components/ui/FilterBar';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import { ArrowUpRight, CheckCheck, ChevronRight, Inbox, Megaphone } from 'lucide-react';
 
 /**
@@ -164,9 +164,11 @@ export function AssociateInboxView() {
   }, [items, unreadOnly, q]);
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="mx-auto"
         title={
           <>
             {t('inbox.title')}{' '}
@@ -178,7 +180,7 @@ export function AssociateInboxView() {
           </>
         }
         subtitle={t('inbox.subtitle')}
-      />
+      >
 
       {error && (
         <ErrorBanner
@@ -341,6 +343,7 @@ export function AssociateInboxView() {
           })}
         </div>
       )}
-    </div>
+      </ListTemplate>
+    </>
   );
 }

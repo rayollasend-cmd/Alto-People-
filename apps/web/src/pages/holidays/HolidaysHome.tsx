@@ -32,12 +32,12 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 
 const TYPE_VARIANT: Record<
   HolidayType,
@@ -253,12 +253,13 @@ export function HolidaysHome() {
   }, [rows]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Holiday calendar"
         subtitle="Federal, state, company, and client-specific holidays. Pay multipliers and shift planning use this list."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Holidays' }]}
-      />
+    >
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -483,7 +484,7 @@ export function HolidaysHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

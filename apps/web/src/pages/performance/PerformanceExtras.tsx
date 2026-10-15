@@ -59,7 +59,6 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
@@ -71,6 +70,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360' | 'timeline';
@@ -200,12 +200,13 @@ export function PerformanceExtras() {
   const [tab, setTab] = useState<Tab>('goals');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Performance"
         subtitle="Goals & OKRs, 1:1 meetings, kudos, performance improvement plans, and 360 reviews."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Performance' }]}
-      />
+    >
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
@@ -223,7 +224,7 @@ export function PerformanceExtras() {
         <TabsContent value="reviews360"><Reviews360Tab canManage={canManage} /></TabsContent>
         <TabsContent value="timeline"><TimelineTab /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

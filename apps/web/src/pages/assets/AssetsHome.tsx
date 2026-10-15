@@ -33,13 +33,13 @@ import {
   DrawerTitle,
   EmptyState,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
 
 const KIND_OPTIONS: AssetKind[] = [
@@ -136,12 +136,13 @@ export function AssetsHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Assets"
         subtitle="Laptops, phones, badges, keys, and other physical items assigned to associates."
         breadcrumbs={[{ label: 'Assets' }]}
-      />
+    >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">
           Showing {visible.length} of {rows?.length ?? 0} asset
@@ -406,7 +407,7 @@ export function AssetsHome() {
           }
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

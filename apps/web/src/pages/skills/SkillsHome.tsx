@@ -28,7 +28,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
   Tabs,
@@ -38,6 +37,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { ymdLocal } from '@/lib/format';
 
 const LEVELS: SkillLevel[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'];
@@ -61,12 +61,13 @@ export function SkillsHome() {
   const [tab, setTab] = useState<'search' | 'catalog'>('search');
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Skills"
         subtitle="Find people by what they know — or browse the catalog and add new competencies."
         breadcrumbs={[{ label: 'Skills' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'catalog')}>
         <TabsList>
           <TabsTrigger value="search">
@@ -79,7 +80,7 @@ export function SkillsHome() {
         <TabsContent value="search"><SearchTab canManage={canManage} /></TabsContent>
         <TabsContent value="catalog"><CatalogTab canManage={canManage} /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 

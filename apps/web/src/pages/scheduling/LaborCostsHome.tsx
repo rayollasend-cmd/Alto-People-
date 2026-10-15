@@ -58,8 +58,8 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { ymd } from './calendarDates';
 // Despite the legacy name, this is the ORG workweek start (Saturday).
 import { startOfWeekMonday } from './WeekCalendarView';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import {
   Button,
   Card,
@@ -2028,11 +2028,11 @@ export function LaborCostsHome() {
   const noRateTotal = grand.scheduledNoRate + grand.workedNoRate;
 
   return (
-    <div>
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
         title="Labor costs"
         subtitle="Scheduled vs worked labor spend, per client and store, day by day"
-      />
+    >
 
       {/* Live operations — deliberately ABOVE the filter row: both cards
           are "right now / this week", not scoped by the date range below.
@@ -2382,6 +2382,6 @@ export function LaborCostsHome() {
           </div>
         </div>
       )}
-    </div>
+    </ListTemplate>
   );
 }

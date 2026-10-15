@@ -18,10 +18,10 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SkeletonRows,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 
 /**
@@ -53,12 +53,13 @@ export function MyDiscipline() {
         );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto max-w-2xl"
         title={t('record.title')}
         subtitle={t('record.subtitle')}
         breadcrumbs={[{ label: t('record.title') }]}
-      />
+    >
       {loadError && (
         <ErrorBanner
           action={
@@ -97,7 +98,7 @@ export function MyDiscipline() {
           {t('record.back')}
         </Link>
       </div>
-    </div>
+    </ListTemplate>
   );
 }
 

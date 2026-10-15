@@ -30,7 +30,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -40,6 +39,7 @@ import { fmtDateTime } from '@/lib/format';
 const AuditIntegrity = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditIntegrity })));
 
 import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
+import { ListTemplate } from '@/components/templates';
 
 const PAGE_SIZE = 100;
 
@@ -173,8 +173,9 @@ export function AuditHome() {
   const csvHref = useMemo(() => auditCsvUrl(appliedFilters), [appliedFilters]);
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Audit log"
         subtitle="Every authentication, onboarding, payroll, scheduling, and document event in one searchable feed. Used for SOC 2, compliance reviews, and incident forensics."
         primaryAction={
@@ -185,7 +186,7 @@ export function AuditHome() {
             </a>
           </Button>
         }
-      />
+    >
 
       <Suspense fallback={null}>
         <AuditIntegrity />
@@ -556,7 +557,7 @@ export function AuditHome() {
           </>
         )}
       </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

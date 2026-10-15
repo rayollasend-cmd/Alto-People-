@@ -28,9 +28,9 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { toast } from '@/components/ui/Toaster';
 
 /**
@@ -96,8 +96,9 @@ export function FinancialChangesQueue() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ['FinancialChangesQueue'] });
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Financial changes"
         subtitle="Every bank, pay card, W-4, name, SSN and address change, the moment it is made. A new pay account is not paid until Finance verifies it by phone."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Financial changes' }]}
@@ -107,7 +108,7 @@ export function FinancialChangesQueue() {
             <Badge variant={counts.pending > 0 ? 'pending' : 'default'}>{counts.pending} pending</Badge>
           </div>
         }
-      />
+    >
 
       {error && (
         <Card>
@@ -232,7 +233,7 @@ export function FinancialChangesQueue() {
       </Card>
 
       <ChangeDialog change={selected} onClose={close} onChanged={refresh} />
-    </div>
+    </ListTemplate>
   );
 }
 

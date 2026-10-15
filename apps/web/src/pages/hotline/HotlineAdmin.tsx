@@ -25,7 +25,6 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   Select,
   SkeletonRows,
   Textarea,
@@ -37,6 +36,7 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import { statusTone } from '@/lib/status';
 
 const CATEGORY_LABELS: Record<ReportCategory, string> = {
@@ -147,12 +147,13 @@ export function HotlineAdmin() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Hotline queue"
         subtitle="Anonymous reports filed via the public reporting page. Reporters see only your visible replies — internal notes stay HR-only."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Hotline' }]}
-      />
+    >
 
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -326,7 +327,7 @@ export function HotlineAdmin() {
           onClose={() => setOpenId(null)}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

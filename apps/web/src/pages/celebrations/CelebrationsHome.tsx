@@ -22,13 +22,13 @@ import {
   EmptyState,
   ErrorBanner,
   FilterBar,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { fmtDate, parseYmd } from '@/lib/format';
 
 const WINDOW_OPTIONS = [30, 60, 90] as const;
@@ -71,12 +71,13 @@ export function CelebrationsHome() {
   const buckets = filtered ? bucketize(filtered) : null;
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Celebrations"
         subtitle="Upcoming birthdays and work anniversaries across the team."
         breadcrumbs={[{ label: 'Celebrations' }]}
-      />
+    >
       <FilterBar>
         <SegmentedControl<number>
           ariaLabel="Look-ahead window"
@@ -209,7 +210,7 @@ export function CelebrationsHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

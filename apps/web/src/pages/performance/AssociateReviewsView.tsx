@@ -9,9 +9,9 @@ import { fmtDate, parseYmd } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 
 function ratingStars(n: number): string {
@@ -58,11 +58,12 @@ export function AssociateReviewsView() {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title={t('reviews.title')}
         subtitle={t('reviews.subtitle')}
-      />
+    >
 
       {error && (
         <ErrorBanner
@@ -143,7 +144,7 @@ export function AssociateReviewsView() {
           ))}
         </ul>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

@@ -8,10 +8,10 @@ import { getActiveTimeEntry } from '@/lib/timeApi';
 import { Button } from '@/components/ui/Button';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { AssociateTimeView } from './AssociateTimeView';
 import { AdminTimeView } from './AdminTimeView';
 import { MyTimesheet } from './MyTimesheet';
+import { ListTemplate } from '@/components/templates';
 import { MyWeekHours } from './MyWeekHours';
 
 export function TimeHome() {
@@ -136,12 +136,13 @@ function AssociateKioskOnlyView({
 }: { title?: string; body?: string; headerActions?: ReactNode } = {}) {
   const { t } = useI18n();
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title={title ?? t('time.title')}
         subtitle={t('time.subtitle')}
         secondaryActions={headerActions}
-      />
+    >
       {/* The week first: worked against scheduled, and the 40h line. */}
       <MyWeekHours />
       {/* Compact kiosk note — the "how punches happen" explainer stays,
@@ -162,6 +163,6 @@ function AssociateKioskOnlyView({
           hours, and review status — the page the dashboard's
           "My timesheet" quick link promises. */}
       <MyTimesheet />
-    </div>
+    </ListTemplate>
   );
 }

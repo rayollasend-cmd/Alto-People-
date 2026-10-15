@@ -32,7 +32,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SegmentedControl,
   Skeleton,
   SkeletonRows,
@@ -40,6 +39,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
 
 // Deliberate departures from the shared vocabulary (visible per the status
@@ -80,12 +80,13 @@ export function ProbationHome() {
   const refresh = () => void Promise.all([refreshQuery.refetch(), refresh2Query.refetch()]);
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Probation"
         subtitle="Track new-hire probation periods. Pass, extend, or fail before the end date."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Probation' }]}
-      />
+    >
 
       {/* Reserve the strip while loading (it used to pop in and shove the
           page down); on failure say so quietly instead of vanishing —
@@ -302,7 +303,7 @@ export function ProbationHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

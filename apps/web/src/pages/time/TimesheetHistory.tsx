@@ -14,12 +14,12 @@ import {
   Button,
   Card,
   EmptyState,
-  PageHeader,
   SegmentedControl,
   Skeleton,
   Textarea,
 } from '@/components/ui';
 import { CopyValue } from './FieldglassDesk';
+import { ListTemplate } from '@/components/templates';
 
 /**
  * An associate's whole timesheet, across pay periods — the page behind
@@ -158,21 +158,25 @@ export function TimesheetHistory() {
   }
   if (!h) {
     return (
-      <div className="space-y-4">
-        <PageHeader title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]} />
+      // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+      <ListTemplate
+          className="space-y-4"
+          title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
+      >
         <EmptyState
           title="Couldn’t load this timesheet"
           description={q.error instanceof ApiError ? q.error.message : 'They may not work at a client you can see.'}
         />
-      </div>
+      </ListTemplate>
     );
   }
 
   const a = h.associate;
   const allWeeks = h.periods.flatMap((p) => p.weeks);
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={a.name}
         subtitle="Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass."
         breadcrumbs={[{ label: 'Fieldglass timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
@@ -182,7 +186,7 @@ export function TimesheetHistory() {
             Export CSV
           </Button>
         }
-      />
+    >
 
       <Identity h={h} />
       <Totals h={h} />
@@ -241,7 +245,7 @@ export function TimesheetHistory() {
           )}
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

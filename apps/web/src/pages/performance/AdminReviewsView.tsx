@@ -16,6 +16,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { ListTemplate } from '@/components/templates';
 import {
   AssociatePicker,
   type PickedAssociate,
@@ -42,7 +43,6 @@ import {
   FilterChip,
   Field,
   Input,
-  PageHeader,
   SearchInput,
   SkeletonRows,
   Textarea,
@@ -195,8 +195,9 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="Performance"
         subtitle={
           canManage
@@ -216,7 +217,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
             </Button>
           ) : undefined
         }
-      />
+    >
 
       <div className="flex flex-wrap gap-2 mb-3">
         {STATUS_FILTERS.map((f) => (
@@ -411,7 +412,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
           />
         )}
       </Drawer>
-    </div>
+    </ListTemplate>
   );
 }
 

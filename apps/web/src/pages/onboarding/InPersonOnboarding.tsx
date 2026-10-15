@@ -49,13 +49,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { DocumentCapture } from '@/components/DocumentCapture';
 import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 import { cn } from '@/lib/cn';
+import { ListTemplate } from '@/components/templates';
 import { isImagePick } from '@/lib/loadImageFile';
 
 /**
@@ -236,16 +236,17 @@ export function InPersonOnboarding() {
 
   if (error) {
     return (
-      <div className="mx-auto">
-        <PageHeader
+      // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+      <ListTemplate
+          className="mx-auto"
           title="In-person onboarding"
           breadcrumbs={[
             { label: 'Onboarding', to: '/onboarding' },
             { label: 'In-person session' },
           ]}
-        />
+      >
         <ErrorBanner>{error}</ErrorBanner>
-      </div>
+      </ListTemplate>
     );
   }
 
@@ -277,8 +278,9 @@ export function InPersonOnboarding() {
     detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title="In-person onboarding"
         subtitle={
           <>
@@ -302,7 +304,7 @@ export function InPersonOnboarding() {
             </Link>
           </Button>
         }
-      />
+    >
 
       <div className="space-y-5">
         {/* Status + progress strip */}
@@ -586,7 +588,7 @@ export function InPersonOnboarding() {
           }
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 

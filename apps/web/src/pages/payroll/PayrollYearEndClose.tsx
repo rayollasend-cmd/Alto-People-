@@ -7,10 +7,10 @@ import {
   type YearEndCloseResponse,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ListTemplate } from '@/components/templates';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 
 export function PayrollYearEndClose() {
@@ -27,8 +27,9 @@ export function PayrollYearEndClose() {
   const allReady = data?.readyToClose ?? false;
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title={`Year-end close — ${year}`}
         subtitle="Single checklist that confirms the tax year is fully wrapped: runs disbursed, forms generated, forms filed, recipient copies sent."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Year-end close' }]}
@@ -43,7 +44,7 @@ export function PayrollYearEndClose() {
             aria-label="Tax year"
           />
         }
-      />
+    >
 
       {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
 
@@ -132,6 +133,6 @@ export function PayrollYearEndClose() {
           </ul>
         </>
       )}
-    </div>
+    </ListTemplate>
   );
 }

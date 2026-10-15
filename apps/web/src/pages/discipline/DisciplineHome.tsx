@@ -36,13 +36,13 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
-  PageHeader,
   SearchInput,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
 const KIND_VARIANT: Record<
@@ -136,12 +136,13 @@ export function DisciplineHome() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Disciplinary actions"
         subtitle="Formal warning ladder. Verbal → written → final → suspension → termination."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Discipline' }]}
-      />
+    >
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1">
@@ -331,7 +332,7 @@ export function DisciplineHome() {
           }}
         />
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

@@ -43,7 +43,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   SearchInput,
   SegmentedControl,
   Select,
@@ -57,6 +56,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
+import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'courses' | 'enrollments' | 'expiring';
@@ -75,12 +75,13 @@ export function LearningHome() {
   }
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Learning"
         subtitle="Courses, certifications, and expiration tracking."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Learning' }]}
-      />
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="courses">
@@ -97,7 +98,7 @@ export function LearningHome() {
         <TabsContent value="enrollments"><EnrollmentsTab canManage={canManage} /></TabsContent>
         <TabsContent value="expiring"><ExpiringTab /></TabsContent>
       </Tabs>
-    </div>
+    </ListTemplate>
   );
 }
 
@@ -126,12 +127,13 @@ function MyTraining() {
   );
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title={t('lrn.myTitle')}
         subtitle={t('lrn.mySubtitle')}
         breadcrumbs={[{ label: t('lrn.crumb') }]}
-      />
+    >
       {error && (
         <ErrorBanner
           action={
@@ -217,7 +219,7 @@ function MyTraining() {
           </ul>
         </section>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

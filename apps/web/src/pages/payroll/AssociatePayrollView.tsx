@@ -31,7 +31,6 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { dayHeading, groupByDayBy, isRelativeDayHeading } from '@/lib/dayGroup';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -47,6 +46,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ListTemplate } from '@/components/templates';
 import {
   CalendarCheck,
   ChevronDown,
@@ -133,12 +133,14 @@ export function AssociatePayrollView() {
   const pullState = usePullToRefresh(() => payQuery.refetch());
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
+      <ListTemplate
+        className="mx-auto"
         title={t('pay.title')}
         subtitle={t('pay.subtitle')}
-      />
+      >
 
       <NextPaydayCard />
 
@@ -204,7 +206,8 @@ export function AssociatePayrollView() {
       })()}
 
       <AskPaycheckDialog item={askItem} onClose={() => setAskItem(null)} />
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

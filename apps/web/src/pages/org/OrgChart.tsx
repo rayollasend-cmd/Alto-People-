@@ -6,13 +6,13 @@ import { listOrgAssociates } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
+import { ListTemplate } from '@/components/templates';
 import {
   Button,
   Card,
   CardContent,
   EmptyState,
   ErrorBanner,
-  PageHeader,
   SearchInput,
   SkeletonRows,
 } from '@/components/ui';
@@ -125,8 +125,9 @@ export function OrgChart() {
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="space-y-5"
         title="Org chart"
         subtitle="Reporting hierarchy across the company. Search to focus on a person or team."
         breadcrumbs={[{ label: 'Org' }, { label: 'Chart' }]}
@@ -141,7 +142,7 @@ export function OrgChart() {
             Export CSV
           </Button>
         }
-      />
+    >
       <div className="flex items-end gap-2 flex-wrap">
         <div className="max-w-sm flex-1 min-w-[220px]">
           <SearchInput
@@ -216,7 +217,7 @@ export function OrgChart() {
         </CardContent>
       </Card>
       )}
-    </div>
+    </ListTemplate>
   );
 }
 

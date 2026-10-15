@@ -31,7 +31,6 @@ import { statusTone } from '@/lib/status';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -40,6 +39,7 @@ import { ShiftTimeline } from './ShiftTimeline';
 import { AttendanceCard } from './AttendanceCard';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
+import { ListTemplate } from '@/components/templates';
 import { workweekStart } from '@/lib/workweek';
 
 // Domain wording only — COMPLETED reads "Pending" to the associate because a
@@ -333,12 +333,13 @@ export function AssociateTimeView({
   }
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    <ListTemplate
+        className="mx-auto"
         title={headerActions ? 'My time' : 'Time & attendance'}
         subtitle="Clock in when you start. Clock out when you stop."
         secondaryActions={headerActions}
-      />
+    >
 
       {overtimeNudge && (
         <div
@@ -624,6 +625,6 @@ export function AssociateTimeView({
       <section className="mt-6">
         <AttendanceCard />
       </section>
-    </div>
+    </ListTemplate>
   );
 }
