@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -11,7 +12,7 @@ import {
   type WorkerType,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate } from '@/lib/format';
 import { listAdminUsers } from '@/lib/usersAdminApi';
@@ -44,8 +45,8 @@ import {
 } from '@/components/ui/Dialog';
 
 /**
- * Worker types (Brief 1D-1) — people, AI agents and robots in one
- * registry. Every worker has an owner (a user who answers for it), a
+ * The workforce roster (Brief 1D-1; UX upgrade step 5) — people, AI agents
+ * and robots in one list, each row opening its record. Every worker has an owner (a user who answers for it), a
  * status and a capability list. People are mirrored from the associate
  * record by the server's sweep; agents and robots are added here.
  */
@@ -92,6 +93,7 @@ function otherStatusesHint(counts: Record<WorkerStatus, number> | undefined): st
 
 export function WorkerTypesAdmin() {
   const { can } = useAuth();
+  const tenant = useTenant();
   const canManage = can('manage:org');
   const qc = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
@@ -139,14 +141,25 @@ export function WorkerTypesAdmin() {
         primary: true,
         sortable: true,
         searchable: true,
-        cell: (w) => (
-          <span className="inline-flex items-center gap-2">
-            <span className="font-medium text-white">{w.name}</span>
-            <Badge variant={TYPE_VARIANT[w.type]} size="sm">
-              {WORKER_TYPE_LABELS[w.type]}
-            </Badge>
-          </span>
-        ),
+        // The row opens the record behind it: a person in People, an agent in
+        // Agents (UX upgrade step 5: one roster, the records where they live).
+        cell: (w) => {
+          const to = w.type === 'PERSON' && w.associateId ? `/people?associateId=${w.associateId}` : w.type === 'AGENT' ? `/agents?agent=${w.id}` : null;
+          return (
+            <span className="inline-flex items-center gap-2">
+              {to ? (
+                <Link to={to} className="font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
+                  {w.name}
+                </Link>
+              ) : (
+                <span className="font-medium text-ink">{w.name}</span>
+              )}
+              <Badge variant={TYPE_VARIANT[w.type]} size="sm">
+                {WORKER_TYPE_LABELS[w.type]}
+              </Badge>
+            </span>
+          );
+        },
         csv: (w) => `${w.name} (${WORKER_TYPE_LABELS[w.type]})`,
       },
       {
@@ -220,7 +233,7 @@ export function WorkerTypesAdmin() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Worker types"
+        title="Workforce roster"
         subtitle="People, AI agents and robots in one registry. Every worker has an owner who answers for it, a status and a list of what it can do."
         primaryAction={
           canManage ? (
@@ -277,7 +290,7 @@ export function WorkerTypesAdmin() {
         defaultSort={{ key: 'name', direction: 'asc' }}
         filters={
           <div className="flex flex-wrap items-center gap-3">
-            <SegmentedControl ariaLabel="Worker type" options={TYPE_OPTIONS} value={typeFilter} onChange={setTypeFilter} />
+            <SegmentedControl ariaLabel="Worker type" options={tenant.modules.robotics ? TYPE_OPTIONS : TYPE_OPTIONS.filter((o) => o.value !== 'ROBOT')} value={typeFilter} onChange={setTypeFilter} />
             <label className="flex items-center gap-2 text-sm text-silver">
               <span className="sr-only">Status</span>
               <Select size="sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as '' | WorkerStatus)} aria-label="Status">

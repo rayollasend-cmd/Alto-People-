@@ -51,7 +51,7 @@ export function SettingsArea() {
       { key: 'compliance-evidence', label: 'Security & compliance', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', show: can('view:org') },
       { key: 'trust', label: 'Trust Center', to: '/trust', icon: ShieldCheck, section: 'Access & trust', show: can('manage:org') || can('view:executive') || can('view:audit') },
       { key: 'agents', label: 'Agents & gates', to: '/agents', icon: Bot, section: 'Access & trust', show: can('view:org') },
-      { key: 'workers', label: 'Worker types', to: '/workers', icon: Workflow, section: 'Access & trust', show: can('view:org') && tenant.modules.robotics },
+      { key: 'workers', label: 'Workforce roster', to: '/workers', icon: Workflow, section: 'Access & trust', show: can('view:org') },
       // Platform
       { key: 'billing', label: 'Billing', to: '/admin/billing', icon: CreditCard, section: 'Platform', show: can('manage:org') || can('process:payroll') },
       { key: 'integrations', label: 'Integrations', to: '/integrations', icon: Plug, section: 'Platform', show: can('view:integrations') },

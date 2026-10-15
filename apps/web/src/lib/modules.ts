@@ -421,7 +421,6 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   regions: 'clientPortal',
   clients: 'clientPortal',
   dircomms: 'clientPortal',
-  workers: 'robotics',
 };
 
 /** The roles that exist only with a module on (shared: the API refuses them too). */
@@ -715,9 +714,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'workers',
     path: '/workers',
-    label: 'Worker types',
+    label: 'Workforce roster',
     description:
-      'People, AI agents and robots in one registry: who owns each worker, what it can do, and where it is in its lifecycle.',
+      'People, AI agents and robots in one roster: who owns each worker, what it can do, where it is in its lifecycle, and the record behind it.',
     requires: 'view:org',
     group: 'workforce-management',
   },

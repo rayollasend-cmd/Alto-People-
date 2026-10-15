@@ -80,16 +80,21 @@ export function AuditIntegrity() {
             : 'Every new row is chained to the one before it. The first check runs with tonight’s controls.'}
         </p>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Keep rows for (years)" hint={`Then they move to the encrypted archive. Never under ${d.minRetentionYears}; nothing is deleted.`}>
-            {(p) => <Input {...p} type="number" min={d.minRetentionYears} max={50} className="w-28" value={years || String(d.retentionYears)} onChange={(e) => setYears(e.target.value)} disabled={!canManage} />}
-          </Field>
-          {canManage && years && Number(years) !== d.retentionYears && (
-            <Button size="sm" onClick={() => void run(() => apiFetch('/audit/integrity/retention', { method: 'PUT', body: { years: Number(years) } }), 'Saved.').then(() => setYears(''))}>
-              Save
-            </Button>
-          )}
-          <span className="pb-2 text-xs text-silver">{d.archives.length ? `${d.archives.reduce((a, x) => a + x.rows, 0)} rows archived in ${d.archives.length} file${d.archives.length === 1 ? '' : 's'}.` : 'Nothing archived yet.'}</span>
+        <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)] md:items-start">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Keep rows for (years)" hint={`Then they move to the encrypted archive. Never under ${d.minRetentionYears}; nothing is deleted.`}>
+              {(p) => <Input {...p} type="number" min={d.minRetentionYears} max={50} className="w-28" value={years || String(d.retentionYears)} onChange={(e) => setYears(e.target.value)} disabled={!canManage} />}
+            </Field>
+            {canManage && years && Number(years) !== d.retentionYears && (
+              <Button size="sm" className="mb-6" onClick={() => void run(() => apiFetch('/audit/integrity/retention', { method: 'PUT', body: { years: Number(years) } }), 'Saved.').then(() => setYears(''))}>
+                Save
+              </Button>
+            )}
+          </div>
+          <div className="text-sm text-ink-muted md:pt-7">
+            <span className="text-2xs uppercase tracking-[0.18em]">Archive</span>
+            <div className="mt-1 text-ink">{d.archives.length ? `${d.archives.reduce((a, x) => a + x.rows, 0)} rows archived in ${d.archives.length} file${d.archives.length === 1 ? '' : 's'}.` : 'Nothing archived yet.'}</div>
+          </div>
         </div>
 
         <div className="space-y-2 border-t border-navy-secondary/60 pt-3">
