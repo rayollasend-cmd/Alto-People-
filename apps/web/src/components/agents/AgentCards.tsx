@@ -77,17 +77,17 @@ function AgentCard({ agent: a }: { agent: AgentSummary }) {
 
       <dl className="mt-auto grid grid-cols-3 gap-2 border-t border-line pt-3 text-xs">
         <div>
-          <dt className="text-ink-subtle">Tasks · 7d</dt>
+          <dt className="text-ink-muted">Tasks · 7d</dt>
           <dd className="mt-0.5 text-base font-semibold tabular-nums text-ink">{s ? s.tasksCompleted : '—'}</dd>
         </div>
         <div>
-          <dt className="text-ink-subtle">Errors</dt>
+          <dt className="text-ink-muted">Errors</dt>
           <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', over ? 'text-caution' : 'text-ink')}>
             {s && s.errorRatePct !== null ? fmtPercent(s.errorRatePct, { decimals: 0 }) : '—'}
           </dd>
         </div>
         <div>
-          <dt className="text-ink-subtle">Spend · month</dt>
+          <dt className="text-ink-muted">Spend · month</dt>
           <dd className="mt-0.5 text-base font-semibold tabular-nums text-ink">{fmtMoney(a.spendThisMonthCents / 100)}</dd>
         </div>
       </dl>
