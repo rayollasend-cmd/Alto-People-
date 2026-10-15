@@ -66,10 +66,13 @@ async function prepare(): Promise<Context> {
   for (let i = 0; i < ASSOCIATE_SESSIONS; i++) {
     associateCookies.push(await login(SCALE_EMAIL(i), SCALE_ASSOCIATE_PASSWORD));
   }
-  // The message burst needs a conversation: admin ↔ the first scale associate.
-  const me = await jsonWith(associateCookies[0]!, 'GET', '/auth/me');
-  const userId = (me.json as { user?: { id?: string } } | null)?.user?.id ?? (me.json as { id?: string } | null)?.id;
-  if (!userId) throw new Error('could not read the first associate user id from /auth/me');
+  // The message burst needs a conversation. An associate is never in the
+  // messenger (lib/messaging.ts), so the admin writes to the first person the
+  // directory says they may message: a supervisor or a desk.
+  const dir = await jsonWith(adminCookie, 'GET', '/messages/directory');
+  const people = ((dir.json as { people?: Array<{ id?: string }> } | null)?.people ?? []).filter((x) => x && x.id);
+  const userId = people[0]?.id;
+  if (!userId) throw new Error(`the admin has nobody to message: ${dir.status} ${JSON.stringify(dir.json).slice(0, 200)}`);
   const conv = await jsonWith(adminCookie, 'POST', '/messages/conversations', { participantIds: [userId], body: 'Load test opens the channel.' });
   const conversationId = (conv.json as { conversation?: { id?: string }; id?: string } | null)?.conversation?.id ?? (conv.json as { id?: string } | null)?.id;
   if (!conversationId) throw new Error(`could not start a conversation: ${conv.status} ${JSON.stringify(conv.json).slice(0, 200)}`);

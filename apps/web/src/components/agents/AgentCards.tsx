@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { capabilityDef, WORKER_STATUS_LABELS, type AgentSummary } from '@alto-people/shared';
+import { capabilityDef, WORKER_CAPABILITIES, WORKER_STATUS_LABELS, type AgentSummary } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { fmtMoney, fmtPercent, fmtRelativeDate } from '@/lib/format';
@@ -13,6 +13,9 @@ import { familyLabel, STATUS_VARIANT } from '@/pages/admin/AgentRegistryAdmin';
  * stays one toggle away for a registry with dozens of agents; the cards
  * are how a buyer meets five.
  */
+// Worker-level capabilities (deploy, report-read) carry their roster label; catalog ones their catalog name.
+const WORKER_CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => [c.code, c.label]));
+
 export function AgentCards({ agents, className }: { agents: AgentSummary[]; className?: string }) {
   return (
     <ul className={cn('grid gap-[var(--d-stack)] sm:grid-cols-2 xl:grid-cols-3', className)} aria-label="Agents">
@@ -26,7 +29,7 @@ export function AgentCards({ agents, className }: { agents: AgentSummary[]; clas
 }
 
 function AgentCard({ agent: a }: { agent: AgentSummary }) {
-  const caps = a.capabilities.map((c) => capabilityDef(c)?.label ?? c);
+  const caps = a.capabilities.map((c) => capabilityDef(c)?.label ?? WORKER_CAP_LABEL.get(c) ?? c);
   const s = a.scorecard;
   const over =
     s?.errorRatePct !== null &&

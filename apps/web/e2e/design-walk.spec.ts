@@ -75,7 +75,8 @@ async function adminTabs(page: Page, form: 'desktop' | 'phone', theme: 'dark' | 
   try {
     await page.goto('/agents', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
-    await page.getByText(/^Workforce( agent)?$/i).first().click({ timeout: 5000 });
+    // The agents are cards; the Workforce agent's card opens its record page.
+    await page.getByRole('link', { name: /^Open Workforce agent/i }).first().click({ timeout: 5000 });
     await page.waitForTimeout(2000);
     await shoot(page, `admin/${form}-${theme}-agents-record`, form === 'phone');
     await page.getByRole('tab', { name: /compliance record/i }).click({ timeout: 5000 });
