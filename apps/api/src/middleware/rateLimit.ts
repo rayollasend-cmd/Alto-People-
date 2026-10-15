@@ -475,7 +475,10 @@ export const integrationsAnonLimiter = rateLimit({
 // with its own limiter or the static SPA assets, where a per-IP cap
 // would punish shared-IP offices.
 // ---------------------------------------------------------------------------
-const DEFAULT_API_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 600;
+// DEFAULT_API_LIMIT exists for the load-test stack, where one runner plays
+// thousands of people per minute; production never sets it.
+const DEFAULT_API_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : Number(process.env.DEFAULT_API_LIMIT) || 600;
 
 /** 600 requests / minute / authenticated user across the whole API. */
 export const defaultApiLimiter = rateLimit({

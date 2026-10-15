@@ -89,9 +89,9 @@ function resolvePath(s: Scenario, n: number, ctx: Context): string {
   return p.replace('{conversation}', ctx.conversationId);
 }
 
-function resolveBody(s: Scenario, n: number): unknown {
+function resolveBody(s: Scenario, n: number, worker: number): unknown {
   if (s.key === 'login') return { email: SCALE_EMAIL(n % SCALE_USERS), password: SCALE_ASSOCIATE_PASSWORD };
-  return typeof s.body === 'function' ? (s.body as (n: number) => unknown)(n) : s.body;
+  return typeof s.body === 'function' ? (s.body as (n: number, worker: number) => unknown)(n, worker) : s.body;
 }
 
 async function runScenario(s: Scenario, ctx: Context): Promise<ScenarioResult> {
@@ -101,11 +101,11 @@ async function runScenario(s: Scenario, ctx: Context): Promise<ScenarioResult> {
   let n = 0;
   const ok = new Set(s.okStatuses ?? [200, 201, 204]);
   const deadline = performance.now() + s.durationSeconds * 1000;
-  const worker = async () => {
+  const worker = async (w: number) => {
     while (performance.now() < deadline) {
       const i = n++;
       const cookie = s.auth === 'admin' ? ctx.adminCookie : s.auth === 'associate' ? ctx.associateCookies[i % ctx.associateCookies.length]! : '';
-      const body = s.method === 'POST' ? resolveBody(s, i) : undefined;
+      const body = s.method === 'POST' ? resolveBody(s, i, w) : undefined;
       const t0 = performance.now();
       let status = 0;
       try {
@@ -121,12 +121,14 @@ async function runScenario(s: Scenario, ctx: Context): Promise<ScenarioResult> {
       }
       const ms = Math.round(performance.now() - t0);
       latencies.push(ms);
+      const pace = s.paceMs ?? 0;
+      if (pace > ms) await new Promise((resolve) => setTimeout(resolve, pace - ms));
       statuses[String(status)] = (statuses[String(status)] ?? 0) + 1;
       if (!ok.has(status)) failed++;
     }
   };
   const t0 = performance.now();
-  await Promise.all(Array.from({ length: s.connections }, () => worker()));
+  await Promise.all(Array.from({ length: s.connections }, (_, w) => worker(w)));
   const seconds = (performance.now() - t0) / 1000;
   const result = summarize(s, latencies, statuses, failed, seconds);
   console.log(`[load] ${s.title}: ${result.requests} req, ${result.rps} rps, p50 ${result.p50} ms, p95 ${result.p95} ms, p99 ${result.p99} ms, failed ${result.failed} → ${result.pass ? 'pass' : 'FAIL'}`);

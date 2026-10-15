@@ -47,6 +47,10 @@ jobs:
       RESEND_FROM: ''
       LOAD_WORKERS: ${{ github.event.inputs.workers || '50000' }}
       LOAD_SITES: ${{ github.event.inputs.sites || '1000' }}
+      # Production boot refuses to fall back to PAYOUT_ENCRYPTION_KEY for these two; throwaway values, this runner only.
+      # Job-level so the scale seed signs kiosk PINs with the secret the API verifies them with.
+      MFA_SECRET_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+      KIOSK_PIN_SECRET: a2lvc2stcGluLXNlY3JldC1mb3ItdGhlLWxvYWQtdGVzdC1vbmx5LW5ldmVyLXByb2Q=
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,10 +65,9 @@ jobs:
       - name: Seed the scale tenant
         run: LOAD_SCALE=1 npm -w apps/api exec tsx scripts/load/seed-scale.ts
       - name: Build and start the API (production build, not the dev watcher)
-        # Production boot refuses to fall back to PAYOUT_ENCRYPTION_KEY for these two; throwaway values, this runner only.
         env:
-          MFA_SECRET_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
-          KIOSK_PIN_SECRET: a2lvc2stcGluLXNlY3JldC1mb3ItdGhlLWxvYWQtdGVzdC1vbmx5LW5ldmVyLXByb2Q=
+          # One runner plays thousands of people a minute; the per-user cap would call that a loop.
+          DEFAULT_API_LIMIT: '1000000'
         run: |
           npm -w apps/api run build
           LOGIN_IP_LIMIT=100000 NODE_ENV=production PORT=3001 npm -w apps/api run start > api.log 2>&1 &

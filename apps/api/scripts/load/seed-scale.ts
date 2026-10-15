@@ -9,6 +9,9 @@
  */
 import { prisma } from '../../src/db.js';
 import { hashPassword } from '../../src/lib/passwords.js';
+import { hashDeviceToken, hmacPin, tokenLookupPrefix } from '../../src/lib/kioskAuth.js';
+import { encryptString } from '../../src/lib/crypto.js';
+import { LOAD_DEVICE_TOKEN, LOAD_KIOSKS, LOAD_PIN } from '../../src/lib/loadHarness.js';
 import { Rng } from '../../src/lib/demoSeed.js';
 import { ALTO_TENANT_ID } from '../../src/lib/tenant.js';
 import { SCALE_ASSOCIATE_PASSWORD, SCALE_EMAIL, SCALE_MARKER_ACTION, SCALE_POSITION, SCALE_SITES, SCALE_USERS, SCALE_WORKERS } from './scale.js';
@@ -128,6 +131,34 @@ async function main(): Promise<void> {
     };
   });
   await chunked('shifts', shifts, (c) => prisma.shift.createMany({ data: c, skipDuplicates: true }));
+
+  // The clock-in burst: one kiosk per site for the first LOAD_KIOSKS sites and
+  // one PIN per kiosk (associate i works at site i), signed with the same
+  // KIOSK_PIN_SECRET the API verifies with.
+  const kioskCount = Math.min(LOAD_KIOSKS, SCALE_SITES, associateIds.length);
+  await prisma.kioskDevice.createMany({
+    data: Array.from({ length: kioskCount }, (_, i) => ({
+      clientId: client.id,
+      locationId: siteIds[i]!,
+      name: `Load kiosk ${i}`,
+      tokenHash: hashDeviceToken(LOAD_DEVICE_TOKEN(i)),
+      tokenPrefix: tokenLookupPrefix(LOAD_DEVICE_TOKEN(i)),
+      tokenExpiresAt: new Date(Date.now() + 365 * 86_400_000),
+      createdById: admin.id,
+    })),
+    skipDuplicates: true,
+  });
+  await prisma.kioskPin.createMany({
+    data: Array.from({ length: kioskCount }, (_, i) => ({
+      associateId: associateIds[i]!,
+      clientId: client.id,
+      pinHmac: hmacPin(LOAD_PIN(i)),
+      pinEncrypted: encryptString(LOAD_PIN(i)),
+      createdById: admin.id,
+    })),
+    skipDuplicates: true,
+  });
+  console.log(`[seed-scale] kiosks: ${kioskCount} (one PIN each)`);
 
   await prisma.auditLog.create({ data: { action: SCALE_MARKER_ACTION, entityType: 'Tenant', entityId: ALTO_TENANT_ID, actorUserId: admin.id, metadata: { workers: SCALE_WORKERS, sites: SCALE_SITES, users: SCALE_USERS } } });
   console.log('[seed-scale] complete');

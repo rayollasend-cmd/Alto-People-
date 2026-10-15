@@ -18,7 +18,7 @@ export interface Scenario {
   path: string | ((n: number) => string);
   auth: ScenarioAuth;
   /** JSON body, or a function of the request number. */
-  body?: unknown | ((n: number) => unknown);
+  body?: unknown | ((n: number, worker: number) => unknown);
   /** Concurrent connections. */
   connections: number;
   durationSeconds: number;
@@ -26,11 +26,23 @@ export interface Scenario {
   budgetMs: number;
   /** HTTP statuses that count as success (a second clock-in is a 409, by design). */
   okStatuses?: number[];
+  /** Minimum milliseconds between two requests on one connection (the kiosk allows one punch a second per device). */
+  paceMs?: number;
   /** What this scenario stands for in the brief's list. */
   why: string;
 }
 
 export const P95_BUDGET_MS = 2_000;
+
+/**
+ * The kiosks the scale seed registers for the clock-in burst: one per site
+ * for the first LOAD_KIOSKS sites, each with one associate's PIN. Tokens
+ * and PINs are deterministic so the harness needs no secret from the seed;
+ * the token's first sixteen characters (the lookup prefix) differ per kiosk.
+ */
+export const LOAD_KIOSKS = 20;
+export const LOAD_DEVICE_TOKEN = (i: number): string => `altokiosk_k${i.toString().padStart(5, '0')}${'0'.repeat(50)}`;
+export const LOAD_PIN = (i: number): string => String(1000 + (i % 9000));
 
 /** The brief's top ten, plus the two control-room polls it names. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -38,7 +50,22 @@ export const SCENARIOS: readonly Scenario[] = [
   { key: 'auth-me', title: 'Session (/auth/me)', method: 'GET', path: '/auth/me', auth: 'admin', connections: 25, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'Read on every page load by every role.' },
   { key: 'home-decisions', title: 'Home decision queue', method: 'GET', path: '/me/decisions', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The admin and supervisor homes open on it; it fans out across queues.' },
   { key: 'schedule-week', title: 'Schedule, one week', method: 'GET', path: '/scheduling/shifts', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The scheduling page and the week view; the largest read.' },
-  { key: 'clock-in', title: 'Clock in at shift change', method: 'POST', path: '/time/me/clock-in', auth: 'associate', body: {}, connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, okStatuses: [200, 201, 409], why: 'The burst at the top of the hour; a repeat punch is a 409, which still has to be fast.' },
+  {
+    key: 'clock-in',
+    title: 'Clock in at the kiosk, shift change',
+    method: 'POST',
+    path: '/kiosk/punch',
+    auth: 'none',
+    // Each connection is one kiosk punching one associate, a second apart
+    // (the device throttle); the second punch of a pair is a clock-out.
+    body: (n: number, worker: number) => ({ deviceToken: LOAD_DEVICE_TOKEN(worker % LOAD_KIOSKS), pin: LOAD_PIN(worker % LOAD_KIOSKS), idempotencyKey: `load-${worker}-${n}` }),
+    connections: LOAD_KIOSKS,
+    durationSeconds: 10,
+    paceMs: 1100,
+    budgetMs: P95_BUDGET_MS,
+    okStatuses: [200, 201, 409],
+    why: 'Clock-ins at shift change: the punch an associate feels, through the kiosk they use.',
+  },
   { key: 'time-live', title: 'Time & attendance, live', method: 'GET', path: '/time/admin/active', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'Who is on the clock now, polled by the admin page.' },
   { key: 'messages-list', title: 'Messages, conversations', method: 'GET', path: '/messages/conversations', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'Opened from every home; unread counts ride on it.' },
   { key: 'messages-send', title: 'Messages, send burst', method: 'POST', path: '/messages/conversations/{conversation}/messages', auth: 'admin', body: (n: number) => ({ body: `Load test message ${n}` }), connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, okStatuses: [200, 201], why: 'A store channel at shift change.' },
