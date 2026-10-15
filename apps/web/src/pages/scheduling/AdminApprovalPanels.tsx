@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
@@ -32,7 +32,7 @@ import { cn } from '@/lib/cn';
  */
 const UNCONFIRMED_KEY = ['approvals', 'unconfirmed'] as const;
 
-export function AdminUnconfirmedPanel({ className = 'mt-8' }: { className?: string } = {}) {
+export function AdminUnconfirmedPanel({ className = 'mt-8', emptyFallback = null }: { className?: string; emptyFallback?: ReactNode } = {}) {
   const [nudging, setNudging] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const unconfirmedQuery = useQuery({
@@ -67,7 +67,7 @@ export function AdminUnconfirmedPanel({ className = 'mt-8' }: { className?: stri
   // The client only earns a place on a row when rows span clients.
   const multiClient = new Set((items ?? []).map((r) => r.clientName ?? '')).size > 1;
 
-  if (!items || items.length === 0) return null;
+  if (!items || items.length === 0) return emptyFallback;
   const picked = items.find((r) => r.shiftId === selected) ?? null;
 
   return (

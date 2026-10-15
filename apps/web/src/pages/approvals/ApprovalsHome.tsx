@@ -9,6 +9,7 @@ import {
   CalendarCheck,
   CalendarOff,
   Check,
+  ChevronLeft,
   ClipboardCheck,
   DoorOpen,
   Store,
@@ -43,7 +44,8 @@ import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd } from '@/lib/format';
 import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { DeskTemplate } from '@/components/templates';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { AsOf } from '@/components/ui/AsOf';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -129,16 +131,22 @@ const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`
 const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
 
 
-/** Bring a queue into view — the summary tiles are its table of contents. */
-function jumpTo(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+/** The queues on the desk, in the order they are worked. */
+type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'unconfirmed';
 
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
   // Pull down from the top = refetch everything on the page — the gesture
   // approvers reach for by habit on a phone.
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
+  // The queue a person opened (or a notification deep-linked: ?request=
+  // lands on time off, ?walkin= on the kiosk queue). Nothing picked: the
+  // desk opens the first queue with work on desktop, and on a phone the
+  // queue list is the page.
+  const [searchParams] = useSearchParams();
+  const [picked, setPicked] = useState<QueueKey | null>(() =>
+    searchParams.get('request') ? 'time-off' : searchParams.get('walkin') ? 'walk-ins' : null,
+  );
   // Timesheets are reviewed on Time & attendance; the tile is best-effort
   // and carries its own retry when the count fails.
   const timesheetQuery = useQuery({
@@ -190,13 +198,148 @@ export function ApprovalsHome() {
           oldestWalkIn ? ` — someone has been at the kiosk ${waitingSince(oldestWalkIn).replace('waiting ', '')}` : ''
         }.`;
 
+  // ---- The desk (design system §4.5, UX upgrade step 6): the queues on
+  // the left with their counts, the open queue's worklist on the right with
+  // the decisions inside it. On a phone the queue list is the page and the
+  // worklist opens over it.
+  const queues: Array<{ key: QueueKey; label: string; value: number | null | undefined; sub: string; urgent?: boolean }> = [
+    ...(counts.walkIns !== null
+      ? [
+          {
+            key: 'walk-ins' as const,
+            label: 'Walk-ins',
+            value: counts.walkIns,
+            sub: counts.walkIns
+              ? oldestWalkIn
+                ? `Oldest ${waitingSince(oldestWalkIn)}`
+                : 'At the kiosk'
+              : 'No one at the kiosk',
+            urgent: !!counts.walkIns,
+          },
+        ]
+      : []),
+    { key: 'time-off', label: 'Time off', value: timeOffError ? null : counts.timeOff, sub: counts.timeOff ? 'Decide before the dates' : 'Nothing pending' },
+    { key: 'swaps', label: 'Swaps', value: swaps.isError ? null : counts.swaps, sub: counts.swaps ? 'Peer already said yes' : 'Nothing pending' },
+    { key: 'pickups', label: 'Pickups', value: pickups.isError ? null : counts.pickups, sub: counts.pickups ? 'Approve to fill the shift' : 'Nothing pending' },
+  ];
+  const firstWithWork = queues.find((q) => typeof q.value === 'number' && q.value > 0)?.key ?? null;
+  const openQueue: QueueKey | null = picked ?? (loaded ? firstWithWork : null);
+  const openCount = queues.find((q) => q.key === openQueue)?.value;
+  const openLabel = queues.find((q) => q.key === openQueue)?.label ?? 'Not confirmed yet';
+
+  const queue = (
+    <div className="space-y-3 animate-enter">
+      {queues.map((q) => (
+        <QueueTile
+          key={q.key}
+          label={q.label}
+          value={q.value}
+          sub={q.sub}
+          urgent={q.urgent}
+          selected={openQueue === q.key}
+          onClick={() => setPicked(q.key)}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={() => setPicked('unconfirmed')}
+        aria-pressed={openQueue === 'unconfirmed'}
+        className={cn(
+          'block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40',
+          openQueue === 'unconfirmed' && '[&>div]:border-gold/60 [&>div]:bg-gold/[0.04]',
+        )}
+      >
+        <StatTile label="Not confirmed yet" value="48h" sub="Shifts nobody has confirmed — chase by phone" className="h-full" />
+      </button>
+      {timesheetFailed ? (
+        <div className="rounded-lg border border-alert/40 bg-navy-secondary/20 p-4">
+          <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Timesheets</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            <span role="alert" className="text-alert">
+              Couldn't load
+            </span>
+            <Button size="xs" variant="outline" onClick={() => timesheetQuery.refetch()}>
+              Retry
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Link
+          to="/time-attendance?tab=queue"
+          className="block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:h-full [&>div]:transition-colors [&>div]:hover:border-gold/40"
+        >
+          <StatTile label="Timesheets" value={timesheetCount ?? '—'} sub="Review on Time & attendance" />
+        </Link>
+      )}
+    </div>
+  );
+
+  const panelFor = (key: QueueKey) =>
+    key === 'walk-ins' ? (
+      <WalkInClockInsPanel />
+    ) : key === 'time-off' ? (
+      <PendingTimeOffPanel items={timeOffError ? null : timeOff} error={timeOffError} onRetry={() => timeOffQ.refetch()} />
+    ) : key === 'swaps' ? (
+      <SwapsPanel />
+    ) : key === 'pickups' ? (
+      <PickupsPanel />
+    ) : (
+      <AdminUnconfirmedPanel
+        className=""
+        emptyFallback={
+          <EmptyState
+            icon={CalendarCheck}
+            title="Everyone confirmed"
+            description="No shift in the next 48 hours is waiting on an “I’ll be there”."
+          />
+        }
+      />
+    );
+
+  const item = !loaded ? (
+    <Skeleton className="h-64" />
+  ) : openQueue === null ? (
+    clear ? (
+      <Card className="border-success/30 bg-success/5 animate-enter">
+        <CardContent className="flex items-center gap-3 p-5">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-success/15 text-success">
+            <CalendarCheck className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <div className="font-medium text-white">Nothing waiting on you</div>
+            <div className="text-sm text-silver">
+              No one at the kiosk, and no time off, swaps, or pickups to decide.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    ) : (
+      <EmptyState icon={ClipboardCheck} title="Pick a queue" description="Open a queue to work it here." />
+    )
+  ) : (
+    <div className="space-y-3">
+      {picked && (
+        <Button size="sm" variant="ghost" className="lg:hidden" onClick={() => setPicked(null)}>
+          <ChevronLeft className="mr-1 h-4 w-4" aria-hidden="true" />
+          All queues
+        </Button>
+      )}
+      {openCount === 0 ? (
+        <EmptyState icon={CalendarCheck} title={`Nothing pending in ${openLabel.toLowerCase()}`} description="New requests land here as they arrive." />
+      ) : (
+        panelFor(openQueue)
+      )}
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      <DeskTemplate
         title="Approvals"
         subtitle={subtitle}
-        secondaryActions={
+        className="mx-auto max-w-6xl"
+        counts={
           <>
             {/* Four queues polling every minute owe the reader the minute. */}
             <AsOf
@@ -217,105 +360,11 @@ export function ApprovalsHome() {
             </Button>
           </>
         }
+        queue={queue}
+        item={item}
+        itemOpen={picked !== null}
       />
-
-      {/* ---- The queues at a glance — each tile jumps to its list -------- */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 animate-enter">
-        {counts.walkIns !== null && (
-          <QueueTile
-            label="Walk-ins"
-            value={counts.walkIns}
-            sub={
-              counts.walkIns
-                ? oldestWalkIn
-                  ? `Oldest ${waitingSince(oldestWalkIn)}`
-                  : 'At the kiosk'
-                : 'No one at the kiosk'
-            }
-            urgent={!!counts.walkIns}
-            onClick={counts.walkIns ? () => jumpTo('queue-walk-ins') : undefined}
-          />
-        )}
-        <QueueTile
-          label="Time off"
-          value={timeOffError ? null : counts.timeOff}
-          sub={counts.timeOff ? 'Decide before the dates' : 'Nothing pending'}
-          onClick={counts.timeOff ? () => jumpTo('queue-time-off') : undefined}
-        />
-        <QueueTile
-          label="Swaps"
-          value={swaps.isError ? null : counts.swaps}
-          sub={counts.swaps ? 'Peer already said yes' : 'Nothing pending'}
-          onClick={counts.swaps ? () => jumpTo('queue-swaps') : undefined}
-        />
-        <QueueTile
-          label="Pickups"
-          value={pickups.isError ? null : counts.pickups}
-          sub={counts.pickups ? 'Approve to fill the shift' : 'Nothing pending'}
-          onClick={counts.pickups ? () => jumpTo('queue-pickups') : undefined}
-        />
-        {timesheetFailed ? (
-          <div
-            className={cn(
-              'rounded-lg border border-alert/40 bg-navy-secondary/20 p-4',
-              counts.walkIns !== null && 'col-span-2 sm:col-span-1',
-            )}
-          >
-            <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Timesheets</div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-              <span role="alert" className="text-alert">
-                Couldn't load
-              </span>
-              <Button size="xs" variant="outline" onClick={() => timesheetQuery.refetch()}>
-                Retry
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <Link
-            to="/time-attendance?tab=queue"
-            className={cn(
-              counts.walkIns !== null && 'col-span-2 sm:col-span-1',
-              'block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:h-full [&>div]:transition-colors [&>div]:hover:border-gold/40',
-            )}
-          >
-            <StatTile
-              label="Timesheets"
-              value={timesheetCount ?? '—'}
-              sub="Review on Time & attendance"
-            />
-          </Link>
-        )}
-      </div>
-
-      {clear && (
-        <Card className="border-success/30 bg-success/5 animate-enter">
-          <CardContent className="flex items-center gap-3 p-5">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-success/15 text-success">
-              <CalendarCheck className="h-5 w-5" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="font-medium text-white">Nothing waiting on you</div>
-              <div className="text-sm text-silver">
-                No one at the kiosk, and no time off, swaps, or pickups to decide.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* First in the stack — someone is physically standing at a kiosk
-          waiting on this decision. */}
-      <WalkInClockInsPanel />
-      <PendingTimeOffPanel
-        items={timeOffError ? null : timeOff}
-        error={timeOffError}
-        onRetry={() => timeOffQ.refetch()}
-      />
-      <SwapsPanel />
-      <PickupsPanel />
-      <AdminUnconfirmedPanel className="" />
-    </div>
+    </>
   );
 }
 
@@ -325,12 +374,15 @@ function QueueTile({
   value,
   sub,
   urgent = false,
+  selected = false,
   onClick,
 }: {
   label: string;
   value: number | null | undefined;
   sub: string;
   urgent?: boolean;
+  /** The queue open on the desk. */
+  selected?: boolean;
   onClick?: () => void;
 }) {
   const tile = (
@@ -346,7 +398,11 @@ function QueueTile({
     <button
       type="button"
       onClick={onClick}
-      className="block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
+      aria-pressed={selected}
+      className={cn(
+        'block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40',
+        selected && '[&>div]:border-gold/60 [&>div]:bg-gold/[0.04]',
+      )}
     >
       {tile}
     </button>
