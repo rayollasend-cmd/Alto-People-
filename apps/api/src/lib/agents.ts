@@ -181,9 +181,9 @@ export const BUILT_IN_AGENTS = [
     model: 'Rule-based agent (lib/workforceAgent)',
     modelVersion: '1',
     environment: 'PRODUCTION',
-    scopes: ['view:scheduling', 'view:org', 'manage:scheduling', 'view:time', 'manage:communications'] as AgentScope[],
-    capabilities: ['shift.fill', 'schedule.repair', 'attendance.confirm'],
-    grants: ['shift.fill', 'schedule.repair', 'attendance.confirm'],
+    scopes: ['view:scheduling', 'view:org', 'manage:scheduling', 'view:time', 'manage:communications', 'view:analytics'] as AgentScope[],
+    capabilities: ['shift.fill', 'schedule.repair', 'attendance.confirm', 'coverage.forecast'],
+    grants: ['shift.fill', 'schedule.repair', 'attendance.confirm', 'coverage.forecast'],
     // Agent controls (1D-3): a new agent starts ONBOARDING and goes ACTIVE only by passing
     // its certification scenarios on the Agents page. Deploying never switches it on.
     status: 'ONBOARDING',

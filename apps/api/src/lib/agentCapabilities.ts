@@ -474,6 +474,10 @@ export async function runCapabilityFixture(
         refs[sh.ref] = row.id;
         created.shifts.push(row.id);
       }
+      // A site's floor target, removed with its site (cascade).
+      for (const t of fixture.world.targets ?? []) {
+        await db.staffingTarget.create({ data: { locationId: refs[t.siteRef]!, targetCount: t.headcount, effectiveFrom: new Date(now.getTime() - 30 * DAY), tenantId } });
+      }
       // The attendance record the risk score reads; removed with its person (cascade).
       for (const a of fixture.world.attendance ?? []) {
         await db.attendanceEvent.create({

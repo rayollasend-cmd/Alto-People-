@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { moduleOn } from './tenantProfile.js';
+import { loadTenantProfile } from './tenantProfile.js';
+import { detectConfirmAnswer, detectHugoIntent, type HugoIntentKey } from './hugo.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { nextPaydayFor } from './associatePayday.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -38,51 +39,14 @@ export interface InboundMessage {
   timestamp?: Date;
 }
 
-export type Intent = 'OPT_OUT' | 'OPT_IN' | 'LANGUAGE' | 'WHO' | 'PAYDAY' | 'RIDE' | 'SCHEDULE' | 'HANDOFF' | 'CONFIRM_YES' | 'CONFIRM_NO';
+/** Hugo's intents as WhatsApp sees them (lib/hugo: the registry), plus the attendance.confirm answers. */
+export type Intent = HugoIntentKey | 'CONFIRM_YES' | 'CONFIRM_NO';
 
-const norm = (s: string) =>
-  s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/ı/g, 'i')
-    .trim();
+export { detectConfirmAnswer };
 
-const OPT_OUT = /^\s*(stop|baja|dur|unsubscribe|cancelar|salir|parar|iptal)\b/;
-const OPT_IN = /^\s*(start|alta|basla|unstop|empezar|activar)\b/;
-const LANGS: Array<[RegExp, WaLang]> = [
-  [/\b(english|ingles)\b/, 'en'],
-  [/\b(espanol|spanish|castellano)\b/, 'es'],
-  [/\b(turkce|turkish|turk)\b/, 'tr'],
-];
-// "Who are you?" in three languages: the answer always says the product and that he is an AI.
-const WHO = /\b(who are you|what are you|are you (a |an )?(bot|robot|ai|human|real person|person)|is this a (bot|robot|person)|quien eres|que eres|eres (un|una) (bot|robot|persona|humano|ia)|kimsin|nesin|sen kimsin|bot musun|robot musun|insan misin)\b/;
-const PAYDAY = /\b(pay ?day|paid|pay\b|paycheck|paystub|cobr\w*|pago|pagan|sueldo|nomina|maas|odeme|para)\b/;
-const RIDE = /\b(ride|van|pick ?up|bus|shuttle|viaje|camioneta|recog\w*|transporte|servis|arac|minibus|ulasim)\b/;
-/** A one-word answer to the Workforce agent's "are you coming?" (attendance.confirm), in three languages. */
-const YES = /^(yes|y|yeah|yep|si|claro|evet|tamam|ok|okay)[.!s]*$/;
-const NO = /^(no|n|nope|hayir|olmaz|yok)[.!s]*$/;
-
-/** YES or NO when the whole message is one; null otherwise (the other intents apply). */
-export function detectConfirmAnswer(text: string): 'YES' | 'NO' | null {
-  const t = norm(text);
-  if (YES.test(t)) return 'YES';
-  if (NO.test(t)) return 'NO';
-  return null;
-}
-
-const SCHEDULE = /\b(schedule|shift|shifts|work|working|hours|horario|turno|turnos|trabajo|vardiya|calis\w*|program|mesai)\b/;
-
+/** An associate on WhatsApp, every module on: the registry's precedence (tests and certification read it). */
 export function detectIntent(text: string): { intent: Intent; lang?: WaLang } {
-  const t = norm(text);
-  if (OPT_OUT.test(t)) return { intent: 'OPT_OUT' };
-  if (OPT_IN.test(t)) return { intent: 'OPT_IN' };
-  for (const [re, lang] of LANGS) if (re.test(t) && t.split(/\s+/).length <= 4) return { intent: 'LANGUAGE', lang };
-  if (WHO.test(t)) return { intent: 'WHO' };
-  if (PAYDAY.test(t)) return { intent: 'PAYDAY' };
-  if (RIDE.test(t)) return { intent: 'RIDE' };
-  if (SCHEDULE.test(t)) return { intent: 'SCHEDULE' };
-  return { intent: 'HANDOFF' };
+  return detectHugoIntent(text, { channel: 'whatsapp', audience: 'associate', moduleOn: () => true, capabilityOn: () => true });
 }
 
 const when = (d: Date, tz: string, lang: WaLang) => {
@@ -94,13 +58,13 @@ const longDay = (ymd: string, lang: WaLang) => {
   return new Intl.DateTimeFormat(locale, { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(`${ymd}T12:00:00Z`));
 };
 
-async function answerPayday(associateId: string, lang: WaLang, now: Date): Promise<string> {
+export async function answerPayday(associateId: string, lang: WaLang, now: Date): Promise<string> {
   const p = await nextPaydayFor(associateId, now);
   if (!p) return WA_REPLY.noPayday(lang);
   return WA_REPLY.payday(lang, longDay(p.payDate, lang), `${longDay(p.periodStart, lang)} – ${longDay(p.periodEnd, lang)}`);
 }
 
-async function answerRide(db: Db, associateId: string, lang: WaLang, now: Date): Promise<string> {
+export async function answerRide(db: Db, associateId: string, lang: WaLang, now: Date): Promise<string> {
   const ride = await db.ride.findFirst({
     where: { associateId, status: { in: ['REQUESTED', 'SCHEDULED', 'BOARDED'] }, targetAt: { gte: new Date(now.getTime() - 2 * 3_600_000) } },
     orderBy: { targetAt: 'asc' },
@@ -121,7 +85,7 @@ async function answerRide(db: Db, associateId: string, lang: WaLang, now: Date):
   return WA_REPLY.ride(lang, when(at, tz, lang), where, ride.run?.van.name ?? null);
 }
 
-async function answerSchedule(db: Db, associateId: string, lang: WaLang, now: Date): Promise<string> {
+export async function answerSchedule(db: Db, associateId: string, lang: WaLang, now: Date): Promise<string> {
   const shifts = await db.shift.findMany({
     where: { assignedAssociateId: associateId, status: 'ASSIGNED', publishedAt: { not: null }, endsAt: { gte: now } },
     orderBy: { startsAt: 'asc' },
@@ -141,7 +105,7 @@ async function answerSchedule(db: Db, associateId: string, lang: WaLang, now: Da
  * thread in the app (reused when one exists) carrying the question, so
  * the answer comes back through the inbox the supervisor already works.
  */
-async function handoff(db: Db, associateId: string, userId: string | null, text: string, now: Date): Promise<{ conversationId: string | null; who: string | null }> {
+export async function handoff(db: Db, associateId: string, userId: string | null, text: string, now: Date, channel: 'WhatsApp' | 'Hugo' = 'WhatsApp'): Promise<{ conversationId: string | null; who: string | null }> {
   if (!userId) return { conversationId: null, who: null };
   const clientIds = await placedClientIds(associateId, db);
   const clientId = clientIds[0];
@@ -157,14 +121,14 @@ async function handoff(db: Db, associateId: string, userId: string | null, text:
     },
     select: { id: true },
   });
-  const preview = `WhatsApp: ${text}`.slice(0, 160);
+  const preview = `${channel}: ${text}`.slice(0, 160);
   const conversation =
     existing ??
     (await db.conversation.create({
       data: { kind: 'DIRECT', createdById: userId, participants: { create: [{ userId }, { userId: lead.userId }] } },
       select: { id: true },
     }));
-  await db.message.create({ data: { conversationId: conversation.id, senderId: userId, kind: 'TEXT', body: `[WhatsApp] ${text}`.slice(0, 4000) } });
+  await db.message.create({ data: { conversationId: conversation.id, senderId: userId, kind: 'TEXT', body: `[${channel}] ${text}`.slice(0, 4000) } });
   await db.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now, lastPreview: preview } });
   emitLiveEvent(lead.userId, 'message');
   return { conversationId: conversation.id, who: lead.name };
@@ -200,7 +164,9 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
   await db.whatsAppConsent.update({ where: { associateId }, data: { lastInboundAt: now } });
   const user = await db.user.findFirst({ where: { associateId, deletedAt: null }, select: { id: true, language: true } });
   let lang = toWaLang(user?.language);
-  const { intent, lang: wanted } = detectIntent(msg.text);
+  // Brief 2-1b / step 3: an intent whose module is off is not matched at all (the registry filters it).
+  const profile = await loadTenantProfile();
+  const { intent, lang: wanted } = detectHugoIntent(msg.text, { channel: 'whatsapp', audience: 'associate', moduleOn: (m) => profile.modules[m], capabilityOn: () => true });
 
   const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null) => {
     const sent = await sendWhatsApp(db, { associateId, text: () => text, lang, category: 'assistant', kind, replyToId: replyTo }, now);
@@ -222,9 +188,7 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
     }
   }
 
-  // Brief 2-1b: a capability that depends on a disabled module is not offered.
-  const effective: Intent = intent === 'RIDE' && !(await moduleOn('transportation')) ? 'HANDOFF' : intent;
-  switch (effective) {
+  switch (intent) {
     case 'OPT_OUT': {
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_OUT', optedOutAt: now, source: 'reply' } });
       // Their last word still gets its one confirmation.

@@ -61,6 +61,7 @@ import {
   updateAgentDrift,
 } from '@/lib/agentsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HugoPanel } from './HugoPanel';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -581,6 +582,9 @@ export function AgentRegistryAdmin() {
           {AGENT_EXECUTABLE_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a]).join(' and ')} may be carried out by the agent once approved.
         </p>
       </section>
+
+      {/* Hugo: ask him, and see what the agents he routes to are doing (agent families step 3). */}
+      <HugoPanel />
 
       {builtInMissing.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm">

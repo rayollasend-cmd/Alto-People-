@@ -48,6 +48,12 @@ vi.mock('@/lib/agentsApi', () => ({
   resumeAgentCapability: vi.fn(),
 }));
 vi.mock('@/lib/usersAdminApi', () => ({ listAdminUsers: vi.fn() }));
+// Hugo's panel sits under the queue (agent families step 3); its own tests are HugoPanel.test.tsx.
+vi.mock('@/lib/hugoApi', () => ({
+  getHugo: vi.fn().mockResolvedValue({ name: 'Hugo', audience: 'admin', intro: 'I am Hugo.', can: [] }),
+  askHugo: vi.fn(),
+  listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
+}));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn().mockResolvedValue('') }));
 
 import { certifyAgent, decideAgentApproval, getAgent, getAgentScorecard, getCapabilityScorecard, issueAgentCredential, listAgentApprovals, listAgentCapabilities, listAgentScenarios, listAgents, resumeAllAgents, suspendAgentCapability } from '@/lib/agentsApi';

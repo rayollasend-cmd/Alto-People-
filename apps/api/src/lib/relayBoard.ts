@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { latestCoverageGaps } from './coverageForecast.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { soonestPayday } from './payday.js';
 import { buildFieldglassQueue } from './fieldglassQueue.js';
@@ -784,6 +785,25 @@ export async function computeRelayBoard(
     );
   }
 
+  // Agent families step 3: the Workforce agent's coverage.forecast, as one baton to
+  // the Workforce desk. Only while the capability writes its daily rows.
+  if (opts.tenantId) {
+    const gaps = await latestCoverageGaps(prisma, now, opts.tenantId);
+    if (gaps) {
+      const soon = gaps.first ? gaps.first.date <= orgDateKey(new Date(now.getTime() + 2 * DAY_MS)) : false;
+      baton(
+        'coverage-gap',
+        BATON_LABELS['coverage-gap']!,
+        'WORKFORCE',
+        gaps.shortDays,
+        null,
+        gaps.first ? new Date(`${gaps.first.date}T12:00:00Z`) : null,
+        soon ? 'overdue' : 'atRisk',
+        gaps.first ? `/scheduling?week=${gaps.first.date}&location=${gaps.first.locationId}` : '/scheduling',
+      );
+    }
+  }
+
   const RANK: Record<BatonStatus, number> = { overdue: 0, atRisk: 1, quiet: 2 };
   batons.sort((a, b) => RANK[a.status] - RANK[b.status] || b.count - a.count);
 
@@ -897,6 +917,7 @@ export const BATON_LABELS: Record<string, string> = {
   'decisions-finance': 'Decisions awaiting Finance',
   'decisions-hr': 'Decisions awaiting HR',
   'decisions-workforce': 'Decisions awaiting Workforce',
+  'coverage-gap': 'Coverage gaps, next 7 days',
 };
 
 export const STAGE_LABELS: Record<LaneStage['key'], string> = {

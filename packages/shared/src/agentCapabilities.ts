@@ -26,6 +26,8 @@ export interface CapabilityScenarioFixture {
     sites?: Array<{ ref: string; name: string; timezone?: string }>;
     people?: Array<{ ref: string; firstName: string; lastName: string; placedAt?: string }>;
     shifts?: Array<{ ref: string; siteRef: string; position: string; startsInMinutes: number; hours: number; assigneeRef?: string | null }>;
+    /** A site's floor target (headcount), in effect from 30 days before `now`. */
+    targets?: Array<{ siteRef: string; headcount: number }>;
     /** Unexcused attendance on record, days before `now` (the no-show risk score reads it). */
     attendance?: Array<{ personRef: string; kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE'; daysAgo: number }>;
   };
@@ -90,6 +92,32 @@ const ATTENDANCE_CONFIRM_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { askedRef: 'rheaShift', asked: 1 }, allowedActions: ['ask'] },
 };
 
+const COVERAGE_FORECAST_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Two sites, one short tomorrow: the forecast names it and the gap',
+  world: {
+    sites: [
+      { ref: 'hotel', name: 'The Grand Hotel', timezone: 'America/Chicago' },
+      { ref: 'inn', name: 'The Other Inn', timezone: 'America/Chicago' },
+    ],
+    people: [
+      { ref: 'ana', firstName: 'Ana', lastName: 'One', placedAt: 'hotel' },
+      { ref: 'ben', firstName: 'Ben', lastName: 'Two', placedAt: 'hotel' },
+      { ref: 'cy', firstName: 'Cy', lastName: 'Three', placedAt: 'inn' },
+    ],
+    shifts: [
+      { ref: 'a1', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1440, hours: 1, assigneeRef: 'ana' },
+      { ref: 'b1', siteRef: 'hotel', position: 'Housekeeper', startsInMinutes: 1440, hours: 1, assigneeRef: 'ben' },
+      { ref: 'c1', siteRef: 'inn', position: 'Housekeeper', startsInMinutes: 1440, hours: 1, assigneeRef: 'cy' },
+    ],
+    targets: [
+      { siteRef: 'hotel', headcount: 4 },
+      { siteRef: 'inn', headcount: 1 },
+    ],
+  },
+  input: {},
+  expected: { output: { shortRef: 'hotel', gap: 2 }, allowedActions: [] },
+};
+
 const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
   world: {
@@ -148,7 +176,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:scheduling', 'view:analytics'],
     gate: null,
     metrics: ['forecastErrorPct7d', 'forecastErrorPct1d'],
-    scenarios: [],
+    scenarios: [COVERAGE_FORECAST_FIXTURE],
   },
   // Compliance
   {

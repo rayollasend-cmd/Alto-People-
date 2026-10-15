@@ -325,6 +325,75 @@ export const WA_REPLY = {
       },
       lang,
     ),
+  /** Hugo in the app (agent families step 3): who he is and what he can do here, in one breath. */
+  appIntro: (lang: WaLang, name: string, can: string[]) =>
+    say(
+      {
+        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. ${can.length ? `I can help with: ${can.join('; ')}.` : 'Nothing is switched on for me to help with here yet.'}`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. ${can.length ? `Puedo ayudarte con: ${can.join('; ')}.` : 'Todavía no hay nada activado con lo que pueda ayudarte aquí.'}`,
+        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. ${can.length ? `Şunlarda yardımcı olabilirim: ${can.join('; ')}.` : 'Burada yardımcı olabileceğim açık bir şey henüz yok.'}`,
+      },
+      lang,
+    ),
+  /** coverage.forecast, asked: nobody short. */
+  coverageAllCovered: (lang: WaLang, sitesNoun: string) =>
+    say(
+      {
+        en: `Next 7 days: every one of your ${sitesNoun} meets its staffing target.`,
+        es: `Próximos 7 días: todos tus ${sitesNoun} cumplen su objetivo de personal.`,
+        tr: `Önümüzdeki 7 gün: tüm ${sitesNoun} kadro hedefini karşılıyor.`,
+      },
+      lang,
+    ),
+  /** coverage.forecast, asked: no targets set anywhere in scope. */
+  coverageNoTargets: (lang: WaLang, sitesNoun: string) =>
+    say(
+      {
+        en: `None of your ${sitesNoun} has a staffing target yet, so there is nothing to compare the schedule with.`,
+        es: `Ninguno de tus ${sitesNoun} tiene todavía un objetivo de personal, así que no hay con qué comparar el horario.`,
+        tr: `${sitesNoun} için henüz bir kadro hedefi yok; programı karşılaştıracak bir şey yok.`,
+      },
+      lang,
+    ),
+  /** coverage.forecast, asked: the short days, earliest first. */
+  coverageShort: (lang: WaLang, shortDays: number, places: number, sitesNoun: string, lines: string[]) =>
+    say(
+      {
+        en: `Next 7 days: ${shortDays} short day${shortDays === 1 ? '' : 's'} across ${places} of your ${sitesNoun}.\n${lines.join('\n')}`,
+        es: `Próximos 7 días: ${shortDays} día${shortDays === 1 ? '' : 's'} con falta de personal en ${places} de tus ${sitesNoun}.\n${lines.join('\n')}`,
+        tr: `Önümüzdeki 7 gün: ${sitesNoun} içinde ${places} yerde ${shortDays} eksik gün.\n${lines.join('\n')}`,
+      },
+      lang,
+    ),
+  /** One short day: where, when, how many short, how many free on the bench. */
+  coverageLine: (lang: WaLang, place: string, day: string, gap: number, bench: number) =>
+    say(
+      {
+        en: `• ${place}, ${day}: short ${gap}, ${bench} free on the bench`,
+        es: `• ${place}, ${day}: faltan ${gap}, ${bench} libres en la reserva`,
+        tr: `• ${place}, ${day}: ${gap} eksik, yedekte ${bench} boş kişi`,
+      },
+      lang,
+    ),
+  /** What waits on the desk from the agents. */
+  deskNothing: (lang: WaLang) =>
+    say(
+      {
+        en: 'Nothing from the agents is waiting on you.',
+        es: 'No hay nada de los agentes pendiente para ti.',
+        tr: 'Ajanlardan seni bekleyen bir şey yok.',
+      },
+      lang,
+    ),
+  deskWaiting: (lang: WaLang, n: number, lines: string[]) =>
+    say(
+      {
+        en: `${n} agent proposal${n === 1 ? '' : 's'} wait${n === 1 ? 's' : ''} on you. Nothing happens until you approve.\n${lines.join('\n')}`,
+        es: `${n} propuesta${n === 1 ? '' : 's'} de agentes espera${n === 1 ? '' : 'n'} tu decisión. No pasa nada hasta que apruebes.\n${lines.join('\n')}`,
+        tr: `Ajanlardan ${n} öneri kararını bekliyor. Onaylayana kadar hiçbir şey olmaz.\n${lines.join('\n')}`,
+      },
+      lang,
+    ),
   /** attendance.confirm: they said YES. */
   confirmedYes: (lang: WaLang, when: string) =>
     say(

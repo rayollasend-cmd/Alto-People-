@@ -8066,6 +8066,8 @@ export interface SeasonPlanSiteWeek {
   /** Actuals, when the week is in the past or in progress. */
   scheduledHours: number | null;
   activeHeadcount: number | null;
+  /** The Workforce agent's coverage.forecast: days that week the site is short, from its latest forecast. Null outside the forecast. */
+  forecastShortDays?: number | null;
 }
 
 export interface SeasonPlanSiteComputed {
@@ -8139,6 +8141,7 @@ export interface SeasonPlanComputed extends SeasonPlanSummary {
     vanSeatsAvailable: number;
     scheduledHours: number | null;
     activeHeadcount: number | null;
+    forecastShortDays?: number | null;
   }>;
   peak: { week: string; daily: number; associatesNeeded: number; bedsNeeded: number; bedsAvailable: number; bedsGap: number };
   recruiting: SeasonRecruitingTarget[];

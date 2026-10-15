@@ -41,6 +41,7 @@ import { programsRouter } from './routes/programs.js';
 import { seasonPlansRouter } from './routes/seasonPlans.js';
 import { workersRouter } from './routes/workers.js';
 import { agentsRouter } from './routes/agents.js';
+import { hugoRouter } from './routes/hugo.js';
 import { agentApiRouter } from './routes/agentApi.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
@@ -458,6 +459,8 @@ export function createApp() {
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
   app.use('/workers', workersRouter);
   app.use('/agents', agentsRouter);
+  // Hugo in the app: the same intent registry as WhatsApp, for associates and desks (agent families step 3).
+  app.use('/hugo', hugoRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
   // here is readable, it only feeds the rollups product-analytics reads.
   app.use('/telemetry', telemetryRouter);

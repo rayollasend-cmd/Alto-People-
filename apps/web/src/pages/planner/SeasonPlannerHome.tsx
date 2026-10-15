@@ -444,7 +444,7 @@ function PlanView({ id }: { id: string }) {
                   </ResponsiveContainer>
                   <DetailsTable
                     label="Details"
-                    columns={['Week of', 'On floor / day', 'Associates', 'Beds needed', 'Beds available', 'Van seats needed', 'Van seats carried', 'Scheduled hours', 'Active now']}
+                    columns={['Week of', 'On floor / day', 'Associates', 'Beds needed', 'Beds available', 'Van seats needed', 'Van seats carried', 'Scheduled hours', 'Active now', 'Short days (forecast)']}
                     rows={weekly.map((t) => [
                       weekLabel(t.week),
                       t.daily,
@@ -455,6 +455,7 @@ function PlanView({ id }: { id: string }) {
                       t.vanSeatsAvailable,
                       t.scheduledHours === null ? '—' : t.scheduledHours,
                       t.activeHeadcount === null ? '—' : t.activeHeadcount,
+                      t.forecastShortDays == null ? '—' : t.forecastShortDays,
                     ])}
                   />
                 </>

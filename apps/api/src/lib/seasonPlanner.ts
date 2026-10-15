@@ -164,13 +164,16 @@ interface Actuals {
   scheduledHours: Map<string, number>; // `${locationId}|${week}`
   activeNow: Map<string, number>; // locationId
   currentWeek: string;
+  /** coverage.forecast: short days per `${locationId}|${week}` from each site's latest forecast. */
+  forecastShort: Map<string, number>;
 }
 
 async function actualsFor(db: Db, locationIds: string[], weeks: string[], now: Date): Promise<Actuals> {
   const currentWeek = orgDateKey(startOfWeekUTC(now));
   const scheduledHours = new Map<string, number>();
   const activeNow = new Map<string, number>();
-  if (locationIds.length === 0 || weeks.length === 0) return { scheduledHours, activeNow, currentWeek };
+  const forecastShort = new Map<string, number>();
+  if (locationIds.length === 0 || weeks.length === 0) return { scheduledHours, activeNow, currentWeek, forecastShort };
   const first = atUtc(weeks[0]!);
   const last = new Date(atUtc(weeks[weeks.length - 1]!).getTime() + 8 * DAY_MS);
   const shifts = await db.shift.findMany({
@@ -185,7 +188,20 @@ async function actualsFor(db: Db, locationIds: string[], weeks: string[], now: D
   for (const locationId of locationIds) {
     activeNow.set(locationId, (await activeAssociateIds({ locationId }, now, db)).size);
   }
-  return { scheduledHours, activeNow, currentWeek };
+  // The Workforce agent's forecast (agent families step 3): each site's newest rows.
+  const fc = await db.coverageForecastDay.findMany({
+    where: { locationId: { in: locationIds }, forecastOn: { gte: new Date(now.getTime() - 2 * DAY_MS) } },
+    select: { locationId: true, forecastOn: true, targetDay: true, gap: true },
+    orderBy: { forecastOn: 'desc' },
+  });
+  const newest = new Map<string, number>();
+  for (const r of fc) if (!newest.has(r.locationId)) newest.set(r.locationId, r.forecastOn.getTime());
+  for (const r of fc) {
+    if (r.forecastOn.getTime() !== newest.get(r.locationId)) continue;
+    const key = `${r.locationId}|${orgDateKey(startOfWeekUTC(new Date(r.targetDay.getTime() + 12 * 3_600_000)))}`;
+    forecastShort.set(key, (forecastShort.get(key) ?? 0) + (r.gap > 0 ? 1 : 0));
+  }
+  return { scheduledHours, activeNow, currentWeek, forecastShort };
 }
 
 function weightedShare(mix: ChannelPercent, share: ChannelPercent): number {
@@ -261,6 +277,7 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
         vanSeatsGap: Math.max(0, vanSeatsNeeded - seatsAvailable),
         scheduledHours: sched !== undefined ? Math.round(sched * 10) / 10 : week <= actuals.currentWeek ? 0 : null,
         activeHeadcount: week === actuals.currentWeek ? (actuals.activeNow.get(site.locationId) ?? 0) : null,
+        forecastShortDays: actuals.forecastShort.get(`${site.locationId}|${week}`) ?? null,
       };
     });
     const peakRow = rows.reduce((best, r) => (r.associatesNeeded > best.associatesNeeded ? r : best), rows[0] ?? { week: weeks[0] ?? s.seasonStart, daily: 0, associatesNeeded: 0, bedsNeeded: 0, vanSeatsNeeded: 0 });
@@ -282,6 +299,7 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
     const rows = sites.map((x) => x.weeks[i]!);
     const anyActual = rows.some((r) => r.scheduledHours !== null);
     const anyActive = rows.some((r) => r.activeHeadcount !== null);
+    const anyForecast = rows.some((r) => r.forecastShortDays != null);
     return {
       week,
       daily: rows.reduce((a, r) => a + r.daily, 0),
@@ -292,6 +310,7 @@ export async function computePlan(db: Db, p: PlanRow, now: Date = new Date()): P
       vanSeatsAvailable: rows.reduce((a, r) => a + r.vanSeatsAvailable, 0),
       scheduledHours: anyActual ? Math.round(rows.reduce((a, r) => a + (r.scheduledHours ?? 0), 0) * 10) / 10 : null,
       activeHeadcount: anyActive ? rows.reduce((a, r) => a + (r.activeHeadcount ?? 0), 0) : null,
+      forecastShortDays: anyForecast ? rows.reduce((a, r) => a + (r.forecastShortDays ?? 0), 0) : null,
     };
   });
   const peakTotal = totals.reduce((best, t) => (t.associatesNeeded > best.associatesNeeded ? t : best), totals[0] ?? { week: s.seasonStart, daily: 0, associatesNeeded: 0, bedsNeeded: 0, bedsAvailable: 0 });
@@ -539,11 +558,11 @@ export function planCsv(plan: SeasonPlanComputed): string {
     return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   const rows: Array<Array<string | number | null>> = [
-    ['Plan', 'Site', 'Client', 'Week', 'Day', 'Evening', 'Overnight', 'Daily on floor', 'Shift slots', 'Associates needed', 'Beds needed', 'Beds available', 'Beds gap', 'Van seats needed', 'Van seats available', 'Van seats gap', 'Scheduled hours', 'Active headcount'],
+    ['Plan', 'Site', 'Client', 'Week', 'Day', 'Evening', 'Overnight', 'Daily on floor', 'Shift slots', 'Associates needed', 'Beds needed', 'Beds available', 'Beds gap', 'Van seats needed', 'Van seats available', 'Van seats gap', 'Scheduled hours', 'Active headcount', 'Short days (forecast)'],
   ];
   for (const site of plan.sites) {
     for (const w of site.weeks) {
-      rows.push([plan.name, site.siteName, site.clientName, w.week, w.day, w.evening, w.overnight, w.daily, w.shiftSlots, w.associatesNeeded, w.bedsNeeded, w.bedsAvailable, w.bedsGap, w.vanSeatsNeeded, w.vanSeatsAvailable, w.vanSeatsGap, w.scheduledHours, w.activeHeadcount]);
+      rows.push([plan.name, site.siteName, site.clientName, w.week, w.day, w.evening, w.overnight, w.daily, w.shiftSlots, w.associatesNeeded, w.bedsNeeded, w.bedsAvailable, w.bedsGap, w.vanSeatsNeeded, w.vanSeatsAvailable, w.vanSeatsGap, w.scheduledHours, w.activeHeadcount, w.forecastShortDays ?? null]);
     }
   }
   return rows.map((r) => r.map(cell).join(',')).join('\r\n');

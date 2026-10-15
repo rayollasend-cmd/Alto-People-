@@ -834,18 +834,20 @@ model Client {
 // employer address; Site.state is the actual work-site code that
 // drives OT / meal-break / predictive-scheduling rules.
 model Site {
-  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String?   @db.Uuid
+  /// Agent families step 3: the Workforce agent's daily coverage.forecast rows for this site.
+  coverageForecasts    CoverageForecastDay[]
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId             String?               @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  tenantId             String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   name                 String
-  addressLine1         String?   @db.VarChar(255)
-  addressLine2         String?   @db.VarChar(255)
-  city                 String?   @db.VarChar(120)
-  state                String?   @db.VarChar(2)
-  zip                  String?   @db.VarChar(10)
-  latitude             Decimal?  @db.Decimal(10, 7)
-  longitude            Decimal?  @db.Decimal(10, 7)
+  addressLine1         String?               @db.VarChar(255)
+  addressLine2         String?               @db.VarChar(255)
+  city                 String?               @db.VarChar(120)
+  state                String?               @db.VarChar(2)
+  zip                  String?               @db.VarChar(10)
+  latitude             Decimal?              @db.Decimal(10, 7)
+  longitude            Decimal?              @db.Decimal(10, 7)
   geofenceRadiusMeters Int?
   // IANA timezone of the physical work site (e.g. "America/New_York").
   // Shifts store UTC instants; this is what turns a UTC instant into the
@@ -853,18 +855,18 @@ model Site {
   // and shift notifications. Defaults to Eastern (the current deployment);
   // admins set it per location. Validated against SUPPORTED_TIMEZONES on
   // write.
-  timezone             String    @default("America/New_York")
+  timezone             String                @default("America/New_York")
   /// Brief 2-1b step 7: what kind of site this is. The noun the tenant uses for it comes from the terminology table.
-  type                 SiteType  @default(STORE)
+  type                 SiteType              @default(STORE)
   // The region this store rolls up to (the command center). Stores may
   // belong to different clients and still share a region.
-  regionId             String?   @db.Uuid
+  regionId             String?               @db.Uuid
   /// Brief 2-1b step 5: the organizational unit this site belongs to (division / region / business unit / cost center).
-  orgUnitId            String?   @db.Uuid
-  isActive             Boolean   @default(true)
-  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime? @db.Timestamptz(6)
+  orgUnitId            String?               @db.Uuid
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?             @db.Timestamptz(6)
 
   client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   employments            Employment[]            @relation("EmploymentSite")
@@ -10131,6 +10133,39 @@ model AttendanceConfirmation {
 
   @@index([associateId, sentAt])
   @@index([tenantId])
+}
+
+/// Agent families step 3 (lib/coverageForecast): one site's coverage for one day,
+/// as the Workforce agent saw it on forecastOn (site-local dates). Written once a
+/// day and never updated: the forecast-error metrics compare what was forecast
+/// 7 and 1 days ahead with the lead-0 row of the same day.
+model CoverageForecastDay {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId String   @db.Uuid
+  /// The site-local day the forecast was made.
+  forecastOn DateTime @db.Date
+  /// The site-local day it is about.
+  targetDay  DateTime @db.Date
+  /// targetDay − forecastOn, 0..7.
+  leadDays   Int
+  /// Headcount the site's staffing targets call for that day.
+  demand     Int
+  /// Distinct people on assigned, published shifts that day.
+  assigned   Int
+  /// Published shifts still open that day.
+  openShifts Int
+  /// People on the site's bench, employed and with no shift that day.
+  bench      Int
+  /// max(0, demand − assigned)
+  gap        Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  location Site @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, forecastOn, targetDay])
+  @@index([tenantId, forecastOn])
 }
 
 /// The tenant's own kill switch; one row per tenant. The AgentControl singleton is the platform's.
