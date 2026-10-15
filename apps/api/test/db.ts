@@ -175,8 +175,9 @@ export async function truncateAll(): Promise<void> {
   // Brief 2-1: the Tenant table is preserved (Alto HR is seeded once), but a test's
   // second tenant must not outlive it — no table references Tenant by key.
   await prisma.tenant.deleteMany({ where: { id: { not: '00000000-0000-4000-8000-000000000001' } } });
-  // Brief 2-1b: a test that turned Alto HR into a direct employer hands it back.
-  await prisma.tenant.updateMany({ where: { id: '00000000-0000-4000-8000-000000000001' }, data: { businessModel: 'WORKFORCE_PROVIDER', modules: {}, terminology: {} } });
+  // Brief 2-1b: a test that turned Alto HR into a direct employer hands it back;
+  // Brief 2-3 step 4: and one that raised the audit retention (the row is preserved).
+  await prisma.tenant.updateMany({ where: { id: '00000000-0000-4000-8000-000000000001' }, data: { businessModel: 'WORKFORCE_PROVIDER', modules: {}, terminology: {}, auditRetentionYears: 7 } });
   // Quote each identifier so PascalCase table names are preserved. CASCADE
   // handles the FK graph; RESTART IDENTITY isn't required (UUIDs everywhere).
   const quoted = TABLES.map((t) => `"alto_test"."${t}"`).join(', ');
