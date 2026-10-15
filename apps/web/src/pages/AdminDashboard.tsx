@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -94,12 +95,6 @@ const greetingFor = (hour: number): string => {
   if (hour < 17) return 'Good afternoon';
   if (hour < 22) return 'Good evening';
   return 'Burning the midnight oil';
-};
-
-const firstNameFromEmail = (email: string): string => {
-  const local = email.split('@')[0] ?? '';
-  const first = local.split(/[._-]+/)[0] ?? local;
-  return first ? first.charAt(0).toUpperCase() + first.slice(1) : 'there';
 };
 
 /**
@@ -212,9 +207,7 @@ export function AdminDashboard() {
       : 'Failed to load dashboard data.'
     : null;
 
-  const greetingName =
-    user?.firstName?.trim() ||
-    (user?.email ? firstNameFromEmail(user.email) : 'there');
+  const greetingName = greetingNameOf(user);
 
   return (
     <>

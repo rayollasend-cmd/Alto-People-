@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -51,12 +52,6 @@ const greetingFor = (hour: number): string => {
   if (hour < 17) return 'Good afternoon';
   if (hour < 22) return 'Good evening';
   return 'Burning the midnight oil';
-};
-
-const firstNameFromEmail = (email: string): string => {
-  const local = email.split('@')[0] ?? '';
-  const first = local.split(/[._-]+/)[0] ?? local;
-  return first ? first.charAt(0).toUpperCase() + first.slice(1) : 'there';
 };
 
 /**
@@ -130,9 +125,7 @@ export function ManagerDashboard() {
     if (pendingPtoQuery.error) void pendingPtoQuery.refetch();
   };
 
-  const greetingName =
-    user?.firstName?.trim() ||
-    (user?.email ? firstNameFromEmail(user.email) : 'there');
+  const greetingName = greetingNameOf(user);
 
   // Index of associateId → active time entry (so we can mark "on the
   // clock" badges in the team list).

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { greetingName } from '@/lib/greeting';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -178,7 +179,7 @@ export function WorkforceDashboard() {
     list.push(s);
     supsByClient.set(s.clientId, list);
   }
-  const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
+  const firstName = greetingName(user, '');
 
   if (query.isError) {
     return (

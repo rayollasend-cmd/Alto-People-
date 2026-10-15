@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { greetingName } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -639,10 +640,7 @@ export function RecruiterDashboard() {
     refetchOnWindowFocus: true,
   });
   const home = q.data;
-  const name =
-    user?.firstName?.trim() ||
-    (user?.email ? (user.email.split('@')[0]!.split(/[._-]+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase()) : '') ||
-    'there';
+  const name = greetingName(user);
 
   return (
     <div className="mx-auto space-y-8">

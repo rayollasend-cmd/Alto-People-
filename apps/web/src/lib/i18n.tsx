@@ -2455,7 +2455,7 @@ const en = {
 
   // Login
   'login.title': 'Sign in',
-  'login.subtitle': 'Use your Alto HR credentials.',
+  'login.subtitle': 'Sign in with your work email.',
   'login.brandTagline': 'Your schedule, time clock, and pay',
   'login.email': 'Email',
   'login.password': 'Password',
@@ -2467,7 +2467,7 @@ const en = {
   'login.errNetwork': 'Network error — check your connection and try again.',
   'login.errRateLimited': 'Too many login attempts. Please wait a minute and try again.',
   'login.errServer': "We're having trouble signing you in. Please try again in a moment.",
-  'login.securedBy': 'Secured by Alto HR',
+  'login.securedBy': 'Secured by Alto People',
   'login.or': 'or',
   'login.usePasskey': 'Use a passkey',
   'login.ssoButton': 'Sign in with SSO',
@@ -5285,7 +5285,7 @@ const es: Record<MessageKey, string> = {
   'pay.askSend': 'Enviar',
 
   'login.title': 'Iniciar sesión',
-  'login.subtitle': 'Usa tus credenciales de Alto HR.',
+  'login.subtitle': 'Inicia sesión con tu correo del trabajo.',
   'login.brandTagline': 'Tu horario, tu reloj y tu pago',
   'login.email': 'Correo electrónico',
   'login.password': 'Contraseña',
@@ -5299,7 +5299,7 @@ const es: Record<MessageKey, string> = {
     'Demasiados intentos de inicio de sesión. Espera un minuto e inténtalo de nuevo.',
   'login.errServer':
     'Tenemos problemas para iniciar tu sesión. Inténtalo de nuevo en un momento.',
-  'login.securedBy': 'Protegido por Alto HR',
+  'login.securedBy': 'Protegido por Alto People',
   'login.or': 'o',
   'login.usePasskey': 'Usar una llave de acceso',
   'login.ssoButton': 'Iniciar sesión con SSO',

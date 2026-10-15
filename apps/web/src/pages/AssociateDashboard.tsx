@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -79,11 +80,7 @@ export function AssociateDashboard() {
   const { user } = useAuth();
   const { t } = useI18n();
 
-  const greetingName =
-    user?.firstName?.trim() ||
-    (user?.email
-      ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase())
-      : 'there');
+  const greetingName = greetingNameOf(user);
 
   // Each fetch is an independent query; one failing shouldn't blank out
   // the others. Cached results render instantly on revisit and refresh

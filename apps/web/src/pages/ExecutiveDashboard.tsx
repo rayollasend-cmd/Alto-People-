@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { greetingName } from '@/lib/greeting';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -713,6 +715,8 @@ interface PortalEngagement {
   totals: { accounts: number; active7d: number; neverSignedIn: number; downloads7d: number };
 }
 
+const greetingWord = (h: number) => (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening');
+
 export function ExecutiveDashboard() {
   const { user } = useAuth();
   const [packBusy, setPackBusy] = useState(false);
@@ -836,28 +840,25 @@ export function ExecutiveDashboard() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-white">
-            Good {new Date().getHours() < 12 ? 'morning' : 'afternoon'}
-            {user ? `, ${user.email.split('@')[0]}` : ''}
-          </h1>
-          <p className="text-sm text-silver">
-            <LiveNow
-              render={(now) => (
-                <>
-                  {LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)}{' '}
-                  — company posture at a glance, board-ready.
-                </>
-              )}
-            />
-          </p>
-        </div>
-        <Button onClick={() => void downloadBoardPack()} loading={packBusy} disabled={packBusy}>
-          <Download className="mr-2 h-4 w-4" />
-          Download board pack
-        </Button>
-      </div>
+      {/* Design system §4.1 (UX upgrade step 2): the hero-scale greeting every
+          home shares; the board pack is the one action. The margin hero and
+          the sections below keep their order until the executive home moves
+          onto the Home template. */}
+      <PageHeader
+        title={
+          <>
+            {greetingWord(new Date().getHours())}, <span className="text-accent">{greetingName(user, '')}</span>
+          </>
+        }
+        topbarTitle="Home"
+        subtitle={<LiveNow render={(now) => <>{LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)} — company posture at a glance, board-ready.</>} />}
+        primaryAction={
+          <Button onClick={() => void downloadBoardPack()} loading={packBusy} disabled={packBusy}>
+            <Download className="mr-2 h-4 w-4" />
+            Download board pack
+          </Button>
+        }
+      />
 
       {summary && summary.narrative.length > 0 && (
         <section

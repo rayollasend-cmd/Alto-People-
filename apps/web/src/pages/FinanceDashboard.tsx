@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { greetingName } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -86,7 +87,7 @@ export function FinanceDashboard() {
     }
   };
 
-  const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
+  const firstName = greetingName(user, '');
 
   if (query.isError) {
     return (
