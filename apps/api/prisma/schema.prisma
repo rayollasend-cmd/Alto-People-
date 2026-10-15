@@ -1762,6 +1762,8 @@ model AssociateAssignment {
 }
 
 model Associate {
+  /// Agent families step 4: the Compliance agent's chases of this person's expiring documents.
+  documentChases          DocumentChase[]
   /// Agent families step 2: the attendance.confirm asks this person received.
   attendanceConfirmations AttendanceConfirmation[]
   id                      String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -10166,6 +10168,38 @@ model CoverageForecastDay {
 
   @@unique([locationId, forecastOn, targetDay])
   @@index([tenantId, forecastOn])
+}
+
+/// Agent families step 4 (lib/complianceAgent): one expiring document or
+/// authorization the Compliance agent chases with its person. itemKey is the
+/// compliance scorecard's action key (exp:<kind>:<associateId>:<expiresAt>), so
+/// a waiver or snooze set there is read here and the item is never chased.
+model DocumentChase {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  itemKey     String    @unique @db.VarChar(300)
+  associateId String    @db.Uuid
+  /// The agent chasing (AgentProfile.workerId).
+  workerId    String    @db.Uuid
+  /// DOCUMENT | I9_WORK_AUTH | VACCINATION (the scorecard's kinds)
+  kind        String    @db.VarChar(30)
+  label       String    @db.VarChar(200)
+  expiresAt   DateTime  @db.Timestamptz(6)
+  /// The last reminder sent: 1 = 30 days out, 2 = 14, 3 = 3.
+  stage       Int       @default(0)
+  lastSentAt  DateTime? @db.Timestamptz(6)
+  /// Expired unresolved: on HR's desk from here.
+  escalatedAt DateTime? @db.Timestamptz(6)
+  resolvedAt  DateTime? @db.Timestamptz(6)
+  /// RENEWED | WAIVED | LEFT
+  resolution  String?   @db.VarChar(20)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, resolvedAt])
+  @@index([tenantId, resolvedAt])
 }
 
 /// The tenant's own kill switch; one row per tenant. The AgentControl singleton is the platform's.

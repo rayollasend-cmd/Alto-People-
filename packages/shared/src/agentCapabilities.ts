@@ -28,6 +28,10 @@ export interface CapabilityScenarioFixture {
     shifts?: Array<{ ref: string; siteRef: string; position: string; startsInMinutes: number; hours: number; assigneeRef?: string | null }>;
     /** A site's floor target (headcount), in effect from 30 days before `now`. */
     targets?: Array<{ siteRef: string; headcount: number }>;
+    /** Documents on file, in the order given (a later one of the same kind is newer). */
+    documents?: Array<{ personRef: string; kind: 'ID' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019'; expiresInDays: number }>;
+    /** Approved hires: start date days before `now`, and how far their I-9 got. */
+    hires?: Array<{ personRef: string; startDaysAgo: number; section1: boolean; section2: boolean }>;
     /** Unexcused attendance on record, days before `now` (the no-show risk score reads it). */
     attendance?: Array<{ personRef: string; kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE'; daysAgo: number }>;
   };
@@ -118,6 +122,43 @@ const COVERAGE_FORECAST_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { shortRef: 'hotel', gap: 2 }, allowedActions: [] },
 };
 
+const DOCUMENT_CHASE_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Three people with IDs on file: only the one expiring soon with nothing newer is chased',
+  world: {
+    people: [
+      { ref: 'ana', firstName: 'Ana', lastName: 'Soon' },
+      { ref: 'ben', firstName: 'Ben', lastName: 'Renewed' },
+      { ref: 'cy', firstName: 'Cy', lastName: 'Later' },
+    ],
+    documents: [
+      { personRef: 'ana', kind: 'ID', expiresInDays: 10 },
+      { personRef: 'ben', kind: 'ID', expiresInDays: 10 },
+      { personRef: 'ben', kind: 'ID', expiresInDays: 400 },
+      { personRef: 'cy', kind: 'I9_SUPPORTING', expiresInDays: 60 },
+    ],
+  },
+  input: {},
+  expected: { output: { chasedRef: 'ana', items: 1 }, allowedActions: ['notify'] },
+};
+
+const I9_SECTION2_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Three approved hires: the two without Section 2 are on the worklist, the earliest deadline first',
+  world: {
+    people: [
+      { ref: 'dan', firstName: 'Dan', lastName: 'Early' },
+      { ref: 'eve', firstName: 'Eve', lastName: 'Recent' },
+      { ref: 'fay', firstName: 'Fay', lastName: 'Done' },
+    ],
+    hires: [
+      { personRef: 'eve', startDaysAgo: 1, section1: true, section2: false },
+      { personRef: 'dan', startDaysAgo: 5, section1: true, section2: false },
+      { personRef: 'fay', startDaysAgo: 4, section1: true, section2: true },
+    ],
+  },
+  input: {},
+  expected: { output: { firstRef: 'dan', pending: 2 } },
+};
+
 const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   name: 'A shift its holder can no longer work: the free person is proposed to cover it, never the holder or the busy one',
   world: {
@@ -187,7 +228,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:compliance', 'manage:compliance', 'manage:communications'],
     gate: null,
     metrics: ['itemsChased', 'uploadedBeforeExpiry', 'expiredAnyway', 'escalations'],
-    scenarios: [],
+    scenarios: [DOCUMENT_CHASE_FIXTURE],
   },
   {
     key: 'i9.section2',
@@ -197,7 +238,7 @@ export const AGENT_CAPABILITIES = [
     scopes: ['view:compliance', 'view:org'],
     gate: null,
     metrics: ['hires', 'completedInTime', 'late', 'everifyOpenedInTime'],
-    scenarios: [],
+    scenarios: [I9_SECTION2_FIXTURE],
   },
   {
     key: 'incident.loop',

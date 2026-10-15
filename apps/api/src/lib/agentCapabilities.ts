@@ -20,7 +20,7 @@ import { notifyUser } from './notify.js';
 import { ALTO_TENANT_ID, runWithTenant } from './tenant.js';
 import { loadTenantProfile, moduleOn } from './tenantProfile.js';
 import { createApprovalRequest, logAgentAction, type AgentContext } from './agents.js';
-import { AGENT_KILL_CATEGORY, evaluateScenario } from './agentControls.js';
+import { AGENT_KILL_CATEGORY, allAgentsSuspended, evaluateScenario } from './agentControls.js';
 
 /**
  * Agent families step 0 (docs/agent-families-investigation.md §8).
@@ -115,6 +115,20 @@ async function capabilitySummary(db: Db, def: AgentCapabilityDef, row: CapRow, o
     suspendReason: row.suspendReason,
     driftErrorRatePct: row.driftErrorRatePct,
   };
+}
+
+/**
+ * The capabilities running for a tenant now: held by an ACTIVE, unsuspended
+ * agent, enabled and not suspended, with neither the tenant's nor the
+ * platform's switch on. Modules are the caller's to check (Hugo, the desk).
+ */
+export async function runningCapabilityKeys(db: Db, tenantId: string): Promise<Set<string>> {
+  if ((await allAgentsSuspended(db as PrismaClient)) || (await tenantAgentsSuspended(db, tenantId))) return new Set();
+  const rows = await db.agentCapability.findMany({
+    where: { tenantId, enabled: true, suspendedAt: null, agent: { suspendedAt: null, worker: { status: 'ACTIVE' } } },
+    select: { key: true },
+  });
+  return new Set(rows.map((r) => r.key));
 }
 
 /** The agent's capabilities, each with whether its tenant offers it (every required module on). */
@@ -474,6 +488,19 @@ export async function runCapabilityFixture(
         refs[sh.ref] = row.id;
         created.shifts.push(row.id);
       }
+      // Documents in the order given, so a later one of the same kind is newer.
+      for (const [n, d] of (fixture.world.documents ?? []).entries()) {
+        await db.documentRecord.create({
+          data: { associateId: refs[d.personRef]!, kind: d.kind, filename: `${d.kind.toLowerCase()}-${n}.pdf`, mimeType: 'application/pdf', size: 1, status: 'VERIFIED', expiresAt: new Date(now.getTime() + d.expiresInDays * DAY), createdAt: new Date(now.getTime() - 60 * DAY + n * 60_000), tenantId },
+        });
+      }
+      // Approved hires: the start date, an approved application, the I-9 as far as it got.
+      for (const h of fixture.world.hires ?? []) {
+        const start = new Date(`${new Date(now.getTime() - h.startDaysAgo * DAY).toISOString().slice(0, 10)}T00:00:00Z`);
+        await db.associate.update({ where: { id: refs[h.personRef]! }, data: { hireDate: start } });
+        await db.application.create({ data: { associateId: refs[h.personRef]!, onboardingTrack: 'STANDARD', status: 'APPROVED', startDate: start, tenantId } });
+        await db.i9Verification.create({ data: { associateId: refs[h.personRef]!, tenantId, ...(h.section1 ? { section1CompletedAt: start } : {}), ...(h.section2 ? { section2CompletedAt: start } : {}) } });
+      }
       // A site's floor target, removed with its site (cascade).
       for (const t of fixture.world.targets ?? []) {
         await db.staffingTarget.create({ data: { locationId: refs[t.siteRef]!, targetCount: t.headcount, effectiveFrom: new Date(now.getTime() - 30 * DAY), tenantId } });
@@ -495,6 +522,9 @@ export async function runCapabilityFixture(
   } finally {
     await db.shift.deleteMany({ where: { id: { in: created.shifts } } });
     await db.associateAssignment.deleteMany({ where: { id: { in: created.assignments } } });
+    // Documents and applications hold their person (onDelete: Restrict): they go first.
+    await db.documentRecord.deleteMany({ where: { associateId: { in: created.associates } } });
+    await db.application.deleteMany({ where: { associateId: { in: created.associates } } });
     await db.worker.deleteMany({ where: { associateId: { in: created.associates } } });
     await db.associate.deleteMany({ where: { id: { in: created.associates } } });
     await db.site.deleteMany({ where: { id: { in: created.sites } } });

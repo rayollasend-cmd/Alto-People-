@@ -10,7 +10,8 @@ import type { PrismaClient } from '@prisma/client';
 import { hasCapability, type Role } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
-import { pendingDeskApprovals, pendingDeskShiftFills } from './agentCapabilities.js';
+import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
+import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
 import { shiftDeepLink } from './workforceAgent.js';
 import { tenantIdForWrite } from './tenant.js';
 
@@ -334,7 +335,38 @@ export async function computeRoleDecisions(
         linkUrl: '/onboarding?status=SUBMITTED',
       });
     }
-    if (i9Pending > 0) {
+    // Agent families step 4: with the Compliance agent's i9.section2 running, the desk
+    // gets a dated worklist (one item a hire, earliest deadline first) instead of a count.
+    const section2Running = (await runningCapabilityKeys(prisma, tenantIdForWrite())).has(I9_SECTION2);
+    const hires = section2Running ? await pendingSection2(prisma, tenantIdForWrite()) : [];
+    if (section2Running && hires.length > 0 && hires.length <= 5) {
+      const today = now.toISOString().slice(0, 10);
+      for (const h of hires) {
+        const due = h.dueBy ? h.dueBy.toISOString().slice(0, 10) : null;
+        out.push({
+          key: `i9:section2:${h.associateId}`,
+          domain: 'hiring',
+          severity: !due ? 'high' : due < today ? 'critical' : due === today ? 'high' : 'normal',
+          label: due ? `I-9 Section 2 for ${h.name}: ${due < today ? 'late, was due' : 'due'} ${due}` : `I-9 Section 2 for ${h.name}: no start date on file`,
+          detail: h.blockers.length ? `E-Verify cannot open yet: ${h.blockers.map(blockerWords).join(', ')}.` : 'E-Verify can open once Section 2 is done.',
+          stakes: null,
+          ageDays: null,
+          linkUrl: section2Link(h),
+        });
+      }
+    } else if (section2Running && hires.length > 5) {
+      const first = hires[0]!;
+      out.push({
+        key: 'i9:section2',
+        domain: 'hiring',
+        severity: 'high',
+        label: `${hires.length} I-9 Section 2 verifications pending${first.dueBy ? `, the first due ${first.dueBy.toISOString().slice(0, 10)}` : ''}`,
+        detail: 'Federal deadline: Section 2 within 3 business days of the start date. Earliest first on the I-9 tab.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/compliance?tab=i9',
+      });
+    } else if (!section2Running && i9Pending > 0) {
       out.push({
         key: 'i9:section2',
         domain: 'hiring',
@@ -349,6 +381,38 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:compliance')) {
+    // Agent families step 4: what the Compliance agent chased and the person did not renew.
+    const expired = await prisma.documentChase.findMany({
+      where: { tenantId: tenantIdForWrite(), escalatedAt: { not: null }, resolvedAt: null },
+      orderBy: { expiresAt: 'asc' },
+      select: { id: true, label: true, expiresAt: true, associateId: true, stage: true, associate: { select: { firstName: true, lastName: true } } },
+      take: 200,
+    });
+    if (expired.length > 0 && expired.length <= 5) {
+      for (const c of expired) {
+        out.push({
+          key: `compliance:expired:${c.id}`,
+          domain: 'compliance',
+          severity: 'critical',
+          label: `${c.associate.firstName} ${c.associate.lastName}: ${c.label} expired ${c.expiresAt.toISOString().slice(0, 10)}`,
+          detail: `The Compliance agent asked them ${c.stage} time${c.stage === 1 ? '' : 's'}; nothing newer is on file. Collect the renewal, or waive it on the scorecard.`,
+          stakes: null,
+          ageDays: Math.max(0, Math.floor((now.getTime() - c.expiresAt.getTime()) / DAY_MS)),
+          linkUrl: `/people?associateId=${c.associateId}`,
+        });
+      }
+    } else if (expired.length > 5) {
+      out.push({
+        key: 'compliance:expired-chased',
+        domain: 'compliance',
+        severity: 'critical',
+        label: `${expired.length} documents expired after the Compliance agent chased them`,
+        detail: 'Nothing newer is on file. Collect the renewals, or waive them on the scorecard.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/expirations',
+      });
+    }
     const expiring = await prisma.documentRecord.findMany({
       where: {
         deletedAt: null,

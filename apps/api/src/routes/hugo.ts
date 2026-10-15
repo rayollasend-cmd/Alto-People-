@@ -6,8 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { inProcessAgent, logBuiltInAgentAction } from '../lib/agents.js';
-import { allAgentsSuspended } from '../lib/agentControls.js';
-import { pendingDeskApprovals, pendingDeskShiftFills, tenantAgentsSuspended } from '../lib/agentCapabilities.js';
+import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from '../lib/agentCapabilities.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { computeCoverageForecast } from '../lib/coverageForecast.js';
 import { detectHugoIntent, hugoAudienceOf, intentsFor, type HugoAudience, type HugoContext, type HugoIntentKey } from '../lib/hugo.js';
@@ -44,16 +43,6 @@ interface Asker {
   language?: string | null;
 }
 
-/** The capabilities Hugo can route to now: the agent holding each is running and the capability is on. */
-async function runningCapabilities(tenantId: string): Promise<Set<string>> {
-  if ((await allAgentsSuspended(prisma)) || (await tenantAgentsSuspended(prisma, tenantId))) return new Set();
-  const rows = await prisma.agentCapability.findMany({
-    where: { tenantId, enabled: true, suspendedAt: null, agent: { suspendedAt: null, worker: { status: 'ACTIVE' } } },
-    select: { key: true },
-  });
-  return new Set(rows.map((r) => r.key));
-}
-
 async function contextFor(user: Asker): Promise<{ tenantId: string; audience: HugoAudience; ctx: HugoContext; lang: WaLang; name: string; profile: Awaited<ReturnType<typeof loadTenantProfile>> }> {
   const audience = hugoAudienceOf(user);
   if (!audience) throw new HttpError(403, 'no_hugo', 'Hugo has nothing for this account.');
@@ -63,7 +52,7 @@ async function contextFor(user: Asker): Promise<{ tenantId: string; audience: Hu
     throw new HttpError(409, 'hugo_off', 'The assistant is switched off for now.');
   }
   const profile = await loadTenantProfile(tenantId);
-  const running = await runningCapabilities(tenantId);
+  const running = await runningCapabilityKeys(prisma, tenantId);
   const ctx: HugoContext = { channel: 'app', audience, moduleOn: (m) => profile.modules[m], capabilityOn: (k) => running.has(k) };
   return { tenantId, audience, ctx, lang: toWaLang(user.language), name: getBrandingSync().assistantName, profile };
 }

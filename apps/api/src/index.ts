@@ -34,6 +34,7 @@ import { startAutoClockOutCron } from './lib/autoClockOut.js';
 import { startExecutiveAlertsCron } from './lib/executiveAlerts.js';
 import { startRelayEscalationCron } from './lib/relayEscalation.js';
 import { startNoShowRiskCron } from './lib/noShowRisk.js';
+import { startComplianceAgentCron } from './lib/complianceAgent.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
 import { startExecutiveDigestCron } from './lib/executiveDigest.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
@@ -120,6 +121,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startRelayEscalationCron();
   startShiftAutofillCron();
   startNoShowRiskCron();
+  // Agent families step 4: the Compliance agent (document.chase, i9.section2), hourly per tenant.
+  startComplianceAgentCron();
   startAutoClockOutCron();
   startWeekAheadCron();
   startOfferLetterCron();
