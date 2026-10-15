@@ -108,7 +108,7 @@ describe('the Rules routes', () => {
     expect(sets.body.sets.every((s: { shipped: boolean; source: string }) => s.shipped && s.source.length > 10)).toBe(true);
   });
 
-  it('are payroll’s to read, not an associate’s', async () => {
+  it('are not an associate’s to read (view:payroll reaches every associate; these need process:payroll, manage:org or view:executive)', async () => {
     const a = await createAssociate();
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: a.id });
     const me = await loginAs(agent(), user.email);

@@ -111,6 +111,20 @@ describe('resolution', () => {
     expect(u.params.custom).toEqual({ seniorityPremium: 0.5 });
   });
 
+  it('an override fills what the law leaves open and its own policy, never removes a protection the law set', () => {
+    const site: RuleSetDef = { ...CA_TEST, jurisdiction: 'SITE:s1', level: 'SITE', params: { meal: { requiredAfterHours: null, penaltyHours: 0 }, restBetweenShifts: { minHours: 11, premiumHours: 1 }, severity: { overtime: 'block' }, custom: { shiftLead: true } } };
+    const ca = resolveFor([...PACKS, CA_TEST, site], ['FEDERAL', 'US-ZZ'], ['SITE:s1'], '2026-10-05');
+    expect(ca.params.meal).toMatchObject({ requiredAfterHours: 5, penaltyHours: 1 });
+    expect(ca.params.restBetweenShifts).toMatchObject({ minHours: 10, premiumHours: 1 });
+    expect(ca.params.severity?.overtime).toBe('block');
+    expect(ca.params.custom).toEqual({ shiftLead: true });
+
+    // Florida sets no rest-between rule (null) and no premium (0): the site's fills both.
+    const fl = resolveFor([...PACKS, site], ['FEDERAL', 'US-FL'], ['SITE:s1'], '2026-10-05');
+    expect(fl.params.restBetweenShifts).toMatchObject({ minHours: 11, premiumHours: 1 });
+    expect(fl.origin['restBetweenShifts.minHours']).toBe('SITE:s1 2020-01-01 v1');
+  });
+
   it('a DRAFT set is never payable; the fingerprint names the combination', () => {
     const r = rulesForSite({ state: 'FL' }, '2026-10-15');
     expect(r.payable).toBe(false);

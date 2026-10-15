@@ -516,7 +516,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
-  { path: 'payroll/labor-rules', element: <RequireCapability cap="view:payroll"><LaborRulesPage /></RequireCapability> },
+  { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },

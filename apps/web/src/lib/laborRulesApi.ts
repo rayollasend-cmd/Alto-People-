@@ -91,3 +91,23 @@ export const listLaborShadowRuns = () => apiFetch<{ runs: LaborShadowRun[] }>('/
 
 export const getLaborShadowRun = (id: string) =>
   apiFetch<{ id: string; periodStart: string; periodEnd: string; associates: number; differences: LaborShadowDifference[] }>(`/labor-rules/shadow/${id}`);
+
+// Brief 2-2 step 6 — the organization's and each site's own rules (manage:org).
+
+export const listLaborRuleSets = () => apiFetch<{ sets: LaborRuleSet[] }>('/labor-rules/sets');
+
+export interface LaborOverrideInput {
+  level: 'TENANT' | 'SITE';
+  siteId?: string | null;
+  effectiveFrom: string;
+  params: Record<string, unknown>;
+  source: string;
+}
+
+export const createLaborOverride = (input: LaborOverrideInput) =>
+  apiFetch<{ id: string; status: string; version: number }>('/labor-rules/overrides', { method: 'POST', body: input });
+
+export const activateLaborRuleSet = (id: string, note: string) =>
+  apiFetch<{ id: string; status: string }>(`/labor-rules/sets/${id}/activate`, { method: 'POST', body: { note } });
+
+export const retireLaborRuleSet = (id: string) => apiFetch<{ id: string; status: string }>(`/labor-rules/sets/${id}/retire`, { method: 'POST', body: {} });

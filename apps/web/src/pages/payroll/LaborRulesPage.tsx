@@ -10,13 +10,16 @@ import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { fmtMoney } from '@/lib/format';
+import { LaborOverridesSection } from './LaborOverridesSection';
 
 /**
- * Brief 2-2 step 2 — the Rules page, read-only: for each site, the labor
- * rules in force on a date (federal, its state, its city, then the
- * organization's and the site's own), and for one site which rule set
- * supplied each value, with its citation. Nothing here pays anyone yet: the
- * engine runs in shadow (step 3) and pays only after the owner signs (step 4).
+ * Brief 2-2 — the Rules page: for each site, the labor rules in force on a
+ * date (federal, its state, its city, then the organization's and the site's
+ * own), and for one site which rule set supplied each value, with its
+ * citation (step 2); the organization's own rules, drafted and signed under
+ * manage:org (step 6, LaborOverridesSection); and the engine in shadow beside
+ * each finalized pay run (step 3). Nothing here pays anyone yet: pay switches
+ * to the engine only after the owner signs a clean dry run (step 4).
  */
 
 const hours = (h: number | null, none = 'None') => (h === null ? none : `${h} h`);
@@ -149,6 +152,7 @@ export function LaborRulesPage() {
           )}
         </CardContent>
       </Card>
+      <LaborOverridesSection sites={q.data?.sites ?? []} />
       <LaborShadowSection />
       {open && <SiteDrawer id={open} date={date} onClose={() => setOpen(null)} />}
     </div>

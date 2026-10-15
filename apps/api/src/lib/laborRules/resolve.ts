@@ -15,8 +15,12 @@ import type { MinorBand, ResolvedRules, RuleLevel, RuleParams, RuleSetDef } from
  *       has none", never "remove the federal one"); multipliers: the highest;
  *     - minors: every band of every layer applies (the strictest limit binds).
  *
- *   An override can therefore add protection but never take it away below
- *   the law, whatever a tenant enters.
+ *   A tenant or site override can therefore add protection but never take
+ *   it away below the law, whatever a tenant enters: beyond the combiners
+ *   above, it fills only what the law leaves open (a null, 0 or false field,
+ *   e.g. a rest-between-shifts rule where the state has none) plus its own
+ *   severity and custom (union) parameters. A stricter value for something
+ *   the law already sets (a longer meal) is a pack change, reviewed.
  */
 
 const LEVEL_ORDER: Record<RuleLevel, number> = { FEDERAL: 0, STATE: 1, CITY: 2, TENANT: 3, SITE: 4 };
@@ -36,13 +40,15 @@ export function setsInForce(candidates: readonly RuleSetDef[], date: string): Ru
 
 type Fam = Record<string, unknown>;
 
-const LOWER_WINS = new Set(['overtime.weeklyThreshold', 'overtime.dailyThreshold', 'overtime.dailyDoubleThreshold']);
+const OVERRIDE_LEVELS = new Set<RuleLevel>(['TENANT', 'SITE']);
+const LOWER_WINS =new Set(['overtime.weeklyThreshold', 'overtime.dailyThreshold', 'overtime.dailyDoubleThreshold']);
 const HIGHER_WINS = new Set(['overtime.weeklyMultiplier', 'overtime.dailyMultiplier', 'overtime.doubleMultiplier', 'minimumWage.rateCents']);
 
 export function resolveRules(layers: readonly RuleSetDef[]): ResolvedRules {
   const params: Record<string, Fam> = {};
   const origin: Record<string, string> = {};
   const bands: MinorBand[] = [];
+  const lawSet = new Set<string>();
   for (const layer of layers) {
     const label = setLabel(layer);
     for (const [family, block] of Object.entries(layer.params) as Array<[keyof RuleParams, Fam | undefined]>) {
@@ -79,8 +85,12 @@ export function resolveRules(layers: readonly RuleSetDef[]): ResolvedRules {
           }
           continue;
         }
+        // An override (tenant, site) may fill what the law leaves open (null, 0, false) and set
+        // its own policy (severity, custom), never replace a protection the law set.
+        if (OVERRIDE_LEVELS.has(layer.level) && family !== 'severity' && family !== 'custom' && lawSet.has(key)) continue;
         into[field] = value;
         origin[key] = label;
+        if (!OVERRIDE_LEVELS.has(layer.level) && value !== null && value !== 0 && value !== false && !(Array.isArray(value) && value.length === 0)) lawSet.add(key);
       }
     }
   }
