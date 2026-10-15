@@ -20,11 +20,18 @@ import {
   Scale,
   Send,
   Landmark,
+  MoreHorizontal,
   ShieldAlert,
   ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 import { getFinancialChangesSummary } from '@/lib/financialChangesApi';
 import type {
   PayrollRunDetail,
@@ -635,52 +642,73 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         }
         primaryAction={
           canProcess ? (
+            // One primary, one desk item while it carries work, and the
+            // seven payroll rooms behind one menu: the header used to spend
+            // a full row on eight buttons before the first number.
             <div className="flex flex-wrap items-center gap-2">
-              <Button asChild variant={openChanges > 0 ? 'outline' : 'ghost'} size="sm">
-                <Link to="/payroll/financial-changes">
-                  <Landmark className="mr-1 h-4 w-4" />
-                  Financial changes
-                  {openChanges > 0 && (
+              {openChanges > 0 && (
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/payroll/financial-changes">
+                    <Landmark className="mr-1 h-4 w-4" />
+                    Financial changes
                     <span className="ml-1.5 rounded-full bg-alert/20 px-1.5 text-xs font-semibold text-alert">{openChanges}</span>
+                  </Link>
+                </Button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" aria-label="More payroll pages">
+                    <MoreHorizontal className="mr-1 h-4 w-4" />
+                    More
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {openChanges === 0 && (
+                    <DropdownMenuItem asChild>
+                      <Link to="/payroll/financial-changes">
+                        <Landmark className="mr-2 h-4 w-4" />
+                        Financial changes
+                      </Link>
+                    </DropdownMenuItem>
                   )}
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/readiness">
-                  <Users className="mr-1 h-4 w-4" />
-                  Readiness
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/ytd">
-                  <FileText className="mr-1 h-4 w-4" />
-                  YTD report
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/tax">
-                  <FileText className="mr-1 h-4 w-4" />
-                  Tax forms
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/compliance">
-                  <AlertTriangle className="mr-1 h-4 w-4" />
-                  Compliance
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/labor-rules">
-                  <Scale className="mr-1 h-4 w-4" />
-                  Labor rules
-                </Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/payroll/year-end-close">
-                  <CheckCircle2 className="mr-1 h-4 w-4" />
-                  Year-end close
-                </Link>
-              </Button>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/readiness">
+                      <Users className="mr-2 h-4 w-4" />
+                      Readiness
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/ytd">
+                      <FileText className="mr-2 h-4 w-4" />
+                      Year-to-date report
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/tax">
+                      <FileText className="mr-2 h-4 w-4" />
+                      Tax forms
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/compliance">
+                      <AlertTriangle className="mr-2 h-4 w-4" />
+                      Compliance
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/labor-rules">
+                      <Scale className="mr-2 h-4 w-4" />
+                      Labor rules
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/year-end-close">
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                      Year-end close
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 onClick={() => {
                   setWizardSeed(null);

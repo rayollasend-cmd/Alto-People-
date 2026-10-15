@@ -29,6 +29,12 @@ import {
   X,
   Trash2,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 import type {
   AssociateLite,
   StaffingTargetLocation,
@@ -2444,6 +2450,70 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const pullState = usePullToRefresh(refresh);
 
+  // The list view's date range rides on the filter row (Phase 54.2 gave it
+  // a card of its own; the sweep folded it in). Defaults to the current month.
+  const rangeControls = view === 'list' ? (
+    <div className="ml-auto inline-flex flex-wrap items-center gap-2">
+      <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+        <Calendar className="h-3 w-3" />
+        Range
+      </div>
+      <input
+        type="date"
+        value={listFrom}
+        onChange={(e) => setListFrom(e.target.value)}
+        className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+        aria-label="From date"
+      />
+      <span className="text-silver/70 text-xs">→</span>
+      <input
+        type="date"
+        value={listTo}
+        onChange={(e) => setListTo(e.target.value)}
+        className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+        aria-label="To date"
+      />
+      <button
+        type="button"
+        onClick={() => {
+          const d = new Date();
+          setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
+          setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
+        }}
+        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+      >
+        This month
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const d = new Date();
+          const monday = startOfWeekMonday(d);
+          setListFrom(ymd(monday));
+          const sunday = new Date(monday);
+          sunday.setDate(sunday.getDate() + 6);
+          setListTo(ymd(sunday));
+        }}
+        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
+      >
+        This week
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setListFrom('');
+          setListTo('');
+        }}
+        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
+      >
+        Clear
+      </button>
+      <span className="ml-auto text-2xs text-silver/70 tabular-nums">
+        {filteredShifts ? `${filteredShifts.length} shifts` : ''}
+      </span>
+    </div>
+  ) : null;
+
   return (
     <>
       <PullToRefreshIndicator state={pullState} />
@@ -2462,24 +2532,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         secondaryActions={
           canManage ? (
             <>
-              <Button variant="ghost" size="sm" onClick={onPrint} title="Print the current view">
-                <Printer className="h-4 w-4" />
-                Print
-              </Button>
-              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Export CSV">
-                <Download className="h-4 w-4" />
-                CSV
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onExportPdf}
-                loading={exportingPdf}
-                title="Generate a PDF for this date range"
-              >
-                <FileText className="h-4 w-4" />
-                PDF
-              </Button>
+              {/* The three ways out (paper, CSV, PDF) behind one Export, so
+                  the header is Export · Templates · New shift. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" loading={exportingPdf}>
+                    <Download className="h-4 w-4" />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onSelect={onPrint}>
+                    <Printer className="mr-2 h-4 w-4" />
+                    Print this view
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={onExportCsv}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void onExportPdf()}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    Download PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button variant="secondary" onClick={() => setShowTemplates(true)}>
                 <LayoutTemplate className="h-4 w-4" />
                 Templates
@@ -2522,13 +2598,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           {canSeeKpis && (
             <div className="no-print">
               <KpiStrip kpis={kpis} period={kpi.period} />
-            </div>
-          )}
-
-          {tzHint && (
-            <div className="no-print mb-2 text-xs2 text-silver/70 inline-flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {tzHint}
             </div>
           )}
 
@@ -2935,73 +3004,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             showAllAssociates={showAllAssociates}
             setShowAllAssociates={setShowAllAssociates}
             showAssociateToggle={view === 'week' || view === 'day'}
+            zoneNote={tzHint}
+            trailing={rangeControls}
           />
         </div>
       )}
 
-      {/* Phase 54.2 — date range filter for the list view (lives above the
-          status filter chips). Defaults to the current month. */}
-      {view === 'list' && (
-        <div className="no-print mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
-          <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
-            <Calendar className="h-3 w-3" />
-            Range
-          </div>
-          <input
-            type="date"
-            value={listFrom}
-            onChange={(e) => setListFrom(e.target.value)}
-            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            aria-label="From date"
-          />
-          <span className="text-silver/70 text-xs">→</span>
-          <input
-            type="date"
-            value={listTo}
-            onChange={(e) => setListTo(e.target.value)}
-            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            aria-label="To date"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const d = new Date();
-              setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
-              setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
-            }}
-            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
-          >
-            This month
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const d = new Date();
-              const monday = startOfWeekMonday(d);
-              setListFrom(ymd(monday));
-              const sunday = new Date(monday);
-              sunday.setDate(sunday.getDate() + 6);
-              setListTo(ymd(sunday));
-            }}
-            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
-          >
-            This week
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setListFrom('');
-              setListTo('');
-            }}
-            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
-          >
-            Clear
-          </button>
-          <span className="ml-auto text-2xs text-silver/70 tabular-nums">
-            {filteredShifts ? `${filteredShifts.length} shifts` : ''}
-          </span>
-        </div>
-      )}
+      {/* Read-only viewers have no filter row; the range stands alone for them. */}
+      {!canManage && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
 
       {/* Auto-schedule ribbon (week view only). Hides when there are no
           unassigned OPEN shifts in the visible week. Stacks above the publish
@@ -6415,6 +6425,8 @@ function FilterBar({
   showAllAssociates,
   setShowAllAssociates,
   showAssociateToggle,
+  zoneNote,
+  trailing,
 }: {
   posFilter: string;
   setPosFilter: (v: string) => void;
@@ -6435,6 +6447,10 @@ function FilterBar({
   showAllAssociates: boolean;
   setShowAllAssociates: (v: boolean) => void;
   showAssociateToggle: boolean;
+  /** "Times shown in EDT (store local time)." — the scope line's tail, not a row of its own. */
+  zoneNote?: string | null;
+  /** Controls that belong on the filter row in one view (the list's date range). */
+  trailing?: React.ReactNode;
 }) {
   const { moduleOn } = useTenant();
   const term = useTerm();
@@ -6457,8 +6473,9 @@ function FilterBar({
   const locationDisabled = clientsOn && !clientFilter;
   return (
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
-      {/* Scope line — tells the admin exactly what they're looking at. */}
-      <div className="mb-2 text-xs2 text-silver/80">
+      {/* Scope line — tells the admin exactly what they're looking at,
+          and in which clock. */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs2 text-silver/80">
         {boundedClient ? (
           <span className="inline-flex flex-wrap items-center gap-1">
             <span className="font-medium text-white">Schedule</span>
@@ -6499,6 +6516,12 @@ function FilterBar({
             ) : (
               <span className="text-silver/60">· all locations</span>
             )}
+          </span>
+        )}
+        {zoneNote && (
+          <span className="inline-flex items-center gap-1 text-silver/60">
+            <Clock className="h-3 w-3" aria-hidden="true" />
+            {zoneNote}
           </span>
         )}
       </div>
@@ -6627,6 +6650,7 @@ function FilterBar({
             Clear
           </button>
         )}
+        {trailing}
         {showAssociateToggle && (
           <label className="ml-auto inline-flex items-center gap-1.5 text-xs2 text-silver cursor-pointer">
             <input
