@@ -1,5 +1,5 @@
 import type { CandidateStage } from '@prisma/client';
-import { hasCapability, type RecruiterHome } from '@alto-people/shared';
+import { type RecruiterHome, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
@@ -54,7 +54,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
   const startOfMonth = zonedWallTimeToUtcInstant(y, mo, 1, 0, tz);
   const startOfLastMonth = zonedWallTimeToUtcInstant(mo === 1 ? y - 1 : y, mo === 1 ? 12 : mo - 1, 1, 0, tz);
   const ago = (days: number) => new Date(now.getTime() - days * DAY);
-  const canApprovePay = hasCapability(user.role, 'manage:comp');
+  const canApprovePay = can(user, 'manage:comp');
 
   const [
     interviewsToday,

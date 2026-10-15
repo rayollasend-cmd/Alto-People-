@@ -507,6 +507,9 @@ export const AuthUserSchema = z.object({
   // a valid 6-digit code. Drives the Settings card and (in a follow-up
   // PR) the login challenge step.
   mfaEnabled: z.boolean(),
+  /** Brief 2-3 step 3: a custom role's capabilities (null = the built-in role's). */
+  capabilities: z.array(z.string()).nullable().optional(),
+  tenantRoleName: z.string().nullable().optional(),
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 

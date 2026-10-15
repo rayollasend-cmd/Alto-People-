@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -538,8 +538,8 @@ const RejectBodySchema = z.object({
 // Explicit requireAuth — bare-mounted router, handler reads req.user!.
 reimbursements97Router.post('/reimbursements/:id/reject', requireAuth, async (req, res) => {
   const user = req.user!;
-  const hasApprove = hasCapability(user.role, 'approve:reimbursement');
-  const hasSettle = hasCapability(user.role, 'settle:reimbursement');
+  const hasApprove = can(user, 'approve:reimbursement');
+  const hasSettle = can(user, 'settle:reimbursement');
   if (!hasApprove && !hasSettle) {
     throw new HttpError(403, 'forbidden', 'Insufficient capability to reject.');
   }

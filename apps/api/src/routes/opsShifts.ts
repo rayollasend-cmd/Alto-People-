@@ -5,7 +5,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { UPLOAD_MAX_BYTES, hasCapability } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
@@ -142,8 +142,8 @@ async function opsAccess(
   shift: { openedById: string; coveringForId: string | null; locationId: string | null; windowLabel: string | null },
 ): Promise<OpsAccess> {
   const user = req.user!;
-  if (hasCapability(user.role, 'run:ops-shifts')) return 'run';
-  if (!hasCapability(user.role, 'assist:ops-shifts')) return null;
+  if (can(user, 'run:ops-shifts')) return 'run';
+  if (!can(user, 'assist:ops-shifts')) return null;
   if (shift.openedById === user.id) return 'run';
   if (!shift.locationId || !shift.windowLabel) return null;
   const me = await prisma.user.findUnique({
@@ -1026,7 +1026,7 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
     // A floor supervisor reads the SOPs they work on; the board roles and
     // supervisors read any of their client's.
     const access = await opsAccess(req, shift);
-    if (!access && !hasCapability(req.user!.role, 'view:ops')) {
+    if (!access && !can(req.user!, 'view:ops')) {
       throw new HttpError(403, 'not_your_shift', "This isn't your shift's SOP.");
     }
     // The three accounts a record has to name: who ran it, who SUBMITTED
@@ -1655,7 +1655,7 @@ opsRouter.get('/my-sop', RUN_OR_ASSIST, async (req, res, next) => {
     // A floor supervisor not running one: the SOP they help on — their
     // shift supervisor's, or one running on a shift they work.
     const helping =
-      !shift && !hasCapability(req.user!.role, 'run:ops-shifts')
+      !shift && !can(req.user!, 'run:ops-shifts')
         ? await helpingSop(req.user!.id)
         : null;
     if (!shift) {

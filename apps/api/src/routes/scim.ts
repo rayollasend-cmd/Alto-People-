@@ -6,7 +6,7 @@ import {
   type NextFunction,
 } from 'express';
 import type { Prisma } from '@prisma/client';
-import { ROLES, type Role } from '@alto-people/shared';
+import { ROLES, ROLE_MODULE, type Role } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { ensureEnvScimToken, scimTenantFor } from '../lib/identity.js';
@@ -14,6 +14,8 @@ import { runWithTenant, tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache } from '../middleware/auth.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
 import { recordCriticalAudit } from '../lib/audit.js';
+import { applyGroupRoles } from '../lib/scimGroups.js';
+import { moduleOn } from '../lib/tenantProfile.js';
 
 /**
  * SCIM 2.0 Users endpoint (RFC 7643 / RFC 7644 — the subset Microsoft
@@ -235,6 +237,13 @@ function parseRequestedRole(
   return { role: name as Role };
 }
 
+/** Brief 2-3 step 3 (gap 7): a role whose module is off for this tenant. */
+async function roleModuleOff(role: Role): Promise<string | null> {
+  const module = ROLE_MODULE[role];
+  if (!module || (await moduleOn(module, tenantIdForWrite()))) return null;
+  return `Role ${role} needs the ${module} module, which is off for this organization.`;
+}
+
 function scimAuditMeta(req: Request, extra: Record<string, unknown>) {
   return {
     // Marks the SCIM integration as the actor — actorUserId is null (no
@@ -363,9 +372,9 @@ scimRouter.get('/Schemas', (_req, res) => {
 scimRouter.get('/ResourceTypes', (_req, res) => {
   sendScim(res, 200, {
     schemas: [LIST_SCHEMA],
-    totalResults: 1,
+    totalResults: 2,
     startIndex: 1,
-    itemsPerPage: 1,
+    itemsPerPage: 2,
     Resources: [
       {
         schemas: ['urn:ietf:params:scim:schemas:core:2.0:ResourceType'],
@@ -376,6 +385,17 @@ scimRouter.get('/ResourceTypes', (_req, res) => {
         meta: {
           resourceType: 'ResourceType',
           location: `${BASE_PATH}/ResourceTypes/User`,
+        },
+      },
+      {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:ResourceType'],
+        id: 'Group',
+        name: 'Group',
+        endpoint: '/Groups',
+        schema: 'urn:ietf:params:scim:schemas:core:2.0:Group',
+        meta: {
+          resourceType: 'ResourceType',
+          location: `${BASE_PATH}/ResourceTypes/Group`,
         },
       },
     ],
@@ -505,6 +525,11 @@ scimRouter.post('/Users', async (req, res) => {
   if (requestedRole !== null) {
     if ('error' in requestedRole) {
       scimError(res, 400, requestedRole.error, 'invalidValue');
+      return;
+    }
+    const moduleOff = await roleModuleOff(requestedRole.role);
+    if (moduleOff) {
+      scimError(res, 400, moduleOff, 'invalidValue');
       return;
     }
     role = requestedRole.role;
@@ -649,6 +674,7 @@ async function applyChanges(
 
   if (desired.role !== undefined && desired.role !== user.role) {
     data.role = desired.role;
+    data.tenantRoleId = null;
     changes.role = { from: user.role, to: desired.role };
     // Same rule as the admin UI (routes/users.ts): a role change kills
     // existing sessions so the new access takes effect immediately.
@@ -871,6 +897,11 @@ scimRouter.put('/Users/:id', async (req, res) => {
       scimError(res, 400, requestedRole.error, 'invalidValue');
       return;
     }
+    const moduleOff = await roleModuleOff(requestedRole.role);
+    if (moduleOff) {
+      scimError(res, 400, moduleOff, 'invalidValue');
+      return;
+    }
     desired.role = requestedRole.role;
   }
 
@@ -934,5 +965,164 @@ scimRouter.delete('/Users/:id', async (req, res) => {
     );
   }
   // Idempotent: a retry against an already-DISABLED user is a 204 no-op.
+  res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// Brief 2-3 step 3 — /Groups. Membership is what Okta and Entra push; the
+// tenant's group → role mappings (routes/tenantRoles.ts) turn it into roles
+// via applyGroupRoles. A group nobody mapped is stored and does nothing.
+// ---------------------------------------------------------------------------
+
+const GROUP_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:Group';
+const PATCH_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:PatchOp';
+
+type ScimGroupRow = { id: string; displayName: string; externalId: string | null; memberUserIds: string[]; createdAt: Date; updatedAt: Date };
+
+function toScimGroup(g: ScimGroupRow, withMembers = true) {
+  return {
+    schemas: [GROUP_SCHEMA],
+    id: g.id,
+    displayName: g.displayName,
+    ...(g.externalId ? { externalId: g.externalId } : {}),
+    ...(withMembers ? { members: g.memberUserIds.map((value) => ({ value, $ref: `${BASE_PATH}/Users/${value}` })) } : {}),
+    meta: { resourceType: 'Group', created: g.createdAt.toISOString(), lastModified: g.updatedAt.toISOString(), location: `${BASE_PATH}/Groups/${g.id}` },
+  };
+}
+
+/** Only this tenant's live accounts can be members; anything else is dropped. */
+async function memberIdsIn(tenantId: string, raw: unknown): Promise<string[]> {
+  const ids = (Array.isArray(raw) ? raw : [])
+    .map((m) => (m && typeof m === 'object' ? (m as { value?: unknown }).value : undefined))
+    .filter((v): v is string => typeof v === 'string' && UUID_RE.test(v));
+  if (!ids.length) return [];
+  const rows = await prisma.user.findMany({ where: { id: { in: ids }, tenantId, deletedAt: null }, select: { id: true } });
+  return rows.map((r) => r.id);
+}
+
+async function loadGroup(id: string): Promise<ScimGroupRow | null> {
+  if (!UUID_RE.test(id)) return null;
+  return prisma.scimGroup.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
+}
+
+async function saveMembers(group: ScimGroupRow, next: string[], displayName = group.displayName): Promise<ScimGroupRow> {
+  const tenantId = tenantIdForWrite();
+  const unique = [...new Set(next)];
+  const row = await prisma.scimGroup.update({ where: { id: group.id }, data: { memberUserIds: unique, displayName } });
+  const added = unique.filter((u) => !group.memberUserIds.includes(u));
+  const removed = group.memberUserIds.filter((u) => !unique.includes(u));
+  if (added.length || removed.length || displayName !== group.displayName) {
+    await recordCriticalAudit(
+      { actorUserId: null, tenantId, action: 'scim.group_changed', entityType: 'ScimGroup', entityId: group.id, metadata: { actor: 'scim', displayName, added, removed } },
+      'scim.group_changed',
+    );
+  }
+  // A rename can move every member into (or out of) a mapping.
+  await applyGroupRoles(tenantId, displayName !== group.displayName ? unique : added);
+  return row;
+}
+
+scimRouter.get('/Groups', async (req, res) => {
+  const filter = typeof req.query.filter === 'string' ? req.query.filter : undefined;
+  let nameEq: string | undefined;
+  if (filter !== undefined) {
+    const m = /^displayName\s+eq\s+"([^"]*)"$/i.exec(filter.trim());
+    if (!m) {
+      scimError(res, 400, 'Only the filter `displayName eq "value"` is supported.', 'invalidFilter');
+      return;
+    }
+    nameEq = m[1];
+  }
+  const rows = await prisma.scimGroup.findMany({
+    where: { tenantId: tenantIdForWrite(), ...(nameEq !== undefined ? { displayName: nameEq } : {}) },
+    orderBy: { displayName: 'asc' },
+    take: 200,
+  });
+  const withMembers = req.query.excludedAttributes !== 'members';
+  sendScim(res, 200, {
+    schemas: [LIST_SCHEMA],
+    totalResults: rows.length,
+    startIndex: 1,
+    itemsPerPage: rows.length,
+    Resources: rows.map((g) => toScimGroup(g, withMembers)),
+  });
+});
+
+scimRouter.get('/Groups/:id', async (req, res) => {
+  const g = await loadGroup(req.params.id);
+  if (!g) return scimError(res, 404, 'Group not found.');
+  sendScim(res, 200, toScimGroup(g));
+});
+
+scimRouter.post('/Groups', async (req, res) => {
+  const tenantId = tenantIdForWrite();
+  const body = (req.body ?? {}) as { displayName?: unknown; externalId?: unknown; members?: unknown };
+  const displayName = typeof body.displayName === 'string' ? body.displayName.trim().slice(0, 200) : '';
+  if (!displayName) return scimError(res, 400, 'displayName is required.', 'invalidValue');
+  if (await prisma.scimGroup.findFirst({ where: { tenantId, displayName }, select: { id: true } })) {
+    return scimError(res, 409, 'A group with that displayName already exists.', 'uniqueness');
+  }
+  const members = await memberIdsIn(tenantId, body.members);
+  const g = await prisma.scimGroup.create({
+    data: { tenantId, displayName, externalId: typeof body.externalId === 'string' ? body.externalId.slice(0, 200) : null, memberUserIds: members },
+  });
+  await recordCriticalAudit(
+    { actorUserId: null, tenantId, action: 'scim.group_created', entityType: 'ScimGroup', entityId: g.id, metadata: { actor: 'scim', displayName, members: members.length } },
+    'scim.group_created',
+  );
+  await applyGroupRoles(tenantId, members);
+  sendScim(res, 201, toScimGroup(g));
+});
+
+scimRouter.put('/Groups/:id', async (req, res) => {
+  const g = await loadGroup(req.params.id);
+  if (!g) return scimError(res, 404, 'Group not found.');
+  const body = (req.body ?? {}) as { displayName?: unknown; members?: unknown };
+  const displayName = typeof body.displayName === 'string' && body.displayName.trim() ? body.displayName.trim().slice(0, 200) : g.displayName;
+  const next = await memberIdsIn(tenantIdForWrite(), body.members);
+  sendScim(res, 200, toScimGroup(await saveMembers(g, next, displayName)));
+});
+
+scimRouter.patch('/Groups/:id', async (req, res) => {
+  const g = await loadGroup(req.params.id);
+  if (!g) return scimError(res, 404, 'Group not found.');
+  const tenantId = tenantIdForWrite();
+  const body = (req.body ?? {}) as { Operations?: unknown };
+  if (!Array.isArray(body.Operations)) return scimError(res, 400, `Expected ${PATCH_SCHEMA} with Operations.`, 'invalidSyntax');
+  let members = [...g.memberUserIds];
+  let displayName = g.displayName;
+  for (const raw of body.Operations as Array<{ op?: unknown; path?: unknown; value?: unknown }>) {
+    const op = String(raw.op ?? '').toLowerCase();
+    const path = typeof raw.path === 'string' ? raw.path.trim() : '';
+    // Entra removes one member as path `members[value eq "id"]`.
+    const one = /^members\[value\s+eq\s+"([^"]+)"\]$/i.exec(path);
+    const obj = raw.value && typeof raw.value === 'object' && !Array.isArray(raw.value) ? (raw.value as { members?: unknown; displayName?: unknown }) : null;
+    if (op === 'add' && (path === 'members' || path === '')) {
+      members.push(...(await memberIdsIn(tenantId, path === '' ? obj?.members : raw.value)));
+    } else if (op === 'remove' && one) {
+      members = members.filter((m) => m !== one[1]);
+    } else if (op === 'remove' && path === 'members') {
+      const drop = Array.isArray(raw.value) ? await memberIdsIn(tenantId, raw.value) : null;
+      members = drop ? members.filter((m) => !drop.includes(m)) : [];
+    } else if (op === 'replace' && path === 'members') {
+      members = await memberIdsIn(tenantId, raw.value);
+    } else if (op === 'replace' && (path === 'displayName' || path === '')) {
+      const v = path === '' ? obj?.displayName : raw.value;
+      if (typeof v === 'string' && v.trim()) displayName = v.trim().slice(0, 200);
+      if (path === '' && obj?.members !== undefined) members = await memberIdsIn(tenantId, obj.members);
+    }
+    // Anything else (externalId, meta) is ignored, as on /Users.
+  }
+  sendScim(res, 200, toScimGroup(await saveMembers(g, members, displayName)));
+});
+
+scimRouter.delete('/Groups/:id', async (req, res) => {
+  const g = await loadGroup(req.params.id);
+  if (!g) return scimError(res, 404, 'Group not found.');
+  await prisma.scimGroup.delete({ where: { id: g.id } });
+  await recordCriticalAudit(
+    { actorUserId: null, tenantId: tenantIdForWrite(), action: 'scim.group_deleted', entityType: 'ScimGroup', entityId: g.id, metadata: { actor: 'scim', displayName: g.displayName, members: g.memberUserIds.length } },
+    'scim.group_deleted',
+  );
   res.status(204).end();
 });

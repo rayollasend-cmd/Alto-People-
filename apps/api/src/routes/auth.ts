@@ -255,6 +255,8 @@ function toAuthUser(u: {
   // pre-computed; raw prisma User carries `mfaEnabledAt` (Date | null).
   mfaEnabled?: boolean;
   mfaEnabledAt?: Date | null;
+  capabilities?: string[] | null;
+  tenantRoleName?: string | null;
 }): AuthUser {
   const primaryRole = (u.primaryRole ?? u.role) as AuthUser['role'];
   const availableRoles = (u.availableRoles ??
@@ -287,6 +289,7 @@ function toAuthUser(u: {
     timezone: u.timezone ?? null,
     language: u.language === 'en' || u.language === 'es' || u.language === 'tr' ? u.language : null,
     mfaEnabled: u.mfaEnabled ?? (u.mfaEnabledAt != null),
+    ...(u.capabilities ? { capabilities: u.capabilities, tenantRoleName: u.tenantRoleName ?? null } : {}),
   };
 }
 

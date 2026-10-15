@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
@@ -241,7 +241,7 @@ async function leadForCover(req: Request, leadUserId: string | undefined) {
   if (caller.role === 'SHIFT_SUPERVISOR' && (!leadUserId || leadUserId === caller.id)) {
     return prisma.user.findFirstOrThrow({ where: { id: caller.id }, select: personSelect });
   }
-  if (!hasCapability(caller.role, 'manage:org')) {
+  if (!can(caller, 'manage:org')) {
     throw new HttpError(403, 'forbidden', 'Only the shift supervisor — or HR and Workforce — can hand a shift over.');
   }
   if (!leadUserId) throw new HttpError(400, 'lead_required', 'Whose shift is being handed over?');
@@ -357,7 +357,7 @@ floorTeamRouter.delete('/shift-covers/:id', requireAuth, async (req, res) => {
     },
   });
   if (!row || row.cancelledAt) throw new HttpError(404, 'not_found', 'That hand-over is gone.');
-  if (row.leadUserId !== req.user!.id && !hasCapability(req.user!.role, 'manage:org')) {
+  if (row.leadUserId !== req.user!.id && !can(req.user!, 'manage:org')) {
     throw new HttpError(403, 'forbidden', 'Only the shift supervisor — or HR and Workforce — can take a shift back.');
   }
   await prisma.shiftCover.update({ where: { id }, data: { cancelledAt: new Date() } });

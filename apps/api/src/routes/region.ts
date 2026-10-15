@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -41,7 +41,7 @@ async function resolveRegion(user: SessionUser, query: { regionId?: unknown }) {
       throw new HttpError(403, 'no_region_assigned', 'No region is linked to this account yet — ask your Alto contact.');
     }
     regionId = user.regionId;
-  } else if (hasCapability(user.role, 'view:executive') || hasCapability(user.role, 'manage:org')) {
+  } else if (can(user, 'view:executive') || can(user, 'manage:org')) {
     if (typeof query.regionId !== 'string' || !query.regionId) {
       throw new HttpError(400, 'region_required', 'Pass ?regionId= to preview a region.');
     }

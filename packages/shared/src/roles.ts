@@ -684,3 +684,35 @@ export function effectiveRoleOf(user: {
   if (!user.activeRole || user.activeRole === user.role) return user.role;
   return rolesAvailableTo(user).includes(user.activeRole) ? user.activeRole : user.role;
 }
+
+/* ===== Brief 2-3 step 3 — tenant roles over archetypes ================= */
+
+/**
+ * A tenant's custom role narrows the archetype it behaves as and never
+ * widens it (owner decision 3). `capabilities` absent or null = the
+ * archetype's built-in set, which is every account without a custom role.
+ */
+export interface CapabilityHolder {
+  role: Role;
+  capabilities?: readonly string[] | null;
+}
+
+/** The capabilities this account actually holds right now. */
+export function capabilitiesOf(user: CapabilityHolder): ReadonlySet<Capability> {
+  const ceiling = ROLE_CAPABILITIES[user.role];
+  if (!user.capabilities) return ceiling;
+  return new Set(user.capabilities.filter((c): c is Capability => ceiling.has(c as Capability)));
+}
+
+/** The one capability check for a person: the archetype, narrowed by a custom role. */
+export function can(user: CapabilityHolder, capability: Capability): boolean {
+  if (!ROLE_CAPABILITIES[user.role].has(capability)) return false;
+  return !user.capabilities || user.capabilities.includes(capability);
+}
+
+/** The roles that exist only with a module on (2-1b decision 12; the API refuses them since 2-3). */
+export const ROLE_MODULE: Partial<Record<Role, 'transportation' | 'clientPortal'>> = {
+  TRANSPORTATION_DIRECTOR: 'transportation',
+  DRIVER: 'transportation',
+  CLIENT_PORTAL: 'clientPortal',
+};

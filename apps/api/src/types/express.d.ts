@@ -39,6 +39,14 @@ export interface SessionUser {
   /** Email language preference (en/es/tr); null or absent means English. */
   language?: string | null;
   mfaEnabled: boolean;
+  /**
+   * Brief 2-3 step 3: a custom role's capabilities when the account wears
+   * the role it narrows; null/absent = the built-in role's set. Read only
+   * through `can()` / `capabilitiesOf()`, which also clamp to the archetype.
+   */
+  capabilities?: string[] | null;
+  tenantRoleId?: string | null;
+  tenantRoleName?: string | null;
 }
 
 /**

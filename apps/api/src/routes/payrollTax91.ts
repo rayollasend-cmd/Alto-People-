@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { dispatchFinancialChange, recordFinancialChange, ssnSummary } from '../lib/financialChanges.js';
@@ -1563,9 +1563,9 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
     //
     // The owner is never gated: it is their form.
     const SSN_BEARING = new Set(['W2', 'W2C', 'F1099_NEC', 'F1099_MISC']);
-    const canRead = hasCapability(user.role, 'view:payroll-documents');
+    const canRead = can(user, 'view:payroll-documents');
     const canReadPii =
-      !SSN_BEARING.has(form.kind) || hasCapability(user.role, 'export:payroll-pii');
+      !SSN_BEARING.has(form.kind) || can(user, 'export:payroll-pii');
     if (!isOwner && !(canRead && canReadPii)) {
       throw new HttpError(404, 'not_found', 'Form not found.');
     }

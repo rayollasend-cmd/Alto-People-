@@ -2,11 +2,11 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import {
-  hasCapability,
   isClientBoundedRole,
   ROLE_LABELS,
   rolesWithCapability,
   type Role,
+  can,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -121,7 +121,7 @@ async function resolveItemForUser(req: Request, key: string) {
       ageDays: own.ageDays,
     };
   }
-  if (hasCapability(me.role, 'view:executive')) {
+  if (can(me, 'view:executive')) {
     const exec = await computeExecutiveDecisions(prisma, new Date(), { tenantId: tenantIdForWrite() });
     const item = exec.find((d) => d.key === key);
     if (item) {
@@ -649,7 +649,7 @@ roleDecisionsRouter.post('/decisions/quick', requireAuth, async (req: Request, r
     const approvalId = z.string().uuid().parse(key.slice('agents:shift-fill:'.length));
     const decline = req.body?.decline === true;
     const tenantId = tenantIdForWrite();
-    const orgAdmin = hasCapability(me.role, 'manage:org');
+    const orgAdmin = can(me, 'manage:org');
     if (!orgAdmin && !(await deskMayDecide(prisma, tenantId, approvalId, 'SHIFT_ASSIGN', { clientId: me.clientId, locationId: me.locationId }))) {
       throw new HttpError(403, 'not_your_desk', 'This shift is not on your desk.');
     }

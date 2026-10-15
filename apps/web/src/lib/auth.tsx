@@ -18,8 +18,7 @@ import {
   type MeResponse,
   type MfaChallengeInput,
   type MfaChallengeResponse,
-  ROLE_CAPABILITIES,
-  hasCapability,
+  capabilitiesOf,
 } from '@alto-people/shared';
 import { ROLE_LABELS, defaultTenantProfile, termsIn, type TenantModule, type TenantProfile, type TermKey } from '@alto-people/shared';
 import { termVarsFrom, useI18n } from './i18n';
@@ -459,7 +458,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthState>(() => {
     const role = user?.role ?? null;
-    const capabilities = role ? ROLE_CAPABILITIES[role] : EMPTY_CAPS;
+    // Brief 2-3 step 3: a custom role narrows the built-in set.
+    const capabilities = user ? capabilitiesOf(user) : EMPTY_CAPS;
     return {
       isInitializing,
       isOffline,
@@ -477,7 +477,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       refreshUser,
       switchRole,
-      can: (cap) => (role ? hasCapability(role, cap) : false),
+      can: (cap) => capabilities.has(cap),
     };
   }, [
     isInitializing,

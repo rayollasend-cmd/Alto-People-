@@ -4,9 +4,9 @@ import {
   SavedViewInputSchema,
   SavedViewScopeSchema,
   SavedViewUpdateSchema,
-  hasCapability,
   type Capability,
   type SavedViewScope,
+  can,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -35,7 +35,7 @@ const SCOPE_CAPABILITY: Record<SavedViewScope, Capability> = {
 const MAX_VIEWS_PER_OWNER = 50;
 
 function assertScope(user: SessionUser, scope: SavedViewScope): void {
-  if (!hasCapability(user.role, SCOPE_CAPABILITY[scope])) {
+  if (!can(user, SCOPE_CAPABILITY[scope])) {
     throw new HttpError(403, 'forbidden', 'You cannot see this list.');
   }
 }

@@ -145,6 +145,9 @@ const TABLES = [
   // Brief 2-5 step 3: the keyring canary (platform-level, no keys to anything).
   'EncryptionCanary',
   'SecurityAlert',
+  'TenantRole',
+  'ScimGroup',
+  'ScimGroupRoleMap',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

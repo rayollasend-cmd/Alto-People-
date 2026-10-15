@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { regionSiteIds, regionUnitPath } from '../lib/orgUnits.js';
 import type { OpsPeriod } from '@prisma/client';
 import { z } from 'zod';
-import { hasCapability, paidMinutesForRange } from '@alto-people/shared';
+import { paidMinutesForRange, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -140,8 +140,8 @@ async function resolveScope(
       user.locationId ??
       (typeof query.locationId === 'string' && query.locationId ? query.locationId : null);
   } else if (
-    hasCapability(user.role, 'view:executive') ||
-    hasCapability(user.role, 'manage:org')
+    can(user, 'view:executive') ||
+    can(user, 'manage:org')
   ) {
     const requested = query.clientId;
     if (typeof requested !== 'string' || !requested) {

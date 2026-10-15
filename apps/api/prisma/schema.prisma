@@ -390,6 +390,10 @@ model User {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId            String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   role                Role
+  /// Brief 2-3 step 3: a custom role narrowing `role` (its archetype must
+  /// equal `role`). Null = the built-in role, which is almost everyone.
+  tenantRoleId        String?          @db.Uuid
+  tenantRole          TenantRole?      @relation(fields: [tenantRoleId], references: [id], onDelete: SetNull)
   /// The other roles this one account may act as. A shift supervisor who
   /// also drives an Alto van holds DRIVER here rather than keeping a
   /// second login. Empty for almost every account; see
@@ -10972,4 +10976,56 @@ model SecurityAlert {
 
   @@index([rule, key, createdAt])
   @@index([createdAt])
+}
+
+/// Brief 2-3 step 3 — a tenant's custom role (docs/identity-rbac-audit-investigation.md §4.3).
+/// It behaves as its archetype (boundedness, portal, MFA class: every direct
+/// role comparison) and holds a SUBSET of the archetype's capabilities
+/// (owner decision 3). The built-in roles are not rows: they are the code's
+/// ROLE_CAPABILITIES, so they can never drift from it.
+model TenantRole {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name         String    @db.VarChar(80)
+  description  String?   @db.VarChar(300)
+  archetype    Role
+  capabilities String[]
+  createdById  String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+
+  users         User[]
+  scimGroupMaps ScimGroupRoleMap[]
+
+  @@index([tenantId])
+}
+
+/// Brief 2-3 step 3 — a SCIM group as the identity provider pushed it.
+model ScimGroup {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  displayName   String   @db.VarChar(200)
+  externalId    String?  @db.VarChar(200)
+  memberUserIds String[] @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, displayName])
+}
+
+/// Brief 2-3 step 3 — group → role: a member of the group holds the role.
+model ScimGroupRoleMap {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  groupName    String      @db.VarChar(200)
+  archetype    Role
+  tenantRoleId String?     @db.Uuid
+  tenantRole   TenantRole? @relation(fields: [tenantRoleId], references: [id], onDelete: Cascade)
+  /// Several mapped groups: the highest priority wins.
+  priority     Int         @default(0)
+  createdById  String?     @db.Uuid
+  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, groupName])
 }

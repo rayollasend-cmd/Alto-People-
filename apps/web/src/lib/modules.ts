@@ -2,7 +2,7 @@ import { useLocation } from 'react-router-dom';
 
 import type { Capability } from './roles';
 import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/shared';
-import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
+import { PLATFORM_OPERATOR_TENANT_ID, ROLE_MODULE } from '@alto-people/shared';
 
 export type ModuleKey =
   | 'tenant-profile'
@@ -422,12 +422,8 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   workers: 'robotics',
 };
 
-/** The roles that exist only with a module on. */
-export const ROLE_MODULE: Partial<Record<Role, TenantModule>> = {
-  TRANSPORTATION_DIRECTOR: 'transportation',
-  DRIVER: 'transportation',
-  CLIENT_PORTAL: 'clientPortal',
-};
+/** The roles that exist only with a module on (shared: the API refuses them too). */
+export { ROLE_MODULE };
 
 export function roleOfferedFor(role: Role, modules: TenantModules | undefined): boolean {
   const gate = ROLE_MODULE[role];

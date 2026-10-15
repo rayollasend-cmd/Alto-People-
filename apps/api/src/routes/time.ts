@@ -27,8 +27,9 @@ import {
   type TimeAnomaly,
   type TimeEntry,
   type TimeEntryListResponse,
+  can,
 } from '@alto-people/shared';
-import { csvCell as sharedCsvCell, hasCapability, isClientBoundedRole } from '@alto-people/shared';
+import { csvCell as sharedCsvCell, isClientBoundedRole } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
@@ -3552,7 +3553,7 @@ timeRouter.get('/admin/timesheets/history/:associateId', MANAGE, async (req, res
     const inTenant = await prisma.associate.findFirst({ where: { id: associateId.data, tenantId: tenantIdForWrite() }, select: { id: true } });
     if (!inTenant) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     const bounded = isClientBoundedRole(user.role);
-    const showSecurityId = !bounded && hasCapability(user.role, 'process:payroll');
+    const showSecurityId = !bounded && can(user, 'process:payroll');
     const history = await buildTimesheetHistory({
       associateId: associateId.data,
       clientId: bounded ? timesheetClientId(user, undefined) : undefined,

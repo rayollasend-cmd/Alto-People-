@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
@@ -295,7 +295,7 @@ docTemplatesRouter.post(
     if (
       t.kind === 'OFFER_LETTER' &&
       associateRow &&
-      hasCapability(req.user!.role, 'manage:documents')
+      can(req.user!, 'manage:documents')
     ) {
       filedDocumentId = await fileOfferLetterPdf({
         templateId,

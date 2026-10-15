@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient, Application } from '@prisma/client';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -498,7 +498,7 @@ export async function assertCanModifyApplication(
   if (
     intent === 'applicant-record' &&
     !(user.associateId && app.associateId === user.associateId) &&
-    !hasCapability(user.role, 'manage:onboarding')
+    !can(user, 'manage:onboarding')
   ) {
     throw new HttpError(
       403,
@@ -514,7 +514,7 @@ export async function assertCanModifyApplication(
   if (
     opts.write &&
     (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') &&
-    !hasCapability(user.role, 'manage:onboarding')
+    !can(user, 'manage:onboarding')
   ) {
     throw new HttpError(
       409,

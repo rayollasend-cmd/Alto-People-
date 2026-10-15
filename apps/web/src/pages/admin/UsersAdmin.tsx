@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Clock,
   KeyRound,
@@ -53,6 +53,9 @@ import {
 import { ApproverPicker } from '@/components/ApproverPicker';
 import { AccessReport, DeactivateDialog } from './AccessReport';
 import { deactivateUsers, reactivateUser } from '@/lib/usersAdminApi';
+
+// Brief 2-3 step 3: its own chunk, fetched when the tab opens.
+const RolesMatrix = lazy(() => import('./RolesMatrix').then((m) => ({ default: m.RolesMatrix })));
 
 const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
 
@@ -129,7 +132,7 @@ export function UsersAdmin() {
   const [bulkBusy, setBulkBusy] = useState(false);
   // Brief 1A-4: the accounts list, or the access report (flags, bulk
   // deactivation reversible for 30 days).
-  const [view, setView] = useState<'accounts' | 'report'>('accounts');
+  const [view, setView] = useState<'accounts' | 'report' | 'roles'>('accounts');
   // A region binding waits here for its named approver.
   // A bulk 'Disabled' from the accounts list goes the reversible way: a
   // reason, one audit row per account, 30 days to undo.
@@ -852,12 +855,19 @@ export function UsersAdmin() {
         options={[
           { value: 'accounts', label: 'Accounts' },
           { value: 'report', label: 'Access report' },
+          { value: 'roles', label: 'Roles & permissions' },
         ]}
         value={view}
         onChange={setView}
       />
 
       {view === 'report' && <AccessReport />}
+
+      {view === 'roles' && (
+        <Suspense fallback={null}>
+          <RolesMatrix />
+        </Suspense>
+      )}
 
       {view === 'accounts' && (<>
       <Card>

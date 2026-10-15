@@ -7,6 +7,7 @@ import {
   HUMAN_ROLES,
   MAX_ADDITIONAL_ROLES,
   additionalRoleRefusal,
+  capabilitiesOf,
   type Role,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -26,6 +27,7 @@ import { personName } from '../lib/floorLeads.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { assertRoleOffered, tenantOf } from '../lib/tenantRoles.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -87,6 +89,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       role: true,
       additionalRoles: true,
       activeRole: true,
+      tenantRoleId: true,
       status: true,
       createdAt: true,
       clientId: true,
@@ -141,6 +144,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       // right now — a supervisor who drives is not a second account.
       additionalRoles: u.additionalRoles,
       activeRole: u.activeRole,
+      tenantRoleId: u.tenantRoleId,
       status: u.status,
       createdAt: u.createdAt.toISOString(),
       associateId: u.associateId,
@@ -307,7 +311,7 @@ usersRouter.patch(
     // Demotions and lateral moves are unaffected; only granting strictly
     // more power than you hold is refused.
     if (input.role && input.role !== target.role) {
-      const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+      const callerCaps = capabilitiesOf(req.user!);
       const grantedCaps = ROLE_CAPABILITIES[input.role];
       const escalating = [...grantedCaps].filter((c) => !callerCaps.has(c));
       if (escalating.length > 0) {
@@ -333,7 +337,7 @@ usersRouter.patch(
         if (refusal) {
           throw new HttpError(400, 'role_combination_forbidden', refusal);
         }
-        const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+        const callerCaps = capabilitiesOf(req.user!);
         const escalating = [...ROLE_CAPABILITIES[extra]].filter((c) => !callerCaps.has(c));
         if (escalating.length > 0) {
           throw new HttpError(
@@ -343,6 +347,12 @@ usersRouter.patch(
           );
         }
       }
+    }
+
+    // Brief 2-3 step 3 (gap 7): a role whose module is off cannot be given.
+    if (input.role && input.role !== target.role) await assertRoleOffered(input.role, tenantOf(req.user!));
+    for (const extra of input.additionalRoles ?? []) {
+      if (!target.additionalRoles.includes(extra)) await assertRoleOffered(extra, tenantOf(req.user!));
     }
 
     // Validate the client (if one was provided and not being cleared).
@@ -417,6 +427,7 @@ usersRouter.patch(
 
     const data: {
       role?: Role;
+      tenantRoleId?: null;
       additionalRoles?: Role[];
       activeRole?: Role | null;
       status?: 'ACTIVE' | 'DISABLED' | 'INVITED';
@@ -433,7 +444,11 @@ usersRouter.patch(
       if (target.clientId) data.clientId = null;
       if (target.locationId) data.locationId = null;
     }
-    if (input.role && input.role !== target.role) data.role = input.role;
+    if (input.role && input.role !== target.role) {
+      data.role = input.role;
+      // A custom role narrows ONE archetype; a new role starts from its built-in set.
+      data.tenantRoleId = null;
+    }
     // The extra hats. Deduped, and never the primary role twice over.
     const nextPrimary = input.role ?? target.role;
     const nextAdditional =

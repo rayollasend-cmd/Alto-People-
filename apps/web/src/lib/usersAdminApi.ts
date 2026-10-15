@@ -13,6 +13,8 @@ export interface AdminUser {
   additionalRoles?: Role[];
   /** Which granted role they are working as right now; null = the primary. */
   activeRole?: Role | null;
+  /** Brief 2-3 step 3: the custom role narrowing `role`, if any. */
+  tenantRoleId?: string | null;
   status: UserStatus;
   createdAt: string;
   associateId: string | null;

@@ -29,7 +29,7 @@ import {
   type PayrollSchedule as PayrollScheduleDto,
   type PayrollScheduleListResponse,
   type PayrollUpcomingSummary,
-  hasCapability,
+  can,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -3037,7 +3037,7 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
     // NOT process:payroll, which guards the rest of this router: six roles
     // hold that, including MARKETING_MANAGER, and "may run payroll" is not
     // "may pull up this named person's paystub".
-    const canManage = hasCapability(user.role, 'view:payroll-documents');
+    const canManage = can(user, 'view:payroll-documents');
     if (!isOwner && !canManage) {
       throw new HttpError(404, 'item_not_found', 'Paystub not found');
     }

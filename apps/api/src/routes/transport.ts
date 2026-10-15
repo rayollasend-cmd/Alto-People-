@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { hasCapability } from '@alto-people/shared';
+import { hasCapability, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { actsAs, actsAsAny } from '../lib/roleScope.js';
@@ -898,7 +898,7 @@ function toRunView(r: RunRow) {
 async function ownRun(req: Request, runId: string) {
   const run = await prisma.rideRun.findUnique({ where: { id: runId }, include: runInclude });
   if (!run) throw new HttpError(404, 'not_found', 'Run not found.');
-  if (run.driverUserId !== req.user!.id && !hasCapability(req.user!.role, 'manage:transport')) {
+  if (run.driverUserId !== req.user!.id && !can(req.user!, 'manage:transport')) {
     throw new HttpError(404, 'not_found', 'Run not found.');
   }
   return run;
@@ -1592,7 +1592,7 @@ transportRouter.post('/rides/:id/pin', DRIVE, async (req, res) => {
   if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
   if (ride.stopId) {
     // A named stop is everyone's — only dispatch moves it.
-    if (!hasCapability(req.user!.role, 'manage:transport')) {
+    if (!can(req.user!, 'manage:transport')) {
       throw new HttpError(409, 'named_stop', `${ride.stop?.name ?? 'That stop'} is a shared pickup point — dispatch sets where it is.`);
     }
     await prisma.transportStop.update({ where: { id: ride.stopId }, data: { lat: input.lat, lng: input.lng } });
@@ -1946,9 +1946,9 @@ transportRouter.get('/me/rides/:id/crew', RIDE, async (req, res) => {
 transportRouter.get('/riders/:associateId', requireAuth, async (req, res) => {
   const user = req.user!;
   const associateId = z.string().uuid().parse(req.params.associateId);
-  const desk = hasCapability(user.role, 'view:transport');
+  const desk = can(user, 'view:transport');
   if (!desk) {
-    if (!hasCapability(user.role, 'drive:transport')) throw new HttpError(403, 'forbidden', 'Not allowed.');
+    if (!can(user, 'drive:transport')) throw new HttpError(403, 'forbidden', 'Not allowed.');
     const now = new Date();
     const related = await prisma.ride.findFirst({
       where: {
@@ -3150,7 +3150,7 @@ transportRouter.put('/settings', MANAGE, async (req, res) => {
 transportRouter.get('/arrivals', requireAuth, async (req, res) => {
   const user = req.user!;
   const bounded = user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR';
-  if (!bounded && !hasCapability(user.role, 'view:transport')) throw new HttpError(403, 'forbidden', 'Not allowed.');
+  if (!bounded && !can(user, 'view:transport')) throw new HttpError(403, 'forbidden', 'Not allowed.');
   const clientId = bounded ? user.clientId : z.string().uuid().optional().parse(req.query.clientId);
   if (!clientId) {
     if (bounded) throw new HttpError(403, 'no_client', 'Your account is not assigned to a client.');

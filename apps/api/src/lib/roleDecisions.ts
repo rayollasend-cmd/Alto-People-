@@ -7,7 +7,7 @@
 // chairman's prerogative on his own queue).
 
 import type { PrismaClient } from '@prisma/client';
-import { hasCapability, type Role } from '@alto-people/shared';
+import { type Capability, type Role, can as userCan } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
@@ -87,7 +87,7 @@ export async function computeRoleDecisions(
   now: Date = new Date(),
 ): Promise<RoleDecision[]> {
   const out: RoleDecision[] = [];
-  const can = (c: Parameters<typeof hasCapability>[1]) => hasCapability(user.role, c);
+  const can = (c: Capability) => userCan(user, c);
   const thisWeekStart = startOfWeekUTC(now);
   // Client-scoped operators see their site; org roles see everything.
   const clientClamp = user.clientId ? { clientId: user.clientId } : {};

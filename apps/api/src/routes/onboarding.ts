@@ -42,9 +42,10 @@ import {
   type PolicyForApplication,
   type TemplateListResponse,
   type TemplateTask,
+  can,
 } from '@alto-people/shared';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
-import { hasCapability, toDateOnly } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -4933,7 +4934,7 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
     // 'create' mode mints APPROVED applications — an HR sign-off, not just
     // an invite — so the invite:onboarding capability that gates this
     // route (SHIFT_SUPERVISOR holds it) is not enough for that mode.
-    if (mode === 'create' && !hasCapability(req.user!.role, 'manage:onboarding')) {
+    if (mode === 'create' && !can(req.user!, 'manage:onboarding')) {
       throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
     }
 

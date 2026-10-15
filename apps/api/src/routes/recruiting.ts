@@ -15,10 +15,10 @@ import {
   RecruitingSourceSpendInputSchema,
   RecruiterHomeSchema,
   RecruitingSummarySchema,
-  hasCapability,
   type Candidate,
   type CandidateFilters,
   type CandidateSort,
+  can,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -815,7 +815,7 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
             amount: (offer.hourlyRate ?? offer.salary)!,
           }
         : null;
-    const payRecorded = pay !== null && hasCapability(req.user!.role, 'manage:comp');
+    const payRecorded = pay !== null && can(req.user!, 'manage:comp');
     // The letter they signed goes in their file with the rest of their
     // hiring paperwork.
     const signedLetter = offer?.signedPdfKey ? await getBlobStore().get(offer.signedPdfKey) : null;

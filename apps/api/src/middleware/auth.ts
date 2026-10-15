@@ -4,7 +4,7 @@ import {
   effectiveRoleOf,
   rolesAvailableTo,
   type Capability,
-  hasCapability,
+  can,
 } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
@@ -161,6 +161,7 @@ export async function attachUser(
         timezone: true,
         language: true,
         mfaEnabledAt: true,
+        tenantRole: { select: { id: true, name: true, archetype: true, capabilities: true, deletedAt: true } },
         associate: {
           select: {
             id: true,
@@ -220,14 +221,19 @@ export async function attachUser(
       additionalRoles: _additionalRoles,
       activeRole: _activeRole,
       orgUnit,
+      tenantRole,
       ...rest
     } = user;
+    const hat = effectiveRoleOf(user);
+    // A custom role narrows the role it was made for, and only while the
+    // account wears that role: another hat is that hat's built-in set.
+    const custom = tenantRole && !tenantRole.deletedAt && tenantRole.archetype === user.role && hat === user.role ? tenantRole : null;
     const sessionUser: SessionUser = {
       ...rest,
       // The hat, not the wardrobe. effectiveRoleOf fails closed to the
       // primary role, so an activeRole an administrator has since revoked
       // stops authorizing anything on the next cache miss.
-      role: effectiveRoleOf(user),
+      role: hat,
       primaryRole: user.role,
       availableRoles: rolesAvailableTo(user),
       associateId,
@@ -236,6 +242,9 @@ export async function attachUser(
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,
       mfaEnabled: mfaEnabledAt !== null,
       orgUnitPath: orgUnit?.path ?? null,
+      capabilities: custom?.capabilities ?? null,
+      tenantRoleId: custom?.id ?? null,
+      tenantRoleName: custom?.name ?? null,
     };
     userCache.set(payload.sub, {
       user: sessionUser,
@@ -417,7 +426,7 @@ export function requireCapability(...caps: Capability[]) {
       replyUnauthenticated(req, res);
       return;
     }
-    const missing = caps.find((c) => !hasCapability(req.user!.role, c));
+    const missing = caps.find((c) => !can(req.user!, c));
     if (missing) {
       res.status(403).json({
         error: {
@@ -443,7 +452,7 @@ export function requireAnyCapability(...caps: Capability[]) {
       replyUnauthenticated(req, res);
       return;
     }
-    if (!caps.some((c) => hasCapability(req.user!.role, c))) {
+    if (!caps.some((c) => can(req.user!, c))) {
       res.status(403).json({
         error: {
           code: 'forbidden',

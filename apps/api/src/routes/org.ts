@@ -21,6 +21,7 @@ import {
   type Department,
   type JobProfile,
   type ShiftPosition,
+  can,
 } from '@alto-people/shared';
 import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { toDateOnly } from '@alto-people/shared';
@@ -47,7 +48,6 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
-import { hasCapability } from '@alto-people/shared';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
@@ -1117,7 +1117,7 @@ orgRouter.post(
     // the middleware change can't accidentally widen exposure. The
     // capability constant could be inlined; the redundant check is
     // cheap insurance for a sensitive endpoint.
-    if (!hasCapability(req.user!.role, 'process:payroll')) {
+    if (!can(req.user!, 'process:payroll')) {
       throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
     }
 
@@ -1337,7 +1337,7 @@ orgRouter.post(
   piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the payout reveal.
-    if (!hasCapability(req.user!.role, 'process:payroll')) {
+    if (!can(req.user!, 'process:payroll')) {
       throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
     }
 
@@ -1697,7 +1697,7 @@ orgRouter.post(
   bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the single-record reveals.
-    if (!hasCapability(req.user!.role, 'export:payroll-pii')) {
+    if (!can(req.user!, 'export:payroll-pii')) {
       throw new HttpError(403, 'forbidden', 'Missing capability: export:payroll-pii');
     }
     // …and the whole-roster download is narrower still: named people only.

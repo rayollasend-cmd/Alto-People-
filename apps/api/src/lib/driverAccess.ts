@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import type { Request } from 'express';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 
@@ -51,7 +51,7 @@ export function mayServe(a: DriverAccess, clientId: string): boolean {
  */
 export async function assertDriverMayServe(req: Request, clientId: string): Promise<void> {
   const user = req.user!;
-  if (hasCapability(user.role, 'manage:transport')) return;
+  if (can(user, 'manage:transport')) return;
   if (!mayServe(await driverAccessFor(user.id), clientId)) {
     throw new HttpError(
       403,

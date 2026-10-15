@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { hasCapability, termsIn, type Role } from '@alto-people/shared';
+import { termsIn, type Role, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -69,7 +69,7 @@ const dayLabel = (ymd: string, lang: WaLang) =>
 
 /** coverage.forecast, on request: computed now, clamped to the desk's sites. */
 async function answerCoverage(user: Asker, tenantId: string, lang: WaLang, sitesNoun: string, now: Date): Promise<{ reply: string; linkUrl: string | null }> {
-  const admin = hasCapability(user.role, 'manage:org');
+  const admin = can(user, 'manage:org');
   const forecast = await computeCoverageForecast(prisma, now, {
     tenantId,
     locationIds: !admin && user.locationId ? [user.locationId] : null,
@@ -90,12 +90,12 @@ async function answerCoverage(user: Asker, tenantId: string, lang: WaLang, sites
 async function answerDesk(user: Asker, tenantId: string, lang: WaLang): Promise<{ reply: string; linkUrl: string | null }> {
   const lines: string[] = [];
   let n = 0;
-  if (hasCapability(user.role, 'manage:scheduling')) {
+  if (can(user, 'manage:scheduling')) {
     const fills = await pendingDeskShiftFills(prisma, tenantId, { clientId: user.clientId, locationId: user.locationId ?? null });
     n += fills.length;
     lines.push(...fills.slice(0, 4).map((f) => `• ${f.summary}`));
   }
-  if (hasCapability(user.role, 'manage:onboarding')) {
+  if (can(user, 'manage:onboarding')) {
     const cases = await pendingDeskApprovals(prisma, tenantId, 'CASE_OPEN');
     n += cases;
   }

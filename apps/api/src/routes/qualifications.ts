@@ -15,7 +15,7 @@ import {
   scopeShifts,
 } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
-import { hasCapability } from '@alto-people/shared';
+import { can } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
@@ -605,10 +605,10 @@ qualificationsRouter.put(
       // old hardcoded role allowlist both locked out SHIFT_SUPERVISOR
       // (whose UI shows the Approve button) and let read-only chairs
       // approve. Client-bounded roles must also own the shift's client.
-      const can = req.user?.role
-        ? hasCapability(req.user.role, 'manage:scheduling')
+      const allowed = req.user?.role
+        ? can(req.user, 'manage:scheduling')
         : false;
-      if (!can) {
+      if (!allowed) {
         throw new HttpError(403, 'forbidden', 'Manager approval required.');
       }
       const decideBounded = effectiveClientIdFilter(req.user!, undefined);

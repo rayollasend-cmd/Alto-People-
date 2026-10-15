@@ -1,5 +1,5 @@
 import type { TenantModule } from '@alto-people/shared';
-import { hasCapability, type Role } from '@alto-people/shared';
+import { type Role, can } from '@alto-people/shared';
 import type { WaLang } from './whatsappContent.js';
 
 /**
@@ -198,8 +198,8 @@ export function detectHugoIntent(text: string, ctx: HugoContext): { intent: Hugo
 
 /** Who is asking, by the hat they wear: admin (manage:org), manager (a desk or the org view), or an associate. */
 export function hugoAudienceOf(user: { role: Role; associateId: string | null }): HugoAudience | null {
-  if (hasCapability(user.role, 'manage:org')) return 'admin';
-  if (hasCapability(user.role, 'manage:scheduling') || hasCapability(user.role, 'view:org')) return 'manager';
+  if (can(user, 'manage:org')) return 'admin';
+  if (can(user, 'manage:scheduling') || can(user, 'view:org')) return 'manager';
   if (user.associateId) return 'associate';
   return null;
 }
