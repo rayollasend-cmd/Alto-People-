@@ -1,0 +1,6 @@
+{
+  "shifts": [
+    { "id": 771201, "employee": { "qualifier": "100418", "email": "amara.okafor@example.com" }, "startDateTime": "2026-10-17T14:00:00", "endDateTime": "2026-10-17T22:00:00", "segments": [{ "orgJobRef": { "qualifier": "Alto/Coastal Resort Holdings/Front Beach 218/Deli associate" } }], "transfer": { "orgPath": "Front Beach 218" }, "status": "Scheduled" },
+    { "id": 771202, "employee": { "qualifier": "100419", "email": "mert.celik@example.com" }, "startDateTime": "2026-10-17T22:00:00", "endDateTime": "2026-10-18T06:00:00", "segments": [{ "orgJobRef": { "qualifier": "Alto/Coastal Resort Holdings/Front Beach 218/Overnight stocker" } }], "transfer": { "orgPath": "Front Beach 218" }, "status": "Scheduled" }
+  ]
+}

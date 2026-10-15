@@ -58,6 +58,7 @@ const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
 
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
+import { ConnectionsSection } from './connections/ConnectionsSection';
 
 export function IntegrationsHome() {
   const { user } = useAuth();
@@ -75,9 +76,11 @@ export function IntegrationsHome() {
       {/* What the platform is connected to. The disbursement rail comes
           first: money is the connection a buyer asks about, and the Payroll
           page only speaks about it when something is wrong. */}
-      <section aria-label="Connections" className="space-y-2">
+      <section aria-label="Connections" className="space-y-3">
         <SectionTitle title="Connections" />
         <WebhookHealthTile surface="integrations" />
+        {/* Brief 3-5: the HR and VMS systems the customer already runs. */}
+        <ConnectionsSection canManage={canManage} />
       </section>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>

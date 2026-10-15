@@ -1,0 +1,7 @@
+{
+  "persons": [
+    { "personNumber": "100418", "personInformation": { "person": { "firstName": "Amara", "lastName": "Okafor", "hireDate": "2026-09-14" }, "emailAddresses": [{ "address": "amara.okafor@example.com", "contactTypeName": "Work" }] }, "jobAssignment": { "primaryLaborAccounts": [{ "organizationPath": "Alto/Coastal Resort Holdings/Front Beach 218" }], "jobTitle": "Deli associate" }, "employmentStatus": "ACTIVE" },
+    { "personNumber": "100419", "personInformation": { "person": { "firstName": "Mert", "lastName": "Çelik", "hireDate": "2026-07-07" }, "emailAddresses": [{ "address": "mert.celik@example.com", "contactTypeName": "Work" }] }, "jobAssignment": { "primaryLaborAccounts": [{ "organizationPath": "Alto/Coastal Resort Holdings/Front Beach 218" }], "jobTitle": "Overnight stocker" }, "employmentStatus": "ACTIVE" },
+    { "personNumber": "100420", "personInformation": { "person": { "firstName": "Gone", "lastName": "Away", "hireDate": "2025-05-01" }, "emailAddresses": [] }, "jobAssignment": {}, "employmentStatus": "TERMINATED" }
+  ]
+}

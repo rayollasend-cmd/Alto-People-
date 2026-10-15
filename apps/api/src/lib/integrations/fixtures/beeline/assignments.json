@@ -1,0 +1,6 @@
+{
+  "assignments": [
+    { "assignmentId": "A-55012", "worker": { "fullName": "Okafor, Amara", "workEmail": "amara.okafor@example.com" }, "workLocation": { "name": "Front Beach 218" }, "startDate": "2026-09-14", "endDate": "2027-03-13", "billRate": { "amount": 21.21, "currency": "USD" }, "status": "Active", "workOrderNumber": "WO-2026-00417" },
+    { "assignmentId": "A-55013", "worker": { "fullName": "Delgado, Mateo", "workEmail": "mateo.delgado@example.com" }, "workLocation": { "name": "Front Beach 218" }, "startDate": "2026-09-21", "endDate": "2027-03-20", "billRate": { "amount": 24.24, "currency": "USD" }, "status": "Active", "workOrderNumber": "WO-2026-00418" }
+  ]
+}

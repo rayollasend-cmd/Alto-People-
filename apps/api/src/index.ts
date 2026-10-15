@@ -57,6 +57,7 @@ import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
+import { installEventSync, runScheduledSyncs } from './lib/integrations/sync.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
 import { onPlatformScope } from './lib/tenant.js';
@@ -186,6 +187,13 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   void sweepAgents();
   setInterval(sweepAgents, 15 * 60_000).unref();
   startAgentDriftCron();
+  // Brief 3-5: the HR and VMS connections sync on their schedule (every five
+  // minutes the clock is checked per tenant) and on the domain events the
+  // webhook fan-out sees.
+  installEventSync();
+  const sweepIntegrations = () =>
+    runForEachTenant('integrations', (tenantId) => runScheduledSyncs(tenantId)).catch((err) => logger.warn({ err }, 'integration sweep failed'));
+  setInterval(sweepIntegrations, 5 * 60_000).unref();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
   // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.

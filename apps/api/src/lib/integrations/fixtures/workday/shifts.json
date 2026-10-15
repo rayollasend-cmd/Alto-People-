@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "id": "SHIFT-88121", "worker": { "descriptor": "Amara Okafor", "email": "amara.okafor@example.com" }, "startDateTime": "2026-10-17T14:00:00Z", "endDateTime": "2026-10-17T22:00:00Z", "position": { "descriptor": "Deli associate" }, "location": { "descriptor": "Front Beach 218" }, "status": "Published" },
+    { "id": "SHIFT-88122", "worker": null, "startDateTime": "2026-10-18T14:00:00Z", "endDateTime": "2026-10-18T22:00:00Z", "position": { "descriptor": "Cashier" }, "location": { "descriptor": "Front Beach 218" }, "status": "Open" },
+    { "worker": { "descriptor": "Broken Row" }, "position": { "descriptor": "Cashier" } }
+  ]
+}
