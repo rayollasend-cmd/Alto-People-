@@ -1,0 +1,80 @@
+# The design-review screenshot walk: every persona, every surface, desktop
+# and phone, dark and light. Run by hand (workflow_dispatch); the PNGs are
+# the artifact a designer (or an agent) reads. Same stack as the E2E job in
+# ci.yml: real API, seeded Postgres, Vite dev server, Chromium.
+
+name: Design walk
+
+on:
+  workflow_dispatch:
+
+jobs:
+  walk:
+    name: Screenshot walk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: alto
+          POSTGRES_PASSWORD: alto_dev
+          POSTGRES_DB: alto_people
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alto -d alto_people"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=public
+      DIRECT_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=public
+      JWT_SECRET: test-jwt-secret-do-not-use-outside-tests-padding-pad-pad
+      JWT_TTL_SECONDS: '3600'
+      PAYOUT_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+      APP_BASE_URL: http://127.0.0.1:5173
+      RESEND_API_KEY: ''
+      RESEND_FROM: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm -w @alto-people/shared run build
+      - run: npm -w apps/api exec prisma migrate deploy
+      - run: npm -w apps/api exec prisma generate
+      - run: npm -w apps/api run db:seed
+      - run: npm -w apps/api exec tsx scripts/seed-demo-shifts.ts
+      - run: npm -w apps/web exec playwright install --with-deps chromium
+      - name: Start API + web dev servers
+        run: |
+          LOGIN_IP_LIMIT=500 npm -w apps/api run dev > api.log 2>&1 &
+          npm -w apps/web run dev > web.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3001/health > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3001/health
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:5173 > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:5173
+      - name: Walk every persona
+        env:
+          E2E_FULLSTACK: '1'
+          E2E_BASE_URL: http://127.0.0.1:5173
+        run: npm -w apps/web exec -- playwright test e2e/design-walk.spec.ts --workers=1 --reporter=line
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-walk
+          path: |
+            apps/web/e2e-results/design-walk/
+            api.log
+            web.log
+          retention-days: 14
