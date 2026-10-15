@@ -8,6 +8,7 @@ vi.mock('@/lib/reliabilityApi', () => ({ getReliability: vi.fn() }));
 
 import { getReliability } from '@/lib/reliabilityApi';
 import { ReliabilityHome } from '@/pages/analytics/ReliabilityHome';
+import { AuthContext } from '@/lib/auth';
 
 /**
  * The reliability page: one hero (errors against the budget) and the
@@ -49,12 +50,27 @@ function response(over: Partial<ReliabilityResponse> = {}): ReliabilityResponse 
 }
 
 function renderPage() {
+  // The page reads the signed-in person and the tenant (the operator's incident panel).
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MemoryRouter>
-        <ReliabilityHome />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <AuthContext.Provider
+      value={
+        {
+          user: { id: 'u1', email: 'ops@example.com', role: 'HR_ADMINISTRATOR', status: 'ACTIVE' },
+          loading: false,
+          can: () => true,
+          tenant: { id: 'tenant-1', businessModel: 'WORKFORCE_PROVIDER', modules: {}, terminology: {} },
+          signIn: vi.fn(),
+          signOut: vi.fn(),
+          refresh: vi.fn(),
+        } as never
+      }
+    >
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <ReliabilityHome />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   );
 }
 

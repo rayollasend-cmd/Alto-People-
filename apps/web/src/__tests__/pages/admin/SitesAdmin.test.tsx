@@ -73,7 +73,7 @@ describe('Sites', () => {
     const user = userEvent.setup();
     renderAsAdmin(<SitesAdmin />, '/admin/sites');
     await screen.findByText('Harbor House');
-    await user.click(screen.getByRole('button', { name: 'Edit Harbor House' }));
+    await user.click(screen.getByRole('row', { name: 'Edit Harbor House' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByLabelText('Name')).toHaveValue('Harbor House');
     expect(within(dialog).getByLabelText('Type')).toHaveValue('PROPERTY');

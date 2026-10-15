@@ -61,7 +61,7 @@ describe('Compliance evidence', () => {
     const user = userEvent.setup();
     renderAsAdmin(<ComplianceEvidenceHome />, '/admin/compliance-evidence');
     await screen.findByText('Quarterly access review');
-    await user.click(screen.getByRole('button', { name: 'Open Quarterly access review' }));
+    await user.click(screen.getByRole('row', { name: 'Open Quarterly access review' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('42 accounts, 3 flagged for review.')).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText(/Sign-off note/), 'Reviewed with the owner');

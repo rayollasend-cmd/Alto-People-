@@ -107,7 +107,7 @@ describe('the Store Ops record', () => {
 
     // The building. Two overnight shifts at two stores used to be the
     // same row twice, both reading "Walmart".
-    expect(within(table).getByRole('button', { name: /Destin/ })).toBeInTheDocument();
+    expect(within(table).getByRole('row', { name: /Destin/ })).toBeInTheDocument();
     expect(within(table).getByText('Front Beach 218')).toBeInTheDocument();
 
     // A clock, not "2 days ago": opened 10:00 PM, closed 6:12 AM.
@@ -122,7 +122,7 @@ describe('the Store Ops record', () => {
     // jsdom applies no CSS, so the grid's phone card and its table row
     // both exist; the table is the one being asked about.
     await userEvent.click(
-      within(await screen.findByRole('table')).getByRole('button', { name: /Overnight.*Destin/ }),
+      within(await screen.findByRole('table')).getByRole('row', { name: /Overnight.*Destin/ }),
     );
     expect(onOpen).toHaveBeenCalledWith('s1');
   });
