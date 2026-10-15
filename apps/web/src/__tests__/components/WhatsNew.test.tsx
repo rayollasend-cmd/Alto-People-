@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { seenKey, tourFor } from '@/lib/tours';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -48,7 +49,11 @@ function renderCard(path = '/') {
 }
 
 describe('<WhatsNew> — the release-note card', () => {
-  beforeEach(() => window.localStorage.clear());
+  beforeEach(() => {
+    window.localStorage.clear();
+    // The note waits until the home tour has been seen (design walk, 2026-10-15).
+    window.localStorage.setItem(seenKey(tourFor('/')!.id, 'u1'), new Date().toISOString());
+  });
 
   it('shows the API note once, in the reader’s language, and stays dismissed', async () => {
     renderCard();

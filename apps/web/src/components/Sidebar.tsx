@@ -22,6 +22,7 @@ import {
   applyTerms,
   DASHBOARD_NAV,
   groupLabel,
+  MODULES,
   visibleModules,
   useActiveNavPath,
   type ModuleGroup,
@@ -66,19 +67,33 @@ const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
 const COLLAPSED_GROUPS_KEY = 'alto.sidebar.collapsedGroups';
 const RAIL_COLLAPSED_KEY = 'alto.sidebar.collapsed';
 
-function readCollapsedGroups(): Set<string> {
-  if (typeof window === 'undefined') return new Set();
+/** The saved state, or null when this person has never touched a group. */
+function readCollapsedGroups(): Set<string> | null {
+  if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(COLLAPSED_GROUPS_KEY);
-    if (!raw) return new Set();
+    if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       return new Set(parsed.filter((x): x is string => typeof x === 'string'));
     }
   } catch {
-    /* ignore — corrupt storage falls back to nothing collapsed */
+    /* ignore — corrupt storage falls back to the default */
   }
-  return new Set();
+  return null;
+}
+
+/**
+ * Design system §4.1 (UX upgrade step 2): until a person has opened or
+ * closed a group themselves, every group is folded except the one the
+ * current page lives in. The first design walk showed the Workforce
+ * Management group's 37 rows open on every admin, workforce and finance
+ * screenshot; the sidebar is a way elsewhere, not the first thing to read.
+ */
+function defaultCollapsedGroups(): Set<string> {
+  const path = typeof window === 'undefined' ? '/' : window.location.pathname;
+  const here = MODULES.find((m) => m.path === path || (m.path !== '/' && path.startsWith(`${m.path}/`)))?.group;
+  return new Set(GROUP_ORDER.filter((g) => g !== here));
 }
 
 function writeCollapsedGroups(groups: Set<string>): void {
@@ -175,7 +190,7 @@ export function Sidebar() {
     .filter((m): m is ModuleNav => !!m)
     .slice(0, 3);
 
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups() ?? defaultCollapsedGroups());
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
   // The rail default is read once at mount; an iPad rotating landscape →
   // portrait would keep a 256px rail on a 768px screen. Follow the

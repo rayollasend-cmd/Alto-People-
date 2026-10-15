@@ -5,6 +5,7 @@ import { Sparkles, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { getLatestReleaseNote } from '@/lib/releaseNotesApi';
+import { seenKey, tourFor } from '@/lib/tours';
 import { Button } from '@/components/ui/Button';
 
 /**
@@ -51,6 +52,11 @@ export function WhatsNew() {
   // Home only — this is a "welcome back" note, not something that should
   // shadow the user onto Payroll, Scheduling, etc.
   if (!onHome) return null;
+  // Day one shows the tour, not the news: a brand-new account on a phone
+  // had both cards over its first screen (the first design walk). The note
+  // waits until the home tour has been seen or skipped.
+  const tour = tourFor('/');
+  if (user && tour && readSeen(seenKey(tour.id, user.id)) === null) return null;
   const note = latest.data?.note ?? null;
   if (!note || note.items.length === 0) return null;
   // Storage unavailable → the seen state can't stick, so never nag.

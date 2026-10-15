@@ -354,6 +354,8 @@ describe('the hotel tenant sees none of the staffing words', () => {
 describe("Alto HR's words are unchanged for a workforce provider", () => {
   it('the navigation still says Clients, People and Store Ops; scheduling still assigns associates and filters by client', async () => {
     tenantProfileResponse = profileResponse(ALTO);
+    // Groups fold by default now (design system §4.1); this test reads every label.
+    window.localStorage.setItem('alto.sidebar.collapsedGroups', '[]');
     renderUnder(ALTO, <Sidebar />);
     await settle();
     let text = visibleText();
