@@ -35,6 +35,7 @@ export const FIELD_COLUMNS: readonly FieldColumn[] = [
   { model: 'quickbooksConnection', column: 'accessTokenEnc', label: 'QuickBooks access tokens', dated: 'updatedAt' },
   { model: 'quickbooksConnection', column: 'refreshTokenEnc', label: 'QuickBooks refresh tokens', dated: 'updatedAt' },
   { model: 'identityConnection', column: 'clientSecretEnc', label: 'Identity provider client secrets', dated: 'updatedAt' },
+  { model: 'integrationConnection', column: 'credentialsEnc', label: 'HR and VMS integration credentials', dated: 'updatedAt' },
 ];
 
 /** The recorded incident that explains rows written before it (docs/access-cleanup-1a4.md). */

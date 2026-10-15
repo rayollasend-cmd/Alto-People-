@@ -68,6 +68,18 @@ export interface EmitWebhookOpts {
 }
 
 /**
+ * Brief 3-5: in-process listeners that hear every domain event the fan-out
+ * hears (the HR and VMS integrations' event-driven sync registers one at
+ * boot). Registered through this hook, not imported here, so the dispatcher
+ * stays a leaf module with no cycle back into the integrations.
+ */
+type EventListener = (eventType: string, payload: Record<string, unknown>, tenantId: string) => void;
+const listeners: EventListener[] = [];
+export function onWebhookEvent(fn: EventListener): void {
+  listeners.push(fn);
+}
+
+/**
  * Fan an event out into PENDING delivery rows. Fire-and-forget-safe:
  * catches everything, blocks on nothing but its own two queries. Call
  * with `void emitWebhookEvent(...)` from request handlers.
@@ -84,6 +96,13 @@ export async function emitWebhookEvent(
   if (!tenantId) {
     console.warn(`[alto-people/api] webhook ${eventType} emitted with no tenant in context; not delivered`);
     return;
+  }
+  for (const fn of listeners) {
+    try {
+      fn(eventType, payload, tenantId);
+    } catch (err) {
+      console.error('[webhookDispatch] event listener failed', { eventType, err: err instanceof Error ? err.message : err });
+    }
   }
   try {
     const hooks = await prisma.webhook.findMany({

@@ -1,0 +1,7 @@
+{
+  "workOrders": [
+    { "workOrderId": "WO-2026-00417", "worker": { "name": "Okafor, Amara", "email": "amara.okafor@example.com" }, "site": "1 - Onsite - FL - Destin", "startDate": "2026-09-14", "endDate": "2027-03-13", "rate": 21.21, "status": "ACTIVE" },
+    { "workOrderId": "WO-2026-00418", "worker": { "name": "Delgado, Mateo", "email": "mateo.delgado@example.com" }, "site": "1 - Onsite - FL - Destin", "startDate": "2026-09-21", "endDate": "2027-03-20", "rate": 24.24, "status": "ACTIVE" },
+    { "worker": { "name": "Unknown, Order" }, "site": "2 - Onsite - FL - Panama City", "startDate": "2026-10-01", "rate": 21.21, "status": "ACTIVE" }
+  ]
+}

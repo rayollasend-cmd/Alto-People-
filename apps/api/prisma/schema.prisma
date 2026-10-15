@@ -11181,3 +11181,105 @@ model StatusIncidentUpdate {
 
   @@index([incidentId, at])
 }
+
+// ---------------------------------------------------------------------------
+// Brief 3-5: HR and VMS integrations. One connection per vendor per tenant,
+// behind a common adapter interface; every sync leaves a run with per-record
+// outcomes the tenant admin can read. Credentials are encrypted at rest with
+// the field-encryption keyring (lib/keyring.ts lists the column).
+// ---------------------------------------------------------------------------
+
+enum IntegrationVendor {
+  FIELDGLASS
+  ADP
+  WORKDAY
+  UKG
+  BEELINE
+}
+
+enum IntegrationConnectionStatus {
+  CONNECTED
+  PAUSED
+  ERROR
+}
+
+enum IntegrationSyncDirection {
+  PULL
+  PUSH
+}
+
+enum IntegrationSyncStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+model IntegrationConnection {
+  id              String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId        String?                     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  vendor          IntegrationVendor
+  name            String                      @db.VarChar(120)
+  status          IntegrationConnectionStatus @default(CONNECTED)
+  /// Sandbox replays recorded fixtures and never calls the vendor; the sync log is real either way.
+  sandbox         Boolean                     @default(true)
+  /// AES-256-GCM under the keyring: a JSON object of the vendor's credential fields. Null in sandbox.
+  credentialsEnc  Bytes?
+  /// Per-tenant field mapping: { group: { altoField: vendorField } }, merged over the vendor's default.
+  mapping         Json                        @default("{}")
+  /// The capabilities this connection runs (a subset of the adapter's).
+  capabilities    String[]                    @default([])
+  /// Scheduled sync every N minutes; null = event-driven and manual only.
+  scheduleMinutes Int?
+  eventDriven     Boolean                     @default(true)
+  lastSyncAt      DateTime?                   @db.Timestamptz(6)
+  nextSyncAt      DateTime?                   @db.Timestamptz(6)
+  lastError       String?                     @db.VarChar(500)
+  createdByUserId String?                     @db.Uuid
+  createdAt       DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime                    @updatedAt @db.Timestamptz(6)
+  runs            IntegrationSyncRun[]
+
+  @@index([tenantId, vendor])
+  @@index([tenantId, status, nextSyncAt])
+}
+
+model IntegrationSyncRun {
+  id           String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  connectionId String                   @db.Uuid
+  connection   IntegrationConnection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  direction    IntegrationSyncDirection
+  capability   String                   @db.VarChar(40)
+  status       IntegrationSyncStatus    @default(RUNNING)
+  /// schedule | event | manual | sandbox-test
+  trigger      String                   @db.VarChar(20)
+  eventType    String?                  @db.VarChar(60)
+  startedAt    DateTime                 @default(now()) @db.Timestamptz(6)
+  finishedAt   DateTime?                @db.Timestamptz(6)
+  total        Int                      @default(0)
+  succeeded    Int                      @default(0)
+  failed       Int                      @default(0)
+  /// Adapter summary: totals reconciled, vendor batch ids, period bounds. Never a credential or PII.
+  summary      Json?
+  errors       IntegrationSyncError[]
+
+  @@index([connectionId, startedAt])
+  @@index([tenantId, startedAt])
+}
+
+model IntegrationSyncError {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  runId     String             @db.Uuid
+  run       IntegrationSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Which record: an Alto id or a vendor id, never a name.
+  recordRef String             @db.VarChar(120)
+  message   String             @db.VarChar(500)
+  /// The vendor payload around the failure, redacted of emails, phones and identifiers.
+  excerpt   Json?
+  createdAt DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@index([runId, createdAt])
+}

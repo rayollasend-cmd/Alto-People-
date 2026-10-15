@@ -11,5 +11,6 @@ export * from './tenantProfile.js';
 export * from './complianceEvidence.js';
 export * from './trust.js';
 export * from './status.js';
+export * from './integrations.js';
 export * from './agentCapabilities.js';
 export * from './publicApi.js';

@@ -229,6 +229,7 @@ const MarketplaceHome = lazyNamed(() => import('@/pages/marketplace/MarketplaceH
 const TemplatesHome = lazyNamed(() => import('@/pages/templates/TemplatesHome'), 'TemplatesHome');
 const IntegrationsHome = lazyNamed(() => import('@/pages/integrations/IntegrationsHome'), 'IntegrationsHome');
 const DevelopersPage = lazyNamed(() => import('@/pages/integrations/DevelopersPage'), 'DevelopersPage');
+const IntegrationConnectionPage = lazyNamed(() => import('@/pages/integrations/connections/ConnectionPage'), 'ConnectionPage');
 const WorktagsHome = lazyNamed(() => import('@/pages/worktags/WorktagsHome'), 'WorktagsHome');
 const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'ReportsHome');
 
@@ -478,6 +479,8 @@ const LAYOUT_ROUTES = [
     { path: 'trust', element: <RequireCapability cap="view:audit" anyOf={['manage:org', 'view:executive']}><TrustCenterPage /></RequireCapability> },
     { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
     { path: 'developers', element: <RequireCapability cap="view:integrations"><DevelopersPage /></RequireCapability> },
+    // Brief 3-5: one HR or VMS connection with its sync log.
+    { path: 'integrations/connections/:id', element: <RequireCapability cap="view:integrations"><IntegrationConnectionPage /></RequireCapability> },
     ],
   },
   // `settings` is universal — every authenticated user manages their own

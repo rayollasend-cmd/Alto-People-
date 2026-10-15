@@ -31,6 +31,11 @@ const TABLES = [
   'ReliabilityWeek',
   'StatusIncidentUpdate',
   'StatusIncident',
+  // Brief 3-5: a connection cascades to its runs and errors, but nothing
+  // in the graph cascades to a connection.
+  'IntegrationSyncError',
+  'IntegrationSyncRun',
+  'IntegrationConnection',
   // Emergency's FKs all SET NULL on delete (declarer, destination), so no
   // cascade from User or Location clears it; its sites and check-ins do
   // cascade from it.

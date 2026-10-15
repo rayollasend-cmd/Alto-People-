@@ -1,0 +1,7 @@
+{
+  "workers": [
+    { "associateOID": "G3349PZGBADQY8H7", "person": { "legalName": { "givenName": "Amara", "familyName1": "Okafor" } }, "businessCommunication": { "emails": [{ "emailUri": "amara.okafor@example.com" }], "mobiles": [{ "formattedNumber": "(850) 555-0147" }] }, "workerDates": { "originalHireDate": "2026-09-14" }, "workerStatus": { "statusCode": { "codeValue": "Active" } }, "workAssignments": [{ "jobTitle": "Deli associate", "homeWorkLocation": { "nameCode": { "shortName": "Front Beach 218" } } }] },
+    { "associateOID": "G3349PZGBADQY8H8", "person": { "legalName": { "givenName": "Mateo", "familyName1": "Delgado" } }, "businessCommunication": { "emails": [{ "emailUri": "mateo.delgado@example.com" }] }, "workerDates": { "originalHireDate": "2026-09-21" }, "workerStatus": { "statusCode": { "codeValue": "Active" } }, "workAssignments": [{ "jobTitle": "Shift lead", "homeWorkLocation": { "nameCode": { "shortName": "Front Beach 218" } } }] },
+    { "associateOID": "G3349PZGBADQY8H9", "person": { "legalName": { "givenName": "No", "familyName1": "Email" } }, "businessCommunication": {}, "workerDates": { "originalHireDate": "2026-10-01" }, "workerStatus": { "statusCode": { "codeValue": "Active" } }, "workAssignments": [] }
+  ]
+}

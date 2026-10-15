@@ -1,0 +1,7 @@
+{
+  "Report_Entry": [
+    { "Employee_ID": "WD-10021", "Legal_First_Name": "Amara", "Legal_Last_Name": "Okafor", "Primary_Work_Email": "amara.okafor@example.com", "Hire_Date": "2026-09-14", "Active_Status": "1", "Business_Title": "Deli associate", "Location": "Front Beach 218" },
+    { "Employee_ID": "WD-10022", "Legal_First_Name": "Zeynep", "Legal_Last_Name": "Şahin", "Primary_Work_Email": "zeynep.sahin@example.com", "Hire_Date": "2026-06-02", "Active_Status": "1", "Business_Title": "Overnight stocker", "Location": "Destin Harbor 507" },
+    { "Employee_ID": "WD-10023", "Legal_First_Name": "Terminated", "Legal_Last_Name": "Person", "Primary_Work_Email": "t.person@example.com", "Hire_Date": "2025-11-10", "Termination_Date": "2026-08-30", "Active_Status": "0", "Business_Title": "Cashier", "Location": "Front Beach 218" }
+  ]
+}
