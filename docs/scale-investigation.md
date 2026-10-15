@@ -157,3 +157,28 @@ lint, i18n check (ok, 1,648 keys, debt 114), API `tsc -p` and
    gate become a ratio against that baseline instead?
 4. The hard-coded-string heuristic only sees JSX text and five attributes;
    strings built in helpers escape it. Worth a lint rule later.
+
+## First baseline (2026-10-15, run 7 of the load-test workflow)
+
+50,000 workers across 1,000 sites, one GitHub runner, the API's production build against the runner's Postgres. Budget: p95 under 2,000 ms and under 1 percent failures on every route. **Pass.**
+
+| Route | Requests | RPS | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|
+| Sign in | 950 | 94.5 | 105 | 125 | 139 |
+| Session (/auth/me) | 17,173 | 1,716 | 14 | 23 | 31 |
+| Home decision queue | 647 | 64 | 155 | 183 | 197 |
+| Schedule, one week | 60 | 5.7 | 1,770 | 1,850 | 1,899 |
+| Clock in at the kiosk, shift change | 200 | 18.2 | 88 | 149 | 164 |
+| Time & attendance, live | 8,395 | 839 | 12 | 16 | 19 |
+| Messages, conversations | 7,038 | 703 | 14 | 18 | 23 |
+| Messages, send burst | 1,815 | 181 | 55 | 70 | 79 |
+| Approvals, walk-in queue | 5,359 | 535 | 18 | 26 | 36 |
+| People directory | 230 | 22.7 | 440 | 489 | 514 |
+| Control room poll, one site | 312 | 30.5 | 647 | 722 | 801 |
+| Control room poll, status | 4,960 | 495 | 40 | 53 | 66 |
+
+The failover workflow's first run the same day: Postgres restarted at 20 s under probing, one probe failed, interruption 2.26 s against the 60 s limit.
+
+What the runs before this one found and fixed, in order: production boot refuses to start without MFA_SECRET_ENCRYPTION_KEY and KIOSK_PIN_SECRET (the workflow carries throwaway values at job level); a shell line continuation handed the secrets to npm; associates are never in the messenger, so the burst writes to the first person the admin may message; the per-user API cap of 600 a minute called one runner a loop (DEFAULT_API_LIMIT, like LOGIN_IP_LIMIT, exists for this stack only); associates clock in at the kiosk, so the scale seed registers twenty kiosks with one PIN each and the scenario punches a second apart per device; the active definition negated a status while filtering 50,000 ids, which Prisma could not split and Postgres refused (the people directory answered 500 and the billing usage tick failed) — it reads evidence in batches of 10,000 now; and the directory computed every associate's standing per page (five seconds) — it asks about its page's rows now.
+
+Still slow enough to watch: the one-week schedule at 1.8 s p95 on 50,000 shifts and the per-site control room at 0.7 s. The workers roster at `/workers` returns up to 5,000 rows with their placements in about 4 s and is not on the list; it needs server-side paging before a tenant that size opens it.
