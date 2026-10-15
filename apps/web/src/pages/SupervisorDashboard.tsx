@@ -25,11 +25,15 @@ import { VanArrivalsCard } from '@/components/VanArrivals';
 import { ReadyToScheduleCard } from '@/components/ReadyToScheduleCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { enterStagger } from '@/lib/motion';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { LiveNow } from '@/components/ui/LiveNow';
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { greetingFor, greetingName } from '@/lib/greeting';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
@@ -248,96 +252,112 @@ export function SupervisorDashboard() {
         .join(' · ')
     : null;
 
-  const header = (
-    <PageHeader
-      title={placeName}
-      topbarTitle={t('floor.title')}
-      subtitle={
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>
-            {oneStore
-              ? (data?.client.name ?? client?.name)
-              : locations.length > 1
-                ? plural(locations.length, 'store', 'stores')
-                : t('floor.title')}
-          </span>
-          {address && (
-            <span className="flex items-center gap-1 text-silver/70">
-              <MapPin className="h-3 w-3" aria-hidden="true" />
-              {address}
-            </span>
-          )}
-          {data && (
-            <span className="flex items-center gap-1.5 text-xs text-silver/60">
-              <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
-              </span>
-              {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
-            </span>
-          )}
+  // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+  // The greeting is the title; the place, its client and address are the
+  // subtitle; the live "as of" is the meta line; the floor is the hero.
+  const greeting = (
+    <>
+      <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+      <span className="text-accent">{greetingName(user)}</span>.
+    </>
+  );
+  const clientLine = oneStore
+    ? (data?.client.name ?? client?.name)
+    : locations.length > 1
+      ? plural(locations.length, 'store', 'stores')
+      : null;
+  const subtitle = (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span className="font-medium text-ink">{placeName}</span>
+      {clientLine && <span>{clientLine}</span>}
+      {address && (
+        <span className="flex items-center gap-1 text-ink-muted">
+          <MapPin className="h-3 w-3" aria-hidden="true" />
+          {address}
         </span>
-      }
-      secondaryActions={
-        <>
-          <Button size="sm" variant="outline" asChild>
-            <Link to="/time-attendance">
-              <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Live board
-            </Link>
-          </Button>
-          {!watchOnly && (
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/today">
-                <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.todayNav')}
-              </Link>
-            </Button>
-          )}
-        </>
-      }
-      primaryAction={
-        watchOnly ? (
-          <Button size="sm" asChild>
-            <Link to="/today">
-              <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.todayNav')}
-            </Link>
-          </Button>
-        ) : (
-          <Button size="sm" asChild>
-            <Link to="/scheduling">
-              <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Open schedule
-            </Link>
-          </Button>
-        )
-      }
-    />
+      )}
+    </span>
+  );
+  const meta = data ? (
+    <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+      <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+      </span>
+      {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
+    </span>
+  ) : undefined;
+  const primary = watchOnly ? (
+    <Button size="sm" asChild>
+      <Link to="/today">
+        <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+        {t('portal.todayNav')}
+      </Link>
+    </Button>
+  ) : (
+    <Button size="sm" asChild>
+      <Link to="/scheduling">
+        <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+        Open schedule
+      </Link>
+    </Button>
+  );
+  // Ways in (§4.1): the places this person works from, after the decisions.
+  const waysIn = (
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" variant="outline" asChild>
+        <Link to="/time-attendance">
+          <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Live board
+        </Link>
+      </Button>
+      {!watchOnly && (
+        <Button size="sm" variant="outline" asChild>
+          <Link to="/today">
+            <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('portal.todayNav')}
+          </Link>
+        </Button>
+      )}
+      <Button size="sm" variant="outline" asChild>
+        <Link to="/ops">
+          <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Store ops
+        </Link>
+      </Button>
+      {!watchOnly && (
+        <Button size="sm" variant="outline" asChild>
+          <Link to="/approvals">Approvals</Link>
+        </Button>
+      )}
+    </div>
   );
 
   if (dayQuery.isError && !data) {
     return (
-      <div className="mx-auto space-y-4">
-        {header}
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void dayQuery.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {dayQuery.error instanceof ApiError ? dayQuery.error.message : t('portal.loadFailed')}
-        </ErrorBanner>
-      </div>
+      <HomeTemplate
+        title={greeting}
+        topbarTitle={t('floor.title')}
+        subtitle={subtitle}
+        hero={
+          <EmptyState
+            icon={Users}
+            title={t('portal.onFloorNow')}
+            description={dayQuery.error instanceof ApiError ? dayQuery.error.message : t('portal.loadFailed')}
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void dayQuery.refetch()}>
+                {t('common.retry')}
+              </Button>
+            }
+          />
+        }
+      />
     );
   }
 
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-64" />
+      <HomeTemplate title={greeting} topbarTitle={t('floor.title')} subtitle={subtitle} hero={<Skeleton className="h-64" />}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
@@ -345,7 +365,7 @@ export function SupervisorDashboard() {
           <Skeleton className="h-24" />
         </div>
         <Skeleton className="h-64" />
-      </div>
+      </HomeTemplate>
     );
   }
 
@@ -426,12 +446,8 @@ export function SupervisorDashboard() {
         }
       : null;
 
-  return (
-    <div className="mx-auto space-y-4">
-      <PullToRefreshIndicator state={pullState} />
-      {header}
-
-      {sopQuery.data?.sop ? (
+  // The interrupting banner (§4.1): the state of their own shift.
+  const shiftBanner = sopQuery.data?.sop ? (
         <SopBanner sop={sopQuery.data.sop} />
       ) : clock.active && sopQuery.data?.submitted ? (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-success/40 bg-success/[0.06] p-4 animate-enter">
@@ -496,422 +512,443 @@ export function SupervisorDashboard() {
             </div>
           </div>
         </div>
-      ) : null}
+      ) : null;
 
-      {myWindows.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">
-          <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} />
-          {mine && (
-            <span className="text-xs text-silver/70">
-              {myWindows
-                .map((w) => `${w.label} ${fmtShiftWindow(w)}${locations.length > 1 ? ` · ${w.locationName}` : ''}`)
-                .join('  ·  ')}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* ---- Hero: the floor right now, drawn across the day ------------- */}
-      <Card
-        className={cn(
-          'relative overflow-hidden animate-enter',
-          heroTone === 'warning'
-            ? 'border-warning/30 bg-gradient-to-br from-warning/[0.14] via-transparent to-transparent'
-            : 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
-        )}
-      >
-        <div
-          aria-hidden="true"
-          className={cn(
-            'pointer-events-none absolute inset-0',
-            heroTone === 'success'
-              ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-success)/0.14),transparent_50%)]'
-              : heroTone === 'warning'
-                ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-warning)/0.14),transparent_50%)]'
-                : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
-          )}
-        />
-        <CardContent className="relative p-5">
-          <div className="grid gap-5 md:grid-cols-12">
-            <div className="md:col-span-4">
-              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
-                <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>
-                  {t('portal.onFloorNow')}
-                  {mine && (
-                    <span className="normal-case tracking-normal text-silver/70">
-                      {' '}· {focusName(runningNow.length > 0 ? runningNow : nextUp ? [nextUp] : myWindows)}
-                    </span>
-                  )}
-                </span>
-              </span>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span
-                  className={cn(
-                    'text-5xl font-bold leading-none tracking-tight sm:text-6xl',
-                    short ? 'text-warning' : 'text-white',
-                  )}
-                >
-                  {onFloor.length}
-                </span>
-                {target !== null && (
-                  <span className="text-2xl font-semibold text-silver/60">/ {target}</span>
+  return (
+    <>
+      <PullToRefreshIndicator state={pullState} />
+      <HomeTemplate
+        title={greeting}
+        topbarTitle={t('floor.title')}
+        subtitle={subtitle}
+        meta={meta}
+        actions={primary}
+        banners={shiftBanner}
+        hero={
+          <div className="space-y-4">
+            {myWindows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">
+                <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} />
+                {mine && (
+                  <span className="text-xs text-silver/70">
+                    {myWindows
+                      .map((w) => `${w.label} ${fmtShiftWindow(w)}${locations.length > 1 ? ` · ${w.locationName}` : ''}`)
+                      .join('  ·  ')}
+                  </span>
                 )}
               </div>
-              <p className="mt-2 text-sm text-silver">
-                {nextUp
-                  ? t('focus.startsAt', {
-                      label: nextUp.label,
-                      time: fmtClockMinute(nextUp.startMinute),
-                      count: nextScheduled,
-                    })
-                  : target !== null
-                  ? short
-                    ? t('portal.heroShort', { missing: target - onFloor.length, window: heroWindow })
-                    : t('portal.heroMet', { window: heroWindow })
-                  : scheduledNow > 0
-                    ? t('portal.onOfSched', { on: onFloor.length, sched: scheduledNow })
-                    : onFloor.length > 0
-                      ? t('portal.onPlain', { on: onFloor.length })
-                      : t('portal.nobodyNow')}
-              </p>
-              {onFloor.length > 0 && (
-                <Link to="/today" className="mt-3 flex items-center -space-x-2" aria-label={t('portal.todayOpen')}>
-                  {onFloor.slice(0, 8).map((p) => (
-                    <Avatar
-                      key={p.associateId}
-                      src={photoUrl(p.associateId)}
-                      name={p.name}
-                      email=""
-                      size="md"
-                      ringed
-                    />
-                  ))}
-                  {onFloor.length > 8 && (
-                    <span className="pl-4 text-sm text-silver tabular-nums">+{onFloor.length - 8}</span>
-                  )}
-                </Link>
+            )}
+      
+            {/* ---- Hero: the floor right now, drawn across the day ------------- */}
+            <Card
+              className={cn(
+                'relative overflow-hidden animate-enter',
+                heroTone === 'warning'
+                  ? 'border-warning/30 bg-gradient-to-br from-warning/[0.14] via-transparent to-transparent'
+                  : 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
               )}
-            </div>
-            <div className="md:col-span-8">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm font-medium text-white">{t('portal.curveTitle')}</h2>
-                <span className="text-xs text-silver/60 tabular-nums">
-                  {t('portal.todayMeta', { filled: data.summary.expected, open: data.summary.open })}
-                </span>
-              </div>
-              <div className="mt-2">
-                <CoverageCurve
-                  points={curve}
-                  target={data.target}
-                  nowHour={nowHour}
-                  bands={mine ? myWindows : []}
-                  labels={{
-                    scheduled: t('portal.chartScheduled'),
-                    open: t('portal.chartOpen'),
-                    contracted: t('portal.chartContracted'),
-                    now: t('portal.chartNow'),
-                    at: (h) => t('portal.chartAt', { hour: h }),
-                  }}
-                />
-                <DetailsTable
-                  label={t('portal.details')}
-                  columns={[t('portal.chartHour'), t('portal.chartScheduled'), t('portal.chartOpen')]}
-                  rows={curve.filter((p) => p.scheduled + p.open > 0).map((p) => [p.label, p.scheduled, p.open])}
-                />
-              </div>
-            </div>
+            >
+              <div
+                aria-hidden="true"
+                className={cn(
+                  'pointer-events-none absolute inset-0',
+                  heroTone === 'success'
+                    ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-success)/0.14),transparent_50%)]'
+                    : heroTone === 'warning'
+                      ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-warning)/0.14),transparent_50%)]'
+                      : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
+                )}
+              />
+              <CardContent className="relative p-5">
+                <div className="grid gap-5 md:grid-cols-12">
+                  <div className="md:col-span-4">
+                    <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+                      <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>
+                        {t('portal.onFloorNow')}
+                        {mine && (
+                          <span className="normal-case tracking-normal text-silver/70">
+                            {' '}· {focusName(runningNow.length > 0 ? runningNow : nextUp ? [nextUp] : myWindows)}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span
+                        className={cn(
+                          'text-5xl font-bold leading-none tracking-tight sm:text-6xl',
+                          short ? 'text-warning' : 'text-white',
+                        )}
+                      >
+                        {onFloor.length}
+                      </span>
+                      {target !== null && (
+                        <span className="text-2xl font-semibold text-silver/60">/ {target}</span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm text-silver">
+                      {nextUp
+                        ? t('focus.startsAt', {
+                            label: nextUp.label,
+                            time: fmtClockMinute(nextUp.startMinute),
+                            count: nextScheduled,
+                          })
+                        : target !== null
+                        ? short
+                          ? t('portal.heroShort', { missing: target - onFloor.length, window: heroWindow })
+                          : t('portal.heroMet', { window: heroWindow })
+                        : scheduledNow > 0
+                          ? t('portal.onOfSched', { on: onFloor.length, sched: scheduledNow })
+                          : onFloor.length > 0
+                            ? t('portal.onPlain', { on: onFloor.length })
+                            : t('portal.nobodyNow')}
+                    </p>
+                    {onFloor.length > 0 && (
+                      <Link to="/today" className="mt-3 flex items-center -space-x-2" aria-label={t('portal.todayOpen')}>
+                        {onFloor.slice(0, 8).map((p) => (
+                          <Avatar
+                            key={p.associateId}
+                            src={photoUrl(p.associateId)}
+                            name={p.name}
+                            email=""
+                            size="md"
+                            ringed
+                          />
+                        ))}
+                        {onFloor.length > 8 && (
+                          <span className="pl-4 text-sm text-silver tabular-nums">+{onFloor.length - 8}</span>
+                        )}
+                      </Link>
+                    )}
+                  </div>
+                  <div className="md:col-span-8">
+                    <SectionTitle
+                      as="h3"
+                      className="mb-2"
+                      title={t('portal.curveTitle')}
+                      trailing={
+                        <span className="text-xs tabular-nums text-ink-muted">
+                          {t('portal.todayMeta', { filled: data.summary.expected, open: data.summary.open })}
+                        </span>
+                      }
+                    />
+                    <div>
+                      <CoverageCurve
+                        points={curve}
+                        target={data.target}
+                        nowHour={nowHour}
+                        bands={mine ? myWindows : []}
+                        labels={{
+                          scheduled: t('portal.chartScheduled'),
+                          open: t('portal.chartOpen'),
+                          contracted: t('portal.chartContracted'),
+                          now: t('portal.chartNow'),
+                          at: (h) => t('portal.chartAt', { hour: h }),
+                        }}
+                      />
+                      <DetailsTable
+                        label={t('portal.details')}
+                        columns={[t('portal.chartHour'), t('portal.chartScheduled'), t('portal.chartOpen')]}
+                        rows={curve.filter((p) => p.scheduled + p.open > 0).map((p) => [p.label, p.scheduled, p.open])}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
-      {watchOnly ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
-          <TileLink to="/today">
+        }
+        decisions={watchOnly ? undefined : { title: 'Needs you', content: <RoleDecisionQueue title={null} /> }}
+        assistant={<HugoSeat />}
+        waysIn={waysIn}
+      >
+        {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
+        {watchOnly ? (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+            <TileLink to="/today">
+              <StatTile
+                className="h-full"
+                label="Not in yet"
+                value={notIn}
+                sub={notIn === 0 ? 'Everyone due is in' : 'Shift started, no punch'}
+              />
+            </TileLink>
             <StatTile
-              className="h-full"
-              label="Not in yet"
-              value={notIn}
-              sub={notIn === 0 ? 'Everyone due is in' : 'Shift started, no punch'}
+              label="Unfilled today"
+              value={openToday}
+              sub={openToday === 0 ? 'Every slot filled' : 'Open slots on the schedule'}
             />
-          </TileLink>
-          <StatTile
-            label="Unfilled today"
-            value={openToday}
-            sub={openToday === 0 ? 'Every slot filled' : 'Open slots on the schedule'}
-          />
-          <StatTile
-            label="Tomorrow · confirmed"
-            value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
-            unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
-            meter={
-              tmTotal > 0
-                ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
-                : null
-            }
-            sub={tm === null ? undefined : tmTotal === 0 ? t('portal.tomorrowNone') : t('portal.tomorrowAllSet')}
-          />
-          <TileLink to={shiftSop ? `/ops?tab=shift&shift=${shiftSop.id}` : '/ops'}>
             <StatTile
-              className="h-full"
-              label="Shift SOP"
-              value={shiftSop ? shiftSop.sopDone : '—'}
-              unit={shiftSop ? `/ ${shiftSop.sopTotal}` : undefined}
+              label="Tomorrow · confirmed"
+              value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
+              unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
               meter={
-                shiftSop && shiftSop.sopTotal > 0
-                  ? {
-                      percent: Math.round((shiftSop.sopDone / shiftSop.sopTotal) * 100),
-                      tone: shiftSop.sopDone === shiftSop.sopTotal ? 'good' : 'primary',
-                    }
+                tmTotal > 0
+                  ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
+                  : null
+              }
+              sub={tm === null ? undefined : tmTotal === 0 ? t('portal.tomorrowNone') : t('portal.tomorrowAllSet')}
+            />
+            <TileLink to={shiftSop ? `/ops?tab=shift&shift=${shiftSop.id}` : '/ops'}>
+              <StatTile
+                className="h-full"
+                label="Shift SOP"
+                value={shiftSop ? shiftSop.sopDone : '—'}
+                unit={shiftSop ? `/ ${shiftSop.sopTotal}` : undefined}
+                meter={
+                  shiftSop && shiftSop.sopTotal > 0
+                    ? {
+                        percent: Math.round((shiftSop.sopDone / shiftSop.sopTotal) * 100),
+                        tone: shiftSop.sopDone === shiftSop.sopTotal ? 'good' : 'primary',
+                      }
+                    : null
+                }
+                sub={
+                  shiftSop
+                    ? shiftSop.mine
+                      ? 'Yours to submit'
+                      : `${shiftSop.runBy} is running it`
+                    : leadFirst
+                      ? `Opens when ${leadFirst} clocks in`
+                      : 'Not open yet'
+                }
+              />
+            </TileLink>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+            <StatTile
+              label="Fill rate · this week"
+              value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
+              delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
+              deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
+              meter={
+                k && weekBase > 0
+                  ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
                   : null
               }
               sub={
-                shiftSop
-                  ? shiftSop.mine
-                    ? 'Yours to submit'
-                    : `${shiftSop.runBy} is running it`
-                  : leadFirst
-                    ? `Opens when ${leadFirst} clocks in`
-                    : 'Not open yet'
-              }
-            />
-          </TileLink>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
-          <StatTile
-            label="Fill rate · this week"
-            value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
-            delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
-            deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
-            meter={
-              k && weekBase > 0
-                ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
-                : null
-            }
-            sub={
-              k
-                ? weekBase > 0
-                  ? `${filledWeek} of ${weekBase} shifts filled`
-                  : 'Nothing scheduled this week yet'
-                : undefined
-            }
-          />
-          <TileLink to="/scheduling">
-            <StatTile
-              className="h-full"
-              label="Open shifts · next 7 days"
-              value={openAhead ?? '—'}
-              meter={
-                openAhead !== null && filledAhead + openAhead > 0
-                  ? {
-                      percent: Math.round((filledAhead / (filledAhead + openAhead)) * 100),
-                      tone: openAhead > 0 ? 'warn' : 'good',
-                    }
-                  : null
-              }
-              sub={
-                aheadDays
-                  ? openAhead === 0
-                    ? 'Every shift covered'
-                    : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+                k
+                  ? weekBase > 0
+                    ? `${filledWeek} of ${weekBase} shifts filled`
+                    : 'Nothing scheduled this week yet'
                   : undefined
               }
             />
-          </TileLink>
-          <StatTile
-            label="Tomorrow · confirmed"
-            value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
-            unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
-            meter={
-              tmTotal > 0
-                ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
-                : null
-            }
-            sub={
-              tm === null
-                ? undefined
-                : tmTotal === 0
-                  ? t('portal.tomorrowNone')
-                  : [
-                      tmOpen > 0 && t('portal.openCount', { count: tmOpen }),
-                      tmUnconfirmed > 0 && t('portal.awaiting', { count: tmUnconfirmed }),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ') || t('portal.tomorrowAllSet')
-            }
-          />
-          <TileLink to="/approvals">
+            <TileLink to="/scheduling">
+              <StatTile
+                className="h-full"
+                label="Open shifts · next 7 days"
+                value={openAhead ?? '—'}
+                meter={
+                  openAhead !== null && filledAhead + openAhead > 0
+                    ? {
+                        percent: Math.round((filledAhead / (filledAhead + openAhead)) * 100),
+                        tone: openAhead > 0 ? 'warn' : 'good',
+                      }
+                    : null
+                }
+                sub={
+                  aheadDays
+                    ? openAhead === 0
+                      ? 'Every shift covered'
+                      : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+                    : undefined
+                }
+              />
+            </TileLink>
             <StatTile
-              className="h-full"
-              label="Waiting on you"
-              value={ap ? ap.total : '—'}
+              label="Tomorrow · confirmed"
+              value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
+              unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
+              meter={
+                tmTotal > 0
+                  ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
+                  : null
+              }
               sub={
-                ap
-                  ? ap.total === 0
-                    ? 'Nothing waiting — inbox zero'
+                tm === null
+                  ? undefined
+                  : tmTotal === 0
+                    ? t('portal.tomorrowNone')
                     : [
-                        ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
-                        ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
-                        ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
-                        ap.timeOff > 0 && `${ap.timeOff} time off`,
-                        ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                        tmOpen > 0 && t('portal.openCount', { count: tmOpen }),
+                        tmUnconfirmed > 0 && t('portal.awaiting', { count: tmUnconfirmed }),
                       ]
                         .filter(Boolean)
-                        .join(' · ')
-                  : undefined
+                        .join(' · ') || t('portal.tomorrowAllSet')
               }
             />
-          </TileLink>
-        </div>
-      )}
-
-      {/* ---- The floor team: who reports to them / who's in charge -------- */}
-      {watchOnly ? <MyLeadStrip /> : <FloorTeamStrip />}
-
-      {/* ---- Who's coming in on the vans (heads-up only) ----------------- */}
-      <VanArrivalsCard />
-      {/* Hires handed to this store with no first shift yet. */}
-      <ReadyToScheduleCard />
-      {/* Program dates (J-1 / H-2B) coming due for this floor. */}
-      <ProgramAlertsCard />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
-        {/* ---- What's waiting on them -------------------------------------- */}
-        {!watchOnly && (
-          <div className="animate-enter md:col-span-2 xl:col-span-7" style={enterStagger(2)}>
-            <RoleDecisionQueue />
+            <TileLink to="/approvals">
+              <StatTile
+                className="h-full"
+                label="Waiting on you"
+                value={ap ? ap.total : '—'}
+                sub={
+                  ap
+                    ? ap.total === 0
+                      ? 'Nothing waiting — inbox zero'
+                      : [
+                          ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
+                          ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
+                          ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
+                          ap.timeOff > 0 && `${ap.timeOff} time off`,
+                          ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
+                    : undefined
+                }
+              />
+            </TileLink>
           </div>
         )}
 
-        {/* ---- Today by shift (the faces live on /today) ------------------- */}
-        <Card
-          className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-7' : 'xl:col-span-5')}
-          style={enterStagger(3)}
-        >
-          <CardContent className="p-5">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
-              <Link to="/today" className="text-xs text-gold underline-offset-2 hover:underline">
-                {t('portal.todayOpen')}
-              </Link>
-            </div>
-            {waves.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{mine ? t('focus.nothingToday') : t('portal.noShiftsToday')}</p>
-            ) : (
-              <ul className="mt-3 space-y-3">
-                {waves.map((w) => {
-                  const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
-                  const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
-                  const waveShort = w.phase === 'live' && inCount < w.expected;
-                  return (
-                    <li key={w.key}>
-                      <Link
-                        to={`/today?wave=${encodeURIComponent(w.startsAt)}`}
-                        className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
-                      >
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span
-                            className={cn(
-                              'text-sm tabular-nums',
-                              w.phase === 'finished' ? 'text-silver/70' : 'text-white',
-                            )}
-                          >
-                            {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
-                            {w.phase === 'live' && (
-                              <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
-                                {t('portal.live')}
-                              </span>
-                            )}
-                          </span>
-                          <span
-                            className={cn(
-                              'shrink-0 text-sm font-semibold tabular-nums',
-                              waveShort ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
-                            )}
-                          >
-                            {w.phase === 'upcoming'
-                              ? t('portal.waveExpected', { expected: w.expected })
-                              : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
-                            {w.open.length > 0 && (
-                              <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
-                          <div
-                            className={cn(
-                              'h-full rounded-full',
-                              w.phase === 'upcoming' ? 'bg-silver/30' : waveShort ? 'bg-warning' : 'bg-success',
-                            )}
-                            style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
-                          />
-                        </div>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        {/* ---- The floor team: who reports to them / who's in charge -------- */}
+        {watchOnly ? <MyLeadStrip /> : <FloorTeamStrip />}
 
-        {/* ---- The next seven days: fill by day ---------------------------- */}
-        {!watchOnly && (
-          <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
+        {/* ---- Who's coming in on the vans (heads-up only) ----------------- */}
+        <VanArrivalsCard />
+        {/* Hires handed to this store with no first shift yet. */}
+        <ReadyToScheduleCard />
+        {/* Program dates (J-1 / H-2B) coming due for this floor. */}
+        <ProgramAlertsCard />
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+          {/* ---- Today by shift (the faces live on /today) ------------------- */}
+          <Card
+            className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-7' : 'xl:col-span-5')}
+            style={enterStagger(3)}
+          >
             <CardContent className="p-5">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                  <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
-                  Next 7 days
-                  {mine && <span className="font-normal text-silver/70">· {focusName(myWindows)}</span>}
-                </h2>
-                <Link to="/scheduling" className="text-xs text-gold underline-offset-2 hover:underline">
-                  Open schedule
-                </Link>
-              </div>
-              {aheadDays === null ? (
-                <Skeleton className="mt-3 h-40" />
+              <SectionTitle
+                title={t('portal.todayByShift')}
+                trailing={
+                  <Link to="/today" className="text-xs text-accent underline-offset-2 hover:underline">
+                    {t('portal.todayOpen')}
+                  </Link>
+                }
+              />
+              {waves.length === 0 ? (
+                <p className="text-sm text-ink-muted">{mine ? t('focus.nothingToday') : t('portal.noShiftsToday')}</p>
               ) : (
-                <>
-                  <div className="mt-3">
-                    <WeekFillChart
-                      days={aheadDays}
-                      todayKey={todayKey}
-                      labels={{
-                        filled: t('portal.chartFilled'),
-                        open: t('portal.chartOpen'),
-                        heading: (d) => {
-                          const row = aheadDays.find((x) => x.day === d);
-                          return row ? fmtDate(parseYmd(row.date)) : d;
-                        },
-                      }}
-                    />
-                  </div>
-                  <p className="mt-2 text-sm text-silver tabular-nums">
-                    {filledAhead + (openAhead ?? 0) === 0
-                      ? 'Nothing scheduled in the next seven days.'
-                      : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
-                    {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
-                  </p>
-                  <DetailsTable
-                    label={t('portal.details')}
-                    columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
-                    rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
-                  />
-                </>
+                <ul className="space-y-3">
+                  {waves.map((w) => {
+                    const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
+                    const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
+                    const waveShort = w.phase === 'live' && inCount < w.expected;
+                    return (
+                      <li key={w.key}>
+                        <Link
+                          to={`/today?wave=${encodeURIComponent(w.startsAt)}`}
+                          className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
+                        >
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span
+                              className={cn(
+                                'text-sm tabular-nums',
+                                w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                              )}
+                            >
+                              {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
+                              {w.phase === 'live' && (
+                                <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
+                                  {t('portal.live')}
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              className={cn(
+                                'shrink-0 text-sm font-semibold tabular-nums',
+                                waveShort ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                              )}
+                            >
+                              {w.phase === 'upcoming'
+                                ? t('portal.waveExpected', { expected: w.expected })
+                                : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
+                              {w.open.length > 0 && (
+                                <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+                            <div
+                              className={cn(
+                                'h-full rounded-full',
+                                w.phase === 'upcoming' ? 'bg-silver/30' : waveShort ? 'bg-warning' : 'bg-success',
+                              )}
+                              style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
+                            />
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </CardContent>
           </Card>
-        )}
 
-        {/* ---- Their own plan ---------------------------------------------- */}
-        <div className={cn('animate-enter', watchOnly ? 'md:col-span-2 xl:col-span-5' : 'xl:col-span-5')} style={enterStagger(5)}>
-          <MyPlanCard />
+          {/* ---- The next seven days: fill by day ---------------------------- */}
+          {!watchOnly && (
+            <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
+              <CardContent className="p-5">
+                <SectionTitle
+                  icon={CalendarDays}
+                  title={
+                    <>
+                      Next 7 days
+                      {mine && <span className="font-normal text-ink-muted"> · {focusName(myWindows)}</span>}
+                    </>
+                  }
+                  trailing={
+                    <Link to="/scheduling" className="text-xs text-accent underline-offset-2 hover:underline">
+                      Open schedule
+                    </Link>
+                  }
+                />
+                {aheadDays === null ? (
+                  <Skeleton className="mt-3 h-40" />
+                ) : (
+                  <>
+                    <div className="mt-3">
+                      <WeekFillChart
+                        days={aheadDays}
+                        todayKey={todayKey}
+                        labels={{
+                          filled: t('portal.chartFilled'),
+                          open: t('portal.chartOpen'),
+                          heading: (d) => {
+                            const row = aheadDays.find((x) => x.day === d);
+                            return row ? fmtDate(parseYmd(row.date)) : d;
+                          },
+                        }}
+                      />
+                    </div>
+                    <p className="mt-2 text-sm text-silver tabular-nums">
+                      {filledAhead + (openAhead ?? 0) === 0
+                        ? 'Nothing scheduled in the next seven days.'
+                        : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
+                      {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
+                    </p>
+                    <DetailsTable
+                      label={t('portal.details')}
+                      columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
+                      rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
+                    />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ---- Their own plan ---------------------------------------------- */}
+          <div className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-5' : 'xl:col-span-12')} style={enterStagger(5)}>
+            <MyPlanCard />
+          </div>
         </div>
-      </div>
-    </div>
+      </HomeTemplate>
+    </>
   );
 }
 

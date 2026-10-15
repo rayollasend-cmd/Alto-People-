@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
-import { greetingName } from '@/lib/greeting';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { greetingFor, greetingName } from '@/lib/greeting';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -338,9 +341,12 @@ function OpsPulseCard() {
 function DecisionQueueCard({
   decisions,
   onChanged,
+  headless = false,
 }: {
   decisions: ExecBriefing['decisions'];
   onChanged: () => void;
+  /** The home's template titles the section ("Needs you"); the card keeps only its count. */
+  headless?: boolean;
 }) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [roomKey, setRoomKey] = useState<string | null>(null);
@@ -372,16 +378,18 @@ function DecisionQueueCard({
 
   return (
     <Card className={open.some((d) => d.severity === 'critical') ? 'border-alert/40' : undefined}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">Needs your decision</CardTitle>
-          {open.length > 0 && (
-            <span className="text-2xs tabular-nums text-silver/70">
-              {open.length} open{delegated.length > 0 ? ` · ${delegated.length} with your team` : ''}
-            </span>
-          )}
-        </div>
-      </CardHeader>
+      {(!headless || open.length > 0) && (
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            {!headless && <CardTitle className="text-base">Needs your decision</CardTitle>}
+            {open.length > 0 && (
+              <span className="ml-auto text-2xs tabular-nums text-silver/70">
+                {open.length} open{delegated.length > 0 ? ` · ${delegated.length} with your team` : ''}
+              </span>
+            )}
+          </div>
+        </CardHeader>
+      )}
       <CardContent>
         {open.length === 0 && delegated.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-silver">
@@ -715,7 +723,6 @@ interface PortalEngagement {
   totals: { accounts: number; active7d: number; neverSignedIn: number; downloads7d: number };
 }
 
-const greetingWord = (h: number) => (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening');
 
 export function ExecutiveDashboard() {
   const { user } = useAuth();
@@ -834,63 +841,166 @@ export function ExecutiveDashboard() {
   const onFloor = floor ? floor.rows.reduce((n, r) => n + r.clockedIn, 0) : null;
   const expected = floor ? floor.rows.reduce((n, r) => n + (r.expected ?? 0), 0) : null;
   const otRisk = ot ? ot.rows.filter((r) => r.projectedOtMinutes > 0) : null;
+  // The hero (§4.1): the margin story with its eight-week arc behind it.
+  const marginHero = summary ? (
+    <Card className="overflow-hidden">
+      <CardContent className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-silver/70">
+              Estimated margin — last week
+            </div>
+            <div className="mt-1 flex items-baseline gap-3">
+              <span className="text-4xl font-semibold tabular-nums text-white">
+                {fmtMoney(summary.lastWeek.estMargin)}
+              </span>
+              {prevWeek && (
+                <Delta now={summary.lastWeek.estMargin} prev={prevWeek.estMargin} money />
+              )}
+            </div>
+            <div className="mt-1 text-sm text-silver">
+              on {fmtMoney(summary.lastWeek.estBilled)} billed ·{' '}
+              {summary.lastWeek.workedHours.toFixed(1)}h worked by{' '}
+              {summary.lastWeek.headsWorked} associates
+            </div>
+          </div>
+          <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
+            Open the live margin board
+          </Link>
+        </div>
+        <div className="mt-4 h-44">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={trendData} margin={{ top: 4, right: 8, bottom: 0, left: -6 }}>
+              <defs>
+                <linearGradient id="execBilled" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={GOLD} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={GOLD} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={GRID} vertical={false} />
+              <XAxis
+                dataKey="week"
+                tick={{ fill: SILVER, fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                tick={{ fill: SILVER, fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                width={44}
+              />
+              <Tooltip
+                formatter={(value, name) => [
+                  fmtMoney(Number(value)),
+                  name === 'billed' ? 'Est. billed' : 'Est. margin',
+                ]}
+                labelFormatter={(l) => `Week of ${l}`}
+                contentStyle={TOOLTIP_STYLE}
+              />
+              <Area
+                type="monotone"
+                dataKey="billed"
+                stroke={GOLD}
+                strokeWidth={2}
+                fill="url(#execBilled)"
+              />
+              <Area
+                type="monotone"
+                dataKey="margin"
+                stroke="rgb(var(--color-success))"
+                strokeWidth={2}
+                fill="transparent"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-1 flex gap-4 text-2xs text-silver/70">
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-full bg-gold" /> Est. billed
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-full bg-success" /> Est. margin
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+
+  ) : null;
   const maxPlaced = summary
     ? Math.max(1, ...summary.clients.map((c) => c.activeAssociates))
     : 1;
 
   return (
-    <div className="space-y-5">
-      {/* Design system §4.1 (UX upgrade step 2): the hero-scale greeting every
-          home shares; the board pack is the one action. The margin hero and
-          the sections below keep their order until the executive home moves
-          onto the Home template. */}
-      <PageHeader
-        title={
-          <>
-            {greetingWord(new Date().getHours())}, <span className="text-accent">{greetingName(user, '')}</span>
-          </>
-        }
-        topbarTitle="Home"
-        subtitle={<LiveNow render={(now) => <>{LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)} — company posture at a glance, board-ready.</>} />}
-        primaryAction={
-          <Button onClick={() => void downloadBoardPack()} loading={packBusy} disabled={packBusy}>
-            <Download className="mr-2 h-4 w-4" />
-            Download board pack
-          </Button>
-        }
-      />
-
-      {summary && summary.narrative.length > 0 && (
-        <section
-          aria-label="The week in brief"
-          className="rounded-lg border border-gold/30 bg-gold/5 px-4 py-3 text-sm leading-relaxed text-silver"
-        >
-          <div className="text-2xs uppercase tracking-widest text-gold">The week in brief</div>
-          <p className="mt-1 max-w-prose text-white/90">{summary.narrative.join(' ')}</p>
-        </section>
-      )}
-
-      {error && (
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={load}>
-              Retry
-            </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
-      )}
-
-      {!summary && !error && (
+    // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+    // The margin is the hero, the chairman's queue the decisions, the
+    // narrative what changed; the board pack is the one action.
+    <HomeTemplate
+      title={
         <>
-          <Skeleton className="h-[260px]" />
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-[96px]" />
-            ))}
-          </div>
+          <LiveNow render={(now) => greetingFor(now.getHours())} />, <span className="text-accent">{greetingName(user, '')}</span>
         </>
+      }
+      topbarTitle="Home"
+      subtitle="Company posture at a glance, board-ready."
+      meta={
+        <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
+          <LiveNow render={(now) => <>{LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)}</>} />
+        </span>
+      }
+      actions={
+        <Button onClick={() => void downloadBoardPack()} loading={packBusy} disabled={packBusy}>
+          <Download className="mr-2 h-4 w-4" />
+          Download board pack
+        </Button>
+      }
+      banners={
+        error ? (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={load}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        ) : undefined
+      }
+      hero={
+        marginHero ??
+        (error ? (
+          <EmptyState icon={TrendingUp} title="Estimated margin" description="The summary did not load. Retry above." />
+        ) : (
+          <Skeleton className="h-[260px]" />
+        ))
+      }
+      decisions={
+        brief
+          ? {
+              title: 'Needs you',
+              count: brief.decisions.filter((d) => d.status === 'open').length,
+              content: <DecisionQueueCard decisions={brief.decisions} onChanged={load} headless />,
+            }
+          : undefined
+      }
+      changes={
+        summary && summary.narrative.length > 0
+          ? {
+              title: 'The week in brief',
+              content: <p className="max-w-prose text-sm leading-relaxed text-ink">{summary.narrative.join(' ')}</p>,
+            }
+          : undefined
+      }
+      assistant={<HugoSeat />}
+    >
+      {!summary && !error && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-[96px]" />
+          ))}
+        </div>
       )}
 
       {/* Batons in flight — the handoff spine's health. Every number is
@@ -899,12 +1009,10 @@ export function ExecutiveDashboard() {
       {batons && (
         <Card>
           <CardContent className="p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">Batons in flight</h2>
-              <span className="text-2xs text-silver/60">
-                work in motion between departments
-              </span>
-            </div>
+            <SectionTitle
+              title="Batons in flight"
+              trailing={<span className="text-2xs text-ink-muted">work in motion between departments</span>}
+            />
             <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-7">
               {(
                 [
@@ -1144,99 +1252,12 @@ export function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
-          <DecisionQueueCard decisions={brief.decisions} onChanged={load} />
-
           <OpsPulseCard />
         </div>
       )}
 
       {summary && (
         <>
-          {/* Hero — the margin story with its eight-week arc behind it. */}
-          <Card className="overflow-hidden">
-            <CardContent className="p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-silver/70">
-                    Estimated margin — last week
-                  </div>
-                  <div className="mt-1 flex items-baseline gap-3">
-                    <span className="text-4xl font-semibold tabular-nums text-white">
-                      {fmtMoney(summary.lastWeek.estMargin)}
-                    </span>
-                    {prevWeek && (
-                      <Delta now={summary.lastWeek.estMargin} prev={prevWeek.estMargin} money />
-                    )}
-                  </div>
-                  <div className="mt-1 text-sm text-silver">
-                    on {fmtMoney(summary.lastWeek.estBilled)} billed ·{' '}
-                    {summary.lastWeek.workedHours.toFixed(1)}h worked by{' '}
-                    {summary.lastWeek.headsWorked} associates
-                  </div>
-                </div>
-                <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
-                  Open the live margin board
-                </Link>
-              </div>
-              <div className="mt-4 h-44">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trendData} margin={{ top: 4, right: 8, bottom: 0, left: -6 }}>
-                    <defs>
-                      <linearGradient id="execBilled" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={GOLD} stopOpacity={0.35} />
-                        <stop offset="100%" stopColor={GOLD} stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke={GRID} vertical={false} />
-                    <XAxis
-                      dataKey="week"
-                      tick={{ fill: SILVER, fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
-                      tick={{ fill: SILVER, fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={44}
-                    />
-                    <Tooltip
-                      formatter={(value, name) => [
-                        fmtMoney(Number(value)),
-                        name === 'billed' ? 'Est. billed' : 'Est. margin',
-                      ]}
-                      labelFormatter={(l) => `Week of ${l}`}
-                      contentStyle={TOOLTIP_STYLE}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="billed"
-                      stroke={GOLD}
-                      strokeWidth={2}
-                      fill="url(#execBilled)"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="margin"
-                      stroke="rgb(var(--color-success))"
-                      strokeWidth={2}
-                      fill="transparent"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-1 flex gap-4 text-2xs text-silver/70">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-4 rounded-full bg-gold" /> Est. billed
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-4 rounded-full bg-success" /> Est. margin
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* KPI band with week-over-week direction. */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Tile
@@ -2111,6 +2132,6 @@ export function ExecutiveDashboard() {
           </p>
         </>
       )}
-    </div>
+    </HomeTemplate>
   );
 }

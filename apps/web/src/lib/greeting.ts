@@ -12,3 +12,15 @@ export function greetingName(user: { firstName?: string | null; email?: string |
   const word = local.split(/[._+-]+/)[0] ?? '';
   return word ? word.charAt(0).toUpperCase() + word.slice(1) : fallback;
 }
+
+/**
+ * The greeting word for an hour of the day. Four homes carried their own
+ * copy (two of them with a different afternoon boundary); this is the one.
+ */
+export function greetingFor(hour: number): string {
+  if (hour < 5) return 'Up late';
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  if (hour < 22) return 'Good evening';
+  return 'Burning the midnight oil';
+}

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { greetingName as greetingNameOf } from '@/lib/greeting';
+import { greetingFor, greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -45,14 +45,6 @@ import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
-
-const greetingFor = (hour: number): string => {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 22) return 'Good evening';
-  return 'Burning the midnight oil';
-};
 
 /**
  * Manager dashboard. All data is direct-report-scoped on the server

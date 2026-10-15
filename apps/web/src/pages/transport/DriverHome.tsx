@@ -55,7 +55,11 @@ import {
 import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { SoundToggle } from '@/components/transport/SoundToggle';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
+import { LiveNow } from '@/components/ui/LiveNow';
+import { useAuth } from '@/lib/auth';
+import { greetingFor, greetingName } from '@/lib/greeting';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -193,6 +197,7 @@ function tripOfRun(run: RideRun): TripKey | null {
 
 export function DriverHome() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const runs = useQuery({ queryKey: ['transport', 'driver'], queryFn: getDriverRuns, refetchInterval: 30_000 });
   // A rider's "I'm outside" lands now, not on the next poll.
@@ -218,55 +223,92 @@ export function DriverHome() {
   const active = all.filter((r) => r.status === 'ACTIVE');
   const planned = all.filter((r) => r.status === 'PLANNED');
   const done = all.filter((r) => r.status === 'COMPLETED' && isRecent(r));
+  // The setup state, as ONE banner (the first design walk found two stacked
+  // above the first useful line): the desk assigns the van; the driver asks
+  // for clients. The read is the seat-request read (same key, one request).
+  const setup = useQuery({ queryKey: ['transport', 'driver', 'requests'], queryFn: getSeatRequests, refetchInterval: 30_000 });
+  const noVan = !!setup.data && !setup.data.van;
+  const clientsSummary = setup.data?.clients;
+  const noClients = !!clientsSummary && !clientsSummary.all && clientsSummary.approved === 0;
+  const setupBanner =
+    noVan && noClients ? t('drive.notSetUp') : noVan ? t('drive.noVan') : noClients ? t('drive.noClients') : null;
+  const requestCount = setup.data?.requests?.length;
+
+  // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+  // The hero is the run that defines the driver's day: on the road, else
+  // the next one up, else the last one finished, else the empty day.
+  const heroRun = active[0] ?? null;
+  const heroNext = heroRun ? null : (planned[0] ?? null);
+  const heroDone = heroRun || heroNext ? null : (done[0] ?? null);
+  const restActive = heroRun ? active.slice(1) : active;
+  const restPlanned = heroNext ? planned.slice(1) : planned;
+  const restDone = heroDone ? done.slice(1) : done;
+  const hero = runs.isLoading ? (
+    <div className="space-y-3">
+      <Skeleton className="h-20" />
+      <Skeleton className="h-64" />
+    </div>
+  ) : runs.isError ? (
+    <QueryError what="today's runs" query={runs} />
+  ) : heroRun ? (
+    <OnTheRoad run={heroRun} onReport={() => setReporting(heroRun.id)} onRider={setRider} />
+  ) : heroNext ? (
+    <UpNext run={heroNext} hero onReport={() => setReporting(heroNext.id)} />
+  ) : heroDone ? (
+    <Finished run={heroDone} />
+  ) : (
+    <EmptyState icon={Bus} title={t('drive.none')} description={t('drive.noneBody')} />
+  );
 
   return (
     <ShiftMapContext.Provider value={setShiftMap}>
-      <div className="mx-auto max-w-2xl">
-      <PageHeader
-        title={t('drive.title')}
-        subtitle={t('drive.subtitle')}
-        secondaryActions={
+      <HomeTemplate
+        className="mx-auto max-w-2xl"
+        title={
           <>
+            <LiveNow render={(now) => greetingFor(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+          </>
+        }
+        topbarTitle={t('drive.title')}
+        subtitle={t('drive.subtitle')}
+        actions={
+          <div className="flex items-center gap-1">
             <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />
             <Button variant="ghost" size="sm" onClick={() => setReporting(null)}>
               <AlertTriangle className="h-4 w-4" />
               {t('ride.report')}
             </Button>
-          </>
+          </div>
         }
-      />
-      <SeatRequests onRider={setRider} />
-      <DriverClients />
-      {runs.isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-20" />
-          <Skeleton className="h-64" />
-        </div>
-      ) : runs.isError ? (
-        <QueryError what="today's runs" query={runs} />
-      ) : active.length + planned.length + done.length === 0 ? (
-        <EmptyState icon={Bus} title={t('drive.none')} description={t('drive.noneBody')} />
-      ) : (
-        <div className="space-y-4">
-          <DayStats runs={[...active, ...planned, ...done]} />
-          {active.map((run) => (
-            <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} onRider={setRider} />
-          ))}
-          {planned.map((run, i) => (
-            <UpNext key={run.id} run={run} hero={active.length === 0 && i === 0} onReport={() => setReporting(run.id)} />
-          ))}
-          {done.map((run) => (
-            <Finished key={run.id} run={run} />
-          ))}
-        </div>
-      )}
-      <DriverWeekCalendar onRider={setRider} />
+        banners={
+          setupBanner ? (
+            <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">
+              {setupBanner}
+            </p>
+          ) : undefined
+        }
+        hero={hero}
+        decisions={{ title: t('drive.requests'), count: requestCount, content: <SeatRequests onRider={setRider} /> }}
+        assistant={<HugoSeat />}
+      >
+        {all.length > 0 && <DayStats runs={[...active, ...planned, ...done]} />}
+        {restActive.map((run) => (
+          <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} onRider={setRider} />
+        ))}
+        {restPlanned.map((run) => (
+          <UpNext key={run.id} run={run} hero={false} onReport={() => setReporting(run.id)} />
+        ))}
+        {restDone.map((run) => (
+          <Finished key={run.id} run={run} />
+        ))}
+        <DriverClients />
+        <DriverWeekCalendar onRider={setRider} />
+      </HomeTemplate>
       {reporting !== undefined && (
         <DriverReportDialog runId={reporting} open onOpenChange={(o) => !o && setReporting(undefined)} />
       )}
       {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
       <ShiftMapDrawer trip={shiftMap} open={!!shiftMap} onClose={() => setShiftMap(null)} />
-      </div>
     </ShiftMapContext.Provider>
   );
 }
@@ -579,7 +621,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
   };
 
   return (
-    <section aria-label={t('drive.requests')} className="mb-4 space-y-3">
+    <div className="space-y-3">
       {van ? (
         <div className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy px-3.5 py-2.5 text-sm">
           <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
@@ -594,17 +636,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
             </span>
           )}
         </div>
-      ) : (
-        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">{t('drive.noVan')}</p>
-      )}
-      {q.data.clients && !q.data.clients.all && q.data.clients.approved === 0 && (
-        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">{t('drive.noClients')}</p>
-      )}
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
-          {t('drive.requests')} <span className="text-white">{requests.length}</span>
-        </h2>
-      </div>
+      ) : null}
       {requests.length === 0 ? (
         <p className="text-sm text-silver">{t('drive.requestsNone')}</p>
       ) : (
@@ -680,7 +712,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
           })}
         </ul>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -744,7 +776,7 @@ function DriverClients() {
   const box =
     'h-4 w-4 shrink-0 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 disabled:opacity-60';
   return (
-    <section aria-label={t('drive.clients')} className="mb-4 rounded-lg border border-navy-secondary bg-navy px-3.5 py-3">
+    <section aria-label={t('drive.clients')} className="rounded-lg border border-navy-secondary bg-navy px-3.5 py-3">
       <div className="flex items-start gap-3">
         <Store className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
         <div className="min-w-0 flex-1">

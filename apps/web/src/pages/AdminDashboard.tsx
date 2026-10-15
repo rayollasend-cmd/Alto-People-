@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { greetingName as greetingNameOf } from '@/lib/greeting';
+import { greetingFor, greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -88,14 +88,6 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
 // has no integer formatter; Intl directly, since toLocale* is lint-banned.
 const INT_FMT = new Intl.NumberFormat('en-US');
 const fmtInt = (n: number): string => INT_FMT.format(n);
-
-const greetingFor = (hour: number): string => {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 22) return 'Good evening';
-  return 'Burning the midnight oil';
-};
 
 /**
  * Friendly verbs for audit `action` codes. The audit log emits dotted

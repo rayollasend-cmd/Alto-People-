@@ -65,7 +65,7 @@ Rules: no inline hex in page code; status colours mean status (never decoration)
 Every page is one of these and says so (`data-template` on the root; `src/components/templates`). The design walk groups screenshots by template.
 
 ### 4.1 Home (`HomeTemplate`)
-Banners that interrupt · greeting · **one hero** · decisions ("Needs you", counted) · what changed · Hugo's seat · ways in. Six homes use it: associate, supervisor, admin, client manager, executive, IT/compliance admin.
+Banners that interrupt · greeting · **one hero** · decisions ("Needs you", counted) · what changed · Hugo's seat · ways in. On it today: associate, supervisor, manager, admin, executive, driver. Still on their own order, for the sweep: recruiter, workforce, finance, transport director, the portal's store and region homes. The aside takes its column only when Hugo rendered something; a queue card under the "Needs you" title runs headless (`title={null}` / `headless`) so the section is titled once.
 
 ### 4.2 List (`ListTemplate`)
 `PageHeader` · optional summary strip · **one `FilterBar`** · `DataGrid` · the record in a `Drawer`. The list never leaves the screen when a record opens.

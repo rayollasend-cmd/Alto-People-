@@ -180,7 +180,8 @@ function renderPage(
 describe('<SupervisorDashboard> — My floor', () => {
   it('leads with the place and the floor against the contracted line', async () => {
     renderPage();
-    expect(await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: /, Dana.$/ })).toBeInTheDocument();
+    expect(await screen.findByText('Front Beach 218')).toBeInTheDocument();
     expect(screen.getByText(/15495 Panama City Beach Pkwy · Panama City Beach, FL 32413/)).toBeInTheDocument();
     expect(screen.getByText('/ 4')).toBeInTheDocument();
     expect(screen.getByText(/2 short of the contracted headcount/)).toBeInTheDocument();
@@ -201,7 +202,7 @@ describe('<SupervisorDashboard> — My floor', () => {
 
   it('shows shifts as waves and people as faces — never a roster of names, never money', async () => {
     renderPage();
-    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    await screen.findByText('Front Beach 218');
     expect(screen.getByText('Who is in').closest('a')).toHaveAttribute('href', '/today');
     for (const link of screen.getAllByRole('link', { name: /open schedule/i })) {
       expect(link).toHaveAttribute('href', '/scheduling');
@@ -223,7 +224,7 @@ describe('<SupervisorDashboard> — My floor', () => {
         { associateId: 'a-w2', name: 'Rosa Vega', clockInAt: clockIn, position: null },
       ],
     });
-    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    await screen.findByText('Front Beach 218');
     // 4 on the floor against a target of 4 — met, not "2 short".
     expect(screen.getByText(/Staffed to the contracted headcount/)).toBeInTheDocument();
     expect(screen.queryByText(/short of the contracted headcount/)).not.toBeInTheDocument();
@@ -302,7 +303,7 @@ describe('<SupervisorDashboard> — My floor', () => {
 
   it('on the clock with no SOP open, no clock card', async () => {
     renderPage({ clockedIn: true });
-    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    await screen.findByText('Front Beach 218');
     expect(screen.queryByText("You're off the clock")).not.toBeInTheDocument();
   });
 
@@ -375,7 +376,8 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
   it('the same floor, watch-only: no schedule, approvals, or week — their shift supervisor instead', async () => {
     vi.clearAllMocks();
     renderPage({ role: 'FLOOR_SUPERVISOR', clockedIn: true, floorTeam: floorTeam() });
-    expect(await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: /, Dana.$/ })).toBeInTheDocument();
+    expect(await screen.findByText('Front Beach 218')).toBeInTheDocument();
     expect(await screen.findByText('Your shift supervisor')).toBeInTheDocument();
     expect(screen.getByText('Dana Reyes')).toBeInTheDocument();
     expect(screen.getByText('Off the clock')).toBeInTheDocument();
@@ -512,7 +514,7 @@ describe('<SupervisorDashboard> — arriving by van', () => {
 
   it('stays out of the way when nobody is coming by van', async () => {
     renderPage();
-    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    await screen.findByText('Front Beach 218');
     expect(screen.queryByText('Arriving by van')).not.toBeInTheDocument();
   });
 });

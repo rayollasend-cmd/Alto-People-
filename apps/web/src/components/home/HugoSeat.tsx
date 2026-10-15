@@ -26,7 +26,8 @@ export function HugoSeat({ className }: { className?: string }) {
       setText('');
     },
   });
-  if (me.isLoading || me.error || !me.data || me.data.can.length === 0) return null;
+  // A thin answer (an older API, a generic test mock) is "nothing to offer".
+  if (me.isLoading || me.error || !me.data?.can?.length) return null;
   const send = (q: string) => {
     const t = q.trim();
     if (t && !ask.isPending) ask.mutate(t);

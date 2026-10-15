@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { greetingName } from '@/lib/greeting';
+import { greetingFor, greetingName } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -60,9 +60,6 @@ const candidateHref = (id: string) => `/recruiting?candidateId=${id}`;
 const sourceName = (s: string | null) =>
   s ? (SOURCE_LABEL[s.toLowerCase()] ?? `${s.charAt(0).toUpperCase()}${s.slice(1)}`) : 'No source';
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-const greetingFor = (hour: number): string =>
-  hour < 5 ? 'Up late' : hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : hour < 22 ? 'Good evening' : 'Burning the midnight oil';
 
 function SectionTitle({ children, count, action }: { children: ReactNode; count?: number; action?: ReactNode }) {
   return (

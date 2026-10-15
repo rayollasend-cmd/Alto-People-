@@ -177,7 +177,7 @@ describe('the driver decides on seat requests', () => {
     });
     renderAs('DRIVER', <DriverHome />);
     const list = await screen.findByRole('region', { name: 'Seat requests' });
-    expect(within(list).getByText('White Ford Transit 2023', { exact: false })).toBeInTheDocument();
+    expect(await within(list).findByText('White Ford Transit 2023', { exact: false })).toBeInTheDocument();
     const items = within(list).getAllByRole('listitem');
     expect(items[0]).toHaveTextContent('Maria Lopez');
     expect(items[0]).toHaveTextContent(/Fits your .* run/);

@@ -57,6 +57,11 @@ First run 2026-10-15 (run 38745262700, 197 screenshots, 12 personas, desktop and
 - **What the sweep must fix first:** the sidebar's Workforce Management group lists up to 37 entries expanded by default (every admin, workforce and finance screenshot scrolls it); the audit Integrity panel's retention and archive lines wrapped into one row (fixed); the executive home's small `text-xl` title (now the shared hero header); the driver home stacks two warning banners before the first useful line; the "Dev seed" line on the login page is development-only but reads as production copy to a reviewer.
 - **Step 0's second half**, the per-module score table, is kept in `apps/web/design-baseline.json` (the design lint's per-file counts) rather than a hand-written table: 1,596 `text-white`, 160 raw headings, 58 inline hex, 38 pills, 39 bare empty strings, 4 "Loading…" at the start; the count only falls.
 
+Second run 2026-10-15 (run 38754830554, 197 screenshots, the theme named outright):
+
+- **Both themes render as named now**; the light theme holds on every walked surface, and Hugo's seat sits beside the admin home as designed.
+- **For the sweep:** the admin home's Workforce snapshot tiles clip their sparkline captions ("— hires vs la…") at desktop width inside the two-thirds column; the supervisor's phone header spent a full row on three buttons before the first useful line (fixed in slice 1: one primary action in the header, the rest as ways in at the foot); the driver's two stacked warnings (fixed in slice 1: one banner).
+
 ## 4. Competitors
 
 - **Workday.** Reviewers describe the interface as confusing and unintuitive, with complicated navigation, a steep learning curve and updates that add complexity; a 2026 Change Job redesign was needed because the old flow was "an unnecessary start page, then a seemingly endless series of fields" (sources below). Its Agent System of Record (Rising 2025, general availability 2026) is a governance console for agents: identity, roles, permissions, oversight, with Entra Agent ID integration. That is the direct competitor to our registry, gates and decision record. Workday shows governance as configuration; we can show it as evidence.
@@ -148,6 +153,8 @@ Product analytics already collects route usage, errors and web vitals. Add three
 | 6. The sweep | The 93 modules onto the templates, highest-traffic first by product analytics; empty, loading and error states; terms; icons | 3 weeks, in slices |
 
 Each step: tests, the walk, acceptance reported before the next.
+
+**Step 6, slice 1 (2026-10-15): the homes still on their own order.** The supervisor, executive and driver homes moved onto the Home template. Supervisor: the greeting is the title, the place with its client and address the subtitle, the live "as of" the meta line, the shift banner the interrupt, the floor the hero, the decision queue "Needs you", the four KPI tiles and the day's cards beneath, the five links the supervisor works from as ways in. Executive: the margin story is the hero, the chairman's queue "Needs you" (counted), the week's narrative "what changed", the board pack the one action. Driver: the run that defines the day is the hero (on the road, else next up, else the last finished, else the empty day), seat requests "Needs you" (counted), and ONE setup banner where the walk found two. Shared: one `greetingFor` helper replaces four page copies; the template's aside takes its column only when Hugo rendered something (`:has(aside:not(:empty))`); the two queue cards can run headless under the template's section title. The lint baseline fell (`text-white` 1,591 → 1,585, raw headings 157 → 152). Proof: the web unit suite (973 tests) and the third walk.
 
 ## 8. Risks
 

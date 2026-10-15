@@ -72,7 +72,10 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
           {decisions.content}
         </section>
       )}
-      <div className={cn('grid gap-6', assistant ? 'lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]' : '')}>
+      {/* The aside takes its column only when the assistant rendered something:
+          Hugo's seat renders nothing when nothing is switched on for this
+          person, and an empty third of the page is not a seat. */}
+      <div className={cn('grid gap-6', assistant ? 'lg:[&:has(aside:not(:empty))]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]' : '')}>
         <div className="min-w-0 space-y-6">
           {changes && (
             <section aria-labelledby="home-changes">

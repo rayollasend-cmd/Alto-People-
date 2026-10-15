@@ -81,7 +81,8 @@ export function RoleDecisionQueue({
   title = 'Needs your decision',
   hideWhenEmpty = false,
 }: {
-  title?: string;
+  /** `null` when the page titles the section itself (a home's "Needs you"). */
+  title?: string | null;
   /**
    * Render nothing when the queue is empty. A page with its own "waiting
    * on you" (the recruiter's) must not also say "nothing needs your
@@ -246,12 +247,13 @@ export function RoleDecisionQueue({
 
   return (
     <Card className={nCritical > 0 ? 'border-alert/40' : undefined}>
+      {(title !== null || (rows && rows.length > 0)) && (
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base">{title}</CardTitle>
+          {title !== null && <CardTitle className="text-base">{title}</CardTitle>}
           {/* The triage line — the whole queue in one sentence. */}
           {rows && rows.length > 0 && (
-            <span className="text-2xs tabular-nums text-silver">
+            <span className="ml-auto text-2xs tabular-nums text-silver">
               {nCritical > 0 && <span className="font-medium text-alert">{nCritical} critical</span>}
               {nCritical > 0 && (nHigh > 0 || nNormal > 0) && ' · '}
               {nHigh > 0 && <span className="text-warning">{nHigh} high</span>}
@@ -264,6 +266,7 @@ export function RoleDecisionQueue({
           )}
         </div>
       </CardHeader>
+      )}
       <CardContent>
         {rows === null && <Skeleton className="h-24" />}
 

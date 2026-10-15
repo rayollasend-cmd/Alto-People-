@@ -1,8 +1,8 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1591,
-    "raw-heading": 157,
+    "brand-text": 1585,
+    "raw-heading": 152,
     "loading-text": 4,
     "empty-text": 39,
     "hex": 58,
@@ -248,10 +248,9 @@
       "brand-text": 4
     },
     "src/pages/ExecutiveDashboard.tsx": {
-      "brand-text": 36,
+      "brand-text": 34,
       "pill": 2,
-      "empty-text": 1,
-      "raw-heading": 1
+      "empty-text": 1
     },
     "src/pages/expirations/ExpirationsHome.tsx": {
       "brand-text": 3
@@ -789,8 +788,7 @@
       "brand-text": 3
     },
     "src/pages/SupervisorDashboard.tsx": {
-      "brand-text": 11,
-      "raw-heading": 3
+      "brand-text": 8
     },
     "src/pages/support/PlatformSupportInbox.tsx": {
       "brand-text": 1,
@@ -858,10 +856,10 @@
       "brand-text": 1
     },
     "src/pages/transport/DriverHome.tsx": {
-      "brand-text": 32,
+      "brand-text": 31,
       "hex": 1,
       "pill": 4,
-      "raw-heading": 3
+      "raw-heading": 2
     },
     "src/pages/transport/PickupPicker.tsx": {
       "brand-text": 6
