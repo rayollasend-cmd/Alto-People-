@@ -16,7 +16,7 @@ import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
-import { useI18n, type Lang } from '@/lib/i18n';
+import { LANGS, LANG_LABELS, useI18n, type Lang } from '@/lib/i18n';
 import { useTheme, type ThemePreference } from '@/lib/theme';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
@@ -156,7 +156,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
       )}
       role="dialog"
       aria-modal="true"
-      aria-label="Main navigation"
+      aria-label={t('nav.mainAria')}
     >
       <div
         className="absolute inset-0 bg-backdrop backdrop-blur-sm"
@@ -187,7 +187,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             type="button"
             onClick={onClose}
             className="grid place-items-center h-10 w-10 -mr-2 text-silver hover:text-white rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-            aria-label="Close menu"
+            aria-label={t('nav.closeMenu')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -297,11 +297,9 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
               {t('common.language')}
             </span>
             <SegmentedControl<Lang>
+              className="flex-wrap"
               ariaLabel={t('common.language')}
-              options={[
-                { value: 'en', label: 'English' },
-                { value: 'es', label: 'Español' },
-              ]}
+              options={LANGS.map((l) => ({ value: l, label: LANG_LABELS[l] }))}
               value={lang}
               onChange={setLang}
             />
@@ -323,7 +321,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   label: (
                     <>
                       <Sun className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">Light</span>
+                      <span className="sr-only">{t('theme.light')}</span>
                     </>
                   ),
                 },
@@ -332,7 +330,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   label: (
                     <>
                       <Moon className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">Dark</span>
+                      <span className="sr-only">{t('theme.dark')}</span>
                     </>
                   ),
                 },
@@ -341,7 +339,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   label: (
                     <>
                       <Monitor className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">System</span>
+                      <span className="sr-only">{t('theme.system')}</span>
                     </>
                   ),
                 },

@@ -2084,6 +2084,7 @@ model Associate {
   @@index([departmentId])
   @@index([costCenterId])
   @@index([jobProfileId])
+  @@index([lastName, firstName])
   @@index([tenantId])
 }
 

@@ -21,9 +21,32 @@ import {
  * translated slice — admin surfaces stay English for now.
  */
 
-export type Lang = 'en' | 'es' | 'tr';
+export type Lang = 'en' | 'es' | 'tr' | 'ht' | 'pt' | 'uk';
+/**
+ * Every language the app speaks, in the order the pickers list them. The
+ * first three are reviewed; Haitian Creole, Portuguese and Ukrainian (Brief
+ * 3-6, the next three by workforce count) are machine-drafted and marked
+ * for review in docs/scale-investigation.md. The associate app is complete
+ * in all six; admin-only strings stay English outside EN/ES.
+ */
+export const LANGS: readonly Lang[] = ['en', 'es', 'tr', 'ht', 'pt', 'uk'];
+export const LANG_LABELS: Record<Lang, string> = {
+  en: 'English',
+  es: 'Español',
+  tr: 'Türkçe',
+  ht: 'Kreyòl ayisyen',
+  pt: 'Português',
+  uk: 'Українська',
+};
+export function isLang(value: unknown): value is Lang {
+  return typeof value === 'string' && (LANGS as readonly string[]).includes(value);
+}
 
 import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
+import { tr as trAssociate } from './i18n/tr';
+import { ht as htAssociate } from './i18n/ht';
+import { pt as ptAssociate } from './i18n/pt';
+import { uk as ukAssociate } from './i18n/uk';
 
 const STORAGE_KEY = 'alto.lang';
 
@@ -36,6 +59,12 @@ const en = {
   'tabs.pay': 'Pay',
   'tabs.more': 'More',
   'tabs.moreAria': 'More — open full navigation',
+  'tabs.primaryAria': 'Primary',
+  'nav.mainAria': 'Main navigation',
+  'nav.closeMenu': 'Close menu',
+  'theme.light': 'Light',
+  'theme.dark': 'Dark',
+  'theme.system': 'System',
 
   // Common
   'common.clear': 'Clear',
@@ -2902,6 +2931,12 @@ const es: Record<MessageKey, string> = {
   'tabs.pay': 'Pago',
   'tabs.more': 'Más',
   'tabs.moreAria': 'Más — abrir la navegación completa',
+  'tabs.primaryAria': 'Principal',
+  'nav.mainAria': 'Navegación principal',
+  'nav.closeMenu': 'Cerrar menú',
+  'theme.light': 'Claro',
+  'theme.dark': 'Oscuro',
+  'theme.system': 'Sistema',
 
   'common.clear': 'Borrar',
   'common.retry': 'Reintentar',
@@ -5792,7 +5827,17 @@ const tr: Partial<Record<MessageKey, string>> = {
   'msg.channelMembers': 'Bu {siteLc} kanalında {count} kişi',
 };
 
-const MESSAGES: Record<Lang, Partial<Record<MessageKey, string>>> = { en, es, tr };
+// The three later languages and the rest of Turkish live in their own
+// modules (the associate app's keys, generated from reviewed chunks); the
+// hand-written Turkish lines above win where they overlap.
+const MESSAGES: Record<Lang, Partial<Record<MessageKey, string>>> = {
+  en,
+  es,
+  tr: { ...trAssociate, ...tr },
+  ht: htAssociate,
+  pt: ptAssociate,
+  uk: ukAssociate,
+};
 
 /**
  * The tenant's words, available to every string as {worker} {workers}
@@ -5822,9 +5867,10 @@ export function termVarsFrom(terms: Record<TermKey, string>): TermVars {
 function detectLang(): Lang {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === 'en' || stored === 'es' || stored === 'tr') return stored;
+    if (isLang(stored)) return stored;
     const nav = navigator.language?.toLowerCase() ?? '';
-    return nav.startsWith('es') ? 'es' : nav.startsWith('tr') ? 'tr' : 'en';
+    const match = LANGS.find((l) => l !== 'en' && nav.startsWith(l));
+    return match ?? 'en';
   } catch {
     return 'en';
   }
