@@ -246,3 +246,45 @@ export async function explainActive(associateId: string, now: Date = new Date(),
   else reason = lastEntry ? `Last clock-in ${lastEntry.clockInAt.toISOString().slice(0, 10)} is outside the ${windowDays}-day window and nothing is scheduled.` : `Never clocked in and nothing is scheduled.`;
   return { active, employed, placement, lastClockInAt: lastEntry?.clockInAt ?? null, nextShiftAt: nextShift?.startsAt ?? null, windowDays, reason };
 }
+
+/**
+ * Brief 2-6 step 4 (decision 2) — who is active on a day, by worker type, for
+ * billing. The one rule, extended here and nowhere else:
+ *
+ *   PERSON  the rule above (activeAssociateIds), read at the day's end;
+ *   AGENT   a Worker of type AGENT, status ACTIVE, with at least one audited
+ *           action in the day (every agent call writes AuditLog.workerId);
+ *   ROBOT   a Worker of type ROBOT, status ACTIVE, at a site that day (an
+ *           assignment overlapping it) or on a shift starting in it.
+ *
+ * `from` and `to` are the day's bounds in the organization's time zone.
+ */
+export async function activeWorkersBetween(
+  tenantId: string,
+  from: Date,
+  to: Date,
+  db: Db = defaultPrisma,
+): Promise<{ PERSON: string[]; AGENT: string[]; ROBOT: string[] }> {
+  const people = await activeAssociateIds({ tenantId }, to, db);
+  const agents = await db.worker.findMany({ where: { tenantId, type: 'AGENT', status: 'ACTIVE' }, select: { id: true } });
+  const acted = agents.length
+    ? await db.auditLog.findMany({ where: { workerId: { in: agents.map((a) => a.id) }, createdAt: { gte: from, lt: to } }, select: { workerId: true }, distinct: ['workerId'] })
+    : [];
+  const robots = await db.worker.findMany({
+    where: {
+      tenantId,
+      type: 'ROBOT',
+      status: 'ACTIVE',
+      OR: [
+        { assignments: { some: { startedAt: { lt: to }, OR: [{ endedAt: null }, { endedAt: { gte: from } }] } } },
+        { shifts: { some: { startsAt: { gte: from, lt: to }, status: { not: 'CANCELLED' } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return {
+    PERSON: [...people].sort(),
+    AGENT: acted.map((a) => a.workerId!).filter(Boolean).sort(),
+    ROBOT: robots.map((r) => r.id).sort(),
+  };
+}

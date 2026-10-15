@@ -49,6 +49,7 @@ import { agentApiRouter } from './routes/agentApi.js';
 import { mcpRouter } from './routes/mcp.js';
 import { laborRulesRouter } from './routes/laborRules.js';
 import { identityRouter } from './routes/identity.js';
+import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -349,6 +350,8 @@ export function createApp() {
   app.use('/resend/webhook', resendWebhookRouter);
   // And Meta's WhatsApp webhook — X-Hub-Signature-256 over the raw body.
   app.use('/whatsapp/webhook', whatsappWebhookRouter);
+  // And Stripe's billing events (Brief 2-6 step 4) — Stripe-Signature over the raw body.
+  app.use('/billing/stripe/webhook', stripeWebhookRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
@@ -391,6 +394,8 @@ export function createApp() {
   app.use('/labor-rules', laborRulesRouter);
   // Brief 2-3 step 2: a tenant's own sign-in, domains and SCIM tokens.
   app.use('/identity', identityRouter);
+  // Brief 2-6 step 4: usage by worker type and invoices.
+  app.use('/billing', billingRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
   // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
   // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the

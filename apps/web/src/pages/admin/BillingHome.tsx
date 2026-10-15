@@ -1,207 +1,134 @@
 import { useQuery } from '@tanstack/react-query';
-import { BadgeDollarSign, CreditCard, FileText, Users as UsersIcon } from 'lucide-react';
-import { ApiError } from '@/lib/api';
-import { getOrgBranding } from '@/lib/brandingApi';
-import { getUserCounts } from '@/lib/usersAdminApi';
-import { Button } from '@/components/ui/Button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Bot, Cpu, ExternalLink, Users as UsersIcon } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
+import { fmtMoney } from '@/lib/format';
+import { Badge } from '@/components/ui/Badge';
+import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
+import { SkeletonRows } from '@/components/ui';
 
 /**
- * HR-only billing scaffold. The org runs on a manual contract today —
- * Stripe integration is deferred until plan tiers are decided. This page
- * exists so HR has one place to see the surface area (plan, seats,
- * payment method, invoices) and so the "self-serve everything" sidebar
- * has a billing entry. Every interactive control is intentionally a stub.
+ * Brief 2-6 step 4 — Billing: the plan, this month's billable count so far
+ * by worker type (people, AI agents, robots active on at least one day,
+ * decision 1), and the invoices with their hosted links. Counts and prices
+ * only; who was active stays in the daily evidence and never reaches the
+ * payment processor. The internal plan is never invoiced.
  */
+
+type WorkerType = 'PERSON' | 'AGENT' | 'ROBOT';
+
+interface BillingOverview {
+  plan: string;
+  invoiced: boolean;
+  stripe: 'test' | 'live' | 'off';
+  month: string;
+  daysCounted: number;
+  running: Record<WorkerType, number>;
+  invoices: Array<{
+    id: string;
+    month: string;
+    status: 'DRAFT' | 'OPEN' | 'PAID' | 'VOID';
+    totalCents: number;
+    lines: Array<{ type: WorkerType; quantity: number; unitPriceCents: number | null; amountCents: number }>;
+    holdReason: string | null;
+    hostedUrl: string | null;
+    lastPaymentError: string | null;
+    paidAt: string | null;
+  }>;
+}
+
+const TYPE: Record<WorkerType, { label: string; icon: typeof UsersIcon }> = {
+  PERSON: { label: 'People', icon: UsersIcon },
+  AGENT: { label: 'AI agents', icon: Bot },
+  ROBOT: { label: 'Robots', icon: Cpu },
+};
+const STATUS: Record<BillingOverview['invoices'][number]['status'], 'pending' | 'accent' | 'success' | 'default'> = { DRAFT: 'pending', OPEN: 'accent', PAID: 'success', VOID: 'default' };
+const HOLD: Record<string, string> = {
+  prices_missing: 'Waiting for your plan’s prices.',
+  stripe_not_configured: 'Waiting for the payment processor to be connected.',
+};
+
 export function BillingHome() {
-  const billingQuery = useQuery({
-    queryKey: ['BillingHome', 'billing'],
-    // getUserCounts is uncapped — the /admin/users list truncates at the
-    // server page size, so its length undercounts seats on large orgs.
-    queryFn: () => Promise.all([getOrgBranding(), getUserCounts()]),
-  });
-  const supportEmail = billingQuery.data?.[0].supportEmail ?? null;
-  const activeSeats = billingQuery.data?.[1].counts.ACTIVE ?? null;
-  const loading = billingQuery.data === undefined && billingQuery.isFetching;
-  const error = billingQuery.error
-    ? billingQuery.error instanceof ApiError
-      ? billingQuery.error.message
-      : 'Could not load billing info.'
-    : null;
-
-  const supportLine = supportEmail ?? 'your account manager';
-
+  const q = useQuery({ queryKey: ['billing', 'overview'], queryFn: () => apiFetch<BillingOverview>('/billing') });
+  const d = q.data;
   return (
-    <div>
-      <PageHeader
-        title="Billing"
-        subtitle="Plan, seats, payment method, and invoice history. Self-serve billing is on the roadmap — for now, contracts are managed manually."
-        breadcrumbs={[
-          { label: 'Home', to: '/' },
-          { label: 'Billing' },
-        ]}
-      />
-
-      <div className="mb-6 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-white">
-        Billing is managed manually today. To upgrade, downgrade, or update
-        billing details, email{' '}
-        {supportEmail ? (
-          <a
-            href={`mailto:${supportEmail}`}
-            className="text-gold underline underline-offset-2 hover:text-gold-soft"
-          >
-            {supportEmail}
-          </a>
-        ) : (
-          <span className="text-silver">{supportLine}</span>
-        )}
-        .
-      </div>
-
-      {error ? (
-        <div className="space-y-3">
-          <ErrorBanner>{error}</ErrorBanner>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => void billingQuery.refetch()}
-          >
-            Retry
-          </Button>
-        </div>
+    <div className="space-y-5">
+      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." breadcrumbs={[{ label: 'Admin' }, { label: 'Billing' }]} />
+      {q.isError ? (
+        <QueryError what="billing" query={q} />
+      ) : !d ? (
+        <SkeletonRows count={4} />
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
+        <>
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BadgeDollarSign className="h-4 w-4 text-gold" />
-                Plan
-              </CardTitle>
-              <CardDescription>
-                Custom contract negotiated with sales. Tiered self-serve plans
-                are on the roadmap.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                <div>
-                  <dt className="text-silver/70 text-xs uppercase tracking-wide">
-                    Plan
-                  </dt>
-                  <dd className="text-white mt-1">Custom</dd>
-                </div>
-                <div>
-                  <dt className="text-silver/70 text-xs uppercase tracking-wide">
-                    Billing cycle
-                  </dt>
-                  <dd className="text-silver mt-1">—</dd>
-                </div>
-                <div>
-                  <dt className="text-silver/70 text-xs uppercase tracking-wide">
-                    Status
-                  </dt>
-                  <dd className="text-white mt-1">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-success" />
-                      Active
-                    </span>
-                  </dd>
-                </div>
-              </dl>
+            <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+              <span className="text-silver">Plan</span>
+              <span className="font-semibold capitalize text-white">{d.plan}</span>
+              {!d.invoiced && <Badge variant="default" size="sm">Not invoiced</Badge>}
+              {d.invoiced && d.stripe === 'test' && <Badge variant="pending" size="sm">Payment processor in test mode</Badge>}
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <UsersIcon className="h-4 w-4 text-gold" />
-                Seats
-              </CardTitle>
-              <CardDescription>
-                Active user accounts counted toward billing. Disabled and
-                invited-but-not-accepted accounts don't count.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <Skeleton className="h-10 w-24" />
-              ) : (
-                <div className="flex items-baseline gap-2">
-                  <span className="font-display text-4xl text-white">
-                    {activeSeats ?? '—'}
-                  </span>
-                  <span className="text-silver text-sm">
-                    {activeSeats === 1 ? 'active seat' : 'active seats'}
-                  </span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <section aria-labelledby="running" className="space-y-2">
+            <h2 id="running" className="text-base font-semibold text-white">
+              {d.month}, so far
+            </h2>
+            <p className="text-sm text-silver">Each person, agent and robot active on at least one day of the month counts once. {d.daysCounted} day{d.daysCounted === 1 ? '' : 's'} counted so far.</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {(Object.keys(TYPE) as WorkerType[]).map((t) => {
+                const Icon = TYPE[t].icon;
+                return (
+                  <Card key={t}>
+                    <CardContent className="flex items-center gap-3 p-4">
+                      <Icon className="h-5 w-5 text-silver" aria-hidden="true" />
+                      <div>
+                        <div className="text-2xl font-semibold text-white">{d.running[t] ?? 0}</div>
+                        <div className="text-xs text-silver">{TYPE[t].label}</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-4 w-4 text-gold" />
-                Payment method
-              </CardTitle>
-              <CardDescription>
-                Cards and ACH details will live here once Stripe is wired up.
-                Today, payment is handled out-of-band with your account
-                manager.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <EmptyState
-                icon={CreditCard}
-                title="No payment method on file"
-                description="Stripe integration coming soon."
-                action={
-                  <Button variant="outline" disabled>
-                    Add payment method
-                  </Button>
-                }
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-gold" />
-                Invoice history
-              </CardTitle>
-              <CardDescription>
-                Receipts and downloadable PDFs will appear here once invoices
-                are issued through the platform.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <EmptyState
-                icon={FileText}
-                title="No invoices yet"
-                description={
-                  <>
-                    Past invoices were sent by email — check with{' '}
-                    {supportEmail ?? 'your account manager'} for copies.
-                  </>
-                }
-              />
-            </CardContent>
-          </Card>
-        </div>
+          <section aria-labelledby="invoices" className="space-y-2">
+            <h2 id="invoices" className="text-base font-semibold text-white">Invoices</h2>
+            <Card>
+              <CardContent className="p-0">
+                {d.invoices.length === 0 ? (
+                  <p className="p-6 text-sm text-silver">{d.invoiced ? 'No invoice yet: the first follows the end of your first month.' : 'Your plan is not invoiced.'}</p>
+                ) : (
+                  <ul className="divide-y divide-navy-secondary">
+                    {d.invoices.map((i) => (
+                      <li key={i.id} className="space-y-1 px-4 py-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-white">{i.month}</span>
+                          <Badge variant={STATUS[i.status]} size="sm">
+                            {i.status === 'OPEN' ? 'Due' : i.status.charAt(0) + i.status.slice(1).toLowerCase()}
+                          </Badge>
+                          <span className="ml-auto font-semibold text-white">{fmtMoney(i.totalCents / 100)}</span>
+                          {i.hostedUrl && (
+                            <a className="inline-flex items-center gap-1 text-gold underline-offset-2 hover:underline" href={i.hostedUrl} target="_blank" rel="noreferrer">
+                              View <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                            </a>
+                          )}
+                        </div>
+                        <p className="text-xs text-silver">
+                          {i.lines.map((l) => `${l.quantity} ${TYPE[l.type].label.toLowerCase()}${l.unitPriceCents !== null ? ` × ${fmtMoney(l.unitPriceCents / 100)}` : ''}`).join(' · ') || 'Nothing billable'}
+                        </p>
+                        {i.status === 'DRAFT' && i.holdReason && <p className="text-xs text-warning">{HOLD[i.holdReason] ?? 'Being prepared.'}</p>}
+                        {i.lastPaymentError && <p className="text-xs text-alert">{i.lastPaymentError}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </section>
+        </>
       )}
     </div>
   );
 }
-
-export default BillingHome;

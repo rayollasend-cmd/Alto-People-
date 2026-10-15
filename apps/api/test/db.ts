@@ -137,6 +137,11 @@ const TABLES = [
   'AgentDecisionProfile',
   'AgentBiasAudit',
   'AutomatedDecisionRecord',
+  // Brief 2-6 step 4: usage and billing rows name tenants and ids, never by key.
+  'UsageSnapshot',
+  'UsageRecord',
+  'BillingPrice',
+  'BillingInvoice',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

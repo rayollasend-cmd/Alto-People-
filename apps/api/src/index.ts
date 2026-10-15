@@ -50,6 +50,7 @@ import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { startLaborShadowCron } from './lib/laborRules/shadow.js';
 import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
+import { startBillingCron } from './lib/billing.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
@@ -143,6 +144,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
+  // Brief 2-6 step 4: daily usage snapshots, and the month's invoices on its first days.
+  startBillingCron(prisma);
   void Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)]).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
   // quarter hour, so an import that bypassed the API still ends up owned.

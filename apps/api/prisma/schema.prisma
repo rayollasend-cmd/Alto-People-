@@ -10849,3 +10849,71 @@ model AutomatedDecisionRecord {
   @@index([tenantId, workerId, createdAt(sort: Desc)])
   @@index([subjectAssociateId])
 }
+
+/// Brief 2-6 step 4 — who was active on a day, by worker type, per tenant
+/// (lib/activeDefinition.activeWorkersOn). The ids are evidence, never sent to Stripe.
+model UsageSnapshot {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  day       DateTime @db.Date
+  /// PERSON (associate ids) | AGENT | ROBOT (worker ids)
+  type      String   @db.VarChar(8)
+  count     Int
+  ids       String[]
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, day, type])
+}
+
+/// A month's billable count by type: distinct workers active on at least one day (decision 1).
+model UsageRecord {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// YYYY-MM
+  month         String   @db.VarChar(7)
+  type          String   @db.VarChar(8)
+  billableCount Int
+  /// SHA-256 of the sorted ids: the count can be re-proved from the snapshots.
+  evidenceHash  String   @db.VarChar(64)
+  computedAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, month, type])
+}
+
+/// A price per worker per month, by plan and type, effective-dated. Set by the platform
+/// operator once the owner gives the prices (decision 3); none ships.
+model BillingPrice {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plan           String   @db.VarChar(40)
+  type           String   @db.VarChar(8)
+  unitPriceCents Int
+  effectiveFrom  DateTime @db.Date
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([plan, type, effectiveFrom])
+}
+
+/// A tenant's monthly invoice: counts and prices only (never a worker's name or id).
+model BillingInvoice {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  month            String    @db.VarChar(7)
+  plan             String    @db.VarChar(40)
+  /// [{ type, quantity, unitPriceCents, amountCents }]
+  lines            Json
+  totalCents       Int
+  /// DRAFT | OPEN | PAID | VOID
+  status           String    @default("DRAFT") @db.VarChar(8)
+  /// Why a draft is still a draft (prices_missing, stripe_not_configured…).
+  holdReason       String?   @db.VarChar(120)
+  stripeInvoiceId  String?   @db.VarChar(120)
+  hostedUrl        String?   @db.VarChar(1000)
+  lastPaymentError String?   @db.VarChar(500)
+  paidAt           DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, month])
+  @@index([stripeInvoiceId])
+}

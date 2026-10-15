@@ -408,7 +408,6 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   programs: 'programs',
   'season-planner': 'programs',
   statements: 'billRates',
-  billing: 'billRates',
   portal: 'clientPortal',
   'portal-today': 'clientPortal',
   'portal-ops': 'clientPortal',
@@ -1365,12 +1364,10 @@ export const MODULES: ModuleNav[] = [
     key: 'billing',
     path: '/admin/billing',
     label: 'Billing',
-    description:
-      'Plan, seat count, payment method, and invoice history. Manual contract today; self-serve billing on the roadmap.',
-    requires: 'view:hr-admin',
-    // The company's own vendor bill — banking relationships and payment
-    // methods are the finance charter's territory.
-    requiresAny: ['view:hr-admin', 'process:payroll'],
+    description: 'Your plan, this month’s active people, agents and robots, and your invoices.',
+    // Brief 2-6 (decision 11): the org's admins and Finance; no longer tied to the bill-rates module.
+    requires: 'manage:org',
+    requiresAny: ['manage:org', 'process:payroll'],
     group: 'payroll-finance',
   },
   {

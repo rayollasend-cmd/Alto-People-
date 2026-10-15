@@ -514,6 +514,11 @@ const EnvSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1).optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().min(8).optional(),
   WHATSAPP_APP_SECRET: z.string().min(1).optional(),
+  // Brief 2-6 step 4: Stripe, TEST MODE until the owner approves live (decision 4). A live key
+  // is refused unless STRIPE_LIVE_APPROVED=yes. Unset: invoices wait as drafts.
+  STRIPE_SECRET_KEY: z.string().min(1).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
+  STRIPE_LIVE_APPROVED: z.string().optional(),
   WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
 });
 
