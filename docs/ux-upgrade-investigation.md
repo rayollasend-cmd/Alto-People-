@@ -46,7 +46,16 @@ Screenshots of every persona and surface, desktop and phone, dark and light, are
 
 ### 3.1 From the screenshots
 
-_Pending the first run of `design-walk.yml`._
+First run 2026-10-15 (run 38745262700, 197 screenshots, 12 personas, desktop and phone, EN/ES/TR):
+
+- **Both themes rendered light.** The app follows the system theme and a CI browser reports light, so "dark" and "light" were identical. The walk now names its theme outright; dark mode is reviewed on the second run.
+- **The coachmark tour and "New this week" sat over every screen** of every fresh account, including the associate's. The walk dismisses them; the product question (should a brand-new account see both at once, on a phone, on day one?) goes to the sweep.
+- **A real bug:** the manager home showed "Malformed identifier." A manager without an associate link put the literal `__none__` into a UUID column in `teamScope`; reimbursements had the same pattern. Fixed (empty `in`).
+- **Greetings from email addresses:** the workforce and finance homes greeted "workforce" and "finance", the executive home the raw local part. One helper now rules every home.
+- **The login page said "Alto HR" three times** on a product called Alto People ("Use your Alto HR credentials", "Secured by Alto HR"); tenant-neutral now. The legal line stays.
+- **What already reads premium:** the associate's pay ("Next payday · Fri, Oct 16 · for work Sep 26–Oct 9"), schedule (the late-shift hero with the kiosk hint and the teammate on with you), the portal's floor-vs-contracted hero, the supervisor's "On the floor now 0 / 8", the Users › Roles & permissions matrix, the Sign-in page. The display serif on titles is consistent across every role.
+- **What the sweep must fix first:** the sidebar's Workforce Management group lists up to 37 entries expanded by default (every admin, workforce and finance screenshot scrolls it); the audit Integrity panel's retention and archive lines wrapped into one row (fixed); the executive home's small `text-xl` title (now the shared hero header); the driver home stacks two warning banners before the first useful line; the "Dev seed" line on the login page is development-only but reads as production copy to a reviewer.
+- **Step 0's second half**, the per-module score table, is kept in `apps/web/design-baseline.json` (the design lint's per-file counts) rather than a hand-written table: 1,596 `text-white`, 160 raw headings, 58 inline hex, 38 pills, 39 bare empty strings, 4 "Loading…" at the start; the count only falls.
 
 ## 4. Competitors
 
