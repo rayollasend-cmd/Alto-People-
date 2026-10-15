@@ -53,6 +53,8 @@ export async function policyFor(db: Db, locationId: string | null): Promise<Work
     robotDefaultCostCents: row.robotDefaultCostCents,
     agentCostPerTaskCents: row.agentCostPerTaskCents,
     maxRobotsPerCrewLead: row.maxRobotsPerCrewLead,
+    robotUtilizationPct: row.robotUtilizationPct,
+    backupCrewRatioPct: row.backupCrewRatioPct,
   };
 }
 

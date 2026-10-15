@@ -42,6 +42,7 @@ export function NewTaskDialog({ sites, defaultLocationId, day, onClose, onCreate
       }),
     onSuccess: (t) => {
       toast.success(t.assignment ? `Assigned to ${t.assignment.workerName}.` : 'Saved; waiting for a person.');
+      for (const w of t.warnings ?? []) toast.warning(w);
       onCreated(t.id);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not save the task.'),

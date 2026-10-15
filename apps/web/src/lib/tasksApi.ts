@@ -20,9 +20,9 @@ const qs = (params: Record<string, string | null | undefined>) => {
 export const listTasks = (f: TaskListFilter) => apiFetch<{ tasks: WorkTaskView[] }>(`/tasks${qs({ locationId: f.locationId, from: f.from, to: f.to, status: f.status })}`);
 export const getTaskSummary = (locationId?: string | null) => apiFetch<WorkTaskSummary>(`/tasks/summary${qs({ locationId })}`);
 export const getTask = (id: string) => apiFetch<WorkTaskDetailView>(`/tasks/${id}`);
-export const createTask = (body: WorkTaskCreate) => apiFetch<WorkTaskDetailView>('/tasks', { method: 'POST', body });
+export const createTask = (body: WorkTaskCreate) => apiFetch<WorkTaskDetailView & { warnings?: string[] }>('/tasks', { method: 'POST', body });
 export const assignTask = (id: string, body: WorkTaskAssignInput) => apiFetch<WorkTaskDetailView>(`/tasks/${id}/assign`, { method: 'POST', body });
-export const autoAssignTask = (id: string) => apiFetch<WorkTaskDetailView>(`/tasks/${id}/auto`, { method: 'POST' });
+export const autoAssignTask = (id: string) => apiFetch<WorkTaskDetailView & { warnings?: string[] }>(`/tasks/${id}/auto`, { method: 'POST' });
 export const handOffTask = (id: string) => apiFetch<WorkTaskDetailView>(`/tasks/${id}/handoff`, { method: 'POST' });
 export const recordTaskEvent = (id: string, body: WorkTaskEventCreate) => apiFetch<WorkTaskDetailView>(`/tasks/${id}/events`, { method: 'POST', body });
 export const getTaskPolicy = (locationId?: string | null) => apiFetch<WorkTaskPolicyView>(`/tasks/policy${qs({ locationId })}`);

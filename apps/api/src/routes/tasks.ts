@@ -8,6 +8,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { assignByPerson, autoAssign, handOffToPerson, listTasks, policyFor, recordEvent, taskDetail, taskSummary } from '../lib/tasks/engine.js';
+import { spanWarningsFor } from '../lib/tasks/spanWarnings.js';
 
 /**
  * Brief 3-2: tasks and their assignment.
@@ -64,6 +65,8 @@ tasksRouter.put('/policy', admin, async (req, res) => {
     ...(input.robotDefaultCostCents !== undefined ? { robotDefaultCostCents: input.robotDefaultCostCents } : {}),
     ...(input.agentCostPerTaskCents !== undefined ? { agentCostPerTaskCents: input.agentCostPerTaskCents } : {}),
     ...(input.maxRobotsPerCrewLead !== undefined ? { maxRobotsPerCrewLead: input.maxRobotsPerCrewLead } : {}),
+    ...(input.robotUtilizationPct !== undefined ? { robotUtilizationPct: input.robotUtilizationPct } : {}),
+    ...(input.backupCrewRatioPct !== undefined ? { backupCrewRatioPct: input.backupCrewRatioPct } : {}),
     updatedByUserId: req.user!.id,
   };
   if (existing) await prisma.workTaskPolicy.update({ where: { id: existing.id }, data });
@@ -100,7 +103,7 @@ tasksRouter.post('/', write, async (req, res) => {
   });
   const detail = await autoAssign(prisma, row.id, req.user!.id);
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'task.created', entityType: 'WorkTask', entityId: row.id, metadata: { capability: input.capability, risk: input.risk, assignedTo: detail.assignment?.workerName ?? null, queued: detail.status === 'QUEUED' } }, 'tasks');
-  res.status(201).json(detail);
+  res.status(201).json({ ...detail, warnings: await spanWarningsFor(prisma, detail) });
 });
 
 async function ownTask(id: string) {
@@ -135,7 +138,8 @@ tasksRouter.post('/:id/auto', write, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const t = await ownTask(id);
   if (t.status !== 'OPEN' && t.status !== 'QUEUED') throw new HttpError(409, 'task_not_open', 'Only an open or queued task is assigned by the engine.');
-  res.json(await autoAssign(prisma, id, req.user!.id));
+  const detail = await autoAssign(prisma, id, req.user!.id);
+  res.json({ ...detail, warnings: await spanWarningsFor(prisma, detail) });
 });
 
 tasksRouter.post('/:id/handoff', write, async (req, res) => {

@@ -1,3 +1,4 @@
+import type { SeasonWeekMix } from './tasks.js';
 import { z } from 'zod';
 import { TenantProfileSchema } from './tenantProfile.js';
 import { httpUrl } from './safeUrl.js';
@@ -8001,6 +8002,22 @@ export const SeasonDemandWeekSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type SeasonDemandWeek = z.infer<typeof SeasonDemandWeekSchema>;
 
+/** Brief 3-3: demand as tasks — a type, how many a week, minutes each, its risk. */
+export const SeasonTaskDemandLineSchema = /* @__PURE__ */ (() => z.object({
+  /** A capability code from WORKER_CAPABILITIES. */
+  capability: z.string().min(1).max(60),
+  count: z.number().int().min(0).max(100_000),
+  minutes: z.number().int().min(0).max(1440),
+  risk: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('LOW'),
+}))();
+export type SeasonTaskDemandLine = z.infer<typeof SeasonTaskDemandLineSchema>;
+
+export const SeasonTaskDemandWeekSchema = /* @__PURE__ */ (() => z.object({
+  week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tasks: z.array(SeasonTaskDemandLineSchema).max(50),
+}))();
+export type SeasonTaskDemandWeek = z.infer<typeof SeasonTaskDemandWeekSchema>;
+
 export const SeasonPlanSiteInputSchema = /* @__PURE__ */ (() => z.object({
   locationId: UuidSchema,
   bedsAvailable: z.number().int().min(0).max(5000).default(0),
@@ -8008,6 +8025,8 @@ export const SeasonPlanSiteInputSchema = /* @__PURE__ */ (() => z.object({
   runsPerShift: z.number().int().min(0).max(20).default(1),
   routeMinutes: z.number().int().min(0).max(600).default(45),
   demand: z.array(SeasonDemandWeekSchema).max(60).default([]),
+  /** Brief 3-3: the week's work as tasks; the planner proposes the people-robot mix from it. */
+  taskDemand: z.array(SeasonTaskDemandWeekSchema).max(60).default([]),
 }))();
 export type SeasonPlanSiteInput = z.infer<typeof SeasonPlanSiteInputSchema>;
 
@@ -8071,6 +8090,8 @@ export interface SeasonPlanSiteWeek {
   activeHeadcount: number | null;
   /** The Workforce agent's coverage.forecast: days that week the site is short, from its latest forecast. Null outside the forecast. */
   forecastShortDays?: number | null;
+  /** Brief 3-3: the hybrid mix from the week's task demand; null when the week has none. */
+  mix?: SeasonWeekMix | null;
 }
 
 export interface SeasonPlanSiteComputed {
@@ -8084,6 +8105,11 @@ export interface SeasonPlanSiteComputed {
   routeMinutes: number;
   weeks: SeasonPlanSiteWeek[];
   peak: { week: string; daily: number; associatesNeeded: number; bedsNeeded: number; vanSeatsNeeded: number };
+  /** Brief 3-3 */
+  taskDemand: SeasonTaskDemandWeek[];
+  /** Robots placed at the site today (the mix's capacity). */
+  robotsPlaced: number;
+  hourlyRateCents: number;
 }
 
 export interface SeasonRecruitingTarget {
@@ -8145,6 +8171,11 @@ export interface SeasonPlanComputed extends SeasonPlanSummary {
     scheduledHours: number | null;
     activeHeadcount: number | null;
     forecastShortDays?: number | null;
+    /** Brief 3-3: summed over the sites that carry task demand; null when none does. */
+    laborCostCents?: number | null;
+    robotCostCents?: number | null;
+    robotsNeeded?: number | null;
+    backupCrew?: number | null;
   }>;
   peak: { week: string; daily: number; associatesNeeded: number; bedsNeeded: number; bedsAvailable: number; bedsGap: number };
   recruiting: SeasonRecruitingTarget[];

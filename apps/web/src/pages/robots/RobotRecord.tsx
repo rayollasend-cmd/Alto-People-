@@ -175,8 +175,9 @@ function LiveTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boolean })
   const samples = useQuery({ queryKey: ['robots', 'samples', robot.id, 24], queryFn: () => listRobotSamples(robot.id, 24), refetchInterval: 60_000 });
   const start = useMutation({
     mutationFn: (shiftId: string) => startRobotShift(robot.id, shiftId),
-    onSuccess: () => {
+    onSuccess: (r) => {
       toast.success('Shift started. The gate passed: checklist, commissioning and zones.');
+      for (const w of r.warnings ?? []) toast.warning(w);
       void qc.invalidateQueries({ queryKey: ['robots'] });
     },
     onError: (e) => toast.error(err(e, 'The shift could not start.')),

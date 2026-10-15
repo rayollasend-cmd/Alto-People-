@@ -54,6 +54,7 @@ import { tenantRolesRouter } from './routes/tenantRoles.js';
 import { trustRouter } from './routes/trust.js';
 import { statusRouter } from './routes/status.js';
 import { forecastRouter } from './routes/forecast.js';
+import { controlRoomRouter } from './routes/controlRoom.js';
 import { integrationConnectionsRouter } from './routes/integrationConnections.js';
 import { tasksRouter } from './routes/tasks.js';
 import { robotsRouter } from './routes/robots.js';
@@ -505,6 +506,8 @@ export function createApp() {
   app.use('/season-plans', requireModule('programs'), seasonPlansRouter);
   // Brief 3-4: the 26-week labor-demand forecast per site, and the planner's one-click start from it.
   app.use('/forecast', requireModule('scheduling'), forecastRouter);
+  // Brief 3-3: one screen for people and machines, per site.
+  app.use('/control-room', requireModule('scheduling'), controlRoomRouter);
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
   app.use('/workers', workersRouter);
   app.use('/agents', agentsRouter);
