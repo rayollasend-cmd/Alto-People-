@@ -9,7 +9,7 @@ import {
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
 
 // Global store (client) scope — the answer to "which store am I working?"
@@ -60,11 +60,15 @@ const EMPTY_CLIENTS: StoreScopeClient[] = [];
 
 export function StoreScopeProvider({ children }: { children: ReactNode }) {
   const { user, can } = useAuth();
+  const { moduleOn } = useTenant();
   // The store switcher is for roles that read store data. The vans cross
   // every client and a driver has no store pages — neither transportation
   // role gets it (their /scheduling/clients read 403'd on every page).
+  // A direct employer (the client module off) has no client scope at all:
+  // the switcher never renders and the clients are never asked for, so a
+  // hotel's screens carry no "store scope" (the hotel journey, 2026-10-15).
   const enabled =
-    !!user && !BOUNDED_ROLES.has(user.role) && (can('view:clients') || can('view:scheduling'));
+    !!user && moduleOn('clientPortal') && !BOUNDED_ROLES.has(user.role) && (can('view:clients') || can('view:scheduling'));
   const userId = user?.id ?? null;
   // Only bounded ROLES pin to the account's clientId — an org-wide role
   // carrying an incidental clientId must not be silently scoped to it.
