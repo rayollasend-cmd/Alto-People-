@@ -139,22 +139,123 @@ function redirectToLogin(res: Response, code: 'sso_failed' | 'sso_no_account'): 
  * REFUSED — so an audit hiccup logs and still redirects rather than
  * dumping a JSON 500 on a browser navigation.
  */
-async function failToLogin(
+export async function failToLogin(
   req: Request,
   res: Response,
   detail: string,
-  opts: { email?: string; page?: 'sso_failed' | 'sso_no_account' } = {},
+  opts: { email?: string; page?: 'sso_failed' | 'sso_no_account'; prefix?: 'oidc' | 'saml' } = {},
 ): Promise<void> {
   try {
     await recordLoginFailure({
       email: opts.email ?? 'unknown',
       req,
-      reason: `oidc_${detail}`,
+      reason: `${opts.prefix ?? 'oidc'}_${detail}`,
     });
   } catch (err) {
     console.error('[auth.oidc] login_failed audit write failed:', err);
   }
   redirectToLogin(res, opts.page ?? 'sso_failed');
+}
+
+/**
+ * Brief 2-3 step 5: the end of every SSO sign-in, OIDC or SAML — the
+ * subject binding (decision 2), the account-state policy in the header,
+ * the critical login audit and the session. Exported for routes/samlAuth.
+ */
+export async function completeSsoSignIn(
+  req: Request,
+  res: Response,
+  conn: IdentityConnection,
+  ident: { sub: string; email: string },
+  nextPath: string | undefined,
+  method: 'oidc' | 'saml',
+): Promise<void> {
+  // Brief 2-3 (decision 2): by the IdP subject once linked, by email inside the connection's tenant the first time.
+  const email = ident.email.trim().toLowerCase();
+  const match = await matchSsoUser(prisma, conn, { sub: ident.sub, email });
+  if (!match.ok) {
+    // Unknown, another tenant's, or a changed subject: the same page; the audit row keeps which.
+    await failToLogin(req, res, match.reason, { email, page: 'sso_no_account', prefix: method });
+    return;
+  }
+  const user = match.user;
+  if (user.status === 'INVITED' && conn.jitPolicy === 'NONE') {
+    // This sign-in never activates anyone; an invite or SCIM does.
+    await failToLogin(req, res, 'not_activated', { email, page: 'sso_no_account', prefix: method });
+    return;
+  }
+  if (!HUMAN_ROLES.includes(user.role)) {
+    await failToLogin(req, res, 'non_human_role', { email, page: 'sso_no_account', prefix: method });
+    return;
+  }
+  if (user.status !== 'ACTIVE' && user.status !== 'INVITED') {
+    // Same page as unknown_email — no status oracle. Audit keeps the truth.
+    await failToLogin(req, res, 'disabled', { email, page: 'sso_no_account', prefix: method });
+    return;
+  }
+
+  let sessionUser = user;
+  if (user.status === 'INVITED') {
+    const now = new Date();
+    sessionUser = await prisma.$transaction(async (tx) => {
+      // Any outstanding invite links are moot once SSO proved mailbox
+      // control — consume them so a stale link can't be accepted later.
+      await tx.inviteToken.updateMany({
+        where: { userId: user.id, consumedAt: null },
+        data: { consumedAt: now },
+      });
+      return tx.user.update({
+        where: { id: user.id },
+        data: {
+          status: 'ACTIVE',
+          // passwordHash stays null on purpose: this account signs in
+          // via the IdP. tokenVersion bump mirrors accept-invite —
+          // defensive against any pre-activation cookies.
+          tokenVersion: { increment: 1 },
+        },
+      });
+    });
+    enqueueAudit(
+      {
+        actorUserId: sessionUser.id,
+        clientId: sessionUser.clientId ?? null,
+        action: 'auth.sso_activated',
+        entityType: 'User',
+        entityId: sessionUser.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          email,
+          idpSub: ident.sub,
+          via: method,
+        },
+      },
+      'auth.sso_activated',
+    );
+  }
+
+  // Critical audit BEFORE the cookie goes out: recordLoginSuccess throws
+  // on DB failure, and we must never hand a browser a session the audit
+  // feed doesn't know about. metadata.method='oidc' distinguishes these
+  // rows from password/passkey logins.
+  await recordLoginSuccess({
+    email: sessionUser.email,
+    req,
+    userId: sessionUser.id,
+    clientId: sessionUser.clientId,
+    method,
+  });
+
+  const token = signSession({
+    sub: sessionUser.id,
+    role: sessionUser.role,
+    ver: sessionUser.tokenVersion,
+    amr: 'sso',
+  });
+  res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
+  // Back to the page they were headed to — an emailed link used to lose
+  // its destination at the SSO button and land everyone on the dashboard.
+  res.redirect(302, safeReturnPath(nextPath) ?? '/');
 }
 
 /**
@@ -209,6 +310,15 @@ async function connectionFor(id: unknown): Promise<IdentityConnection | null> {
  */
 oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
   try {
+    // Brief 2-3 step 5: the login page has one button per connection; a SAML one continues there.
+    if (typeof req.query.connection === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.connection)) {
+      const saml = await prisma.identityConnection.findFirst({ where: { id: req.query.connection, enabled: true, kind: 'SAML' }, select: { id: true } });
+      if (saml) {
+        const next = safeReturnPath(req.query.next);
+        res.redirect(302, `/auth/saml/start?connection=${saml.id}${next ? `&next=${encodeURIComponent(next)}` : ''}`);
+        return;
+      }
+    }
     const conn = await connectionFor(req.query.connection);
     if (!conn) {
       // Feature off (or no such sign-in): a plain 404 (not a login-page
@@ -337,91 +447,7 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       return;
     }
 
-    // Brief 2-3 (decision 2): by the IdP subject once linked, by email inside the connection's tenant the first time.
-    const email = claims.email.trim().toLowerCase();
-    const match = await matchSsoUser(prisma, conn, { sub: claims.sub, email });
-    if (!match.ok) {
-      // Unknown, another tenant's, or a changed subject: the same page; the audit row keeps which.
-      await failToLogin(req, res, match.reason, { email, page: 'sso_no_account' });
-      return;
-    }
-    const user = match.user;
-    if (user.status === 'INVITED' && conn.jitPolicy === 'NONE') {
-      // This sign-in never activates anyone; an invite or SCIM does.
-      await failToLogin(req, res, 'not_activated', { email, page: 'sso_no_account' });
-      return;
-    }
-    if (!HUMAN_ROLES.includes(user.role)) {
-      await failToLogin(req, res, 'non_human_role', { email, page: 'sso_no_account' });
-      return;
-    }
-    if (user.status !== 'ACTIVE' && user.status !== 'INVITED') {
-      // Same page as unknown_email — no status oracle. Audit keeps the truth.
-      await failToLogin(req, res, 'disabled', { email, page: 'sso_no_account' });
-      return;
-    }
-
-    let sessionUser = user;
-    if (user.status === 'INVITED') {
-      const now = new Date();
-      sessionUser = await prisma.$transaction(async (tx) => {
-        // Any outstanding invite links are moot once SSO proved mailbox
-        // control — consume them so a stale link can't be accepted later.
-        await tx.inviteToken.updateMany({
-          where: { userId: user.id, consumedAt: null },
-          data: { consumedAt: now },
-        });
-        return tx.user.update({
-          where: { id: user.id },
-          data: {
-            status: 'ACTIVE',
-            // passwordHash stays null on purpose: this account signs in
-            // via the IdP. tokenVersion bump mirrors accept-invite —
-            // defensive against any pre-activation cookies.
-            tokenVersion: { increment: 1 },
-          },
-        });
-      });
-      enqueueAudit(
-        {
-          actorUserId: sessionUser.id,
-          clientId: sessionUser.clientId ?? null,
-          action: 'auth.sso_activated',
-          entityType: 'User',
-          entityId: sessionUser.id,
-          metadata: {
-            ip: req.ip ?? null,
-            userAgent: req.headers['user-agent'] ?? null,
-            email,
-            idpSub: claims.sub,
-          },
-        },
-        'auth.sso_activated',
-      );
-    }
-
-    // Critical audit BEFORE the cookie goes out: recordLoginSuccess throws
-    // on DB failure, and we must never hand a browser a session the audit
-    // feed doesn't know about. metadata.method='oidc' distinguishes these
-    // rows from password/passkey logins.
-    await recordLoginSuccess({
-      email: sessionUser.email,
-      req,
-      userId: sessionUser.id,
-      clientId: sessionUser.clientId,
-      method: 'oidc',
-    });
-
-    const token = signSession({
-      sub: sessionUser.id,
-      role: sessionUser.role,
-      ver: sessionUser.tokenVersion,
-      amr: 'sso',
-    });
-    res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
-    // Back to the page they were headed to — an emailed link used to lose
-    // its destination at the SSO button and land everyone on the dashboard.
-    res.redirect(302, safeReturnPath(flow.next) ?? '/');
+    await completeSsoSignIn(req, res, conn, { sub: claims.sub, email: claims.email }, flow.next, 'oidc');
   } catch (err) {
     // Never JSON-error a redirect flow: last-resort catch (unexpected DB
     // error, audit-write failure post-refusal, …) still lands the browser

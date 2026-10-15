@@ -7,6 +7,8 @@ import { recordCriticalAudit } from '../lib/audit.js';
 import { encryptString } from '../lib/crypto.js';
 import { addDomain, ensureEnvIdentity, issueScimToken, revokeScimToken, txtRecordFor, unlinkIdentity, verifyDomain } from '../lib/identity.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { X509Certificate } from 'node:crypto';
+import { acsUrl, spEntityId } from '../lib/saml.js';
 
 /**
  * Brief 2-3 step 2 — a tenant's own sign-in, managed by its admins
@@ -65,6 +67,8 @@ identityRouter.get('/', MANAGE, async (_req, res) => {
       ssoRequiredForStaff: c.ssoRequiredForStaff,
       enabled: c.enabled,
       fromEnvironment: c.fromEnvironment,
+      // Brief 2-3 step 5: what the IdP's admin needs for a SAML connection.
+      ...(c.kind === 'SAML' ? { allowIdpInitiated: c.allowIdpInitiated, spEntityId: spEntityId(c), acsUrl: acsUrl(c), metadataUrl: spEntityId(c) } : {}),
       linkedPeople: c._count.identities,
       createdAt: c.createdAt.toISOString(),
     })),
@@ -99,7 +103,7 @@ identityRouter.patch('/connections/:id', MANAGE, async (req, res) => {
   const id = Id.parse(req.params.id);
   const input = ConnectionUpdate.parse(req.body);
   const tenantId = tenantIdForWrite();
-  const before = await prisma.identityConnection.findFirst({ where: { id, tenantId } });
+  const before = await prisma.identityConnection.findFirst({ where: { id, tenantId, kind: 'OIDC' } });
   if (!before) throw new HttpError(404, 'connection_not_found', 'Connection not found.');
   const { clientSecret, ...rest } = input;
   await prisma.identityConnection.update({ where: { id }, data: { ...rest, ...(clientSecret ? { clientSecretEnc: encryptString(clientSecret) } : {}) } });
@@ -114,6 +118,73 @@ identityRouter.patch('/connections/:id', MANAGE, async (req, res) => {
       // Field names and non-secret values only; a rotated secret is recorded as rotated, never its value.
       metadata: { fields: Object.keys(input), secretRotated: !!clientSecret, enabled: input.enabled ?? before.enabled, ssoRequiredForStaff: input.ssoRequiredForStaff ?? before.ssoRequiredForStaff },
     },
+    'identity',
+  );
+  res.json({ ok: true });
+});
+
+/* Brief 2-3 step 5 — SAML connections: the IdP's SSO URL, entity id and signing certificate. */
+
+const pemOk = (pem: string) => {
+  try {
+    new X509Certificate(pem);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const SamlInput = z
+  .object({
+    displayName: z.string().trim().min(2).max(120),
+    buttonLabel: z.string().trim().min(2).max(80).nullable().optional(),
+    ssoUrl: z.string().trim().url().max(500).refine((u) => u.startsWith('https://'), 'The sign-on URL must be https.'),
+    idpEntityId: z.string().trim().min(1).max(300),
+    idpCert: z.string().trim().min(100).max(20_000).refine(pemOk, 'That is not a PEM certificate.'),
+    allowIdpInitiated: z.boolean().default(false),
+    jitPolicy: z.enum(['NONE', 'INVITED_ONLY']).default('INVITED_ONLY'),
+    ssoRequiredForStaff: z.boolean().default(false),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+identityRouter.post('/saml-connections', MANAGE, async (req, res) => {
+  const input = SamlInput.parse(req.body);
+  const tenantId = tenantIdForWrite();
+  const row = await prisma.identityConnection.create({
+    data: {
+      tenantId,
+      kind: 'SAML',
+      displayName: input.displayName,
+      buttonLabel: input.buttonLabel ?? null,
+      issuerUrl: input.ssoUrl,
+      clientId: input.idpEntityId,
+      clientSecretEnc: Buffer.alloc(0),
+      samlIdpCert: input.idpCert,
+      allowIdpInitiated: input.allowIdpInitiated,
+      jitPolicy: input.jitPolicy,
+      ssoRequiredForStaff: input.ssoRequiredForStaff,
+      enabled: input.enabled,
+      createdById: req.user!.id,
+    },
+  });
+  await recordCriticalAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'identity.connection_created', entityType: 'IdentityConnection', entityId: row.id, metadata: { kind: 'SAML', ssoUrl: row.issuerUrl, idpEntityId: row.clientId, allowIdpInitiated: row.allowIdpInitiated, jitPolicy: row.jitPolicy, ssoRequiredForStaff: row.ssoRequiredForStaff } }, 'identity');
+  res.status(201).json({ id: row.id, spEntityId: spEntityId(row), acsUrl: acsUrl(row) });
+});
+
+identityRouter.patch('/saml-connections/:id', MANAGE, async (req, res) => {
+  const id = Id.parse(req.params.id);
+  const input = SamlInput.partial().strict().parse(req.body);
+  const tenantId = tenantIdForWrite();
+  const before = await prisma.identityConnection.findFirst({ where: { id, tenantId, kind: 'SAML' } });
+  if (!before) throw new HttpError(404, 'connection_not_found', 'Connection not found.');
+  const { ssoUrl, idpEntityId, idpCert, ...rest } = input;
+  await prisma.identityConnection.update({
+    where: { id },
+    data: { ...rest, ...(ssoUrl ? { issuerUrl: ssoUrl } : {}), ...(idpEntityId ? { clientId: idpEntityId } : {}), ...(idpCert ? { samlIdpCert: idpCert } : {}) },
+  });
+  await recordCriticalAudit(
+    { actorUserId: req.user!.id, clientId: null, tenantId, action: 'identity.connection_updated', entityType: 'IdentityConnection', entityId: id, metadata: { kind: 'SAML', fields: Object.keys(input), certRotated: !!idpCert, enabled: input.enabled ?? before.enabled, allowIdpInitiated: input.allowIdpInitiated ?? before.allowIdpInitiated } },
     'identity',
   );
   res.json({ ok: true });

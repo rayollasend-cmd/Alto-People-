@@ -139,7 +139,8 @@ interface LoginFailureContext extends LoginContext {
     // unknown_email, disabled, …) — the browser only ever sees the
     // generic /login?error=sso_failed|sso_no_account redirect, so the
     // audit row is the only place the detail lives.
-    | `oidc_${string}`;
+    | `oidc_${string}`
+    | `saml_${string}`;
 }
 
 interface LogoutContext {

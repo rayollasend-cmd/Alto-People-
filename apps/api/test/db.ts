@@ -152,6 +152,7 @@ const TABLES = [
   'AuditChainCheck',
   'AuditArchive',
   'AuditSink',
+  'SamlCache',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

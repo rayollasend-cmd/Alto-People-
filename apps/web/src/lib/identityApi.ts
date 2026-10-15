@@ -15,6 +15,11 @@ export interface IdentityConnectionRow {
   fromEnvironment: boolean;
   linkedPeople: number;
   createdAt: string;
+  /** SAML only (Brief 2-3 step 5): what the IdP's admin enters. */
+  allowIdpInitiated?: boolean;
+  spEntityId?: string;
+  acsUrl?: string;
+  metadataUrl?: string;
 }
 
 export interface TenantDomainRow {
@@ -61,3 +66,20 @@ export const releaseDomain = (id: string) => apiFetch<void>(`/identity/domains/$
 export const issueScimToken = (name: string) => apiFetch<{ id: string; token: string; last4: string }>('/identity/scim-tokens', { method: 'POST', body: { name } });
 
 export const revokeScimToken = (id: string) => apiFetch<{ ok: true }>(`/identity/scim-tokens/${id}/revoke`, { method: 'POST', body: {} });
+
+/** Brief 2-3 step 5 — a SAML connection: the IdP's SSO URL, entity id and signing certificate. */
+export interface SamlConnectionInput {
+  displayName: string;
+  buttonLabel?: string | null;
+  ssoUrl: string;
+  idpEntityId: string;
+  idpCert: string;
+  allowIdpInitiated: boolean;
+  jitPolicy: 'NONE' | 'INVITED_ONLY';
+  ssoRequiredForStaff: boolean;
+  enabled: boolean;
+}
+
+export const createSamlConnection = (input: SamlConnectionInput) => apiFetch<{ id: string; spEntityId: string; acsUrl: string }>('/identity/saml-connections', { method: 'POST', body: input });
+
+export const updateSamlConnection = (id: string, input: Partial<SamlConnectionInput>) => apiFetch<{ ok: true }>(`/identity/saml-connections/${id}`, { method: 'PATCH', body: input });

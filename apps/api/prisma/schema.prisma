@@ -10680,6 +10680,10 @@ model IdentityConnection {
   /// Password sign-in is refused for this tenant's staff (non-associate roles); passkeys still work (decision 4).
   ssoRequiredForStaff Boolean  @default(false)
   enabled             Boolean  @default(true)
+  /// Brief 2-3 step 5 (SAML): the IdP's signing certificate (PEM). For SAML, issuerUrl is the IdP's single sign-on URL and clientId its entity id; clientSecretEnc is empty.
+  samlIdpCert         String?  @db.Text
+  /// Decision 6: IdP-initiated SAML (an unsolicited response) is refused unless turned on per connection.
+  allowIdpInitiated   Boolean  @default(false)
   /// The connection made from the environment variables at boot.
   fromEnvironment     Boolean  @default(false)
   createdById         String?  @db.Uuid
@@ -11105,4 +11109,16 @@ model AuditSinkDelivery {
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([sinkId, createdAt])
+}
+
+/// Brief 2-3 step 5 — SAML's server-side memory: the AuthnRequest ids we sent
+/// (InResponseTo must name one, once) and the assertion ids we accepted (a
+/// replayed assertion is refused). Rows expire; a sweep removes them.
+model SamlCache {
+  key       String   @id @db.VarChar(300)
+  value     String   @db.VarChar(300)
+  expiresAt DateTime @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([expiresAt])
 }

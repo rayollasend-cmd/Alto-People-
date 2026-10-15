@@ -22,6 +22,7 @@ import {
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { oidcAuthRouter } from './routes/oidcAuth.js';
+import { samlAuthRouter } from './routes/samlAuth.js';
 import { clientsAccessGate, clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
@@ -377,6 +378,8 @@ export function createApp() {
   // up exactly with the password/passkey flows. Mounted before /auth so
   // the more-specific prefix wins outright.
   app.use('/auth/oidc', oidcAuthRouter);
+  // Brief 2-3 step 5: SAML 2.0 (the ACS is un-prefixed: a form POST from the IdP).
+  app.use('/auth/saml', samlAuthRouter);
   app.use('/auth', authRouter);
   // Public integration API (AltoHR / ShiftReport Nexus, etc.). Authenticates
   // via `Authorization: Bearer altop_<hex>` rather than the session cookie,

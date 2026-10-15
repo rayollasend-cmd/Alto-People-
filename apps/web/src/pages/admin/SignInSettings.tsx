@@ -6,6 +6,8 @@ import { ApiError } from '@/lib/api';
 import {
   addDomain,
   createConnection,
+  createSamlConnection,
+  updateSamlConnection,
   getIdentity,
   issueScimToken,
   releaseDomain,
@@ -18,7 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui';
@@ -112,10 +114,80 @@ function ConnectionDrawer({ existing, onClose, onSaved }: { existing: IdentityCo
   );
 }
 
+function SamlDrawer({ existing, onClose, onSaved }: { existing: IdentityConnectionRow | null; onClose: () => void; onSaved: () => void }) {
+  const [displayName, setDisplayName] = useState(existing?.displayName ?? '');
+  const [buttonLabel, setButtonLabel] = useState(existing?.buttonLabel ?? '');
+  const [ssoUrl, setSsoUrl] = useState(existing?.issuerUrl ?? '');
+  const [idpEntityId, setIdpEntityId] = useState(existing?.clientId ?? '');
+  const [idpCert, setIdpCert] = useState('');
+  const [allowIdpInitiated, setAllowIdp] = useState(existing?.allowIdpInitiated ?? false);
+  const [ssoRequiredForStaff, setSsoRequired] = useState(existing?.ssoRequiredForStaff ?? false);
+  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = { displayName: displayName.trim(), buttonLabel: buttonLabel.trim() || null, ssoUrl: ssoUrl.trim(), idpEntityId: idpEntityId.trim(), allowIdpInitiated, ssoRequiredForStaff, enabled, jitPolicy: 'INVITED_ONLY' as const };
+      if (existing) await updateSamlConnection(existing.id, { ...body, ...(idpCert.trim() ? { idpCert: idpCert.trim() } : {}) });
+      else await createSamlConnection({ ...body, idpCert: idpCert.trim() });
+      toast.success('Saved.');
+      onSaved();
+    } catch (err) {
+      toast.error(message(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>{existing ? existing.displayName : 'New SAML sign-in'}</DrawerTitle>
+        <DrawerDescription>
+          {existing?.acsUrl ? (
+            <>
+              In your identity provider: single sign-on URL <code className="break-all text-white">{existing.acsUrl}</code>, audience (entity id) <code className="break-all text-white">{existing.spEntityId}</code>. Metadata:{' '}
+              <a className="underline" href={existing.metadataUrl} target="_blank" rel="noreferrer">download</a>.
+            </>
+          ) : (
+            'Save first; the sign-on URL and audience to enter in your identity provider appear here.'
+          )}
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <Field label="Name" required>{(p) => <Input {...p} value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={120} placeholder="Okta" />}</Field>
+        <Field label="Button">{(p) => <Input {...p} value={buttonLabel} onChange={(e) => setButtonLabel(e.target.value)} maxLength={80} placeholder="Continue with Okta" />}</Field>
+        <Field label="Identity provider sign-on URL" required>{(p) => <Input {...p} value={ssoUrl} onChange={(e) => setSsoUrl(e.target.value)} placeholder="https://acme.okta.com/app/…/sso/saml" />}</Field>
+        <Field label="Identity provider issuer (entity id)" required>{(p) => <Input {...p} value={idpEntityId} onChange={(e) => setIdpEntityId(e.target.value)} placeholder="http://www.okta.com/exk…" />}</Field>
+        <Field label={existing ? 'New signing certificate' : 'Signing certificate (PEM)'} required={!existing} hint={existing ? 'Leave empty to keep the current one.' : undefined}>
+          {(p) => <Textarea {...p} rows={6} value={idpCert} onChange={(e) => setIdpCert(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />}
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input type="checkbox" checked={allowIdpInitiated} onChange={(e) => setAllowIdp(e.target.checked)} />
+          Allow sign-in started from the identity provider’s dashboard (less safe)
+        </label>
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input type="checkbox" checked={ssoRequiredForStaff} onChange={(e) => setSsoRequired(e.target.checked)} />
+          Required for staff (associates keep passwords)
+        </label>
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          On
+        </label>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={saving || !displayName.trim() || !ssoUrl.trim() || !idpEntityId.trim() || (!existing && !idpCert.trim())} onClick={() => void save()}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
 export function SignInSettings() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['identity'], queryFn: () => getIdentity() });
-  const [editing, setEditing] = useState<IdentityConnectionRow | 'new' | null>(null);
+  const [editing, setEditing] = useState<IdentityConnectionRow | 'new' | 'new-saml' | null>(null);
   const [domain, setDomain] = useState('');
   const [tokenName, setTokenName] = useState('');
   const [issued, setIssued] = useState<string | null>(null);
@@ -138,9 +210,14 @@ export function SignInSettings() {
         subtitle="Your organization’s own sign-in, the email domains that lead to it, and directory provisioning."
         breadcrumbs={[{ label: 'Admin' }, { label: 'Sign-in' }]}
         primaryAction={
-          <Button size="sm" onClick={() => setEditing('new')}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> New sign-in
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setEditing('new-saml')}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> SAML
+            </Button>
+            <Button size="sm" onClick={() => setEditing('new')}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> New sign-in
+            </Button>
+          </div>
         }
       />
       {q.isError ? (
@@ -162,6 +239,7 @@ export function SignInSettings() {
                         <button type="button" onClick={() => setEditing(c)} className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-left text-sm hover:bg-navy-secondary/30">
                           <ShieldCheck className="h-4 w-4 text-silver" aria-hidden="true" />
                           <span className="font-medium text-white">{c.displayName}</span>
+                          {c.kind === 'SAML' && <Badge variant="default" size="sm">SAML</Badge>}
                           <span className="text-xs text-silver">{c.issuerUrl}</span>
                           <Badge variant={c.enabled ? 'success' : 'default'} size="sm">{c.enabled ? 'On' : 'Off'}</Badge>
                           {c.ssoRequiredForStaff && <Badge variant="accent" size="sm">Required for staff</Badge>}
@@ -281,7 +359,11 @@ export function SignInSettings() {
           </section>
         </>
       )}
-      {editing && <ConnectionDrawer existing={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />}
+      {editing && (editing === 'new-saml' || (editing !== 'new' && editing.kind === 'SAML')) ? (
+        <SamlDrawer existing={editing === 'new-saml' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />
+      ) : editing ? (
+        <ConnectionDrawer existing={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />
+      ) : null}
     </div>
   );
 }
