@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
+import { AccessReviewPanel } from './AccessReviewPanel';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -167,6 +168,8 @@ function ControlDialog({ control, onClose }: { control: ComplianceControlView; o
           <DialogTitle>{control.title}</DialogTitle>
           <DialogDescription>{control.how}</DialogDescription>
         </DialogHeader>
+        {/* Brief 2-5 step 6: the review this control signs off. */}
+        {control.id === 'access-review' && can('manage:org') && <AccessReviewPanel />}
         <div className="space-y-4">
           {history.isPending ? (
             <Skeleton className="h-24" />

@@ -183,6 +183,9 @@ export async function runEvidenceSweep(db: Db = defaultPrisma, now: Date = new D
     const id = await recordEvidence(control, 'evidenceSweep', await collect(), db);
     if (id) recorded.push(control);
   }
+  // Brief 2-5 step 6: the quarterly access review, once a quarter, waiting for its sign-off.
+  const { runQuarterlyAccessReview } = await import('./accessReview.js');
+  if (await runQuarterlyAccessReview(db, now)) recorded.push('access-review');
   return { recorded };
 }
 

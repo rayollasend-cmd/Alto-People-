@@ -55,3 +55,23 @@ complianceEvidenceRouter.post('/admin/compliance-evidence/:id/signoff', MANAGE, 
   );
   res.status(201).json({ id: signed.id });
 });
+
+/*
+ * Brief 2-5 step 6 — the access review behind the access-review control.
+ *
+ *   GET  /admin/access-review        the review now: elevated accounts and flags, and every agent with its flags
+ *   POST /admin/access-review/run    record it as evidence (it waits for a named approver's sign-off above)
+ *
+ * The review names accounts and agents for the reviewer; the evidence it records keeps counts and ids only.
+ */
+complianceEvidenceRouter.get('/admin/access-review', MANAGE, operatorOnly, async (_req, res) => {
+  const { AGENT_FLAG_LABEL, buildAccessReview } = await import('../lib/accessReview.js');
+  res.json({ ...(await buildAccessReview(prisma)), agentFlagLabels: AGENT_FLAG_LABEL });
+});
+
+complianceEvidenceRouter.post('/admin/access-review/run', MANAGE, operatorOnly, async (req, res) => {
+  const { recordAccessReview } = await import('../lib/accessReview.js');
+  const id = await recordAccessReview(prisma, req.user!.id);
+  if (!id) throw new HttpError(500, 'evidence_not_recorded', 'The review could not be recorded.');
+  res.status(201).json({ id });
+});
