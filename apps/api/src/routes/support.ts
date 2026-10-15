@@ -31,7 +31,8 @@ function operatorOnly(): void {
 }
 
 supportRouter.get('/config', (_req, res) => {
-  res.json({ statusPageUrl: env.STATUS_PAGE_URL ?? null });
+  // The platform has its own status page; a hosted one (STATUS_PAGE_URL) still wins when set.
+  res.json({ statusPageUrl: env.STATUS_PAGE_URL ?? `${env.APP_BASE_URL.replace(/\/$/, '')}/status` });
 });
 
 supportRouter.post('/', requireAuth, async (req, res) => {

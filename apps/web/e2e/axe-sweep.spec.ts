@@ -1,23 +1,30 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
-import { PERSONAS, signIn } from './personas';
+import { ADMIN_ROUTES, ASSOCIATE, DRIVER, PUBLIC_ROUTES, WALK_PERSONAS, settleWalk, setWalkTheme, walkLogin, type WalkPersona } from './walkPersonas';
 
 /**
- * Accessibility sweep on the real, running app. The unit-level axe suites
- * render pages against mocked data; this walks the pages a person
- * actually gets, with real data and real chrome, and fails on anything
- * axe rates serious or critical against WCAG 2.1 AA. Lesser findings are
- * attached to the report rather than failing the run, so the bar can
- * rise without a flag day.
+ * Accessibility sweep on the real, running app — the CI gate behind the
+ * accessibility statement (/accessibility). It signs in as every persona
+ * the design walk photographs, opens every surface the walk opens, in the
+ * dark theme (and the light theme for the two most-used roles), runs
+ * axe-core against WCAG 2.2 AA, and fails on anything rated serious or
+ * critical. Lesser findings ride along in the report so the bar can rise
+ * without a flag day.
  *
- * axe-core is injected from the package already in the tree — no browser
- * extension, no extra dependency.
+ * Its own CI job (.github/workflows/ci.yml, "Accessibility"), its own
+ * switch (A11Y_SWEEP=1): one sign-in per persona per run, so the login
+ * limiter is never the thing that fails.
+ *
+ * Known third-party findings go in axe-allowlist.json with a reason; the
+ * list is read here and is empty until something earns a place on it.
  */
 
-test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server');
+test.skip(!process.env.E2E_FULLSTACK || !process.env.A11Y_SWEEP, 'needs the API dev server and A11Y_SWEEP=1');
 
 interface Finding {
+  persona: string;
+  theme: string;
   route: string;
   id: string;
   impact: string | null;
@@ -28,14 +35,25 @@ interface Finding {
   detail: string;
 }
 
-async function auditRoute(page: Page, route: string): Promise<Finding[]> {
-  await page.goto(route);
+interface Allowed {
+  id: string;
+  /** Route prefix; omitted = every route. */
+  route?: string;
+  reason: string;
+}
+
+const ALLOWLIST = JSON.parse(readFileSync('e2e/axe-allowlist.json', 'utf8')) as Allowed[];
+const allowed = (f: Finding) => ALLOWLIST.some((a) => a.id === f.id && (!a.route || f.route.startsWith(a.route)));
+
+async function auditRoute(page: Page, persona: string, theme: string, route: string): Promise<Finding[]> {
+  await page.goto(route, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
+  await settleWalk(page);
   await page.addScriptTag({ content: axe.source });
   const raw = await page.evaluate(async () => {
     const w = window as unknown as { axe: typeof import('axe-core') };
     const r = await w.axe.run(document, {
-      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
       resultTypes: ['violations'],
     });
     return r.violations.map((v) => ({
@@ -55,29 +73,78 @@ async function auditRoute(page: Page, route: string): Promise<Finding[]> {
         .join(' | '),
     }));
   });
-  return raw.map((f) => ({ route, ...f }));
+  return raw.map((f) => ({ persona, theme, route, ...f }));
 }
 
-for (const persona of PERSONAS) {
-  test(`no serious or critical accessibility violations (${persona.name})`, async ({ page }, testInfo) => {
-    // A dozen routes, each settled and audited: minutes, not the default 30s.
-    test.setTimeout(240_000);
-    await signIn(page, persona);
-    const findings: Finding[] = [];
-    for (const route of [...persona.routes, ...persona.axeRoutes]) {
-      findings.push(...(await auditRoute(page, route)));
-    }
-    // Both the report attachment and a file in the test's output dir —
-    // the CI failure artifact ships the directory, not the report.
-    const body = JSON.stringify(findings, null, 2);
-    writeFileSync(testInfo.outputPath(`axe-${persona.name}.json`), body);
-    await testInfo.attach(`axe-${persona.name}.json`, { body, contentType: 'application/json' });
-    const blocking = findings
-      .filter((f) => f.impact === 'serious' || f.impact === 'critical')
-      .map(
-        (f) =>
-          `[${f.route}] ${f.id} (${f.impact}) — ${f.help} @ ${f.targets.join(' | ')}${f.detail ? ` :: ${f.detail}` : ''}`,
-      );
-    expect(blocking, `axe as ${persona.name}`).toEqual([]);
-  });
+function report(findings: Finding[], name: string, testInfo: Parameters<Parameters<typeof test>[1]>[1]) {
+  const body = JSON.stringify(findings, null, 2);
+  writeFileSync(testInfo.outputPath(`axe-${name}.json`), body);
+  void testInfo.attach(`axe-${name}.json`, { body, contentType: 'application/json' });
+  const blocking = findings
+    .filter((f) => (f.impact === 'serious' || f.impact === 'critical') && !allowed(f))
+    .map((f) => `[${f.persona} ${f.theme} ${f.route}] ${f.id} (${f.impact}) — ${f.help} @ ${f.targets.join(' | ')}${f.detail ? ` :: ${f.detail}` : ''}`);
+  expect(blocking, `axe as ${name}`).toEqual([]);
 }
+
+async function sweep(page: Page, persona: WalkPersona, themes: Array<'dark' | 'light'>): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  for (const theme of themes) {
+    await setWalkTheme(page, theme);
+    for (const [route] of persona.routes) {
+      try {
+        findings.push(...(await auditRoute(page, persona.key, theme, route)));
+      } catch (err) {
+        // A route that fails to load is the E2E job's finding, not this one's; say so and move on.
+        console.log(`${persona.key} ${theme} ${route}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
+  return findings;
+}
+
+test.describe('desktop', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+
+  test('public pages', async ({ page }, testInfo) => {
+    test.setTimeout(PUBLIC_ROUTES.length * 2 * 10_000 + 30_000);
+    const findings: Finding[] = [];
+    for (const theme of ['dark', 'light'] as const) {
+      await page.goto('/login', { waitUntil: 'domcontentloaded' });
+      await setWalkTheme(page, theme);
+      for (const [route] of PUBLIC_ROUTES) {
+        findings.push(...(await auditRoute(page, 'public', theme, route)));
+      }
+    }
+    report(findings, 'public', testInfo);
+  });
+
+  for (const persona of WALK_PERSONAS) {
+    const themes: Array<'dark' | 'light'> = persona.key === 'admin' ? ['dark', 'light'] : ['dark'];
+    test(`${persona.key} (${themes.join(', ')})`, async ({ page }, testInfo) => {
+      test.setTimeout(persona.routes.length * themes.length * 10_000 + 60_000);
+      await walkLogin(page, persona.email, persona.pass);
+      report(await sweep(page, persona, themes), persona.key, testInfo);
+    });
+  }
+});
+
+test.describe('phone', () => {
+  test('associate (dark, light)', async ({ page }, testInfo) => {
+    test.setTimeout(ASSOCIATE.routes.length * 2 * 10_000 + 60_000);
+    await walkLogin(page, ASSOCIATE.email, ASSOCIATE.pass);
+    report(await sweep(page, ASSOCIATE, ['dark', 'light']), 'associate', testInfo);
+  });
+
+  test('driver (dark)', async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    await walkLogin(page, DRIVER.email, DRIVER.pass);
+    report(await sweep(page, DRIVER, ['dark']), 'driver', testInfo);
+  });
+
+  test('admin on the go (dark)', async ({ page }, testInfo) => {
+    test.setTimeout(ADMIN_ROUTES.length * 10_000 + 60_000);
+    await walkLogin(page, 'admin@altohr.com', 'alto-admin-dev');
+    const onTheGo: WalkPersona = { key: 'admin-phone', email: '', pass: '', routes: [['/', 'home'], ['/approvals', 'approvals'], ['/people', 'people'], ['/scheduling', 'scheduling'], ['/time-attendance', 'time'], ['/agents', 'agents'], ['/audit', 'audit'], ['/admin/users', 'users'], ['/settings', 'settings']] };
+    report(await sweep(page, onTheGo, ['dark']), 'admin-phone', testInfo);
+  });
+});

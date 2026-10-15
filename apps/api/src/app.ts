@@ -52,6 +52,7 @@ import { laborRulesRouter } from './routes/laborRules.js';
 import { identityRouter } from './routes/identity.js';
 import { tenantRolesRouter } from './routes/tenantRoles.js';
 import { trustRouter } from './routes/trust.js';
+import { statusRouter } from './routes/status.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
 import { supportRouter } from './routes/support.js';
 import { telemetryRouter } from './routes/telemetry.js';
@@ -403,6 +404,8 @@ export function createApp() {
   app.use('/tenant-roles', tenantRolesRouter);
   // UX upgrade step 4: the Trust Center (public summary and the tenant's view).
   app.use('/trust', trustRouter);
+  // The public status page beside the Trust Center, and the operator's incident posts.
+  app.use('/status', statusRouter);
   // Brief 2-6 step 4: usage by worker type and invoices.
   app.use('/billing', billingRouter);
   // Brief 2-6 step 5: support requests to the platform inbox, and the status link.

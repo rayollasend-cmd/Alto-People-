@@ -215,6 +215,8 @@ const DesignSystemPage = lazyNamed(() => import('@/pages/platform/DesignSystemPa
 const SettingsArea = lazyNamed(() => import('@/pages/settings/SettingsArea'), 'SettingsArea');
 const TrustCenterPage = lazyNamed(() => import('@/pages/trust/TrustCenterPage'), 'TrustCenterPage');
 const PublicTrustPage = lazyNamed(() => import('@/pages/trust/PublicTrustPage'), 'PublicTrustPage');
+const PublicStatusPage = lazyNamed(() => import('@/pages/status/PublicStatusPage'), 'PublicStatusPage');
+const AccessibilityPage = lazyNamed(() => import('@/pages/trust/AccessibilityPage'), 'AccessibilityPage');
 const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHome'), 'ReliabilityHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
@@ -593,6 +595,27 @@ export const router = createBrowserRouter([
     element: (
       <Suspense fallback={<PublicRouteFallback />}>
         <PublicTrustPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // The public status page and the accessibility statement sit beside the
+  // Trust Center: a buyer's review and a person who needs the contact line
+  // read them without an account.
+  {
+    path: '/status',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <PublicStatusPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  {
+    path: '/accessibility',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <AccessibilityPage />
       </Suspense>
     ),
     errorElement: <RouterErrorPage />,
