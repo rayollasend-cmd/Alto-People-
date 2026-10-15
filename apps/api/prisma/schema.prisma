@@ -9841,11 +9841,11 @@ model Worker {
   createdAt    DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
 
-  associate   Associate?         @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  owner       User               @relation("WorkerOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
-  assignments WorkerAssignment[]
-  shifts      Shift[]
-  agent       AgentProfile?
+  associate           Associate?           @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  owner               User                 @relation("WorkerOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  assignments         WorkerAssignment[]
+  shifts              Shift[]
+  agent               AgentProfile?
   workTaskAssignments WorkTaskAssignment[]
 
   @@index([type, status])
@@ -11157,18 +11157,18 @@ enum StatusIncidentState {
 }
 
 model StatusIncident {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId        String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  title           String              @db.VarChar(160)
+  tenantId        String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  title           String                 @db.VarChar(160)
   component       StatusComponent
   impact          StatusImpact
-  state           StatusIncidentState @default(INVESTIGATING)
-  startedAt       DateTime            @default(now()) @db.Timestamptz(6)
-  resolvedAt      DateTime?           @db.Timestamptz(6)
-  createdByUserId String?             @db.Uuid
-  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  state           StatusIncidentState    @default(INVESTIGATING)
+  startedAt       DateTime               @default(now()) @db.Timestamptz(6)
+  resolvedAt      DateTime?              @db.Timestamptz(6)
+  createdByUserId String?                @db.Uuid
+  createdAt       DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime               @updatedAt @db.Timestamptz(6)
   updates         StatusIncidentUpdate[]
 
   @@index([startedAt])
@@ -11378,6 +11378,7 @@ model IntegrationSyncError {
 
   @@index([runId, createdAt])
 }
+
 // ---------------------------------------------------------------------------
 // Brief 3-2: tasks and the assignment engine. A Task is one unit of work at a
 // site in a time window with a required capability; TaskAssignment records
@@ -11431,30 +11432,30 @@ enum WorkTaskHighRiskPolicy {
 }
 
 model WorkTask {
-  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId         String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  type             String      @db.VarChar(80)
-  locationId       String      @db.Uuid
+  tenantId         String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  type             String         @db.VarChar(80)
+  locationId       String         @db.Uuid
   /// Where inside the site: "Dock 3", "Ballroom B".
-  area             String?     @db.VarChar(120)
-  windowStart      DateTime    @db.Timestamptz(6)
-  windowEnd        DateTime    @db.Timestamptz(6)
+  area             String?        @db.VarChar(120)
+  windowStart      DateTime       @db.Timestamptz(6)
+  windowEnd        DateTime       @db.Timestamptz(6)
   /// A WORKER_CAPABILITIES code.
-  capability       String      @db.VarChar(60)
-  risk             WorkTaskRisk    @default(LOW)
+  capability       String         @db.VarChar(60)
+  risk             WorkTaskRisk   @default(LOW)
   estimatedMinutes Int
   /// The client's own reference: a truck, a banquet, a room list.
-  reference        String?     @db.VarChar(160)
-  notes            String?     @db.VarChar(2000)
-  status           WorkTaskStatus  @default(OPEN)
+  reference        String?        @db.VarChar(160)
+  notes            String?        @db.VarChar(2000)
+  status           WorkTaskStatus @default(OPEN)
   /// Why the engine queued it for a person, in one line.
-  queuedReason     String?     @db.VarChar(300)
-  createdByUserId  String?     @db.Uuid
-  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime    @updatedAt @db.Timestamptz(6)
+  queuedReason     String?        @db.VarChar(300)
+  createdByUserId  String?        @db.Uuid
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(6)
 
-  location    Site             @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location    Site                 @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignments WorkTaskAssignment[]
   events      WorkTaskEvent[]
 
@@ -11463,38 +11464,38 @@ model WorkTask {
 }
 
 model WorkTaskAssignment {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId        String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  taskId          String              @db.Uuid
-  workerId        String              @db.Uuid
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  taskId          String                  @db.Uuid
+  workerId        String                  @db.Uuid
   state           WorkTaskAssignmentState @default(ACTIVE)
   decidedBy       WorkTaskDecider
-  decidedByUserId String?             @db.Uuid
-  score           Int                 @default(0)
-  costCents       Int                 @default(0)
+  decidedByUserId String?                 @db.Uuid
+  score           Int                     @default(0)
+  costCents       Int                     @default(0)
   /// The factors and points behind this assignment (AssignmentReason[]).
   reasons         Json
   /// Every candidate weighed, best first (RankedCandidate[]).
   ranking         Json
-  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
-  releasedAt      DateTime?           @db.Timestamptz(6)
+  createdAt       DateTime                @default(now()) @db.Timestamptz(6)
+  releasedAt      DateTime?               @db.Timestamptz(6)
 
   task   WorkTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  worker Worker @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  worker Worker   @relation(fields: [workerId], references: [id], onDelete: Restrict)
 
   @@index([taskId, state])
   @@index([workerId, state])
 }
 
 model WorkTaskEvent {
-  id       String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  taskId   String        @db.Uuid
+  id       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  taskId   String            @db.Uuid
   kind     WorkTaskEventKind
-  at       DateTime      @default(now()) @db.Timestamptz(6)
-  note     String?       @db.VarChar(2000)
-  byUserId String?       @db.Uuid
-  workerId String?       @db.Uuid
+  at       DateTime          @default(now()) @db.Timestamptz(6)
+  note     String?           @db.VarChar(2000)
+  byUserId String?           @db.Uuid
+  workerId String?           @db.Uuid
 
   task WorkTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
@@ -11503,21 +11504,21 @@ model WorkTaskEvent {
 
 /// One per tenant (locationId null), optionally one per site that overrides it.
 model WorkTaskPolicy {
-  id                    String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId              String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  locationId            String?        @db.Uuid
-  handoffSeconds        Int            @default(30)
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId              String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId            String?                @db.Uuid
+  handoffSeconds        Int                    @default(30)
   maxAutoAssignCents    Int?
   highRiskPolicy        WorkTaskHighRiskPolicy @default(PERSON_OR_SUPERVISED_ROBOT)
   /// Cents per task for a robot by capability code.
-  robotCostPerTaskCents Json           @default("{}")
-  robotDefaultCostCents Int            @default(400)
-  agentCostPerTaskCents Int            @default(0)
+  robotCostPerTaskCents Json                   @default("{}")
+  robotDefaultCostCents Int                    @default(400)
+  agentCostPerTaskCents Int                    @default(0)
   /// Brief 3-3: the span of control the scheduler warns on.
-  maxRobotsPerCrewLead  Int            @default(4)
-  updatedByUserId       String?        @db.Uuid
-  createdAt             DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime       @updatedAt @db.Timestamptz(6)
+  maxRobotsPerCrewLead  Int                    @default(4)
+  updatedByUserId       String?                @db.Uuid
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
 
   @@index([tenantId, locationId])
 }
