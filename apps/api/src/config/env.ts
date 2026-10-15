@@ -521,6 +521,10 @@ const EnvSchema = z.object({
   STRIPE_LIVE_APPROVED: z.string().optional(),
   // Brief 2-6 step 5 (decision 9): the hosted status page, linked from the help menu and the sign-in page.
   STATUS_PAGE_URL: z.string().url().optional(),
+  // Brief 2-5 step 3: the field-encryption keyring. Key 0 is always PAYOUT_ENCRYPTION_KEY; these add
+  // keys ("1:<base64>,2:<base64>") and pick the one new writes use. Unset: key 0, as before.
+  FIELD_KEYS: z.string().optional(),
+  FIELD_KEY_ACTIVE: z.coerce.number().int().min(0).max(255).optional(),
   WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
 });
 

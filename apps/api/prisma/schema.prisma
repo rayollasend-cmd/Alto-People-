@@ -10945,3 +10945,12 @@ model SupportRequest {
   @@index([tenantId, status])
   @@index([status, createdAt])
 }
+
+/// Brief 2-5 step 3 — one row per field-encryption key id, written when the key first appears.
+/// At boot every key in the ring must decrypt its canary, so a changed key stops the deploy
+/// instead of surfacing at a read (lib/keyring.verifyKeyring). Platform-level: no tenant.
+model EncryptionCanary {
+  keyId     Int      @id
+  blob      Bytes
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+}

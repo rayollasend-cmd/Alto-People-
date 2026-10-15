@@ -161,16 +161,27 @@ export function jobSecretsResult(): EvidenceResult {
   };
 }
 
-/** Records job-secrets-separated at most once a day. */
+/**
+ * The daily controls, each recorded at most once a day (Brief 2-5 steps 1 and 4): the per-job
+ * secrets, the encryption inventory, TLS to the web and the database, the uploads' encryption at
+ * rest and the audit log's immutability. Loaded on use: lib/controls reads the whole keyring.
+ */
 export async function runEvidenceSweep(db: Db = defaultPrisma, now: Date = new Date()): Promise<{ recorded: string[] }> {
+  const c = await import('./controls.js');
+  const daily: Array<[string, () => EvidenceResult | Promise<EvidenceResult>]> = [
+    ['job-secrets-separated', jobSecretsResult],
+    ['field-encryption-inventory', () => c.fieldEncryptionInventory(db)],
+    ['tls-web', () => c.tlsWeb(now)],
+    ['tls-database', () => c.tlsDatabase(db)],
+    ['blob-encryption', () => c.blobEncryption()],
+    ['audit-log-immutability', () => c.auditLogImmutability(db)],
+  ];
   const recorded: string[] = [];
-  const recent = await db.complianceEvidence.findFirst({
-    where: { control: 'job-secrets-separated', collectedAt: { gte: new Date(now.getTime() - 20 * 3_600_000) } },
-    select: { id: true },
-  });
-  if (!recent) {
-    const id = await recordEvidence('job-secrets-separated', 'evidenceSweep', jobSecretsResult(), db);
-    if (id) recorded.push('job-secrets-separated');
+  for (const [control, collect] of daily) {
+    const recent = await db.complianceEvidence.findFirst({ where: { control, collectedAt: { gte: new Date(now.getTime() - 20 * 3_600_000) } }, select: { id: true } });
+    if (recent) continue;
+    const id = await recordEvidence(control, 'evidenceSweep', await collect(), db);
+    if (id) recorded.push(control);
   }
   return { recorded };
 }

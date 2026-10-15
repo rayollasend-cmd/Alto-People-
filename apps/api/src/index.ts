@@ -66,8 +66,23 @@ import { startVanTrailRetentionCron } from './lib/transportLive.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
+import { KeyringError, verifyKeyring } from './lib/keyring.js';
 
 const app = createApp();
+
+// Brief 2-5 step 3: every field-encryption key decrypts its canary before the API serves anyone.
+// A key that changed under its id (the 2026-06-11 incident) stops this deploy here, and the
+// running version keeps serving, instead of failing a person's read in production.
+try {
+  const k = await verifyKeyring(prisma);
+  logger.info({ keys: k.checked, canariesWritten: k.created }, 'field-encryption keyring verified');
+} catch (err) {
+  if (err instanceof KeyringError) {
+    logger.fatal({ err: err.message }, 'field-encryption keyring refused');
+    process.exit(1);
+  }
+  logger.error({ err }, 'field-encryption keyring could not be verified (database unreachable?); starting anyway');
+}
 
 const server = app.listen(env.PORT, '0.0.0.0', async () => {
   logger.info(
