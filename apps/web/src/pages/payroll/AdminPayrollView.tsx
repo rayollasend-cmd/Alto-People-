@@ -17,6 +17,7 @@ import {
   Play,
   Plus,
   RotateCw,
+  Scale,
   Send,
   Landmark,
   ShieldAlert,
@@ -665,6 +666,12 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 <Link to="/payroll/compliance">
                   <AlertTriangle className="mr-1 h-4 w-4" />
                   Compliance
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/payroll/labor-rules">
+                  <Scale className="mr-1 h-4 w-4" />
+                  Labor rules
                 </Link>
               </Button>
               <Button asChild variant="ghost" size="sm">

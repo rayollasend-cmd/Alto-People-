@@ -675,6 +675,7 @@ model User {
   workPlanItems                     WorkPlanItem[]                @relation("WorkPlanOwner")
   decisionComments                  DecisionComment[]             @relation("DecisionCommenter")
   nextStepsOwned                    DecisionNextStep[]            @relation("NextStepOwner")
+  laborRuleSetsApproved             LaborRuleSet[]                @relation("LaborRuleSetApprover")
 
   @@index([role])
   @@index([clientId])
@@ -899,6 +900,7 @@ model Site {
   candidateSubmittals    CandidateSubmittal[]
   rides                  Ride[]
   readyToWorkHandoffs    ReadyToWorkHandoff[]
+  laborRuleSets          LaborRuleSet[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -10547,4 +10549,40 @@ enum EvidenceStatus {
   PASS
   FAIL
   WARN
+}
+
+/// Brief 2-2 step 2 — labor rule sets (docs/labor-rules-investigation.md §4.1).
+/// A shipped pack has no tenant (seeded by migration from lib/laborRules/packs.ts,
+/// read-only to every tenant); a tenant- or site-level override has one. The
+/// engine refuses a DRAFT set for pay: a pack turns ACTIVE only with counsel's
+/// sign-off recorded here (owner's decision 10).
+model LaborRuleSet {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// NULL: a shipped pack. Deliberately NOT defaulted to Alto HR like other tenant columns.
+  tenantId         String?   @db.Uuid
+  /// FEDERAL, US-FL, US-NY-NYC…; TENANT or SITE for an override.
+  jurisdiction     String    @db.VarChar(60)
+  /// FEDERAL | STATE | CITY | TENANT | SITE
+  level            String    @db.VarChar(10)
+  siteId           String?   @db.Uuid
+  effectiveFrom    DateTime  @db.Date
+  version          Int
+  /// The family blocks this set names (RuleParamsSchema).
+  params           Json
+  source           String    @db.VarChar(1000)
+  sourceDate       DateTime  @db.Date
+  /// DRAFT | ACTIVE | RETIRED
+  status           String    @default("DRAFT") @db.VarChar(10)
+  approvedByUserId String?   @db.Uuid
+  approvedAt       DateTime? @db.Timestamptz(6)
+  /// Counsel's sign-off reference (memo, ticket, date).
+  approvalNote     String?   @db.VarChar(500)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  site       Site? @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("LaborRuleSetApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([jurisdiction, effectiveFrom])
 }

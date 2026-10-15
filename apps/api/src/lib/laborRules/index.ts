@@ -10,3 +10,4 @@ export * from './params.js';
 export * from './packs.js';
 export * from './resolve.js';
 export * from './evaluate.js';
+export * from './store.js';

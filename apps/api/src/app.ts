@@ -47,6 +47,7 @@ import { v1Router } from './routes/v1.js';
 import { apiClientsRouter } from './routes/apiClients.js';
 import { agentApiRouter } from './routes/agentApi.js';
 import { mcpRouter } from './routes/mcp.js';
+import { laborRulesRouter } from './routes/laborRules.js';
 import { telemetryRouter } from './routes/telemetry.js';
 import { releaseNotesRouter } from './routes/releaseNotes.js';
 import { searchRouter } from './routes/search.js';
@@ -385,6 +386,8 @@ export function createApp() {
   // generated OpenAPI document at /v1/openapi.json; /integrations/v1 stays for ASN.
   app.use('/v1', v1Router);
   app.use('/api-clients', apiClientsRouter);
+  // Brief 2-2: the labor rules in force per site (read-only until step 6).
+  app.use('/labor-rules', laborRulesRouter);
   // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
   // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
   // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the

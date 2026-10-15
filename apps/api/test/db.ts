@@ -2,6 +2,7 @@ import { PrismaClient, type Role } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
 import { flushPendingAudits } from '../src/lib/audit.js';
 import { flushPendingNotifications } from '../src/lib/notify.js';
+import { seedShippedPacks } from '../src/lib/laborRules/store.js';
 
 export const prisma = new PrismaClient();
 
@@ -171,6 +172,9 @@ export async function truncateAll(): Promise<void> {
         prisma.$queryRawUnsafe("SELECT set_config('alto.allow_audit_truncate', 'test', true)"),
         prisma.$executeRawUnsafe(sql),
       ]);
+      // Brief 2-2: the shipped labor packs are migration-seeded reference rows, but the
+      // cascade from Location and User clears them; put them back as production has them.
+      await seedShippedPacks(prisma);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
