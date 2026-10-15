@@ -193,7 +193,7 @@ export const BUILT_IN_AGENTS = [
     key: 'compliance-agent',
     name: 'Compliance agent',
     family: 'compliance',
-    capability: 'Chase expiring documents and keep I-9 Section 2 on time: the person hears in their language; the verifier desk gets a dated worklist',
+    capability: 'Chase expiring documents and keep I-9 Section 2 on time: each person hears in their language; the desk gets a worklist',
     purpose: 'Chases each person whose document or authorization expires within 30 days (in their language, with the upload link; again at 14 and 3 days; to HR at expiry; never a waived item), and keeps the verifier desk on the I-9 Section 2 clock (three business days from the start date) with the E-Verify readiness reason, climbing to HR the day before (agent families step 4). It completes nothing itself: a person uploads, a person verifies.',
     vendor: 'Alto People',
     model: 'Rule-based agent (lib/complianceAgent)',
