@@ -33,12 +33,12 @@ import {
 import { coverageByHour } from './coverage';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
@@ -367,26 +367,29 @@ export function ClientPortalHome() {
 
   if (query.isError) {
     return (
-      <div className="mx-auto">
-        <PageHeader title={t('portal.title')} subtitle={t('portal.subtitle')} />
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('portal.loadFailed')}
-        </ErrorBanner>
-      </div>
+      <HomeTemplate
+        title={t('portal.title')}
+        topbarTitle={t('portal.title')}
+        subtitle={t('portal.subtitle')}
+        hero={
+              <EmptyState
+                icon={Building2}
+                title={t('portal.onFloorNow')}
+                description={t('portal.loadFailed')}
+                action={
+                  <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                    {t('common.retry')}
+                  </Button>
+                }
+              />
+        }
+      />
     );
   }
 
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-64" />
+      <HomeTemplate title={t('portal.title')} topbarTitle={t('portal.title')} subtitle={t('portal.subtitle')} hero={<Skeleton className="h-64" />}>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
@@ -394,7 +397,7 @@ export function ClientPortalHome() {
           <Skeleton className="h-24" />
         </div>
         <Skeleton className="h-64" />
-      </div>
+      </HomeTemplate>
     );
   }
 
@@ -468,8 +471,12 @@ export function ClientPortalHome() {
   }));
 
   return (
-    <div className="mx-auto space-y-4 print-area">
-      <PageHeader
+    // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+    // The store site titles the place, not the person — the store is the
+    // identity a client signs into; the floor against the contracted line
+    // is the hero; the week's report and history are the ways in.
+    <HomeTemplate
+        className="print-area"
         title={data.store ? data.store.name : data.client.name}
         topbarTitle={t('portal.title')}
         subtitle={
@@ -496,8 +503,8 @@ export function ClientPortalHome() {
             </span>
           </span>
         }
-        secondaryActions={
-          <>
+        waysIn={
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} title={t('portal.svcReportHint')}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}
@@ -520,9 +527,9 @@ export function ClientPortalHome() {
               t={t}
               busy={marking === `SERVICE_REPORT:${data.serviceReport.weekStart}`}
             />
-          </>
+          </div>
         }
-        primaryAction={
+        actions={
           <Button size="sm" asChild>
             <Link to={scheduleTo}>
               <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -530,60 +537,7 @@ export function ClientPortalHome() {
             </Link>
           </Button>
         }
-      />
-
-      {/* ---- Per-store strip for market managers ------------------------ */}
-      {data.stores.length > 1 && !data.store && (
-        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 animate-enter">
-          {data.stores.map((s) => {
-            const pct = s.scheduledNow > 0 ? Math.min(100, Math.round((s.onFloor / s.scheduledNow) * 100)) : null;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => drillTo(s.id)}
-                className="rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3 text-left transition-colors hover:border-gold/40 elev-1"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-white">{s.name}</span>
-                  {s.openToday > 0 ? (
-                    <span className="shrink-0 text-2xs font-medium text-alert">
-                      {t('portal.openCount', { count: s.openToday })}
-                    </span>
-                  ) : (
-                    <span className="shrink-0 text-2xs text-silver/50">{t('portal.storeOk')}</span>
-                  )}
-                </div>
-                <div className="mt-1.5 flex items-baseline gap-1">
-                  <span className="text-2xl font-bold tracking-tight text-white">{s.onFloor}</span>
-                  <span className="text-xs text-silver/70">
-                    {t('portal.storeOfSched', { sched: s.scheduledNow })}
-                  </span>
-                </div>
-                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
-                  <div
-                    className={cn('h-full rounded-full', pct !== null && pct < 100 ? 'bg-warning' : 'bg-success')}
-                    style={{ width: `${pct ?? 0}%` }}
-                  />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {data.store && data.stores.length === 0 && !user?.locationId && (
-        <button
-          type="button"
-          onClick={() => drillTo(null)}
-          className="text-xs text-gold underline-offset-2 hover:underline"
-        >
-          ← {t('portal.allStores', { client: data.client.name })}
-        </button>
-      )}
-
-      {isPortal && <PushPrompt />}
-
-      {/* ---- Hero: the floor right now, drawn across the day --------------- */}
+        hero={
       <Card
         className={cn(
           'relative overflow-hidden animate-enter',
@@ -688,8 +642,61 @@ export function ClientPortalHome() {
         </CardContent>
       </Card>
 
+        }
+        banners={isPortal ? <PushPrompt /> : undefined}
+        assistant={<HugoSeat />}
+      >
+      {/* ---- Per-store strip for market managers ------------------------ */}
+      {data.stores.length > 1 && !data.store && (
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 animate-enter">
+          {data.stores.map((s) => {
+            const pct = s.scheduledNow > 0 ? Math.min(100, Math.round((s.onFloor / s.scheduledNow) * 100)) : null;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => drillTo(s.id)}
+                className="rounded-lg border border-navy-secondary bg-navy-secondary/20 p-3 text-left transition-colors hover:border-gold/40 elev-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-white">{s.name}</span>
+                  {s.openToday > 0 ? (
+                    <span className="shrink-0 text-2xs font-medium text-alert">
+                      {t('portal.openCount', { count: s.openToday })}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-2xs text-silver/50">{t('portal.storeOk')}</span>
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-1">
+                  <span className="text-2xl font-bold tracking-tight text-white">{s.onFloor}</span>
+                  <span className="text-xs text-silver/70">
+                    {t('portal.storeOfSched', { sched: s.scheduledNow })}
+                  </span>
+                </div>
+                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+                  <div
+                    className={cn('h-full rounded-full', pct !== null && pct < 100 ? 'bg-warning' : 'bg-success')}
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {data.store && data.stores.length === 0 && !user?.locationId && (
+        <button
+          type="button"
+          onClick={() => drillTo(null)}
+          className="text-xs text-gold underline-offset-2 hover:underline"
+        >
+          ← {t('portal.allStores', { client: data.client.name })}
+        </button>
+      )}
+
       {/* ---- KPI strip ------------------------------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
         <StatTile
           label={t('portal.kpiFill')}
           value={data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—'}
@@ -1286,7 +1293,7 @@ export function ClientPortalHome() {
 
       {/* ---- Requests: the client in the loop -------------------------- */}
       {isPortal && <PortalRequests prefill={prefill} refetchMs={180_000} />}
-    </div>
+    </HomeTemplate>
   );
 }
 

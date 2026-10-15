@@ -7,11 +7,11 @@ import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtRelativeDate, fmtTime, parseYmd, zonedMinutesOfDay } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { regionOverview, type StoreSnapshot } from '@/lib/regionsApi';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { HomeTemplate } from '@/components/templates';
+import { HugoSeat } from '@/components/home/HugoSeat';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -87,25 +87,27 @@ export function RegionHome() {
   }
   if (query.isError) {
     return (
-      <div className="mx-auto">
-        <PageHeader title={t('region.title')} />
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('portal.loadFailed')}
-        </ErrorBanner>
-      </div>
+      <HomeTemplate
+        title={t('region.title')}
+        topbarTitle={t('region.title')}
+        hero={
+              <EmptyState
+                icon={Building2}
+                title={t('region.title')}
+                description={t('portal.loadFailed')}
+                action={
+                  <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                    {t('common.retry')}
+                  </Button>
+                }
+              />
+        }
+      />
     );
   }
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-64" />
+      <HomeTemplate title={t('region.title')} topbarTitle={t('region.title')} hero={<Skeleton className="h-64" />}>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           <Skeleton className="h-40" />
           <Skeleton className="h-40" />
@@ -114,7 +116,7 @@ export function RegionHome() {
           <Skeleton className="h-40" />
         </div>
         <Skeleton className="h-72" />
-      </div>
+      </HomeTemplate>
     );
   }
 
@@ -145,8 +147,10 @@ export function RegionHome() {
   };
 
   return (
-    <div className="mx-auto space-y-4">
-      <PageHeader
+    // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
+    // The command center titles the region; the market's floor is the hero;
+    // the store rail and the numbers that go upward follow.
+    <HomeTemplate
         title={data.region.name}
         topbarTitle={t('region.title')}
         subtitle={
@@ -161,7 +165,7 @@ export function RegionHome() {
             </span>
           </span>
         }
-        primaryAction={
+        actions={
           !data.preview ? (
             <Button size="sm" asChild>
               <Link to="/messages">
@@ -171,11 +175,7 @@ export function RegionHome() {
             </Button>
           ) : undefined
         }
-      />
-
-      {isRegion && <PushPrompt />}
-
-      {/* ---- Hero: the market's floor right now, drawn across the day ------ */}
+        hero={
       <Card
         className={cn(
           'relative overflow-hidden animate-enter',
@@ -258,6 +258,10 @@ export function RegionHome() {
         </CardContent>
       </Card>
 
+        }
+        banners={isRegion ? <PushPrompt /> : undefined}
+        assistant={<HugoSeat />}
+      >
       {/* ---- The store rail: one tile per store, each carrying its own alarm ---- */}
       <section aria-labelledby="region-stores">
         <div className="flex items-baseline justify-between gap-3 px-0.5">
@@ -331,7 +335,7 @@ export function RegionHome() {
       </section>
 
       {/* ---- KPI strip: the numbers that go upward ------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatTile
           label={t('region.kpiGrade')}
           value={tot.score === null ? '—' : `${tot.score}%`}
@@ -518,6 +522,6 @@ export function RegionHome() {
           </Card>
         </details>
       )}
-    </div>
+    </HomeTemplate>
   );
 }
