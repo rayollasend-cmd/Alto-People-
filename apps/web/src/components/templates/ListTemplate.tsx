@@ -31,12 +31,14 @@ export interface ListTemplateProps {
   /** The open record, if any. */
   drawer?: React.ReactNode;
   className?: string;
+  /** For the header alone (a page with its own print-only header passes `no-print`). */
+  headerClassName?: string;
 }
 
-export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, primaryAction, secondaryActions, filters, summary, children, drawer, className }: ListTemplateProps) {
+export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, primaryAction, secondaryActions, filters, summary, children, drawer, className, headerClassName }: ListTemplateProps) {
   return (
     <div className={cn('space-y-4', className)} data-template="list">
-      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={primaryAction} secondaryActions={secondaryActions} />
+      <PageHeader className={headerClassName} title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={primaryAction} secondaryActions={secondaryActions} />
       {summary}
       {filters}
       {children}

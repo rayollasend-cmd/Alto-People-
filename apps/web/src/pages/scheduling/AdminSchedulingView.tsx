@@ -124,7 +124,7 @@ import { Field, type FieldRenderArgs } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -2445,30 +2445,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const pullState = usePullToRefresh(refresh);
 
   return (
-    <div className="mx-auto print-area">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
-      <div className="print-only mb-3">
-        <div className="text-xl font-semibold">Schedule</div>
-        <div className="text-sm text-gray-700">
-          {fmtPrintRange(exportRange.from, exportRange.to)}
-          {boundedClient
-            ? ` · ${boundedClient.name}`
-            : clientFilter && clients.find((c) => c.id === clientFilter)
-              ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
-              : ''}
-          {locationFilter && clientLocations.find((l) => l.id === locationFilter)
-            ? ` › ${clientLocations.find((l) => l.id === locationFilter)?.name}`
-            : ''}
-          {posFilter ? ` · position: ${posFilter}` : ''}
-        </div>
-        <div className="text-2xs text-gray-500 mt-1">
-          Generated {fmtDateTime(new Date())}
-        </div>
-      </div>
-
-      <PageHeader
-        className="no-print"
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+          The print-only header and the KPIs are the summary; the view toggle
+          and each view's own filter row follow. */}
+      <ListTemplate
+        className="print-area"
+        headerClassName="no-print"
         title="Scheduling"
         subtitle={
           canManage
@@ -2511,61 +2495,86 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             </Button>
           ) : undefined
         }
-      />
+        summary={
+              <>
 
-      {canSeeKpis && (
-        <div className="no-print">
-          <KpiStrip kpis={kpis} period={kpi.period} />
-        </div>
-      )}
+          {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
+          <div className="print-only mb-3">
+            <div className="text-xl font-semibold">Schedule</div>
+            <div className="text-sm text-gray-700">
+              {fmtPrintRange(exportRange.from, exportRange.to)}
+              {boundedClient
+                ? ` · ${boundedClient.name}`
+                : clientFilter && clients.find((c) => c.id === clientFilter)
+                  ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
+                  : ''}
+              {locationFilter && clientLocations.find((l) => l.id === locationFilter)
+                ? ` › ${clientLocations.find((l) => l.id === locationFilter)?.name}`
+                : ''}
+              {posFilter ? ` · position: ${posFilter}` : ''}
+            </div>
+            <div className="text-2xs text-gray-500 mt-1">
+              Generated {fmtDateTime(new Date())}
+            </div>
+          </div>
 
-      {tzHint && (
-        <div className="no-print mb-2 text-xs2 text-silver/70 inline-flex items-center gap-1">
-          <Clock className="h-3 w-3" />
-          {tzHint}
-        </div>
-      )}
 
-      {canManage && (
-        <CreateShiftDialog
-          open={showCreate}
-          clients={clients}
-          boundedClient={boundedClient}
-          clientsError={clientsError}
-          onRetryClients={loadClients}
-          associates={associates}
-          initialDate={createInitialDate}
-          initialEnd={createInitialEnd}
-          initialAssociateId={createInitialAssociateId}
-          initialOpenSlots={createInitialOpenSlots}
-          initialClientId={clientFilter || null}
-          initialLocationId={locationFilter || null}
-          initialPosition={lastPositionRef.current || null}
-          onPositionUsed={(p) => {
-            lastPositionRef.current = p;
-          }}
-          team={selectedTeam}
-          onOpenChange={(o) => {
-            setShowCreate(o);
-            if (!o) {
-              setCreateInitialDate(null);
-              setCreateInitialEnd(null);
-              setCreateInitialAssociateId(null);
-              setCreateInitialOpenSlots(0);
-            }
-          }}
-          onCreated={() => {
-            setShowCreate(false);
-            setCreateInitialDate(null);
-            setCreateInitialEnd(null);
-            setCreateInitialAssociateId(null);
-            setCreateInitialOpenSlots(0);
-            toast.success('Shift created.');
-            refresh();
-          }}
-        />
-      )}
+          {canSeeKpis && (
+            <div className="no-print">
+              <KpiStrip kpis={kpis} period={kpi.period} />
+            </div>
+          )}
 
+          {tzHint && (
+            <div className="no-print mb-2 text-xs2 text-silver/70 inline-flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {tzHint}
+            </div>
+          )}
+
+          {canManage && (
+            <CreateShiftDialog
+              open={showCreate}
+              clients={clients}
+              boundedClient={boundedClient}
+              clientsError={clientsError}
+              onRetryClients={loadClients}
+              associates={associates}
+              initialDate={createInitialDate}
+              initialEnd={createInitialEnd}
+              initialAssociateId={createInitialAssociateId}
+              initialOpenSlots={createInitialOpenSlots}
+              initialClientId={clientFilter || null}
+              initialLocationId={locationFilter || null}
+              initialPosition={lastPositionRef.current || null}
+              onPositionUsed={(p) => {
+                lastPositionRef.current = p;
+              }}
+              team={selectedTeam}
+              onOpenChange={(o) => {
+                setShowCreate(o);
+                if (!o) {
+                  setCreateInitialDate(null);
+                  setCreateInitialEnd(null);
+                  setCreateInitialAssociateId(null);
+                  setCreateInitialOpenSlots(0);
+                }
+              }}
+              onCreated={() => {
+                setShowCreate(false);
+                setCreateInitialDate(null);
+                setCreateInitialEnd(null);
+                setCreateInitialAssociateId(null);
+                setCreateInitialOpenSlots(0);
+                toast.success('Shift created.');
+                refresh();
+              }}
+            />
+          )}
+
+              </>
+        }
+      >
       {/* View-mode toggle + per-view navigator */}
       <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
         <div
@@ -3831,7 +3840,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           onManage={() => setShowTemplates(true)}
         />
       )}
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

@@ -3,6 +3,7 @@ import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-d
 import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { ListTemplate } from '@/components/templates';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   Activity,
@@ -114,7 +115,6 @@ import {
   FilterChip,
   Input,
   Label,
-  PageHeader,
   Select,
   Skeleton,
   SkeletonRows,
@@ -1858,9 +1858,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   );
 
   return (
-    <div className="mx-auto">
+    <>
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader
+      {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+          The tabs are the page's two lists; each carries its own filter row. */}
+      <ListTemplate
         title="Time & attendance"
         subtitle={
           canManage
@@ -1893,62 +1895,142 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             </div>
           ) : undefined
         }
-      />
+        summary={
+              <>
+          {personal}
 
-      {personal}
+          {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
+              shortcuts too: the live trio jumps to the live board (Off-site
+              also applies the off-site lens), Pending review opens the queue. */}
+          <div
+            className={cn(
+              'grid grid-cols-2 gap-3 mb-6',
+              liveOnly ? 'md:grid-cols-3' : 'md:grid-cols-4',
+            )}
+          >
+            <KpiCard
+              icon={Activity}
+              label="Clocked in"
+              value={liveStats.total === null ? '—' : String(liveStats.total)}
+              tone="default"
+              onClick={() => {
+                setLiveOffSiteOnly(false);
+                setTab('live');
+              }}
+            />
+            <KpiCard
+              icon={Coffee}
+              label="On break"
+              value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
+              tone="warning"
+              onClick={() => {
+                setLiveOffSiteOnly(false);
+                setTab('live');
+              }}
+            />
+            <KpiCard
+              icon={MapPinOff}
+              label="Off-site"
+              value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
+              tone={liveStats.offSite && liveStats.offSite > 0 ? 'alert' : 'silver'}
+              onClick={() => {
+                setLiveOffSiteOnly(true);
+                setTab('live');
+              }}
+            />
+            {/* Watch-only (FLOOR_SUPERVISOR) never reviews time: no queue, no
+                count — the tile read a permanent "—". */}
+            {!liveOnly && (
+              <KpiCard
+                icon={ListChecks}
+                label="Pending review"
+                value={pendingCount === null ? '—' : String(pendingCount)}
+                tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
+                onClick={() => setTab('queue')}
+              />
+            )}
+          </div>
+              </>
+        }
+        drawer={
 
-      {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
-          shortcuts too: the live trio jumps to the live board (Off-site
-          also applies the off-site lens), Pending review opens the queue. */}
-      <div
-        className={cn(
-          'grid grid-cols-2 gap-3 mb-6',
-          liveOnly ? 'md:grid-cols-3' : 'md:grid-cols-4',
-        )}
+          <Drawer
+            open={!!drawerTarget}
+            onOpenChange={(o) => {
+              if (!o) {
+                setDrawerTarget(null);
+                // Mutations from the drawer's footer buttons trigger their own
+                // refresh through onApprove / setRejectOpen. No extra refresh.
+              }
+            }}
+            width="max-w-xl"
+          >
+            {drawerTarget && (
+              <TimeEntryDetailPanel
+                entry={drawerTarget}
+                canManage={canManage}
+                busy={pendingId === drawerTarget.id || bulkBusy}
+                onApprove={async () => {
+                  const id = drawerTarget.id;
+                  setDrawerTarget(null);
+                  await onApprove(id);
+                }}
+                // Triage chain — offered only while another flagged entry is
+                // waiting in the current view. Approves in place and advances
+                // the drawer instead of dumping the reviewer to the list; a
+                // failed approve keeps this drawer open.
+                onApproveNext={
+                  tab === 'queue' && nextFlaggedAfter(drawerTarget.id)
+                    ? async () => {
+                        if (pendingIdRef.current) return;
+                        const id = drawerTarget.id;
+                        pendingIdRef.current = id;
+                        setPendingId(id);
+                        try {
+                          await approveTimeEntry(id);
+                          const next = nextFlaggedAfter(id);
+                          if (next) {
+                            setDrawerTarget(next);
+                          } else {
+                            setDrawerTarget(null);
+                            toast.success(
+                              'All caught up — no more flagged entries in view.',
+                            );
+                          }
+                          await Promise.all([refresh(), refreshPendingCount()]);
+                        } catch (err) {
+                          setError(
+                            err instanceof ApiError ? err.message : 'Approve failed.',
+                          );
+                        } finally {
+                          pendingIdRef.current = null;
+                          setPendingId(null);
+                        }
+                      }
+                    : undefined
+                }
+                onReject={() => {
+                  // advanceOnDone only when the triage chain has somewhere to
+                  // go — a lone reject keeps today's close-to-list behavior.
+                  setRejectOpen({
+                    mode: 'one',
+                    id: drawerTarget.id,
+                    advanceOnDone:
+                      tab === 'queue' && nextFlaggedAfter(drawerTarget.id) !== null,
+                  });
+                  setDrawerTarget(null);
+                }}
+                onEdit={() => {
+                  setEditFromDetail(true);
+                  setEditTarget(drawerTarget);
+                  setDrawerTarget(null);
+                }}
+              />
+            )}
+          </Drawer>
+
+        }
       >
-        <KpiCard
-          icon={Activity}
-          label="Clocked in"
-          value={liveStats.total === null ? '—' : String(liveStats.total)}
-          tone="default"
-          onClick={() => {
-            setLiveOffSiteOnly(false);
-            setTab('live');
-          }}
-        />
-        <KpiCard
-          icon={Coffee}
-          label="On break"
-          value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
-          tone="warning"
-          onClick={() => {
-            setLiveOffSiteOnly(false);
-            setTab('live');
-          }}
-        />
-        <KpiCard
-          icon={MapPinOff}
-          label="Off-site"
-          value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
-          tone={liveStats.offSite && liveStats.offSite > 0 ? 'alert' : 'silver'}
-          onClick={() => {
-            setLiveOffSiteOnly(true);
-            setTab('live');
-          }}
-        />
-        {/* Watch-only (FLOOR_SUPERVISOR) never reviews time: no queue, no
-            count — the tile read a permanent "—". */}
-        {!liveOnly && (
-          <KpiCard
-            icon={ListChecks}
-            label="Pending review"
-            value={pendingCount === null ? '—' : String(pendingCount)}
-            tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
-            onClick={() => setTab('queue')}
-          />
-        )}
-      </div>
-
       {!liveOnly && (
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mb-5">
           <TabsList>
@@ -2656,80 +2738,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         onSubmit={onSubmitReject}
       />
 
-      <Drawer
-        open={!!drawerTarget}
-        onOpenChange={(o) => {
-          if (!o) {
-            setDrawerTarget(null);
-            // Mutations from the drawer's footer buttons trigger their own
-            // refresh through onApprove / setRejectOpen. No extra refresh.
-          }
-        }}
-        width="max-w-xl"
-      >
-        {drawerTarget && (
-          <TimeEntryDetailPanel
-            entry={drawerTarget}
-            canManage={canManage}
-            busy={pendingId === drawerTarget.id || bulkBusy}
-            onApprove={async () => {
-              const id = drawerTarget.id;
-              setDrawerTarget(null);
-              await onApprove(id);
-            }}
-            // Triage chain — offered only while another flagged entry is
-            // waiting in the current view. Approves in place and advances
-            // the drawer instead of dumping the reviewer to the list; a
-            // failed approve keeps this drawer open.
-            onApproveNext={
-              tab === 'queue' && nextFlaggedAfter(drawerTarget.id)
-                ? async () => {
-                    if (pendingIdRef.current) return;
-                    const id = drawerTarget.id;
-                    pendingIdRef.current = id;
-                    setPendingId(id);
-                    try {
-                      await approveTimeEntry(id);
-                      const next = nextFlaggedAfter(id);
-                      if (next) {
-                        setDrawerTarget(next);
-                      } else {
-                        setDrawerTarget(null);
-                        toast.success(
-                          'All caught up — no more flagged entries in view.',
-                        );
-                      }
-                      await Promise.all([refresh(), refreshPendingCount()]);
-                    } catch (err) {
-                      setError(
-                        err instanceof ApiError ? err.message : 'Approve failed.',
-                      );
-                    } finally {
-                      pendingIdRef.current = null;
-                      setPendingId(null);
-                    }
-                  }
-                : undefined
-            }
-            onReject={() => {
-              // advanceOnDone only when the triage chain has somewhere to
-              // go — a lone reject keeps today's close-to-list behavior.
-              setRejectOpen({
-                mode: 'one',
-                id: drawerTarget.id,
-                advanceOnDone:
-                  tab === 'queue' && nextFlaggedAfter(drawerTarget.id) !== null,
-              });
-              setDrawerTarget(null);
-            }}
-            onEdit={() => {
-              setEditFromDetail(true);
-              setEditTarget(drawerTarget);
-              setDrawerTarget(null);
-            }}
-          />
-        )}
-      </Drawer>
 
       <SummaryExportDialog
         open={summaryOpen}
@@ -2815,7 +2823,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           }}
         />
       )}
-    </div>
+      </ListTemplate>
+    </>
   );
 }
 

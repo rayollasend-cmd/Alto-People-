@@ -88,7 +88,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
@@ -624,8 +624,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   };
 
   return (
-    <div className="mx-auto">
-      <PageHeader
+    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // The pay-cycle hero is the summary; the tabs are the page's lists.
+    <ListTemplate
         title="Payroll"
         subtitle={
           canProcess
@@ -692,58 +693,427 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             </div>
           ) : undefined
         }
-      />
+        summary={
+              <>
 
-      {canProcess && (
-        <RunPayrollWizard
-          open={showCreate}
-          onOpenChange={setShowCreate}
-          seed={wizardSeed}
-          onCreated={(detail) => {
-            setShowCreate(false);
-            setSelected(detail);
-            refresh();
-            refreshUpcoming();
-          }}
-        />
-      )}
+          {canProcess && (
+            <RunPayrollWizard
+              open={showCreate}
+              onOpenChange={setShowCreate}
+              seed={wizardSeed}
+              onCreated={(detail) => {
+                setShowCreate(false);
+                setSelected(detail);
+                refresh();
+                refreshUpcoming();
+              }}
+            />
+          )}
 
-      {/* Wave 8 — QBO-parity hero. Shows next pay date · employee count ·
-          projected gross/net · exception count, with a one-click resume
-          CTA. Hidden when there is neither a schedule nor a prior run.
-          Wave 9 — when a DRAFT already exists for the upcoming period,
-          the CTA flips to "Resume" and deep-links to the drawer instead
-          of opening the wizard. */}
-      <PayrollHero
-        upcoming={upcoming}
-        loading={upcomingLoading}
-        canProcess={canProcess}
-        onStartRun={() => {
-          // Seed the wizard with what the hero already knows — schedule and
-          // period — so step 1 never re-asks; a clean preview then collapses
-          // the whole flow to one review screen.
-          const nr = upcoming?.nextRun;
-          setWizardSeed(
-            nr
-              ? {
-                  scheduleId: nr.scheduleId,
-                  periodStart: nr.periodStart,
-                  periodEnd: nr.periodEnd,
-                }
-              : null
-          );
-          setShowCreate(true);
-        }}
-        onResumeRun={(id) => openRun(id)}
-        onOpenLastRun={(id) => openRun(id)}
-      />
+          {/* Wave 8 — QBO-parity hero. Shows next pay date · employee count ·
+              projected gross/net · exception count, with a one-click resume
+              CTA. Hidden when there is neither a schedule nor a prior run.
+              Wave 9 — when a DRAFT already exists for the upcoming period,
+              the CTA flips to "Resume" and deep-links to the drawer instead
+              of opening the wizard. */}
+          <PayrollHero
+            upcoming={upcoming}
+            loading={upcomingLoading}
+            canProcess={canProcess}
+            onStartRun={() => {
+              // Seed the wizard with what the hero already knows — schedule and
+              // period — so step 1 never re-asks; a clean preview then collapses
+              // the whole flow to one review screen.
+              const nr = upcoming?.nextRun;
+              setWizardSeed(
+                nr
+                  ? {
+                      scheduleId: nr.scheduleId,
+                      periodStart: nr.periodStart,
+                      periodEnd: nr.periodEnd,
+                    }
+                  : null
+              );
+              setShowCreate(true);
+            }}
+            onResumeRun={(id) => openRun(id)}
+            onOpenLastRun={(id) => openRun(id)}
+          />
 
-      {canProcess && (
-        <div className="mb-4">
-          <WebhookHealthTile />
-        </div>
-      )}
+          {canProcess && (
+            <div className="mb-4">
+              <WebhookHealthTile />
+            </div>
+          )}
 
+              </>
+        }
+        drawer={
+
+          <Drawer
+            open={selected !== null}
+            onOpenChange={(o) => !o && setSelected(null)}
+            width="max-w-3xl"
+          >
+            {selected && (
+              <>
+                <DrawerHeader>
+                  <DrawerTitle>
+                    {fmtPeriod(selected.periodStart, selected.periodEnd)}
+                  </DrawerTitle>
+                  <DrawerDescription>
+                    <StatusBadge status={selected.status} overrides={RUN_STATUS_TONES} />
+                    <span className="ml-2 text-xs">
+                      {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
+                    </span>
+                  </DrawerDescription>
+                </DrawerHeader>
+                <DrawerBody>
+                  {/* Gap 3 — CANCELLED banner. When the run was voided, surface
+                      who/when/why above everything else and link the reversing
+                      JE if QBO sync was wired up. */}
+                  {selected.status === 'CANCELLED' && (
+                    <div className="mb-4 rounded border border-alert/40 bg-alert/5 p-3 text-xs">
+                      <div className="flex items-center gap-2 text-alert font-medium mb-1">
+                        <Ban className="h-4 w-4" />
+                        Run voided
+                        {selected.cancelledAt && (
+                          <span className="text-silver/70 font-normal">
+                            — {fmtDateTime(selected.cancelledAt)}
+                          </span>
+                        )}
+                      </div>
+                      {selected.cancelReason && (
+                        <div className="text-silver mt-1">
+                          <span className="text-silver/70">Reason: </span>
+                          {selected.cancelReason}
+                        </div>
+                      )}
+                      {selected.voidJournalEntryId && (
+                        <div className="text-silver/70 mt-1">
+                          Reversing JE{' '}
+                          <span className="font-mono text-silver">
+                            {selected.voidJournalEntryId}
+                          </span>{' '}
+                          filed in QuickBooks.
+                        </div>
+                      )}
+                      <div className="text-silver/70 mt-1.5">
+                        Alto did not pull funds back from associates. Recover
+                        disbursed amounts out-of-band or via a deduction on the
+                        corrected run. A voided run can&apos;t be amended — create
+                        a corrected run for the same period instead.
+                      </div>
+                      {canProcess && (
+                        <div className="mt-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={openCorrectedRun}
+                            disabled={busy}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Create corrected run
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Gap 3 — AMENDMENT banner. Shows the link back to the source
+                      run + the mandatory reason captured at amend time. */}
+                  {selected.kind === 'AMENDMENT' && (
+                    <div className="mb-4 rounded border border-warning/30 bg-warning/5 p-3 text-xs">
+                      <div className="flex items-center gap-2 text-warning font-medium mb-1">
+                        <Pencil className="h-4 w-4" />
+                        Amendment run
+                      </div>
+                      {selected.amendmentReason && (
+                        <div className="text-silver mt-1">
+                          <span className="text-silver/70">Reason: </span>
+                          {selected.amendmentReason}
+                        </div>
+                      )}
+                      {selected.amendsRunId && (
+                        <Button
+                          variant="link"
+                          onClick={() => openRun(selected.amendsRunId!)}
+                          className="mt-1 text-xs font-normal text-silver/70 hover:text-gold"
+                        >
+                          View source run
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Four-eyes approval note — visible once a run is approved
+                      so the disburser knows a second person signed off. */}
+                  {selected.approvedAt && (
+                    <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
+                      <ShieldCheck className="h-4 w-4" />
+                      Approved {fmtDateTime(selected.approvedAt)}
+                      {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
+                    </div>
+                  )}
+
+                  {/* Wave 9 — QBO-style status progress bar shown across the top
+                      of the drawer. Tracks the run state through the four
+                      human-meaningful checkpoints. */}
+                  <RunStatusStepper
+                    status={selected.status}
+                    qboSynced={!!selected.qboJournalEntryId}
+                  />
+
+                  {/* Draft add-on lines (bonus / commission / tips / PTO). */}
+                  {selected.status === 'DRAFT' && canProcess && (
+                    <DraftAddOnsSection
+                      runId={selected.id}
+                      runItems={selected.items}
+                      onChanged={async () => {
+                        const updated = await getPayrollRun(selected.id);
+                        setSelected(updated);
+                        refresh();
+                      }}
+                    />
+                  )}
+
+                  {/* Workers-comp premium accrual (disbursed runs). */}
+                  {selected.status === 'DISBURSED' && wcReport && wcReport.totalPremium > 0 && (
+                    <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-xs uppercase tracking-wide text-silver">
+                          Workers-comp premium (accrual)
+                        </div>
+                        <div className="text-lg tabular-nums text-white">
+                          {fmtMoney(wcReport.totalPremium)}
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        {wcReport.classes.map((c) => (
+                          <div key={c.code} className="flex justify-between text-silver">
+                            <span>
+                              {c.code} · {c.description}{' '}
+                              <span className="text-silver/60">@ {c.ratePer100}/100</span>
+                            </span>
+                            <span className="tabular-nums text-white">{fmtMoney(c.premium)}</span>
+                          </div>
+                        ))}
+                        {wcReport.unclassifiedWages > 0 && (
+                          <div className="flex justify-between text-warning">
+                            <span>Unclassified wages (no WC class code)</span>
+                            <span className="tabular-nums">{fmtMoney(wcReport.unclassifiedWages)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 mb-5 text-sm">
+                    <DrawerStat label="Gross" value={fmtMoney(selected.totalGross)} />
+                    <DrawerStat label="Tax" value={`−${fmtMoney(selected.totalTax)}`} />
+                    <DrawerStat
+                      label="Net"
+                      value={fmtMoney(selected.totalNet)}
+                      highlight
+                    />
+                    <DrawerStat
+                      label="Employer cost"
+                      value={fmtMoney(selected.totalEmployerTax)}
+                      hint="FICA + Medicare match + FUTA + SUTA"
+                    />
+                  </div>
+
+                  {selected.items.length === 0 && (
+                    <EmptyState
+                      icon={FileText}
+                      title="No paystubs in this run"
+                      description="No approved time entries fell inside this period."
+                    />
+                  )}
+                  <FailedPaymentsSummary
+                    items={selected.items}
+                    canProcess={canProcess}
+                    onRetry={onRetryFailures}
+                    onEnrollBranch={openEnrollBranch}
+                    busy={busy}
+                  />
+                  {selected.items.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-2xs uppercase tracking-widest text-silver/70">
+                          Paystubs ({selected.items.length})
+                        </div>
+                        {paystubView.heldCount > 0 && (
+                          <Badge variant="destructive" className="text-2xs">
+                            {paystubView.heldCount} held
+                          </Badge>
+                        )}
+                      </div>
+                      <ul className="space-y-1.5">
+                        {paystubView.visible.map((it) => (
+                          <PaystubAdminCard
+                            key={it.id}
+                            item={it}
+                            canProcess={canProcess}
+                            onEnrollBranch={openEnrollBranch}
+                          />
+                        ))}
+                      </ul>
+                      {paystubView.visible.length < selected.items.length && (
+                        <div className="mt-2 flex justify-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowAllPaystubs(true)}
+                          >
+                            Show all {selected.items.length}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(selected.qboJournalEntryId || selected.qboSyncError) && (
+                    <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
+                      <div className="flex items-center gap-2 text-2xs uppercase tracking-widest text-silver/70 mb-1.5">
+                        <LinkIcon className="h-3 w-3" />
+                        QuickBooks sync
+                      </div>
+                      {selected.qboJournalEntryId && (
+                        <div className="text-silver">
+                          JournalEntry{' '}
+                          <span className="font-mono text-white">
+                            {selected.qboJournalEntryId}
+                          </span>
+                          {selected.qboSyncedAt && (
+                            <> — synced {fmtDateTime(selected.qboSyncedAt)}</>
+                          )}
+                        </div>
+                      )}
+                      {selected.qboSyncError && (
+                        <div className="text-alert mt-1">
+                          Last sync error: {selected.qboSyncError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </DrawerBody>
+                {canProcess && (
+                  <DrawerFooter className="flex-wrap justify-start">
+                    {selected.status === 'DRAFT' && (
+                      <Button onClick={() => setConfirmFinalize(true)} disabled={busy}>
+                        <CheckCircle2 className="h-4 w-4" />
+                        Finalize
+                      </Button>
+                    )}
+                    {selected.status === 'FINALIZED' && !selected.approvedAt && (
+                      <Button variant="secondary" onClick={onApprove} loading={busy} disabled={busy}>
+                        <ShieldCheck className="h-4 w-4" />
+                        Approve
+                      </Button>
+                    )}
+                    {selected.status === 'FINALIZED' &&
+                      (requireSecondApproval && !selected.approvedAt ? (
+                        // Honesty gate — the server would 409 the disbursement
+                        // anyway; don't let the admin walk the whole ceremony
+                        // into it. The Approve button renders right beside this.
+                        <Button
+                          variant="primary"
+                          disabled
+                          title="Needs a second approval first"
+                        >
+                          <Send className="h-4 w-4" />
+                          Needs a second approval first
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="primary"
+                          onClick={() => setConfirmDisburse(true)}
+                          disabled={busy}
+                        >
+                          <Send className="h-4 w-4" />
+                          Disburse
+                        </Button>
+                      ))}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      selected.items.length > 0 && (
+                        <Button asChild variant="secondary">
+                          <a
+                            href={`/api/payroll/runs/${selected.id}/paystubs.zip`}
+                            download
+                          >
+                            <Download className="h-4 w-4" />
+                            Download all paystubs
+                          </a>
+                        </Button>
+                      )}
+                    {selected.status === 'DISBURSED' && (
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          downloadCheckRegister(selected.id).catch((err) =>
+                            toast.error(err instanceof Error ? err.message : 'No checks in this run.'),
+                          )
+                        }
+                        title="Printable register of paper checks issued for this run (if any)"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Check register
+                      </Button>
+                    )}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      paystubView.heldCount > 0 && (
+                        <Button variant="secondary" onClick={() => onRetryFailures()} loading={busy}>
+                          <RotateCw className="h-4 w-4" />
+                          Retry failed disbursements
+                        </Button>
+                      )}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      selected.clientId && (
+                        <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
+                          <LinkIcon className="h-4 w-4" />
+                          {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
+                        </Button>
+                      )}
+                    {canShowAmendButton && (
+                      <Button variant="secondary" onClick={() => setAmendOpen(true)} disabled={busy}>
+                        <Pencil className="h-4 w-4" />
+                        Amend
+                      </Button>
+                    )}
+                    {canVoid &&
+                      (selected.status === 'DRAFT' || selected.status === 'FINALIZED') && (
+                        <Button variant="destructive" onClick={onDeleteRun} disabled={busy}>
+                          <Ban className="h-4 w-4" />
+                          Delete run
+                        </Button>
+                      )}
+                    {canShowVoidButton && (
+                      <Button variant="destructive" onClick={openVoidModal} disabled={busy}>
+                        <Ban className="h-4 w-4" />
+                        Void run
+                      </Button>
+                    )}
+                    {canVoid &&
+                      selected.status === 'DISBURSED' &&
+                      !canShowVoidButton && (
+                        <Button
+                          variant="destructive"
+                          disabled
+                          title={`Runs can only be voided within ${VOID_WINDOW_DAYS} days of disbursement. This one is past that window — issue an amendment instead.`}
+                        >
+                          <Ban className="h-4 w-4" />
+                          Void window closed
+                        </Button>
+                      )}
+                  </DrawerFooter>
+                )}
+              </>
+            )}
+          </Drawer>
+
+        }
+      >
       <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'schedules' | 'garnishments')} className="mb-5">
         <TabsList>
           <TabsTrigger value="runs">Runs</TabsTrigger>
@@ -922,367 +1292,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         </TabsContent>
       </Tabs>
 
-      <Drawer
-        open={selected !== null}
-        onOpenChange={(o) => !o && setSelected(null)}
-        width="max-w-3xl"
-      >
-        {selected && (
-          <>
-            <DrawerHeader>
-              <DrawerTitle>
-                {fmtPeriod(selected.periodStart, selected.periodEnd)}
-              </DrawerTitle>
-              <DrawerDescription>
-                <StatusBadge status={selected.status} overrides={RUN_STATUS_TONES} />
-                <span className="ml-2 text-xs">
-                  {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
-                </span>
-              </DrawerDescription>
-            </DrawerHeader>
-            <DrawerBody>
-              {/* Gap 3 — CANCELLED banner. When the run was voided, surface
-                  who/when/why above everything else and link the reversing
-                  JE if QBO sync was wired up. */}
-              {selected.status === 'CANCELLED' && (
-                <div className="mb-4 rounded border border-alert/40 bg-alert/5 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-alert font-medium mb-1">
-                    <Ban className="h-4 w-4" />
-                    Run voided
-                    {selected.cancelledAt && (
-                      <span className="text-silver/70 font-normal">
-                        — {fmtDateTime(selected.cancelledAt)}
-                      </span>
-                    )}
-                  </div>
-                  {selected.cancelReason && (
-                    <div className="text-silver mt-1">
-                      <span className="text-silver/70">Reason: </span>
-                      {selected.cancelReason}
-                    </div>
-                  )}
-                  {selected.voidJournalEntryId && (
-                    <div className="text-silver/70 mt-1">
-                      Reversing JE{' '}
-                      <span className="font-mono text-silver">
-                        {selected.voidJournalEntryId}
-                      </span>{' '}
-                      filed in QuickBooks.
-                    </div>
-                  )}
-                  <div className="text-silver/70 mt-1.5">
-                    Alto did not pull funds back from associates. Recover
-                    disbursed amounts out-of-band or via a deduction on the
-                    corrected run. A voided run can&apos;t be amended — create
-                    a corrected run for the same period instead.
-                  </div>
-                  {canProcess && (
-                    <div className="mt-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={openCorrectedRun}
-                        disabled={busy}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Create corrected run
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Gap 3 — AMENDMENT banner. Shows the link back to the source
-                  run + the mandatory reason captured at amend time. */}
-              {selected.kind === 'AMENDMENT' && (
-                <div className="mb-4 rounded border border-warning/30 bg-warning/5 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-warning font-medium mb-1">
-                    <Pencil className="h-4 w-4" />
-                    Amendment run
-                  </div>
-                  {selected.amendmentReason && (
-                    <div className="text-silver mt-1">
-                      <span className="text-silver/70">Reason: </span>
-                      {selected.amendmentReason}
-                    </div>
-                  )}
-                  {selected.amendsRunId && (
-                    <Button
-                      variant="link"
-                      onClick={() => openRun(selected.amendsRunId!)}
-                      className="mt-1 text-xs font-normal text-silver/70 hover:text-gold"
-                    >
-                      View source run
-                    </Button>
-                  )}
-                </div>
-              )}
-
-              {/* Four-eyes approval note — visible once a run is approved
-                  so the disburser knows a second person signed off. */}
-              {selected.approvedAt && (
-                <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
-                  <ShieldCheck className="h-4 w-4" />
-                  Approved {fmtDateTime(selected.approvedAt)}
-                  {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
-                </div>
-              )}
-
-              {/* Wave 9 — QBO-style status progress bar shown across the top
-                  of the drawer. Tracks the run state through the four
-                  human-meaningful checkpoints. */}
-              <RunStatusStepper
-                status={selected.status}
-                qboSynced={!!selected.qboJournalEntryId}
-              />
-
-              {/* Draft add-on lines (bonus / commission / tips / PTO). */}
-              {selected.status === 'DRAFT' && canProcess && (
-                <DraftAddOnsSection
-                  runId={selected.id}
-                  runItems={selected.items}
-                  onChanged={async () => {
-                    const updated = await getPayrollRun(selected.id);
-                    setSelected(updated);
-                    refresh();
-                  }}
-                />
-              )}
-
-              {/* Workers-comp premium accrual (disbursed runs). */}
-              {selected.status === 'DISBURSED' && wcReport && wcReport.totalPremium > 0 && (
-                <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-xs uppercase tracking-wide text-silver">
-                      Workers-comp premium (accrual)
-                    </div>
-                    <div className="text-lg tabular-nums text-white">
-                      {fmtMoney(wcReport.totalPremium)}
-                    </div>
-                  </div>
-                  <div className="space-y-1 text-xs">
-                    {wcReport.classes.map((c) => (
-                      <div key={c.code} className="flex justify-between text-silver">
-                        <span>
-                          {c.code} · {c.description}{' '}
-                          <span className="text-silver/60">@ {c.ratePer100}/100</span>
-                        </span>
-                        <span className="tabular-nums text-white">{fmtMoney(c.premium)}</span>
-                      </div>
-                    ))}
-                    {wcReport.unclassifiedWages > 0 && (
-                      <div className="flex justify-between text-warning">
-                        <span>Unclassified wages (no WC class code)</span>
-                        <span className="tabular-nums">{fmtMoney(wcReport.unclassifiedWages)}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 mb-5 text-sm">
-                <DrawerStat label="Gross" value={fmtMoney(selected.totalGross)} />
-                <DrawerStat label="Tax" value={`−${fmtMoney(selected.totalTax)}`} />
-                <DrawerStat
-                  label="Net"
-                  value={fmtMoney(selected.totalNet)}
-                  highlight
-                />
-                <DrawerStat
-                  label="Employer cost"
-                  value={fmtMoney(selected.totalEmployerTax)}
-                  hint="FICA + Medicare match + FUTA + SUTA"
-                />
-              </div>
-
-              {selected.items.length === 0 && (
-                <EmptyState
-                  icon={FileText}
-                  title="No paystubs in this run"
-                  description="No approved time entries fell inside this period."
-                />
-              )}
-              <FailedPaymentsSummary
-                items={selected.items}
-                canProcess={canProcess}
-                onRetry={onRetryFailures}
-                onEnrollBranch={openEnrollBranch}
-                busy={busy}
-              />
-              {selected.items.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-2xs uppercase tracking-widest text-silver/70">
-                      Paystubs ({selected.items.length})
-                    </div>
-                    {paystubView.heldCount > 0 && (
-                      <Badge variant="destructive" className="text-2xs">
-                        {paystubView.heldCount} held
-                      </Badge>
-                    )}
-                  </div>
-                  <ul className="space-y-1.5">
-                    {paystubView.visible.map((it) => (
-                      <PaystubAdminCard
-                        key={it.id}
-                        item={it}
-                        canProcess={canProcess}
-                        onEnrollBranch={openEnrollBranch}
-                      />
-                    ))}
-                  </ul>
-                  {paystubView.visible.length < selected.items.length && (
-                    <div className="mt-2 flex justify-center">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowAllPaystubs(true)}
-                      >
-                        Show all {selected.items.length}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {(selected.qboJournalEntryId || selected.qboSyncError) && (
-                <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-2xs uppercase tracking-widest text-silver/70 mb-1.5">
-                    <LinkIcon className="h-3 w-3" />
-                    QuickBooks sync
-                  </div>
-                  {selected.qboJournalEntryId && (
-                    <div className="text-silver">
-                      JournalEntry{' '}
-                      <span className="font-mono text-white">
-                        {selected.qboJournalEntryId}
-                      </span>
-                      {selected.qboSyncedAt && (
-                        <> — synced {fmtDateTime(selected.qboSyncedAt)}</>
-                      )}
-                    </div>
-                  )}
-                  {selected.qboSyncError && (
-                    <div className="text-alert mt-1">
-                      Last sync error: {selected.qboSyncError}
-                    </div>
-                  )}
-                </div>
-              )}
-            </DrawerBody>
-            {canProcess && (
-              <DrawerFooter className="flex-wrap justify-start">
-                {selected.status === 'DRAFT' && (
-                  <Button onClick={() => setConfirmFinalize(true)} disabled={busy}>
-                    <CheckCircle2 className="h-4 w-4" />
-                    Finalize
-                  </Button>
-                )}
-                {selected.status === 'FINALIZED' && !selected.approvedAt && (
-                  <Button variant="secondary" onClick={onApprove} loading={busy} disabled={busy}>
-                    <ShieldCheck className="h-4 w-4" />
-                    Approve
-                  </Button>
-                )}
-                {selected.status === 'FINALIZED' &&
-                  (requireSecondApproval && !selected.approvedAt ? (
-                    // Honesty gate — the server would 409 the disbursement
-                    // anyway; don't let the admin walk the whole ceremony
-                    // into it. The Approve button renders right beside this.
-                    <Button
-                      variant="primary"
-                      disabled
-                      title="Needs a second approval first"
-                    >
-                      <Send className="h-4 w-4" />
-                      Needs a second approval first
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      onClick={() => setConfirmDisburse(true)}
-                      disabled={busy}
-                    >
-                      <Send className="h-4 w-4" />
-                      Disburse
-                    </Button>
-                  ))}
-                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                  selected.items.length > 0 && (
-                    <Button asChild variant="secondary">
-                      <a
-                        href={`/api/payroll/runs/${selected.id}/paystubs.zip`}
-                        download
-                      >
-                        <Download className="h-4 w-4" />
-                        Download all paystubs
-                      </a>
-                    </Button>
-                  )}
-                {selected.status === 'DISBURSED' && (
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      downloadCheckRegister(selected.id).catch((err) =>
-                        toast.error(err instanceof Error ? err.message : 'No checks in this run.'),
-                      )
-                    }
-                    title="Printable register of paper checks issued for this run (if any)"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Check register
-                  </Button>
-                )}
-                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                  paystubView.heldCount > 0 && (
-                    <Button variant="secondary" onClick={() => onRetryFailures()} loading={busy}>
-                      <RotateCw className="h-4 w-4" />
-                      Retry failed disbursements
-                    </Button>
-                  )}
-                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                  selected.clientId && (
-                    <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
-                      <LinkIcon className="h-4 w-4" />
-                      {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
-                    </Button>
-                  )}
-                {canShowAmendButton && (
-                  <Button variant="secondary" onClick={() => setAmendOpen(true)} disabled={busy}>
-                    <Pencil className="h-4 w-4" />
-                    Amend
-                  </Button>
-                )}
-                {canVoid &&
-                  (selected.status === 'DRAFT' || selected.status === 'FINALIZED') && (
-                    <Button variant="destructive" onClick={onDeleteRun} disabled={busy}>
-                      <Ban className="h-4 w-4" />
-                      Delete run
-                    </Button>
-                  )}
-                {canShowVoidButton && (
-                  <Button variant="destructive" onClick={openVoidModal} disabled={busy}>
-                    <Ban className="h-4 w-4" />
-                    Void run
-                  </Button>
-                )}
-                {canVoid &&
-                  selected.status === 'DISBURSED' &&
-                  !canShowVoidButton && (
-                    <Button
-                      variant="destructive"
-                      disabled
-                      title={`Runs can only be voided within ${VOID_WINDOW_DAYS} days of disbursement. This one is past that window — issue an amendment instead.`}
-                    >
-                      <Ban className="h-4 w-4" />
-                      Void window closed
-                    </Button>
-                  )}
-              </DrawerFooter>
-            )}
-          </>
-        )}
-      </Drawer>
 
       {/* Disburse ceremony — the most consequential moment in payroll
           deserves a layout that reads as a ceremony, not a generic
@@ -1544,7 +1553,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           }
         }}
       />
-    </div>
+    </ListTemplate>
   );
 }
 
