@@ -75,7 +75,7 @@ describe('robot registry (Brief 3-1)', () => {
     // 1. No checklist yet.
     const noChecklist = await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`);
     expect(noChecklist.status).toBe(409);
-    expect(noChecklist.body.code).toBe('checklist_incomplete');
+    expect(noChecklist.body.error.code).toBe('checklist_incomplete');
 
     const template = await w.admin.post('/robots/checklists/templates').send({
       locationId: w.site.id,
@@ -91,7 +91,7 @@ describe('robot registry (Brief 3-1)', () => {
     const failed = await w.crew.post(`/robots/${bot.id}/checklists`).send({ templateId: template.body.id, shiftId: shift.id, answers: [{ key: 'estop', ok: true }, { key: 'tray', ok: false, note: 'Tray latch loose' }] });
     expect(failed.status).toBe(201);
     expect(failed.body.allPassed).toBe(false);
-    expect((await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`)).body.code).toBe('checklist_incomplete');
+    expect((await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`)).body.error.code).toBe('checklist_incomplete');
 
     const passed = await w.crew.post(`/robots/${bot.id}/checklists`).send({ templateId: template.body.id, shiftId: shift.id, answers: [{ key: 'estop', ok: true }, { key: 'tray', ok: true }] });
     expect(passed.body.allPassed).toBe(true);
@@ -99,7 +99,7 @@ describe('robot registry (Brief 3-1)', () => {
     // 2. Not commissioned at the site.
     const notCommissioned = await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`);
     expect(notCommissioned.status).toBe(409);
-    expect(notCommissioned.body.code).toBe('not_commissioned');
+    expect(notCommissioned.body.error.code).toBe('not_commissioned');
 
     const commissioning = await w.admin.put(`/robots/${bot.id}/commissioning`).send({ locationId: w.site.id, chargingStations: [{ label: 'Dock A', x: 2, y: 2 }], safetyLeadUserId: w.lead.id });
     expect(commissioning.status).toBe(200);
@@ -118,7 +118,7 @@ describe('robot registry (Brief 3-1)', () => {
     expect((await w.crew.post(`/robots/zones/${zone.body.id}/occupied`).send({ occupied: true })).body.guestOccupied).toBe(true);
     const blocked = await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`);
     expect(blocked.status).toBe(409);
-    expect(blocked.body.code).toBe('zone_occupied');
+    expect(blocked.body.error.code).toBe('zone_occupied');
 
     await w.crew.post(`/robots/zones/${zone.body.id}/occupied`).send({ occupied: false });
     const started = await w.crew.post(`/robots/${bot.id}/shifts/${shift.id}/start`);

@@ -83,7 +83,7 @@ export async function controlRoom(db: Db = defaultPrisma, locationId: string, te
     }),
     policyFor(db, locationId),
     crewLeadsOnFloor(db, locationId, now),
-    listZones(db, locationId),
+    listZones(db, locationId, tenantId),
   ]);
 
   // People: one row per person on an assigned shift now, with their punch.

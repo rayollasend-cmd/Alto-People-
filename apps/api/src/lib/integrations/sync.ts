@@ -93,7 +93,12 @@ export async function runSync(opts: RunSyncOpts): Promise<RunSyncResult> {
     outcomes = r.outcomes;
     summary = r.summary;
   } catch (err) {
-    fatal = err instanceof SyncRefused ? err.message : err instanceof Error ? err.message : 'sync failed';
+    if (err instanceof SyncRefused) {
+      // Nothing was attempted: the run row goes and the caller hears the refusal (409 / 422).
+      await prisma.integrationSyncRun.delete({ where: { id: run.id } });
+      throw err;
+    }
+    fatal = err instanceof Error ? err.message : 'sync failed';
     logger.warn({ err, connectionId: connection.id, capability: opts.capability }, 'integration sync failed');
   }
 

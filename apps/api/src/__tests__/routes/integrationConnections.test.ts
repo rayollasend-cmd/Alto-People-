@@ -40,7 +40,7 @@ async function worldWithApprovedTime() {
   const amara = await createAssociate({ firstName: 'Amara', lastName: 'Okafor', email: 'amara.okafor@example.com' });
   const mateo = await createAssociate({ firstName: 'Mateo', lastName: 'Delgado', email: 'mateo.delgado@example.com' });
   const { start } = lastPeriod();
-  // Amara: two 8-hour days (7.5 paid each, the unpaid break rule); Mateo: one, plus a REJECTED entry that must not go.
+  // Amara: two 8-hour days (7 paid each: the shared rule takes an unpaid hour past six); Mateo: one, plus a REJECTED entry that must not go.
   for (const [who, dayOffset] of [[amara, 2], [amara, 3], [mateo, 4]] as const) {
     const clockIn = new Date(start.getTime() + dayOffset * DAY + 14 * HOUR);
     await prisma.timeEntry.create({ data: { associateId: who.id, clientId: client.id, locationId: site.id, clockInAt: clockIn, clockOutAt: new Date(clockIn.getTime() + 8 * HOUR), status: 'APPROVED' } });
@@ -102,7 +102,7 @@ describe('Fieldglass', () => {
     const res = await a.post(`/integration-connections/${id}/sync`).send({ capability: 'pushTimesheets', periodStart, periodEnd });
     expect(res.status).toBe(200);
     expect(res.body.run).toMatchObject({ status: 'SUCCEEDED', total: 3, succeeded: 3, failed: 0 });
-    expect(res.body.run.summary).toMatchObject({ mode: 'sandbox', lines: 3, entries: 3, manualEntries: 0, hours: 22.5, period: [periodStart, periodEnd] });
+    expect(res.body.run.summary).toMatchObject({ mode: 'sandbox', lines: 3, entries: 3, manualEntries: 0, hours: 21, period: [periodStart, periodEnd] });
     const runs = await a.get(`/integration-connections/${id}/runs`);
     expect(runs.body.runs[0]).toMatchObject({ capability: 'pushTimesheets', direction: 'PUSH', trigger: 'manual', status: 'SUCCEEDED' });
     // One line per person per day; the rejected entry never left.

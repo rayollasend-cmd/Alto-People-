@@ -27,10 +27,13 @@ export const adpAdapter: IntegrationAdapter = {
     // Reconciliation: what left Alto must equal the run's own totals, to the cent.
     const reconciled = Math.abs(sent.gross - batch.totals.gross) < 0.005 && Math.abs(sent.net - batch.totals.net) < 0.005 && sent.count === batch.totals.count;
     const summary = { mode: ctx.connection.sandbox ? 'sandbox' : 'live', runId: batch.runId, payDate: batch.payDate, period: [batch.periodStart, batch.periodEnd], sent, runTotals: batch.totals, reconciled };
+    if (!reconciled) {
+      // Never a silent export: a mismatch holds every row, sandbox or live, before any vendor call.
+      const message = 'Export held: the totals do not match the run';
+      return { outcomes: batch.rows.map((r) => ({ ref: r.ref, ok: false, message, excerpt: { sent, runTotals: batch.totals } })), summary };
+    }
     if (ctx.connection.sandbox) {
-      const outcomes = sandboxOutcomes(batch.rows, (r) => (r.net < 0 ? 'Net pay below zero cannot be imported' : null));
-      if (!reconciled) outcomes.push({ ref: `run:${batch.runId}`, ok: false, message: 'Export totals do not match the run', excerpt: { sent, runTotals: batch.totals } });
-      return { outcomes, summary };
+      return { outcomes: sandboxOutcomes(batch.rows, (r) => (r.net < 0 ? 'Net pay below zero cannot be imported' : null)), summary };
     }
     const base = requireCredential(ctx, 'baseUrl').replace(/\/$/, '');
     const token = await bearer(ctx);

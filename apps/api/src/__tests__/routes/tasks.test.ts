@@ -100,7 +100,8 @@ describe('tasks and the assignment engine', () => {
     expect(policy.status).toBe(200);
     expect(policy.body.handoffSeconds).toBe(5);
 
-    const created = await api.post('/api/tasks').send({ type: 'Run plates to table 12', locationId: s.site.id, windowStart: s.windowStart.toISOString(), windowEnd: s.windowEnd.toISOString(), capability: 'food-service', risk: 'LOW', estimatedMinutes: 15 });
+    // Half an hour: the robot's flat $4.00 beats a person's $7.50 (a ten-minute task is cheaper by hand).
+    const created = await api.post('/api/tasks').send({ type: 'Run plates to table 12', locationId: s.site.id, windowStart: s.windowStart.toISOString(), windowEnd: s.windowEnd.toISOString(), capability: 'food-service', risk: 'LOW', estimatedMinutes: 30 });
     expect(created.body.assignment.workerType).toBe('ROBOT');
     const robotName = created.body.assignment.workerName;
 
@@ -136,7 +137,7 @@ describe('tasks and the assignment engine', () => {
   it('a person may hand a machine’s task over at once, and pick the holder by hand with the reasons kept', async () => {
     const s = await banquet();
     const api = await loginAs(agent(), s.admin.email);
-    const created = await api.post('/api/tasks').send({ type: 'Deliver towels to 410', locationId: s.site.id, windowStart: s.windowStart.toISOString(), windowEnd: s.windowEnd.toISOString(), capability: 'food-service', risk: 'LOW', estimatedMinutes: 10 });
+    const created = await api.post('/api/tasks').send({ type: 'Deliver towels to 410', locationId: s.site.id, windowStart: s.windowStart.toISOString(), windowEnd: s.windowEnd.toISOString(), capability: 'food-service', risk: 'LOW', estimatedMinutes: 30 });
     expect(created.body.assignment.workerType).toBe('ROBOT');
     const handed = await api.post(`/api/tasks/${created.body.id}/handoff`);
     expect(handed.status).toBe(200);

@@ -731,7 +731,7 @@ export const MODULES: ModuleNav[] = [
     path: '/control-room',
     label: 'Control room',
     description: 'One live screen per site: every person, agent and robot on shift, the exceptions, what waits for a person, the safety zones and the span of control.',
-    requires: 'view:scheduling',
+    requires: 'view:time-live',
     group: 'operations',
   },
   {
@@ -739,7 +739,7 @@ export const MODULES: ModuleNav[] = [
     path: '/tasks',
     label: 'Tasks',
     description: 'Every unit of work at a site in a time window, who holds it (a person, an agent or a robot) and why; a machine that stalls hands its task to a person.',
-    requires: 'view:scheduling',
+    requires: 'view:time-live',
     group: 'operations',
   },
   {

@@ -11198,6 +11198,8 @@ model StatusIncident {
 
 model StatusIncidentUpdate {
   id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId   String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   incidentId String              @db.Uuid
   state      StatusIncidentState
   note       String              @db.VarChar(2000)

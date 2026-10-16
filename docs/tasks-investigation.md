@@ -30,7 +30,7 @@ Work is modelled as tasks. A task is one unit of work at one site, in a time win
 5. **The handoff.** A machine's task that stalled or failed waits the policy's seconds, then the sweep (every 15 s per tenant) hands it to the best PERSON on shift — never another machine — records the handoff as the first reason, releases the machine's assignment into the history, and tells the crew leads: supervisors placed at the site, else the tenant's workforce and operations managers. The "Hand to a person" action does the same at once. With 30 seconds and a 15-second sweep the task is in a person's hands within 45 seconds; the acceptance test proves the decision and the timing bound.
 6. **Robot seam.** `robotAvailability(db, workerId)` answers availability, a note and battery from the Worker row (ACTIVE = running, battery unknown). Brief 3-1 replaces its body with the fleet connector's latest reading and keeps the signature; the ranker already weighs battery.
 7. **Names.** `TaskStatus` and `Task` already belong to the onboarding checklist, so the models and shared types are `WorkTask*`; the product says "task".
-8. **Access.** Reads need `view:scheduling`, writes `manage:scheduling`, the policy `manage:org`. Everything is the caller's tenant; a second tenant's admin gets 404 on a task and an empty board.
+8. **Access.** Reads need `view:time-live` (the floor's live view; associates, drivers and the client portal lack it), writes `manage:scheduling`, the policy `manage:org`. Everything is the caller's tenant; a second tenant's admin gets 404 on a task and an empty board.
 
 ## Open questions for the owner
 

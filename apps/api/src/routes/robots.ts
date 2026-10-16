@@ -99,7 +99,7 @@ robotsRouter.put('/checklists/templates/:id', MANAGE, wrap(async (req, res) => {
 /* ---- safety zones per site ---- */
 
 robotsRouter.get('/sites/:locationId/zones', VIEW, wrap(async (req, res) => {
-  res.json({ zones: await listZones(prisma, idParam(req, 'locationId')) });
+  res.json({ zones: await listZones(prisma, idParam(req, 'locationId'), tenantIdForWrite()) });
 }));
 
 robotsRouter.post('/sites/:locationId/zones', MANAGE, wrap(async (req, res) => {

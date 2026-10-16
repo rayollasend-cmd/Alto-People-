@@ -214,7 +214,9 @@ function zoneSummary(z: { id: string; locationId: string; name: string; shape: u
   return { id: z.id, locationId: z.locationId, name: z.name, shape: z.shape as unknown as ZoneShape, guestOccupied: z.guestOccupied, robotsAllowedWhenOccupied: z.robotsAllowedWhenOccupied, occupiedSince: z.occupiedSince?.toISOString() ?? null };
 }
 
-export async function listZones(db: Db, locationId: string): Promise<SiteSafetyZoneSummary[]> {
+export async function listZones(db: Db, locationId: string, tenantId: string | null): Promise<SiteSafetyZoneSummary[]> {
+  const site = await db.site.findFirst({ where: { id: locationId, ...(tenantId ? { tenantId } : {}) }, select: { id: true } });
+  if (!site) throw new HttpError(404, 'site_not_found', 'No such site.');
   const rows = await db.siteSafetyZone.findMany({ where: { locationId }, orderBy: { name: 'asc' } });
   return rows.map(zoneSummary);
 }

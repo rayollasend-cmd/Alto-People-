@@ -24,12 +24,13 @@ import { spanWarningsFor } from '../lib/tasks/spanWarnings.js';
  *   POST   /tasks/:id/handoff          hand a machine's task to a person now
  *   POST   /tasks/:id/events           started / stalled / failed / done / cancelled
  *
- * Reads need view:scheduling; writes need manage:scheduling. The policy
+ * Reads need view:time-live (the floor's live view: supervisors and up, never an
+ * associate, a driver or the client portal); writes need manage:scheduling. The policy
  * needs manage:org. Everything is the caller's tenant only.
  */
 export const tasksRouter = Router();
 
-const read = requireCapability('view:scheduling');
+const read = requireCapability('view:time-live');
 const write = requireCapability('manage:scheduling');
 const admin = requireCapability('manage:org');
 

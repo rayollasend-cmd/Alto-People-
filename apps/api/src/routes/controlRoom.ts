@@ -13,12 +13,13 @@ import { tenantIdForWrite } from '../lib/tenant.js';
  *   GET /control-room?locationId=      one site, live: people, robots, agents,
  *                                      exceptions, what waits, zones, span
  *
- * Reads need view:scheduling. Every action the page offers goes through
+ * Reads need view:time-live (the floor's live view: supervisors and up, never an
+ * associate, a driver or the client portal). Every action the page offers goes through
  * the record's own route (/robots/:id/stop, /tasks/:id/handoff, /agents…).
  */
 export const controlRoomRouter = Router();
 
-const VIEW = requireCapability('view:scheduling');
+const VIEW = requireCapability('view:time-live');
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);

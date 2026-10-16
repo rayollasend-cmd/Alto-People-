@@ -466,8 +466,8 @@ const LAYOUT_ROUTES = [
   { path: 'recruiting', element: <RecruitingHome /> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   // Brief 3-2: tasks and their assignment.
-  { path: 'tasks', element: <RequireCapability cap="view:scheduling"><TasksBoard /></RequireCapability> },
-  { path: 'control-room', element: <RequireCapability cap="view:scheduling"><ControlRoomPage /></RequireCapability> },
+  { path: 'tasks', element: <RequireCapability cap="view:time-live"><TasksBoard /></RequireCapability> },
+  { path: 'control-room', element: <RequireCapability cap="view:time-live"><ControlRoomPage /></RequireCapability> },
   { path: 'support', element: <SupportPage /> },
   // UX upgrade step 3: Settings & Trust — one area (rail + eyebrow) around the pages
   // an organization configures and an auditor checks. Paths unchanged.

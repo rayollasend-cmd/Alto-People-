@@ -191,7 +191,7 @@ const SECRET_KEY = /(secret|token|password|key|credential|authorization|ssn|tin|
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 4) return '[…]';
   if (typeof value === 'string') {
-    return value.replace(EMAIL, (m) => `***@${m.split('@')[1]}`).replace(SSN, '***-**-****').replace(PHONE, '***-***-****').replace(LONG_DIGITS, '[id]').slice(0, 400);
+    return value.replace(EMAIL, (m) => `***@${m.split('@')[1]}`).replace(SSN, '***-**-****').replace(LONG_DIGITS, '[id]').replace(PHONE, '***-***-****').slice(0, 400);
   }
   if (Array.isArray(value)) return value.slice(0, 20).map((v) => redact(v, depth + 1));
   if (value && typeof value === 'object') {
