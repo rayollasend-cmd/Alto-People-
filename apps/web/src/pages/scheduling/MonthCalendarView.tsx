@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
 import { addDays, paidShiftMinutes, sameDay, startOfDay, ymd } from './calendarDates';
 import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
@@ -33,6 +34,44 @@ function initialsOf(name: string | null): string {
   if (!name) return '·';
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase();
+}
+
+/**
+ * The assignee's face on a month chip: a 16px photo, which fits the chip's
+ * line without growing it. With no photo on file (the route 404s) or nobody
+ * assigned, the chip keeps its initials as text — squeezed into a 16px
+ * circle, as the Avatar would draw them, they don't read.
+ */
+function ChipFace({
+  associateId,
+  initials,
+  className,
+}: {
+  associateId: string | null;
+  initials: string;
+  className?: string;
+}) {
+  const src = associatePhotoUrl(associateId);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (src && failedSrc !== src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onError={() => setFailedSrc(src)}
+        className="h-4 w-4 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span className={cn('text-2xs font-semibold tabular-nums shrink-0', className)}>
+      {initials}
+    </span>
+  );
 }
 
 // Human-readable labels — raw enum values never reach the user's eyes.
@@ -446,9 +485,11 @@ function MonthShiftChip({
           >
             {shift.position}
           </span>
-          <span className={cn('text-2xs font-semibold tabular-nums shrink-0', tone.initials)}>
-            {initials}
-          </span>
+          <ChipFace
+            associateId={shift.assignedAssociateId}
+            initials={initials}
+            className={tone.initials}
+          />
           <StatusMark status={shift.status} />
         </button>
       </TooltipTrigger>
