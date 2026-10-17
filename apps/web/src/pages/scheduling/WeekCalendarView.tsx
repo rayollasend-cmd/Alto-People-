@@ -41,6 +41,8 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   GRIP_HIT,
   GRIP_ICON,
@@ -917,7 +919,6 @@ const Row = memo(function Row({
    *  week. Undefined = name cell stays a plain label. */
   onSelectRow?: () => void;
 }) {
-  const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   // Row-reorder drag: the grip is the draggable, the name cell the drop
   // target. The droppable stays DISABLED unless a row drag is in flight so
   // shift-chip drags can never resolve onto a row target by accident.
@@ -971,9 +972,11 @@ const Row = memo(function Row({
             <GripVertical className={GRIP_ICON} />
           </div>
         )}
-        <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
-          {initials || '?'}
-        </div>
+        <Avatar
+          src={associatePhotoUrl(associate.id)}
+          name={`${associate.firstName} ${associate.lastName}`}
+          className="h-7 w-7 bg-gold/15 text-gold text-xs font-semibold"
+        />
         <div className="min-w-0 flex-1">
           {/* Two lines + full-name tooltip: "Adolfo Fernando Reinoso
               Hernadez" must be identifiable, not a 6-character sliver.

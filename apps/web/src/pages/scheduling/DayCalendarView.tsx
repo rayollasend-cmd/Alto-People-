@@ -16,6 +16,8 @@ import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
 import { shiftMinutes, ymd } from './calendarDates';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -346,10 +348,11 @@ const DayColumn = memo(function DayColumn({
     <div className="flex-1 min-w-[160px] border-r border-navy-secondary">
       {associate ? (
         <div className="px-2 py-2 border-b border-navy-secondary h-12 flex items-center gap-2 bg-navy/95">
-          <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
-            {associate.firstName[0]}
-            {associate.lastName[0]}
-          </div>
+          <Avatar
+            src={associatePhotoUrl(associate.id)}
+            name={`${associate.firstName} ${associate.lastName}`}
+            className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
+          />
           <div className="text-xs text-white truncate">
             {associate.firstName} {associate.lastName}
           </div>

@@ -7,6 +7,8 @@ import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   Button,
   Card,
@@ -264,9 +266,11 @@ function TreeNode({
           className="flex items-center gap-2 flex-1 min-w-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           title={`Open ${node.firstName} ${node.lastName} in the directory`}
         >
-          <div className="h-7 w-7 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-xs text-gold shrink-0">
-            {`${node.firstName.charAt(0)}${node.lastName.charAt(0)}`.toUpperCase()}
-          </div>
+          <Avatar
+            src={associatePhotoUrl(node.id)}
+            name={`${node.firstName} ${node.lastName}`}
+            className="h-7 w-7 bg-gold/15 border border-gold/40 text-xs text-gold font-normal"
+          />
           <div className="flex-1 min-w-0">
             <div className="text-sm text-white truncate group-hover:underline decoration-silver/40 underline-offset-2">
               {node.firstName} {node.lastName}

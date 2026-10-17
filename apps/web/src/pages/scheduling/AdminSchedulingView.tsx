@@ -159,6 +159,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useClientBounded } from '@/lib/useClientBounded';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 
 // Stable empties so derived lists keep their identity across renders
 // (they sit in memo/callback/effect deps throughout this file).
@@ -3670,9 +3671,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     onClick={() => addToCrew(a)}
                     className="flex items-center gap-2.5 rounded px-2 py-2 text-left hover:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   >
-                    <span className="h-7 w-7 shrink-0 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center">
-                      {`${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase() || '?'}
-                    </span>
+                    <Avatar
+                      src={associatePhotoUrl(a.id)}
+                      name={`${a.firstName} ${a.lastName}`}
+                      className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
+                    />
                     <span className="min-w-0 flex-1 truncate text-sm text-white">
                       {a.firstName} {a.lastName}
                     </span>
@@ -4202,10 +4205,11 @@ function AssignDialog({
             {picked ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
-                    {picked.firstName[0]}
-                    {picked.lastName[0]}
-                  </div>
+                  <Avatar
+                    src={associatePhotoUrl(picked.id)}
+                    name={`${picked.firstName} ${picked.lastName}`}
+                    className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
+                  />
                   <div className="min-w-0">
                     <div className="text-sm text-white truncate">
                       {picked.firstName} {picked.lastName}
@@ -4266,10 +4270,11 @@ function AssignDialog({
                             : 'text-silver hover:bg-navy-secondary/40',
                         )}
                       >
-                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-3xs font-semibold flex items-center justify-center shrink-0">
-                          {a.firstName[0]}
-                          {a.lastName[0]}
-                        </div>
+                        <Avatar
+                          src={associatePhotoUrl(a.id)}
+                          name={`${a.firstName} ${a.lastName}`}
+                          className="h-6 w-6 bg-gold/10 text-gold text-3xs font-semibold"
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="truncate">
                             {a.firstName} {a.lastName}

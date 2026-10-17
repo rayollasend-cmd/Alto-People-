@@ -34,6 +34,8 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   GRIP_HIT,
   GRIP_ICON,
@@ -432,13 +434,12 @@ export function TimeGridWeekView({
             estimateRowPx={TOTAL_HEIGHT + 2}
             renderRow={(index) => {
             const a = visibleAssociates[index];
-            const initials = `${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase();
             const fit = availabilityFit?.get(a.id);
             return (
               <Row
                 key={a.id}
                 colStyle={colStyle}
-                initials={initials}
+                associateId={a.id}
                 firstName={a.firstName}
                 lastName={a.lastName}
                 scheduledMinutes={minutesByAssociate.get(a.id) ?? 0}
@@ -574,14 +575,14 @@ export function TimeGridWeekView({
 /* ===== Subcomponents ====================================================== */
 
 const Row = memo(function Row({
-  initials,
+  associateId,
   firstName,
   lastName,
   scheduledMinutes,
   colStyle,
   children,
 }: {
-  initials: string;
+  associateId: string;
   firstName: string;
   lastName: string;
   /** Scheduled (non-CANCELLED) minutes within the visible range. */
@@ -599,9 +600,11 @@ const Row = memo(function Row({
   return (
     <div className="grid" style={colStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 flex items-center gap-2.5">
-        <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
-          {initials || '?'}
-        </div>
+        <Avatar
+          src={associatePhotoUrl(associateId)}
+          name={`${firstName} ${lastName}`}
+          className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
+        />
         <div className="min-w-0 flex-1">
           <div className="text-xs text-white truncate">
             {firstName} {lastName}
