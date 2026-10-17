@@ -87,6 +87,7 @@ import { MobileNav } from '@/components/MobileNav';
 import { CommandPalette } from '@/components/ui/CommandPalette';
 import { AdminDashboard } from '@/pages/AdminDashboard';
 import { PeopleDirectory } from '@/pages/people/PeopleDirectory';
+import { OrgChart } from '@/pages/org/OrgChart';
 import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
 import { TimeHome } from '@/pages/time/TimeHome';
 import { HrCasesHome } from '@/pages/hrCases/HrCasesHome';
@@ -150,7 +151,27 @@ const HOTEL_APPLICATION = {
   lastActivityAt: '2026-10-12T14:00:00.000Z',
 };
 
+// The org chart's field tree, as a hotel group's would read.
+const ORG_NODE = { subtitle: null, role: null, shiftLabels: null, photoUrl: null, associateId: null, userId: null, departmentId: null, departmentName: null, clientId: null, clientName: null, siteName: null, reports: 0, shiftsToday: null, filledToday: null, positionStatus: null, former: false };
+const ORG_CHART = {
+  view: 'field',
+  fieldOnly: 3,
+  unplaced: 1,
+  truncated: false,
+  limit: 5000,
+  nodes: [
+    { ...ORG_NODE, id: 'r:1', parentId: null, kind: 'region', name: 'Gulf Coast' },
+    { ...ORG_NODE, id: 'c:1', parentId: 'r:1', kind: 'client', name: 'Grand Hospitality', clientId: 'c1', clientName: 'Grand Hospitality' },
+    { ...ORG_NODE, id: 's:1', parentId: 'c:1', kind: 'store', name: 'The Grand Hotel', clientId: 'c1', shiftsToday: 2, filledToday: 1, reports: 1 },
+    { ...ORG_NODE, id: 'l:1', parentId: 's:1', kind: 'lead', name: 'Lena Lead', role: 'SHIFT_SUPERVISOR', shiftLabels: null, userId: 'u1' },
+    { ...ORG_NODE, id: 'a:1@1', parentId: 's:1', kind: 'person', name: 'Rio Room', associateId: 'a1' },
+    { ...ORG_NODE, id: 'p:1', parentId: 'c:1', kind: 'vacancy', name: 'Night auditor', subtitle: 'NA-1', positionStatus: 'OPEN' },
+    { ...ORG_NODE, id: 'group:unplaced', parentId: null, kind: 'group', name: 'Not yet placed', subtitle: 'No open assignment anywhere', reports: 1 },
+  ],
+};
+
 const DASHBOARD_FIXTURES: Record<string, unknown> = {
+  '/org/chart': ORG_CHART,
   '/onboarding/applications': { applications: [HOTEL_APPLICATION], total: 1, page: 1, pageSize: 50 },
   '/onboarding/applications/stats': {
     total: 1,
@@ -309,6 +330,9 @@ const SURFACES: Surface[] = [
   { name: 'CommandPalette', ui: () => <CommandPalette open onOpenChange={() => undefined} onShowKeyboardShortcuts={() => undefined} /> },
   { name: 'Dashboard home', ui: () => <AdminDashboard /> },
   { name: 'People directory', ui: () => <PeopleDirectory />, route: '/people' },
+  { name: 'Org chart — field list', ui: () => <OrgChart />, route: '/org/chart?view=field&layout=list' },
+  { name: 'Org chart — field chart', ui: () => <OrgChart />, route: '/org/chart?view=field' },
+  { name: 'Org chart — company', ui: () => <OrgChart />, route: '/org/chart' },
   { name: 'Scheduling home', ui: () => <SchedulingHome />, route: '/scheduling' },
   { name: 'Time home', ui: () => <TimeHome />, route: '/time' },
   { name: 'HR cases home', ui: () => <HrCasesHome />, route: '/hr-cases' },

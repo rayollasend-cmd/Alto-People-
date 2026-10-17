@@ -849,9 +849,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'org-chart',
     path: '/org/chart',
-    label: 'Reporting chart',
+    label: 'Org chart',
     description:
-      'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
+      'Who runs the company and who reports to whom, and every place and crew with who leads them.',
     requires: 'view:org',
     group: 'workforce-management',
   },

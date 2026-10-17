@@ -505,6 +505,10 @@ model User {
   /// A binding carries a named approver, like a region binding does.
   scopeSiteIds           String[]         @default([])
   scopeRegionIds         String[]         @default([])
+  /// Org chart: who this staff account reports to (an associate's manager is Associate.managerId).
+  reportsToUserId        String?          @db.Uuid
+  reportsTo              User?            @relation("UserReportsTo", fields: [reportsToUserId], references: [id], onDelete: SetNull)
+  directReportUsers      User[]           @relation("UserReportsTo")
   scopeApprovedById      String?          @db.Uuid
   scopeApprovedAt        DateTime?        @db.Timestamptz(6)
   /// Access pack: a break-glass owner may sign in with password + two-step
@@ -759,6 +763,7 @@ model User {
   @@index([leadUserId])
   @@index([deletedAt])
   @@index([tenantId])
+  @@index([reportsToUserId])
 }
 
 model Client {

@@ -30,7 +30,7 @@ import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { atClient, effectiveClientIdFilter } from '../lib/scope.js';
+import { atClient, effectiveClientIdFilter, scopeAssociates } from '../lib/scope.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
@@ -45,6 +45,7 @@ import {
 import { notifyFinanceOfTransfer } from '../lib/fieldglassNotify.js';
 import { notifyAssociate, notifyManager, notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { buildOrgChart } from '../lib/orgChart.js';
 import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
@@ -620,17 +621,90 @@ orgRouter.delete(
 
 // ----- Associate-side org assignment + listing -----------------------------
 
+/**
+ * GET /org/chart?view=company|field&clientId=&former=1 — the org chart as
+ * one flat list of nodes with parents (lib/orgChart). Company: the staff
+ * and everyone in a reporting line, with open seats. Field: region →
+ * client → store → leads → crew, with today's coverage. Both clamp to the
+ * caller's reach.
+ */
+orgRouter.get('/chart', VIEW, async (req: Request, res: Response) => {
+  const q = z
+    .object({
+      view: z.enum(['company', 'field']).default('company'),
+      clientId: z.string().uuid().optional(),
+      former: z.enum(['0', '1']).optional(),
+    })
+    .parse(req.query);
+  // Every query below is clamped to the caller's tenant: another tenant's client reads as empty.
+  res.json(await buildOrgChart(req.user!, { view: q.view, clientId: q.clientId ?? null, includeFormer: q.former === '1' }));
+});
+
+/**
+ * PUT /org/staff/:userId/reports-to — { managerUserId | null }: who an
+ * office account reports to, for the company chart. An associate's
+ * manager stays on the person record (PUT /associates/:id/org); this is
+ * for the accounts with no person record, or a manager who has none.
+ * Refuses a cycle, walking both kinds of link.
+ */
+orgRouter.put('/staff/:userId/reports-to', MANAGE, async (req: Request, res: Response) => {
+  const userId = z.string().uuid().parse(req.params.userId);
+  const { managerUserId } = z.object({ managerUserId: z.string().uuid().nullable() }).parse(req.body ?? {});
+  const tenantId = tenantIdForWrite();
+  const subject = await prisma.user.findFirst({
+    where: { id: userId, tenantId, deletedAt: null },
+    select: { id: true, associateId: true, reportsToUserId: true },
+  });
+  if (!subject) throw new HttpError(404, 'user_not_found', 'No such account.');
+  if (managerUserId === userId) throw new HttpError(400, 'self_manager', 'Someone can’t report to themselves.');
+  if (managerUserId) {
+    const manager = await prisma.user.findFirst({ where: { id: managerUserId, tenantId, deletedAt: null }, select: { id: true } });
+    if (!manager) throw new HttpError(404, 'manager_not_found', 'No such manager.');
+    // Walk up from the manager through person-record managers and account
+    // "reports to" links; meeting the subject means a loop.
+    let cursor: { userId: string | null; associateId: string | null } | null = { userId: managerUserId, associateId: null };
+    for (let i = 0; i < 100 && cursor; i++) {
+      const u: { id: string; associateId: string | null; reportsToUserId: string | null } | null = cursor.userId
+        ? await prisma.user.findUnique({ where: { id: cursor.userId }, select: { id: true, associateId: true, reportsToUserId: true } })
+        : cursor.associateId
+          ? await prisma.user.findFirst({ where: { associateId: cursor.associateId, deletedAt: null }, select: { id: true, associateId: true, reportsToUserId: true } })
+          : null;
+      const associateId: string | null = cursor.associateId ?? u?.associateId ?? null;
+      if (u?.id === userId || (associateId && associateId === subject.associateId)) {
+        throw new HttpError(409, 'manager_cycle', 'That would make a loop in the reporting line.');
+      }
+      const a: { managerId: string | null } | null = associateId ? await prisma.associate.findUnique({ where: { id: associateId }, select: { managerId: true } }) : null;
+      cursor = a?.managerId ? { userId: null, associateId: a.managerId } : u?.reportsToUserId ? { userId: u.reportsToUserId, associateId: null } : null;
+    }
+  }
+  await prisma.user.update({ where: { id: userId }, data: { reportsToUserId: managerUserId } });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'user.reports_to_changed',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { from: subject.reportsToUserId, to: managerUserId },
+    },
+    'org.reportsTo',
+  );
+  res.json({ ok: true, reportsToUserId: managerUserId });
+});
+
 orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
   const clientId =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
   const rows = await prisma.associate.findMany({
     take: 1000,
     where: {
-      deletedAt: null,
-      tenantId: tenantIdForWrite(),
-      // Where they work now (a transfer moves them), else the client
-      // they applied to — lib/scope.atClient.
-      ...(clientId ? atClient(clientId) : {}),
+      AND: [
+        { deletedAt: null, tenantId: tenantIdForWrite() },
+        // The caller's reach: a site/region-bound lead sees only their people.
+        scopeAssociates(req.user!),
+        // Where they work now (a transfer moves them), else the client
+        // they applied to — lib/scope.atClient.
+        clientId ? atClient(clientId) : {},
+      ],
     },
     select: {
       id: true,

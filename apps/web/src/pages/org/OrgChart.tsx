@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Download, Network, Users } from 'lucide-react';
-import type { AssociateOrgSummary } from '@alto-people/shared';
-import { listOrgAssociates } from '@/lib/orgApi';
-import { ApiError } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { ChevronDown, ChevronUp, Download, Network, Printer } from 'lucide-react';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { getOrgChart, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
+import { useClients } from '@/lib/useClients';
+import { useMediaQuery } from '@/lib/useViewport';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
-import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   Button,
   Card,
@@ -16,297 +16,369 @@ import {
   EmptyState,
   ErrorBanner,
   SearchInput,
+  Select,
+  SegmentedControl,
   SkeletonRows,
 } from '@/components/ui';
+import { QueryError } from '@/components/ui/QueryError';
+import { ChartCanvas, ReportsToDialog, TreeList, type Painter } from './OrgChartParts';
+import {
+  PALETTE,
+  ancestorsOf,
+  chartCsv,
+  colourKeys,
+  departmentsOf,
+  filterByDepartment,
+  indexNodes,
+  roleLabelFor,
+  searchNodes,
+  type ColourBy,
+} from './orgChartModel';
 
 /**
- * Phase 106 — Visual org chart.
+ * The org chart, two ways.
  *
- * Renders the Associate hierarchy via managerId. Pure frontend: the
- * /org/associates endpoint already returns the data we need; we shape
- * it into a tree client-side. Roots are anyone whose managerId is
- * null (CEOs, contractors, anyone not yet assigned). A search box
- * filters to a single chain (matching nodes + their full path to root).
+ *   Company — the people who run the company: every office account (with
+ *   or without a person record) and every reporting line, with open seats
+ *   as dotted cards under the manager hiring for them.
+ *
+ *   Field — the tree a staffing company runs on: region → client → store
+ *   → the leads placed there → the crew, with today's coverage on each
+ *   store, and everyone not yet placed in one labelled group.
+ *
+ * Desktop draws a chart you can move around in (a focused node, its team,
+ * and each member's own team beneath); the phone — and anyone who prefers
+ * it — gets the same tree as an accessible list. Search jumps to each
+ * match and opens the path to it. Everything is inside the caller's reach.
  */
-type Node = AssociateOrgSummary & { children: Node[] };
-
-function buildTree(rows: AssociateOrgSummary[]): Node[] {
-  const byId = new Map<string, Node>();
-  for (const r of rows) byId.set(r.id, { ...r, children: [] });
-  const roots: Node[] = [];
-  for (const r of rows) {
-    const node = byId.get(r.id)!;
-    if (r.managerId && byId.has(r.managerId)) {
-      byId.get(r.managerId)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-  // Stable alpha order at every level.
-  const sortRec = (nodes: Node[]) => {
-    nodes.sort((a, b) => {
-      const al = `${a.lastName} ${a.firstName}`.toLowerCase();
-      const bl = `${b.lastName} ${b.firstName}`.toLowerCase();
-      return al.localeCompare(bl);
-    });
-    nodes.forEach((n) => sortRec(n.children));
-  };
-  sortRec(roots);
-  return roots;
-}
-
-function filterTree(nodes: Node[], query: string): Node[] {
-  if (!query) return nodes;
-  const q = query.toLowerCase();
-  const matches = (n: Node): Node | null => {
-    const childMatches = n.children
-      .map(matches)
-      .filter((c): c is Node => c !== null);
-    const selfMatch =
-      `${n.firstName} ${n.lastName}`.toLowerCase().includes(q) ||
-      n.email.toLowerCase().includes(q) ||
-      (n.jobProfileTitle ?? '').toLowerCase().includes(q) ||
-      (n.departmentName ?? '').toLowerCase().includes(q);
-    if (selfMatch || childMatches.length > 0) {
-      return { ...n, children: childMatches };
-    }
-    return null;
-  };
-  return nodes.map(matches).filter((c): c is Node => c !== null);
-}
 
 export function OrgChart() {
-  const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { can } = useAuth();
+  const term = useTerm();
+  // A direct employer (a hotel) has no clients: the field tree is place → crew.
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const [params, setParams] = useSearchParams();
+  const view: OrgChartView = params.get('view') === 'field' ? 'field' : 'company';
+  const isPhone = useMediaQuery('(max-width: 767px)');
+  const layout: 'chart' | 'list' = isPhone ? 'list' : params.get('layout') === 'list' ? 'list' : 'chart';
+  const focusId = params.get('focus');
+  const clientId = view === 'field' ? params.get('client') : null;
+  const [former, setFormer] = useState(false);
   const [query, setQuery] = useState('');
-  // Bumping seq re-applies the open/closed signal to every node even if
-  // the previous click was the same action.
-  const [expandSignal, setExpandSignal] = useState<{
-    open: boolean;
-    seq: number;
-  } | null>(null);
+  const [hit, setHit] = useState(0);
+  const [departmentId, setDepartmentId] = useState('');
+  const [colourBy, setColourBy] = useState<ColourBy>('none');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<OrgNode | null>(null);
+  const canEdit = can('manage:org') && view === 'company';
 
-  const load = () => {
-    setRows(null);
-    setError(null);
-    listOrgAssociates()
-      .then((r) => setRows(r.associates))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : 'Could not load the org chart.',
-        ),
-      );
+  /** Change one or more URL params in a single update (two in a row would drop the first). */
+  const setParam = (key: string | Record<string, string | null>, value?: string | null) => {
+    const changes = typeof key === 'string' ? { [key]: value ?? null } : key;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(changes)) {
+          if (v === null) next.delete(k);
+          else next.set(k, v);
+        }
+        return next;
+      },
+      { replace: true },
+    );
   };
-  useEffect(load, []);
 
-  const tree = useMemo(
-    () => (rows ? filterTree(buildTree(rows), query.trim()) : []),
-    [rows, query],
-  );
+  const chart = useQuery({
+    queryKey: ['org', 'chart', view, clientId ?? '', former],
+    queryFn: () => getOrgChart({ view, clientId, former }),
+  });
+  const { clients } = useClients({ enabled: view === 'field' && hasClients });
 
-  // People whose manager exists but isn't in the fetched set — their
-  // subtree silently detaches to the root level, which reads as "no
-  // manager" unless we call it out.
-  const outOfViewManagerCount = useMemo(() => {
-    if (!rows) return 0;
-    const ids = new Set(rows.map((r) => r.id));
-    return rows.filter((r) => r.managerId && !ids.has(r.managerId)).length;
-  }, [rows]);
+  const roleLabel = useMemo(() => roleLabelFor(term), [term]);
+  const nodes = useMemo(() => filterByDepartment(chart.data?.nodes ?? [], view === 'company' ? departmentId || null : null), [chart.data, departmentId, view]);
+  const index = useMemo(() => indexNodes(nodes), [nodes]);
+  const departments = useMemo(() => departmentsOf(chart.data?.nodes ?? []), [chart.data]);
+  const colour = useMemo(() => colourKeys(nodes, colourBy), [nodes, colourBy]);
+  const painter: Painter = useMemo(() => {
+    const slot = new Map(colour.legend.map((l) => [l.key, l.slot]));
+    return {
+      roleLabel,
+      term,
+      slotOf: (n) => {
+        if (colourBy === 'none') return null;
+        const k = colour.keyOf(n);
+        return k ? (slot.get(k) ?? null) : null;
+      },
+    };
+  }, [colour, colourBy, roleLabel, term]);
 
-  const exportCsv = () => {
-    if (!rows || rows.length === 0) return;
-    downloadCsv(`org-chart-${ymdLocal()}.csv`, [
-      ['Name', 'Title', 'Manager', 'Department'],
-      ...rows.map((r) => [
-        `${r.firstName} ${r.lastName}`,
-        r.jobProfileTitle ?? '',
-        r.managerName ?? '',
-        r.departmentName ?? '',
-      ]),
-    ]);
-  };
+  // The first two levels start open in the list; a new view starts fresh.
+  useEffect(() => {
+    const open = new Set<string>();
+    for (const n of index.children.get(null) ?? []) {
+      open.add(n.id);
+      for (const c of index.children.get(n.id) ?? []) if (view === 'field') open.add(c.id);
+    }
+    setExpanded(open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart.data, view]);
+
+  // Search: every match in reading order; the current one opens its path
+  // (list) or brings its team into view (chart).
+  const matches = useMemo(() => searchNodes(index, query, roleLabel), [index, query, roleLabel]);
+  const current = matches.length ? matches[Math.min(hit, matches.length - 1)]! : null;
+  useEffect(() => setHit(0), [query]);
+  useEffect(() => {
+    if (!current) return;
+    const path = ancestorsOf(index, current.id);
+    if (layout === 'list') {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const a of path) next.add(a.id);
+        return next;
+      });
+    } else {
+      setParam('focus', current.parentId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, layout]);
+
+  const step = (d: 1 | -1) => matches.length && setHit((h) => (h + d + matches.length) % matches.length);
+  const topLabel = view === 'company' ? 'The company' : 'Every region';
+  const stats = useMemo(() => {
+    const people = nodes.filter((n) => n.kind === 'person' || n.kind === 'staff' || n.kind === 'lead').length;
+    const seats = nodes.filter((n) => n.kind === 'vacancy').length;
+    const stores = nodes.filter((n) => n.kind === 'store').length;
+    return { people, seats, stores };
+  }, [nodes]);
+
+  const exportCsv = () => downloadCsv(`org-chart-${view}-${ymdLocal()}.csv`, chartCsv(index, roleLabel));
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
-        title="Org chart"
-        subtitle="Reporting hierarchy across the company. Search to focus on a person or team."
-        breadcrumbs={[{ label: 'Org' }, { label: 'Chart' }]}
-        secondaryActions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={exportCsv}
-            disabled={!rows || rows.length === 0}
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export CSV
+      title="Org chart"
+      subtitle={
+        view === 'company'
+          ? 'Who runs the company and who reports to whom — with the seats still to fill.'
+          : hasClients
+            ? `Every ${term('label.client').toLowerCase()}, ${term('label.store').toLowerCase()} and crew, with who leads them and today’s coverage.`
+            : `Every ${term('label.store').toLowerCase()} and its crew, with who leads them and today’s coverage.`
+      }
+      breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Org chart' }]}
+      secondaryActions={
+        <div className="flex items-center gap-2 print:hidden">
+          <Button variant="ghost" size="sm" className="hidden md:inline-flex" onClick={() => window.print()} disabled={!nodes.length}>
+            <Printer className="h-3.5 w-3.5" aria-hidden="true" />
+            Print or save as PDF
           </Button>
-        }
-    >
-      <div className="flex items-end gap-2 flex-wrap">
-        <div className="max-w-sm flex-1 min-w-[220px]">
-          <SearchInput
-            placeholder="Search by name, title, department…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search the org chart"
-          />
+          <Button variant="outline" size="sm" onClick={exportCsv} disabled={!nodes.length}>
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            CSV
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setExpandSignal((s) => ({ open: true, seq: (s?.seq ?? 0) + 1 }))}
-          disabled={!rows || rows.length === 0}
-        >
-          Expand all
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setExpandSignal((s) => ({ open: false, seq: (s?.seq ?? 0) + 1 }))}
-          disabled={!rows || rows.length === 0}
-        >
-          Collapse all
-        </Button>
-      </div>
-      {outOfViewManagerCount > 0 && (
-        <ErrorBanner severity="warning">
-          {outOfViewManagerCount}{' '}
-          {outOfViewManagerCount === 1 ? 'person has' : 'people have'} an
-          unassigned or out-of-view manager — they appear at the top level.
-        </ErrorBanner>
-      )}
-      {error && (
-        <ErrorBanner>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span>{error}</span>
-            <Button variant="outline" size="sm" onClick={load}>
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
-      )}
-      {!error && (
-      <Card>
-        <CardContent className="p-4">
-          {rows === null ? (
-            <SkeletonRows count={5} />
-          ) : tree.length === 0 ? (
-            <EmptyState
-              icon={Network}
-              title={query ? 'No matches' : 'No associates'}
-              description={
-                query
-                  ? 'Try a different search.'
-                  : 'Once associates are added, the reporting tree appears here.'
-              }
+      }
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3 print:hidden">
+          <SegmentedControl
+            ariaLabel="Which chart"
+            value={view}
+            onChange={(v) => {
+              const next = new URLSearchParams(params);
+              next.set('view', v);
+              next.delete('focus');
+              next.delete('client');
+              setParams(next, { replace: true });
+              setDepartmentId('');
+              setColourBy('none');
+            }}
+            options={[
+              { value: 'company', label: 'Company' },
+              { value: 'field', label: 'Field' },
+            ]}
+          />
+          {!isPhone && (
+            <SegmentedControl
+              className="ml-auto"
+              ariaLabel="How to show it"
+              value={layout}
+              onChange={(v) => setParam('layout', v === 'chart' ? null : v)}
+              options={[
+                { value: 'chart', label: 'Chart' },
+                { value: 'list', label: 'List' },
+              ]}
             />
-          ) : (
-            <div className="space-y-1">
-              {tree.map((root) => (
-                <TreeNode
-                  key={root.id}
-                  node={root}
-                  depth={0}
-                  expanded={query.length > 0}
-                  signal={expandSignal}
-                />
-              ))}
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2 print:hidden">
+          <div className="min-w-0 flex-1 basis-64 sm:max-w-sm">
+            <SearchInput
+              placeholder="Find a person, title or place"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  step(e.shiftKey ? -1 : 1);
+                }
+              }}
+              aria-label="Search the org chart"
+            />
+          </div>
+          {query.trim() && (
+            <div className="flex items-center gap-1 text-xs text-ink-muted" aria-live="polite">
+              <span className="tabular-nums">{matches.length ? `${Math.min(hit, matches.length - 1) + 1} of ${matches.length}` : 'No matches'}</span>
+              <Button size="icon-sm" variant="ghost" aria-label="Previous match" onClick={() => step(-1)} disabled={matches.length < 2}>
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
+              <Button size="icon-sm" variant="ghost" aria-label="Next match" onClick={() => step(1)} disabled={matches.length < 2}>
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
             </div>
           )}
-        </CardContent>
-      </Card>
-      )}
-    </ListTemplate>
-  );
-}
-
-function TreeNode({
-  node,
-  depth,
-  expanded: defaultExpanded,
-  signal,
-}: {
-  node: Node;
-  depth: number;
-  expanded: boolean;
-  signal: { open: boolean; seq: number } | null;
-}) {
-  const [open, setOpen] = useState(defaultExpanded || depth < 2);
-  const hasChildren = node.children.length > 0;
-
-  // Expand-all / collapse-all broadcast from the toolbar.
-  useEffect(() => {
-    if (signal) setOpen(signal.open);
-  }, [signal]);
-
-  return (
-    <div>
-      <div
-        className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-navy-secondary/40 transition group"
-        style={{ paddingLeft: 8 + depth * 20 }}
-      >
-        <button
-          onClick={() => hasChildren && setOpen((o) => !o)}
-          className={`w-5 h-5 grid place-items-center text-silver/70 ${
-            hasChildren ? 'hover:text-white cursor-pointer' : 'opacity-0 cursor-default'
-          }`}
-          aria-label={open ? 'Collapse' : 'Expand'}
-        >
-          {hasChildren && (open ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          ))}
-        </button>
-        <Link
-          to={`/people?associateId=${node.id}`}
-          className="flex items-center gap-2 flex-1 min-w-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-          title={`Open ${node.firstName} ${node.lastName} in the directory`}
-        >
-          <Avatar
-            src={associatePhotoUrl(node.id)}
-            name={`${node.firstName} ${node.lastName}`}
-            className="h-7 w-7 bg-gold/15 border border-gold/40 text-xs text-gold font-normal"
-          />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm text-white truncate group-hover:underline decoration-silver/40 underline-offset-2">
-              {node.firstName} {node.lastName}
+          {view === 'company' && departments.length > 0 && (
+            <>
+              <label htmlFor="org-dept" className="sr-only">
+                Department
+              </label>
+              <Select id="org-dept" size="sm" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+                <option value="">Every department</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
+          {view === 'field' && hasClients && clients.length > 1 && (
+            <>
+              <label htmlFor="org-client" className="sr-only">
+                {term('label.client')}
+              </label>
+              <Select id="org-client" size="sm" value={clientId ?? ''} onChange={(e) => setParam({ client: e.target.value || null, focus: null })}>
+                <option value="">Every {term('label.client').toLowerCase()}</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
+          <label htmlFor="org-colour" className="sr-only">
+            Colour by
+          </label>
+          <Select id="org-colour" size="sm" value={colourBy} onChange={(e) => setColourBy(e.target.value as ColourBy)}>
+            <option value="none">No colour</option>
+            <option value="department">Colour by department</option>
+            {view === 'field' && hasClients && <option value="client">Colour by {term('label.client').toLowerCase()}</option>}
+          </Select>
+          <label className="flex items-center gap-2 text-sm text-ink coarse:min-h-11">
+            <input type="checkbox" className="h-4 w-4 coarse:h-6 coarse:w-6" checked={former} onChange={(e) => setFormer(e.target.checked)} />
+            Include former
+          </label>
+          {layout === 'list' && nodes.length > 0 && (
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setExpanded(new Set(nodes.filter((n) => (index.children.get(n.id) ?? []).length).map((n) => n.id)))}>
+                Open all
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setExpanded(new Set())}>
+                Close all
+              </Button>
             </div>
-            <div className="text-xs text-silver truncate">
-              {node.jobProfileTitle ?? 'No title'}
-              {node.departmentName ? ` • ${node.departmentName}` : ''}
-            </div>
-          </div>
-        </Link>
-        {hasChildren && (
-          <div className="text-xs text-silver can-hover:opacity-60 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-            <Users className="h-3 w-3" />
-            {countTeam(node)}
-          </div>
+          )}
+        </div>
+
+        {colourBy !== 'none' && colour.legend.length > 0 && (
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted" aria-label="Colour key">
+            {colour.legend.map((l) => (
+              <li key={l.key} className="flex items-center gap-1.5">
+                <span className={`h-2.5 w-2.5 rounded-full ${PALETTE[l.slot]!.swatch}`} aria-hidden="true" />
+                {l.label}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {chart.data?.truncated && (
+          <ErrorBanner severity="warning">
+            Showing the first {chart.data.limit.toLocaleString()} people. {hasClients ? `Pick a ${term('label.client').toLowerCase()} or a department` : 'Pick a department'} to see the rest.
+          </ErrorBanner>
+        )}
+
+        {chart.isError ? (
+          <QueryError what="the org chart" query={chart} />
+        ) : chart.isLoading || !chart.data ? (
+          <Card>
+            <CardContent className="p-4">
+              <SkeletonRows count={6} />
+            </CardContent>
+          </Card>
+        ) : nodes.length === 0 ? (
+          <Card>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={Network}
+                title={departmentId ? 'Nobody in this department' : view === 'company' ? 'No one on the company chart yet' : `No ${term('label.stores').toLowerCase()} in reach`}
+                description={
+                  view === 'company'
+                    ? `Office accounts and anyone with a manager appear here. ${term('workers')} placed only at a ${term('label.store').toLowerCase()} are in the Field chart.`
+                    : `Once ${term('label.stores').toLowerCase()} have ${term('workers').toLowerCase()} placed, the field tree appears here.`
+                }
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <p className="text-xs text-ink-muted">
+              {stats.people.toLocaleString()} people
+              {view === 'field' && ` · ${stats.stores} ${stats.stores === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`}
+              {stats.seats > 0 && ` · ${stats.seats} open ${stats.seats === 1 ? 'seat' : 'seats'}`}
+              {view === 'company' && chart.data.fieldOnly > 0 && (
+                <>
+                  {' · '}
+                  <button type="button" className="text-accent hover:underline print:hidden" onClick={() => setParam('view', 'field')}>
+                    {chart.data.fieldOnly.toLocaleString()} more in the Field chart
+                  </button>
+                </>
+              )}
+            </p>
+            {canEdit && view === 'company' && !nodes.some((n) => n.parentId && (n.kind === 'person' || n.kind === 'staff')) && (
+              <ErrorBanner severity="info">
+                Nobody on this chart has a manager recorded yet. Use “Reports to” on a card (the person-and-gear button) to build the reporting lines.
+              </ErrorBanner>
+            )}
+            {layout === 'chart' ? (
+              <ChartCanvas
+                index={index}
+                focusId={focusId && index.byId.has(focusId) ? focusId : null}
+                setFocus={(id) => setParam('focus', id)}
+                highlightId={current?.id ?? null}
+                painter={painter}
+                topLabel={topLabel}
+                onEdit={canEdit ? setEditing : undefined}
+              />
+            ) : (
+              <Card>
+                <CardContent className="p-2 sm:p-3">
+                  <TreeList
+                    index={index}
+                    expanded={expanded}
+                    setExpanded={setExpanded}
+                    highlightId={current?.id ?? null}
+                    painter={painter}
+                    onEdit={canEdit ? setEditing : undefined}
+                    label={view === 'company' ? 'Company org chart' : 'Field org chart'}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </>
         )}
       </div>
-      {hasChildren && open && (
-        <div>
-          {node.children.map((c) => (
-            <TreeNode
-              key={c.id}
-              node={c}
-              depth={depth + 1}
-              expanded={defaultExpanded}
-              signal={signal}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+      <ReportsToDialog subject={editing} index={index} onClose={() => setEditing(null)} />
+    </ListTemplate>
   );
-}
-
-function countTeam(node: Node): number {
-  let n = node.children.length;
-  for (const c of node.children) n += countTeam(c);
-  return n;
 }
