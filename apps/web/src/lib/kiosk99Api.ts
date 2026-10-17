@@ -224,6 +224,46 @@ export const getAssociateKioskPin = async (
   return r.pins[0] ?? null;
 };
 
+export interface KioskPinCandidate {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+/** Why the person a deep link names can or can't get a number here. */
+export type KioskPinFocusReason =
+  | 'eligible'
+  | 'onboarding'
+  | 'elsewhere'
+  | 'not_approved'
+  | 'separated'
+  | 'deactivated';
+
+export interface KioskPinCandidates {
+  /** Employed and placed at the client — a number can be issued. */
+  eligible: Array<KioskPinCandidate & { currentLocationId: string | null }>;
+  /** An application here still in flight — shown, but not issuable yet. */
+  onboarding: Array<KioskPinCandidate & { applicationId: string; applicationStatus: string }>;
+  focus: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    reason: KioskPinFocusReason;
+    applicationId: string | null;
+    placedClientId: string | null;
+    placedClientName: string | null;
+  } | null;
+}
+
+/** Who can be issued a number at a client (placed there, whether or not
+ *  they've worked yet), plus who's still onboarding. With associateId, also
+ *  why that one person is or isn't eligible. */
+export const listKioskPinCandidates = (clientId: string, associateId?: string) =>
+  apiFetch<KioskPinCandidates>(
+    `/kiosk-pins/candidates?clientId=${clientId}${associateId ? `&associateId=${associateId}` : ''}`,
+  );
+
 export interface KioskPinHealth {
   total: number;
   healthy: number;

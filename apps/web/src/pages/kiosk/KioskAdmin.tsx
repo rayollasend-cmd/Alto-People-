@@ -1,5 +1,5 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
@@ -30,6 +30,7 @@ import {
   emailKioskPin,
   emailKioskPinsBulk,
   kioskPinsHealth,
+  listKioskPinCandidates,
   listKioskDevices,
   listKioskFaceReferences,
   listKioskPins,
@@ -44,11 +45,11 @@ import {
   type KioskFaceReferenceSummary,
   type KioskPin,
   type KioskPinDiagnosis,
+  type KioskPinCandidates,
   type KioskPinHealth,
   type KioskPunchSummary,
   type KioskRejectGroup,
 } from '@/lib/kiosk99Api';
-import { listDirectory } from '@/lib/directoryApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';
@@ -1089,6 +1090,9 @@ function PinsTab({
   // the global scope or the persisted value.
   useEffect(() => {
     if (boundedClient || clientsLoading) return;
+    // A deep link's ?client= is being applied in this same commit (the
+    // effect above); this closure still holds the pre-link id.
+    if (deepParams.get('client')) return;
     const valid =
       clientId === ALL_CLIENTS || clientList.some((c) => c.id === clientId);
     if (!valid && clientList.length > 0) setClientIdState(clientList[0]!.id);
@@ -1104,17 +1108,16 @@ function PinsTab({
   const loadError = pinsQuery.isError;
   const refresh = () => void pinsQuery.refetch();
 
-  // PIN-eligible associates (ACTIVE = approved application) at the selected
-  // client, used to compute who is MISSING a code. Per-client only — the
-  // directory is cursor-paginated, so we don't diff across all clients.
-  // Cached for 60s so tab-hopping / drawer churn doesn't re-pull the
-  // roster; limit 500 (the server max) keeps it to one request instead of
-  // the default page size, and we keep only the fields the diff needs.
+  // Who can be issued a number at the selected client — employed and
+  // placed there — used to compute who is MISSING a code. Not the
+  // directory's ACTIVE badge: that also wants recent work, which a new
+  // hire can't have before they have a number, and it came one 500-row
+  // page at a time. Per-client only. Same key the issue drawer reads, so
+  // opening it is instant; onboarding approval invalidates ['kiosk'].
   const eligibleQuery = useQuery({
-    queryKey: ['directory', clientId, 'ACTIVE'],
-    queryFn: () => listDirectory({ clientId, status: 'ACTIVE', limit: 500 }),
+    queryKey: ['kiosk', 'candidates', clientId],
+    queryFn: () => listKioskPinCandidates(clientId),
     enabled: Boolean(clientId && clientId !== ALL_CLIENTS),
-    staleTime: 60_000,
   });
   const eligible = useMemo<
     Array<{
@@ -1127,7 +1130,7 @@ function PinsTab({
     if (!clientId || clientId === ALL_CLIENTS) return null;
     if (eligibleQuery.isError) return [];
     if (!eligibleQuery.data) return null; // loading — matches the old null state
-    return eligibleQuery.data.associates.map((a) => ({
+    return eligibleQuery.data.eligible.map((a) => ({
       id: a.id,
       name: `${a.firstName} ${a.lastName}`,
       email: a.email,
@@ -1755,6 +1758,7 @@ function PinsTab({
         <NewPinDrawer
           clientId={clientId}
           initialAssociateId={issueFor ?? undefined}
+          onSwitchClient={boundedClient ? undefined : setClientId}
           onClose={() => {
             setShowNew(false);
             setIssueFor(null);
@@ -2060,58 +2064,57 @@ function DiagnoseDrawer({
 function NewPinDrawer({
   clientId,
   initialAssociateId,
+  onSwitchClient,
   onClose,
   onSaved,
 }: {
   clientId: string;
   initialAssociateId?: string;
+  /** Re-point the tab at another client — offered when the person the deep
+   *  link names works elsewhere. Absent for client-bounded viewers. */
+  onSwitchClient?: (clientId: string) => void;
   onClose: () => void;
   onSaved: (associateName: string, employeeNumber: string) => void;
 }) {
-  type PickerEntry = {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    status: 'ACTIVE' | 'PENDING' | 'INACTIVE';
-  };
   const [associateId, setAssociateId] = useState('');
+  // A hand pick is final; an automatic one may be replaced when fresher
+  // data arrives (a cached list restored before the refetch landed would
+  // otherwise pin whoever it happened to preselect).
+  const handPicked = useRef(false);
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Show every associate at the client. The server only allows issuing
-  // to ACTIVE (= APPROVED application) associates; the picker reflects
-  // that by disabling the others so HR can see who's there and why.
-  const directoryQuery = useQuery({
-    queryKey: ['directory', clientId, 'picker'],
-    queryFn: () => listDirectory({ clientId }),
+  // Everyone who can be issued a number here (placed at the client, worked
+  // yet or not), plus who's still onboarding so HR can see who's there and
+  // why they're greyed out. With a deep-linked associate the server also
+  // says why THAT person is or isn't eligible.
+  const candidatesQuery = useQuery({
+    queryKey: initialAssociateId
+      ? ['kiosk', 'candidates', clientId, initialAssociateId]
+      : ['kiosk', 'candidates', clientId],
+    queryFn: () => listKioskPinCandidates(clientId, initialAssociateId),
   });
-  const associates = useMemo<PickerEntry[] | null>(() => {
-    if (directoryQuery.isError) return [];
-    if (!directoryQuery.data) return null;
-    return directoryQuery.data.associates.map((a) => ({
-      id: a.id,
-      firstName: a.firstName,
-      lastName: a.lastName,
-      email: a.email,
-      status: a.status,
-    }));
-  }, [directoryQuery.data, directoryQuery.isError]);
-  // Preselect the associate we were opened for (issuing from a "missing a
-  // code" row), if they're eligible; otherwise the first eligible one so
-  // HR doesn't have to hunt for a row. Only while nothing is picked yet.
-  useEffect(() => {
-    if (!associates) return;
-    const preset =
-      initialAssociateId &&
-      associates.find((a) => a.id === initialAssociateId && a.status === 'ACTIVE');
-    const pick = preset ? initialAssociateId : associates.find((a) => a.status === 'ACTIVE')?.id;
-    if (pick) setAssociateId((cur) => cur || pick);
-  }, [associates, initialAssociateId]);
+  const data = candidatesQuery.isError
+    ? { eligible: [], onboarding: [], focus: null }
+    : candidatesQuery.data;
+  const eligible = data?.eligible ?? null;
+  const onboarding = data?.onboarding ?? [];
+  const focus = data?.focus ?? null;
+  const blockedFocus = initialAssociateId && focus && focus.reason !== 'eligible' ? focus : null;
 
-  const selected = associates?.find((a) => a.id === associateId);
-  const eligibleCount =
-    associates?.filter((a) => a.status === 'ACTIVE').length ?? 0;
+  // Preselect the associate we were opened for when they're eligible. Opened
+  // for someone who ISN'T, preselect nobody — the notice below says why — so
+  // Issue can never land on a different person than the one HR came for.
+  // Opened from the toolbar, the first eligible person saves a hunt.
+  useEffect(() => {
+    if (!eligible || handPicked.current) return;
+    const pick = initialAssociateId
+      ? (eligible.find((a) => a.id === initialAssociateId)?.id ?? '')
+      : (eligible[0]?.id ?? '');
+    setAssociateId(pick);
+  }, [eligible, initialAssociateId]);
+
+  const selected = eligible?.find((a) => a.id === associateId);
 
   const onSubmit = async () => {
     if (!associateId) {
@@ -2151,9 +2154,9 @@ function NewPinDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label>Associate</Label>
-          {associates === null ? (
+          {eligible === null ? (
             <Skeleton className="mt-1 h-10 w-full" />
-          ) : associates.length === 0 ? (
+          ) : eligible.length === 0 && onboarding.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
               No associates have been added to this client yet. Start an
               onboarding application from the Onboarding page first.
@@ -2163,32 +2166,40 @@ function NewPinDrawer({
               <Select
                 className="mt-1"
                 value={associateId}
-                onChange={(e) => setAssociateId(e.target.value)}
+                onChange={(e) => {
+                  handPicked.current = true;
+                  setAssociateId(e.target.value);
+                }}
               >
                 <option value="">Select an associate…</option>
-                {associates.map((a) => {
-                  const label =
-                    a.status === 'ACTIVE'
-                      ? `${a.firstName} ${a.lastName} — ${a.email}`
-                      : `${a.firstName} ${a.lastName} — ${a.email} (onboarding ${a.status.toLowerCase()})`;
-                  return (
-                    <option
-                      key={a.id}
-                      value={a.id}
-                      disabled={a.status !== 'ACTIVE'}
-                    >
-                      {label}
-                    </option>
-                  );
-                })}
+                {eligible.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {`${a.firstName} ${a.lastName} — ${a.email}`}
+                  </option>
+                ))}
+                {onboarding.length > 0 && (
+                  <optgroup label="Still onboarding — approve first">
+                    {onboarding.map((a) => (
+                      <option key={a.id} value={a.id} disabled>
+                        {`${a.firstName} ${a.lastName} — ${a.email} (${STATUS_WORDS[a.applicationStatus] ?? 'onboarding'})`}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
-              {eligibleCount === 0 && (
+              {eligible.length === 0 && !blockedFocus && (
                 <div className="mt-1 text-xs text-warning">
                   No associates here have an approved application yet —
                   approve one from the Onboarding page to issue a number.
                 </div>
               )}
             </>
+          )}
+          {blockedFocus && (
+            <FocusNotice
+              focus={blockedFocus}
+              onSwitchClient={onSwitchClient}
+            />
           )}
         </div>
         <div>
@@ -2211,11 +2222,70 @@ function NewPinDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving || associates === null}>
+        <Button onClick={onSubmit} disabled={saving || eligible === null}>
           {saving ? 'Saving…' : 'Issue'}
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+const STATUS_WORDS: Record<string, string> = {
+  DRAFT: 'not started',
+  SUBMITTED: 'awaiting review',
+  IN_REVIEW: 'in review',
+};
+
+// Why the person the profile link named isn't in the list, and the one
+// step that fixes it.
+function FocusNotice({
+  focus,
+  onSwitchClient,
+}: {
+  focus: NonNullable<KioskPinCandidates['focus']>;
+  onSwitchClient?: (clientId: string) => void;
+}) {
+  const name = `${focus.firstName} ${focus.lastName}`;
+  const appLink = focus.applicationId ? (
+    <Link to={`/onboarding/applications/${focus.applicationId}`} className="font-medium underline">
+      Open their application
+    </Link>
+  ) : null;
+  let body: ReactNode;
+  switch (focus.reason) {
+    case 'onboarding':
+      body = <>{name}&rsquo;s onboarding hasn&rsquo;t been approved yet. Approve it, then issue their number. {appLink}</>;
+      break;
+    case 'elsewhere':
+      body = (
+        <>
+          {name} works at {focus.placedClientName ?? 'another client'}, not this one.{' '}
+          {onSwitchClient && focus.placedClientId && (
+            <button
+              type="button"
+              className="font-medium underline"
+              onClick={() => onSwitchClient(focus.placedClientId!)}
+            >
+              Switch to {focus.placedClientName ?? 'their client'}
+            </button>
+          )}
+        </>
+      );
+      break;
+    case 'separated':
+      body = <>{name} has been separated — a clock-in number can&rsquo;t be issued.</>;
+      break;
+    case 'deactivated':
+      body = <>{name} is deactivated. Reactivate them from their profile first.</>;
+      break;
+    default:
+      body = <>{name} has no approved application at this client. {appLink}</>;
+  }
+  return (
+    <div className="mt-2 flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning" role="status">
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+      <div>{body}</div>
+    </div>
   );
 }
 

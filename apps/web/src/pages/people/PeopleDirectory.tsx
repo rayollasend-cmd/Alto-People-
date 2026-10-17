@@ -2548,6 +2548,32 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
   const issueLink = `/time-attendance/kiosk?tab=pins&issue=${a.id}${
     a.workplaceClientId ? `&client=${a.workplaceClientId}` : ''
   }&return=${encodeURIComponent(`/people?associateId=${a.id}`)}`;
+  // Kiosk admin won't list someone whose onboarding isn't approved, nor
+  // anyone separated or paused — sending HR there only to find the name
+  // missing was the complaint. Say why here, and point at the fix.
+  // (Approved but not yet working reads INACTIVE on the directory badge;
+  // that person CAN be issued a number, so status alone doesn't block.)
+  const blocked: React.ReactNode = a.deactivatedAt ? (
+    <>Deactivated — reactivate them before issuing a number.</>
+  ) : a.separatedAt ? (
+    <>Separated — a clock-in number can&rsquo;t be issued.</>
+  ) : a.status === 'PENDING' ? (
+    <>
+      Their onboarding hasn&rsquo;t been approved yet — a number can be issued
+      once it is.
+      {a.applicationId && (
+        <>
+          {' '}
+          <Link
+            to={`/onboarding/applications/${a.applicationId}`}
+            className="font-medium underline"
+          >
+            Approve their onboarding first
+          </Link>
+        </>
+      )}
+    </>
+  ) : null;
 
   return (
     <Section title="Kiosk clock-in">
@@ -2585,8 +2611,14 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
           </div>
         </div>
       )}
+      {blocked && (
+        <div className="flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-2.5 text-warning text-xs">
+          <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+          <div>{blocked}</div>
+        </div>
+      )}
       <div className="pt-2 flex items-center gap-3">
-        {pin?.employeeNumber && !mismatch && !pin.wontClockIn && (
+        {pin?.employeeNumber && !mismatch && !pin.wontClockIn && !blocked && (
           <Button
             variant="ghost"
             size="sm"
@@ -2611,20 +2643,31 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
             <Mail className="mr-2 h-3.5 w-3.5" /> Email number
           </Button>
         )}
-        <Link
-          to={
-            !pin || mismatch || pin.wontClockIn || !pin.employeeNumber
-              ? issueLink
-              : '/time-attendance/kiosk?tab=pins'
-          }
-          className="text-xs text-gold hover:text-gold-bright"
-        >
-          {!pin
-            ? 'Issue a number in Kiosk admin'
-            : mismatch || pin.wontClockIn || !pin.employeeNumber
-              ? 'Re-issue in Kiosk admin'
-              : 'Open Kiosk admin'}
-        </Link>
+        {blocked ? (
+          pin && (
+            <Link
+              to="/time-attendance/kiosk?tab=pins"
+              className="text-xs text-gold hover:text-gold-bright"
+            >
+              Open Kiosk admin
+            </Link>
+          )
+        ) : (
+          <Link
+            to={
+              !pin || mismatch || pin.wontClockIn || !pin.employeeNumber
+                ? issueLink
+                : '/time-attendance/kiosk?tab=pins'
+            }
+            className="text-xs text-gold hover:text-gold-bright"
+          >
+            {!pin
+              ? 'Issue a number in Kiosk admin'
+              : mismatch || pin.wontClockIn || !pin.employeeNumber
+                ? 'Re-issue in Kiosk admin'
+                : 'Open Kiosk admin'}
+          </Link>
+        )}
       </div>
     </Section>
   );

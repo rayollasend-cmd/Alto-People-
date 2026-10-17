@@ -46,6 +46,15 @@ async function mockApi(page: Page) {
     if (p === `/people/directory/${A1}`) return json(ana);
     if (p === '/kiosk-pins' && m === 'GET') return json({ pins: [] });
     if (p === '/kiosk-pins' && m === 'POST') return json({ id: 'p1', employeeNumber: '4821' }, 201);
+    if (p === '/kiosk-pins/candidates') {
+      return json({
+        eligible: [{ id: A1, firstName: 'Ana', lastName: 'Lopez', email: 'ana@example.com', currentLocationId: null }],
+        onboarding: [],
+        focus: new URL(req.url()).searchParams.get('associateId') === A1
+          ? { id: A1, firstName: 'Ana', lastName: 'Lopez', reason: 'eligible', applicationId: null, placedClientId: C1, placedClientName: 'Walmart 1234' }
+          : null,
+      });
+    }
     if (p === '/kiosk-pins/health') return json({ total: 0, healthy: 0, unreadable: 0, wontClockIn: 0, legacy: 0, truncated: false });
     if (p === '/kiosk-devices') return json({ devices: [] });
     if (p === '/kiosk-punches') return json({ punches: [] });
@@ -147,4 +156,34 @@ test('a profile deep link finds someone the loaded list does not have', async ({
   await page.goto(`/people?associateId=${A1}`);
   await expect(page.getByRole('dialog').getByText('Ana Lopez').first()).toBeVisible();
   await expect.poll(() => here(page)).toBe('/people');
+});
+
+test('the issue drawer lists an approved hire whose directory badge says Inactive (never clocked in yet)', async ({ page }) => {
+  // The directory's ACTIVE wants recent work; a new hire has none until they
+  // have a number. The drawer must not read that badge.
+  await page.route('**/api/people/directory**', (route) =>
+    route.fulfill({ json: { associates: [{ ...ana, status: 'INACTIVE' }], nextCursor: null } }));
+  await page.goto(`/time-attendance/kiosk?tab=pins&issue=${A1}&client=${C1}`);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('combobox')).toHaveValue(A1);
+  await issueAndReveal(page);
+});
+
+test('opened for someone still onboarding: nobody is preselected and the drawer says why', async ({ page }) => {
+  const P1 = '44444444-4444-4444-8444-444444444444';
+  const APP = '55555555-5555-4555-8555-555555555555';
+  await page.route('**/api/kiosk-pins/candidates**', (route) =>
+    route.fulfill({
+      json: {
+        eligible: [{ id: A1, firstName: 'Ana', lastName: 'Lopez', email: 'ana@example.com', currentLocationId: null }],
+        onboarding: [{ id: P1, firstName: 'Deontay', lastName: 'Smith', email: 'd@example.com', applicationId: APP, applicationStatus: 'IN_REVIEW' }],
+        focus: { id: P1, firstName: 'Deontay', lastName: 'Smith', reason: 'onboarding', applicationId: APP, placedClientId: null, placedClientName: null },
+      },
+    }));
+  await page.goto(`/time-attendance/kiosk?tab=pins&issue=${P1}&client=${C1}`);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(/Deontay Smith.s onboarding hasn.t been approved yet/)).toBeVisible();
+  await expect(dialog.getByRole('link', { name: /open their application/i })).toHaveAttribute('href', `/onboarding/applications/${APP}`);
+  // Not Ana — Issue must never land on someone other than the person HR came for.
+  await expect(dialog.getByRole('combobox')).toHaveValue('');
 });

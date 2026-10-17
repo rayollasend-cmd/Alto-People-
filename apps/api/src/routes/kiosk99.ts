@@ -32,6 +32,7 @@ import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+import { EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
 import { supervisorRecipients } from '../lib/shiftWindows.js';
@@ -484,6 +485,145 @@ kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
 // the CURRENT KIOSK_PIN_SECRET and compare to the stored hash: a mismatch
 // means that code will fail clock-in (the secret changed). Codes we can't
 // decrypt at all flag the encryption key drifting. Either way → rotate.
+/**
+ * Who can be issued a number at a client — the issue drawer's picker and
+ * the "Missing" roster.
+ *
+ * Read from the placement half of the one definition of active, never from
+ * the directory's ACTIVE badge. Active also wants recent work (a clock-in
+ * in the window, or a shift ahead), and a new hire has neither: they can't
+ * clock in until they have a number. Reading the badge hid every new hire
+ * from the drawer the day that definition landed. The directory was wrong
+ * here twice over besides: one page of 500 sorted by last name (a big
+ * client's Smiths never loaded), and a view:org gate that 403'd the shift
+ * supervisor this page is also for.
+ *
+ *   eligible    employed and placed here — an open assignment at one of
+ *               the client's sites, or (placed nowhere) an approved
+ *               application here;
+ *   onboarding  an application here still in flight, so the picker can
+ *               show them greyed out with the reason;
+ *   focus       with ?associateId, that one person and why they are or
+ *               aren't eligible here — the profile deep link names them
+ *               even when the lists don't.
+ */
+kiosk99Router.get('/kiosk-pins/candidates', MANAGE, async (req, res) => {
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const focusId = z.string().uuid().optional().parse(req.query.associateId);
+  const clientId = kioskClientClamp(req.user!, requested);
+  if (!clientId) {
+    throw new HttpError(400, 'invalid_query', 'clientId is required.');
+  }
+  const tenantId = tenantIdForWrite();
+
+  const placed = await placements({ clientId, tenantId });
+  const placedIds = [...placed.keys()];
+  const eligibleRows: Array<{ id: string; firstName: string; lastName: string; email: string }> = [];
+  for (let i = 0; i < placedIds.length; i += 10_000) {
+    eligibleRows.push(
+      ...(await prisma.associate.findMany({
+        where: { id: { in: placedIds.slice(i, i + 10_000) } },
+        select: { id: true, firstName: true, lastName: true, email: true },
+      })),
+    );
+  }
+  eligibleRows.sort(
+    (a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName),
+  );
+  const eligible = eligibleRows.map((a) => ({
+    ...a,
+    currentLocationId: placed.get(a.id)?.source === 'assignment' ? (placed.get(a.id)?.locationId ?? null) : null,
+  }));
+
+  const inFlight = await prisma.application.findMany({
+    take: 2000,
+    where: {
+      clientId,
+      deletedAt: null,
+      status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
+      associate: { ...EMPLOYED_WHERE, tenantId },
+      ...(placedIds.length > 0 ? { associateId: { notIn: placedIds } } : {}),
+    },
+    select: {
+      id: true,
+      status: true,
+      associate: { select: { id: true, firstName: true, lastName: true, email: true } },
+    },
+    orderBy: { invitedAt: 'desc' },
+  });
+  const onboardingById = new Map<string, {
+    id: string; firstName: string; lastName: string; email: string;
+    applicationId: string; applicationStatus: string;
+  }>();
+  for (const app of inFlight) {
+    if (onboardingById.has(app.associate.id)) continue;
+    onboardingById.set(app.associate.id, {
+      ...app.associate,
+      applicationId: app.id,
+      applicationStatus: app.status,
+    });
+  }
+  const onboarding = [...onboardingById.values()].sort(
+    (a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName),
+  );
+
+  let focus: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    reason: 'eligible' | 'onboarding' | 'elsewhere' | 'not_approved' | 'separated' | 'deactivated';
+    applicationId: string | null;
+    placedClientId: string | null;
+    placedClientName: string | null;
+  } | null = null;
+  if (focusId) {
+    const a = await prisma.associate.findFirst({
+      where: { id: focusId, tenantId, deletedAt: null, erasedAt: null },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        separatedAt: true,
+        deactivatedAt: true,
+        applications: {
+          where: { deletedAt: null },
+          select: { id: true, status: true, clientId: true },
+          orderBy: { invitedAt: 'desc' },
+        },
+      },
+    });
+    if (a) {
+      const elsewhere = placed.has(a.id) ? null : (await placements({ associateIds: [a.id], tenantId })).get(a.id) ?? null;
+      const pending = a.applications.find((x) => x.status === 'DRAFT' || x.status === 'SUBMITTED' || x.status === 'IN_REVIEW');
+      const reason = placed.has(a.id)
+        ? 'eligible'
+        : a.separatedAt
+          ? 'separated'
+          : a.deactivatedAt
+            ? 'deactivated'
+            : elsewhere
+              ? 'elsewhere'
+              : pending
+                ? 'onboarding'
+                : 'not_approved';
+      const placedClient = elsewhere?.clientId
+        ? await prisma.client.findUnique({ where: { id: elsewhere.clientId }, select: { name: true } })
+        : null;
+      focus = {
+        id: a.id,
+        firstName: a.firstName,
+        lastName: a.lastName,
+        reason,
+        applicationId: (pending ?? a.applications[0])?.id ?? null,
+        placedClientId: elsewhere?.clientId ?? null,
+        placedClientName: placedClient?.name ?? null,
+      };
+    }
+  }
+
+  res.json({ eligible, onboarding, focus });
+});
+
 kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
   const requestedHealth = z.string().uuid().optional().parse(req.query.clientId);
   const clientId = kioskClientClamp(req.user!, requestedHealth);

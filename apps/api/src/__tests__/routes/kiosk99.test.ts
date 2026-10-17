@@ -622,3 +622,107 @@ describe('kiosk PIN client re-homing + attributed rejects', () => {
     expect(empty.body.punches).toHaveLength(0);
   });
 });
+
+describe('GET /kiosk-pins/candidates — who can be issued a number', () => {
+  async function approvedHire(clientId: string, name: { firstName: string; lastName: string }) {
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId } });
+    const associate = await createAssociate(name);
+    await prisma.application.create({
+      data: { associateId: associate.id, clientId, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() },
+    });
+    // What approval opens: an assignment at the store. No punch, no shift.
+    await prisma.associateAssignment.create({
+      data: { associateId: associate.id, locationId: site.id, startedAt: new Date() },
+    });
+    return associate;
+  }
+
+  it('lists an approved hire who has never clocked in — the directory calls them INACTIVE', async () => {
+    const client = await createClient('Walmart 1234');
+    const hire = await approvedHire(client.id, { firstName: 'Deontay', lastName: 'Smith' });
+    const cookie = await adminCookie();
+
+    const dir = await request(app()).get(`/people/directory/${hire.id}`).set('Cookie', cookie);
+    expect(dir.body.status).toBe('INACTIVE');
+
+    const res = await request(app()).get(`/kiosk-pins/candidates?clientId=${client.id}`).set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.eligible.map((a: { id: string }) => a.id)).toEqual([hire.id]);
+    expect(res.body.eligible[0].currentLocationId).toBeTruthy();
+  });
+
+  it('shows in-flight onboarding separately, and leaves out the separated and other clients', async () => {
+    const client = await createClient('Walmart 1234');
+    const other = await createClient('Walmart 9999');
+    const pending = await createAssociate({ firstName: 'Pat', lastName: 'Pending' });
+    const app1 = await prisma.application.create({
+      data: { associateId: pending.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'SUBMITTED' },
+    });
+    const gone = await approvedHire(client.id, { firstName: 'Sam', lastName: 'Separated' });
+    await prisma.associate.update({ where: { id: gone.id }, data: { separatedAt: new Date() } });
+    await approvedHire(other.id, { firstName: 'Olga', lastName: 'Other' });
+    const cookie = await adminCookie();
+
+    const res = await request(app()).get(`/kiosk-pins/candidates?clientId=${client.id}`).set('Cookie', cookie);
+    expect(res.body.eligible).toEqual([]);
+    expect(res.body.onboarding).toEqual([
+      expect.objectContaining({ id: pending.id, applicationId: app1.id, applicationStatus: 'SUBMITTED' }),
+    ]);
+  });
+
+  it('explains the deep-linked person: onboarding, elsewhere, separated, eligible', async () => {
+    const client = await createClient('Walmart 1234');
+    const other = await createClient('Walmart 9999');
+    const pending = await createAssociate({ firstName: 'Pat', lastName: 'Pending' });
+    const app1 = await prisma.application.create({
+      data: { associateId: pending.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'IN_REVIEW' },
+    });
+    const away = await approvedHire(other.id, { firstName: 'Olga', lastName: 'Other' });
+    const gone = await approvedHire(client.id, { firstName: 'Sam', lastName: 'Separated' });
+    await prisma.associate.update({ where: { id: gone.id }, data: { separatedAt: new Date() } });
+    const hire = await approvedHire(client.id, { firstName: 'Deontay', lastName: 'Smith' });
+    const cookie = await adminCookie();
+    const focus = async (id: string) =>
+      (await request(app()).get(`/kiosk-pins/candidates?clientId=${client.id}&associateId=${id}`).set('Cookie', cookie)).body.focus;
+
+    expect(await focus(pending.id)).toMatchObject({ reason: 'onboarding', applicationId: app1.id });
+    expect(await focus(away.id)).toMatchObject({ reason: 'elsewhere', placedClientId: other.id, placedClientName: 'Walmart 9999' });
+    expect(await focus(gone.id)).toMatchObject({ reason: 'separated' });
+    expect(await focus(hire.id)).toMatchObject({ reason: 'eligible', firstName: 'Deontay' });
+  });
+
+  it('is not capped at a page: the 501st name by last name is still there', async () => {
+    const client = await createClient('Walmart 1234');
+    // 500 people who once applied here and went nowhere sort ahead of Smith.
+    await prisma.associate.createMany({
+      data: Array.from({ length: 500 }, (_, i) => ({
+        firstName: 'Old', lastName: `A${String(i).padStart(3, '0')}`, email: `old-${i}@example.com`,
+      })),
+    });
+    const olds = await prisma.associate.findMany({ where: { firstName: 'Old' }, select: { id: true } });
+    await prisma.application.createMany({
+      data: olds.map((o) => ({ associateId: o.id, clientId: client.id, onboardingTrack: 'STANDARD' as const, status: 'REJECTED' as const })),
+    });
+    const hire = await approvedHire(client.id, { firstName: 'Deontay', lastName: 'Smith' });
+    const cookie = await adminCookie();
+
+    const res = await request(app()).get(`/kiosk-pins/candidates?clientId=${client.id}`).set('Cookie', cookie);
+    expect(res.body.eligible.map((a: { id: string }) => a.id)).toEqual([hire.id]);
+  });
+
+  it("a shift supervisor reads their own client's list (the directory 403s them), clamped to it", async () => {
+    const client = await createClient('Walmart 1234');
+    const other = await createClient('Walmart 9999');
+    const hire = await approvedHire(client.id, { firstName: 'Deontay', lastName: 'Smith' });
+    await approvedHire(other.id, { firstName: 'Olga', lastName: 'Other' });
+    const { user } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const cookie = `alto.session=${signSession({ sub: user.id, role: user.role, ver: user.tokenVersion })}`;
+
+    const dir = await request(app()).get(`/people/directory?clientId=${client.id}`).set('Cookie', cookie);
+    expect(dir.status).toBe(403);
+
+    const res = await request(app()).get(`/kiosk-pins/candidates?clientId=${other.id}`).set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.eligible.map((a: { id: string }) => a.id)).toEqual([hire.id]);
+  });
+});

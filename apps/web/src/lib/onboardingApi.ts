@@ -33,6 +33,7 @@ import type {
   W4SubmissionInput,
 } from '@alto-people/shared';
 import { ApiError, apiFetch } from './api';
+import { queryClient } from './queryClient';
 
 export interface ListApplicationsFilters {
   /**
@@ -125,14 +126,26 @@ export function nextReviewApplication(
   );
 }
 
-export function approveApplication(
+/**
+ * Approval places the hire at their store — the moment they belong on the
+ * People list and in Kiosk admin's "issue a number" picker. Drop the cached
+ * copies of both so HR going straight from approval to the kiosk finds them
+ * there, not a list from before the approval.
+ */
+function invalidateHireLists(): void {
+  void queryClient.invalidateQueries({ queryKey: ['directory'] });
+  void queryClient.invalidateQueries({ queryKey: ['kiosk'] });
+}
+
+export async function approveApplication(
   applicationId: string,
   body: { hireDate: string; acknowledgeWarnings?: boolean; locationId?: string }
 ): Promise<void> {
-  return apiFetch<void>(
+  await apiFetch<void>(
     `/onboarding/applications/${applicationId}/approve`,
     { method: 'POST', body }
   );
+  invalidateHireLists();
 }
 
 export function rejectApplication(
@@ -232,13 +245,15 @@ export function bulkRejectApplications(body: {
 /** Approve many finished applications with one shared hire date. Rows
  *  with verification gaps come back as per-row `approval_warnings`
  *  failures — bulk never auto-acknowledges; open those individually. */
-export function bulkApproveApplications(
+export async function bulkApproveApplications(
   body: BulkApproveInput
 ): Promise<BulkApproveResponse> {
-  return apiFetch<BulkApproveResponse>('/onboarding/applications/bulk-approve', {
+  const r = await apiFetch<BulkApproveResponse>('/onboarding/applications/bulk-approve', {
     method: 'POST',
     body,
   });
+  invalidateHireLists();
+  return r;
 }
 
 export function nudgeApplicant(
