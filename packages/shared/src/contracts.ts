@@ -5721,6 +5721,8 @@ export const TimeOffRequestResponseSchema = /* @__PURE__ */ (() => z.object({
 export type TimeOffRequestResponse = z.infer<typeof TimeOffRequestResponseSchema>;
 
 export const TimeOffAdminListQuerySchema = /* @__PURE__ */ (() => z.object({
+  /** One person's requests — the person record's Time off tab. */
+  associateId: UuidSchema.optional(),
   status: TimeOffRequestStatusSchema.optional(),
 }))();
 export type TimeOffAdminListQuery = z.infer<typeof TimeOffAdminListQuerySchema>;
@@ -5969,6 +5971,9 @@ export const DirectoryEntrySchema = /* @__PURE__ */ (() => z.object({
   photoUrl: z.string().nullable(),
   // Phase 131 — open AssociateAssignment, if any. Null when the
   // associate has never been placed at a Location.
+  /** The login to open a messenger thread with — set only for someone the
+   *  messenger serves (staff), never a plain associate. */
+  messageUserId: UuidSchema.nullable().optional(),
   currentLocationId: UuidSchema.nullable(),
   currentLocationName: z.string().nullable(),
   // Start date (YYYY-MM-DD) of that open assignment. The transfer and

@@ -417,6 +417,7 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
     const where = {
       ...scopeTimeOffRequests(req.user!),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.associateId ? { associateId: query.associateId } : {}),
     };
     const [rows, total] = await Promise.all([
       prisma.timeOffRequest.findMany({

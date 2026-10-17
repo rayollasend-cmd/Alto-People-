@@ -16,6 +16,7 @@ import { computePercent } from '../lib/checklist.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { canUseMessenger } from '../lib/messaging.js';
 
 /**
  * People directory.
@@ -85,6 +86,8 @@ const DIRECTORY_SELECT = {
   department: { select: { name: true } },
   jobProfileId: true,
   jobProfile: { select: { title: true } },
+  // Their login, for the record's Message action (lib/messaging decides who may be messaged).
+  user: { select: { id: true, role: true, status: true, deletedAt: true } },
   applications: {
     where: { deletedAt: null },
     select: {
@@ -260,6 +263,12 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
         photoS3Key: a.photoS3Key,
         photoUpdatedAt: a.photoUpdatedAt,
       }),
+      // The user id to open a thread with, when they hold a login the
+      // messenger serves (staff; never a plain associate's login).
+      messageUserId:
+        a.user && !a.user.deletedAt && a.user.status === 'ACTIVE' && canUseMessenger(a.user.role)
+          ? a.user.id
+          : null,
       currentLocationId: a.assignments[0]?.locationId ?? null,
       currentLocationName: a.assignments[0]?.location?.name ?? null,
       currentAssignmentStartedAt: a.assignments[0]?.startedAt

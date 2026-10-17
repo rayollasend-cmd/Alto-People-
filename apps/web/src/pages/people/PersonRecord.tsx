@@ -1,13 +1,18 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Clock, Eye, Gauge, Palmtree, Ticket } from 'lucide-react';
+import { CalendarDays, Clock, Eye, Gauge, MessageSquare, Palmtree, Smartphone, Ticket } from 'lucide-react';
 import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
-import { Avatar, Badge, Button, Card, CardContent, EmptyState, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
+import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { Textarea } from '@/components/ui/Input';
+import { toast } from 'sonner';
+import { ApiError } from '@/lib/api';
+import { sendNotification } from '@/lib/communicationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { getDirectoryEntry } from '@/lib/directoryApi';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
@@ -43,7 +48,8 @@ const TIME_WINDOW_DAYS = 30;
 export function PersonRecord() {
   const { associateId = '' } = useParams();
   const term = useTerm();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const [textOpen, setTextOpen] = useState(false);
   const { moduleOn } = useTenant();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -199,6 +205,24 @@ export function PersonRecord() {
       }
       actions={
         <>
+          {/* Message: a thread with their login, when the messenger serves it
+              (staff). Text: an SMS to the phone on file, for everyone else
+              who has one — the way the floor actually reaches a person. */}
+          {a.messageUserId && user?.role !== 'ASSOCIATE' && (
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/messages?to=${a.messageUserId}`}>
+                <MessageSquare className="h-3.5 w-3.5" />
+                Message
+              </Link>
+            </Button>
+          )}
+          {!a.messageUserId && a.phone && can('manage:communications') && (
+            <Button variant="outline" size="sm" onClick={() => setTextOpen(true)}>
+              <Smartphone className="h-3.5 w-3.5" />
+              Text
+            </Button>
+          )}
+          {textOpen && <TextDialog phone={a.phone!} name={name} onClose={() => setTextOpen(false)} />}
           <Button asChild variant="outline" size="sm">
             <Link to={`/people?associateId=${a.id}`}>
               <Eye className="h-3.5 w-3.5" />
@@ -395,19 +419,14 @@ const TIME_OFF_CATEGORY_LABELS: Record<TimeOffEntitlement['category'], string> =
 };
 
 /**
- * The admin list has no per-person filter, so the desk's recent requests
- * are read once and this person's picked out. The server caps the list;
- * when the cap bit, the tab says so instead of posing as complete.
+ * This person's requests, from the desk list filtered server-side.
  */
 function usePersonTimeOffRequests(associateId: string, enabled: boolean) {
   return useQuery({
     queryKey: ['person-record', 'time-off-requests', associateId],
     queryFn: async () => {
-      const r = await listAdminRequests();
-      return {
-        requests: r.requests.filter((x) => x.associateId === associateId),
-        truncated: r.total !== undefined && r.total > r.requests.length,
-      };
+      const r = await listAdminRequests(undefined, { associateId });
+      return { requests: r.requests, truncated: r.total !== undefined && r.total > r.requests.length };
     },
     enabled,
   });
@@ -464,7 +483,7 @@ function TimeOffTab({ associateId, requests }: { associateId: string; requests: 
           <EmptyState
             icon={Palmtree}
             title="They have not requested time off"
-            description={requests.data.truncated ? 'The desk list is capped, so older requests may not be shown here — the Time off page has the whole queue.' : 'A request they make from their phone or the kiosk shows up here with its decision.'}
+            description="A request they make from their phone or the kiosk shows up here with its decision."
             action={openLink}
           />
         ) : (
@@ -514,7 +533,7 @@ function TimeOffTab({ associateId, requests }: { associateId: string; requests: 
                 ]}
               />
             </Card>
-            {requests.data.truncated && <p className="text-xs text-ink-muted">The desk list is capped, so older requests may be missing here — the Time off page has the whole queue.</p>}
+            {requests.data.truncated && <p className="text-xs text-ink-muted">Showing the most recent 200 — the Time off page has the rest.</p>}
             <div className="flex justify-end">{openLink}</div>
           </>
         )}
@@ -707,5 +726,44 @@ function CasesTab({ query, workerWord }: { query: ReturnType<typeof usePersonCas
         />
       </Card>
     </div>
+  );
+}
+
+
+/** One SMS to the phone on file, sent through the communications desk so it
+ *  lands in the log like every other message to this person. */
+function TextDialog({ phone, name, onClose }: { phone: string; name: string; onClose: () => void }) {
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    if (!body.trim()) return;
+    setSending(true);
+    try {
+      await sendNotification({ channel: 'SMS', recipientPhone: phone, body: body.trim(), category: 'person-record' });
+      toast.success(`Text sent to ${name}.`);
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : `Couldn't send the text to ${name}.`);
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} confirmDiscard={() => body.trim().length > 0}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Text {name}</DialogTitle>
+          <DialogDescription>Goes to {phone} as an SMS, and is kept in the communications log.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="person-text-body">Message</Label>
+          <Textarea id="person-text-body" value={body} onChange={(e) => setBody(e.target.value)} rows={4} maxLength={1000} autoFocus />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={sending}>Cancel</Button>
+          <Button onClick={() => void send()} disabled={sending || !body.trim()}>{sending ? 'Sending…' : 'Send text'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

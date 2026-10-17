@@ -109,7 +109,6 @@ const FIXTURES: Record<string, unknown> = {
   '/time-off/admin/requests': {
     requests: [
       { id: 'r1', associateId: ID, associateName: 'Ana Reyes', category: 'VACATION', startDate: '2026-11-02', endDate: '2026-11-04', requestedMinutes: 1440, reason: null, status: 'APPROVED', reviewerUserId: null, reviewerEmail: 'hr@hotel.example', reviewerNote: null, decidedAt: '2026-10-10T00:00:00.000Z', cancelledAt: null, createdAt: '2026-10-09T00:00:00.000Z' },
-      { id: 'r2', associateId: OTHER, associateName: 'Ben Ortiz', category: 'SICK', startDate: '2026-10-20', endDate: '2026-10-20', requestedMinutes: 480, reason: null, status: 'PENDING', reviewerUserId: null, reviewerEmail: null, reviewerNote: null, decidedAt: null, cancelledAt: null, createdAt: '2026-10-15T00:00:00.000Z' },
     ],
     total: 2,
   },

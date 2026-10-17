@@ -33,9 +33,12 @@ export function cancelMyRequest(id: string) {
   });
 }
 
-export function listAdminRequests(status?: TimeOffRequestStatus) {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-  return apiFetch<TimeOffRequestListResponse>(`/time-off/admin/requests${qs}`);
+export function listAdminRequests(status?: TimeOffRequestStatus, opts: { associateId?: string } = {}) {
+  const p = new URLSearchParams();
+  if (status) p.set('status', status);
+  if (opts.associateId) p.set('associateId', opts.associateId);
+  const qs = p.toString();
+  return apiFetch<TimeOffRequestListResponse>(`/time-off/admin/requests${qs ? `?${qs}` : ''}`);
 }
 
 export function approveAdminRequest(id: string, note?: string, overrideReason?: string) {
