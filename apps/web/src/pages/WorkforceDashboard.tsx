@@ -140,6 +140,8 @@ interface SupervisorRow {
   name: string;
   phone: string | null;
   associateId: string | null;
+  /** Associate headshot, else the staff account's own photo. */
+  photoUrl?: string | null;
   clientId: string | null;
   clientName: string | null;
 }
@@ -462,11 +464,7 @@ export function WorkforceDashboard() {
                         {sups.slice(0, 3).map((sup) => (
                           <div key={sup.userId} className="flex items-center gap-2">
                             <Avatar
-                              src={
-                                sup.associateId
-                                  ? `/api/associates/${sup.associateId}/photo`
-                                  : null
-                              }
+                              src={sup.photoUrl ?? null}
                               name={sup.name}
                               email={sup.email}
                               size="xs"

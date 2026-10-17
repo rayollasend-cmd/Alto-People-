@@ -19,6 +19,7 @@ import { useI18n } from '@/lib/i18n';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { fmtDate, fmtDateTime, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import {
   getThread,
   listConversations,
@@ -406,6 +407,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
   const groups = useMemo(() => groupByDay(data?.messages ?? []), [data]);
   const loadFailed = thread.isError && !data;
   const others = (data?.participants ?? []).filter((p) => p.id !== meId);
+  const participantById = useMemo(() => new Map((data?.participants ?? []).map((p) => [p.id, p])), [data]);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-lg border border-navy-secondary bg-navy-secondary/10">
@@ -458,7 +460,17 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
             <div key={g.day}>
               <div className="my-3 text-center text-2xs uppercase tracking-wider text-silver/50">{g.label}</div>
               {g.messages.map((m) => (
-                <Bubble key={m.id} m={m} showSender={data.kind !== 'DIRECT'} />
+                <Bubble
+                  key={m.id}
+                  m={m}
+                  showSender={data.kind !== 'DIRECT'}
+                  // Someone who has since left the group isn't a participant
+                  // any more — their userId still finds their face.
+                  senderPhoto={personPhotoUrl({
+                    photoUrl: m.senderId ? participantById.get(m.senderId)?.photoUrl : null,
+                    userId: m.senderId,
+                  })}
+                />
               ))}
             </div>
           ))
@@ -531,12 +543,14 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
   );
 }
 
-function Bubble({ m, showSender }: { m: MessageRow; showSender: boolean }) {
+function Bubble({ m, showSender, senderPhoto }: { m: MessageRow; showSender: boolean; senderPhoto?: string }) {
   if (m.kind === 'SYSTEM') {
     return <div className="my-2 text-center text-2xs text-silver/50">{m.body}</div>;
   }
+  const withFace = showSender && !m.mine && !!m.senderName;
   return (
-    <div className={cn('mb-2 flex', m.mine ? 'justify-end' : 'justify-start')}>
+    <div className={cn('mb-2 flex', m.mine ? 'justify-end' : 'justify-start', withFace && 'items-end gap-2')}>
+      {withFace && <Avatar src={senderPhoto} name={m.senderName} size="xs" />}
       <div
         className={cn(
           'max-w-[85%] rounded-2xl px-3 py-2 text-sm md:max-w-[70%]',

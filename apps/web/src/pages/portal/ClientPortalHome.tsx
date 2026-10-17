@@ -32,6 +32,7 @@ import {
 } from '@/lib/format';
 import { coverageByHour } from './coverage';
 import { cn } from '@/lib/cn';
+import { userPhotoUrl } from '@/lib/photoUrl';
 import { enterStagger } from '@/lib/motion';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
@@ -849,6 +850,7 @@ export function ClientPortalHome() {
               <ul className="mt-3 space-y-3">
                 {data.leads.people.map((p) => (
                   <li key={p.email} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <Avatar src={userPhotoUrl(p.userId)} name={p.name} email={p.email} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-sm font-medium text-white">
                         <span className="truncate">{p.name}</span>

@@ -151,6 +151,7 @@ import { recordConfirmationAnswer } from '../lib/attendanceConfirm.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 import { emitShiftEvent } from '../lib/webhookEvents.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const schedulingRouter = Router();
 
@@ -3650,7 +3651,14 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
     const leads = leadIds.length
       ? await prisma.user.findMany({
           where: { id: { in: leadIds } },
-          select: { id: true, email: true, associateId: true, associate: { select: { firstName: true, lastName: true } } },
+          select: {
+            id: true,
+            email: true,
+            associateId: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
+            associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
+          },
         })
       : [];
 
@@ -3662,6 +3670,7 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
           userId: u.id,
           name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email),
           associateId: u.associateId,
+          photoUrl: accountPhotoUrlFor(u),
         })),
       }),
     );

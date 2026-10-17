@@ -33,6 +33,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusLabel } from '@/lib/status';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -397,7 +398,7 @@ export function CandidateDetailDrawer({
     <Drawer open={candidate !== null} onOpenChange={onOpenChange} width="max-w-xl">
       <DrawerHeader>
         <div className="flex items-start gap-3">
-          <Avatar name={fullName} email={candidate.email} size="md" />
+          <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="md" />
           <div className="min-w-0 flex-1">
             <DrawerTitle>{fullName}</DrawerTitle>
             <DrawerDescription>

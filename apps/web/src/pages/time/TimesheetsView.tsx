@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
+import { Avatar } from '@/components/ui/Avatar';
 import {
   AlertTriangle,
   CalendarClock,
@@ -37,6 +38,7 @@ import { boundedClientOf } from '@/lib/roles';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
@@ -958,6 +960,7 @@ export function TimesheetsView() {
                 cell: (r) => (
                   <>
                     <span className="inline-flex items-center gap-1.5">
+                      <Avatar src={associatePhotoUrl(r.associateId)} name={r.worker} size="xs" />
                       <button
                         type="button"
                         onClick={() => void openDetail(r.associateId)}

@@ -2,6 +2,7 @@ import type { FieldglassStatus } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { primaryClientsForAssociates } from './associateClients.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 /**
  * Fieldglass setup — who has to be registered, moved or closed in the
@@ -346,7 +347,7 @@ export async function buildFieldglassRoster(opts: { tenantId?: string } = {}): P
       addedAt: true,
       client: { select: { name: true } },
       addedBy: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
-      associate: { select: { firstName: true, lastName: true, photoS3Key: true, separatedAt: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true, separatedAt: true } },
     },
   });
   const ids = regs.map((r) => r.associateId);
@@ -375,7 +376,7 @@ export async function buildFieldglassRoster(opts: { tenantId?: string } = {}): P
     return {
       associateId: r.associateId,
       name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
-      photoUrl: r.associate.photoS3Key ? `/api/associates/${r.associateId}/photo` : null,
+      photoUrl: profilePhotoUrlFor({ id: r.associateId, ...r.associate }),
       clientId: r.clientId,
       clientName: r.client?.name ?? null,
       workerId: r.workerId,

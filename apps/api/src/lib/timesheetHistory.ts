@@ -15,6 +15,7 @@ import { fieldglassDueAt, fieldglassHours } from './fieldglassDesk.js';
 import { fieldglassSecurityId } from './fieldglassSecurityId.js';
 import { payScheduleFor } from './associatePayday.js';
 import { getCurrentPeriod } from './payrollSchedule.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 /**
  * One associate's whole timesheet, across pay periods.
@@ -56,6 +57,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
       firstName: true,
       lastName: true,
       photoS3Key: true,
+      photoUpdatedAt: true,
       dob: true,
       ssnLast4: true,
       travelDocLast4: true,
@@ -253,7 +255,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
       id: a.id,
       name: `${a.firstName} ${a.lastName}`,
       worker: `${a.lastName}, ${a.firstName}`,
-      photoUrl: a.photoS3Key ? `/api/associates/${a.id}/photo` : null,
+      photoUrl: profilePhotoUrlFor(a),
       clientName: newestClient?.name ?? null,
       position: raw.find((e) => e.shift?.position)?.shift?.position ?? null,
       workerId: reg?.workerId ?? null,

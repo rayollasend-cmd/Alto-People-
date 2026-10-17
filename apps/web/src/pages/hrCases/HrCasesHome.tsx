@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -465,12 +467,15 @@ export function HrCasesHome() {
                     sortable: true,
                     cardMeta: true,
                     cell: (c) => (
-                      <>
-                        <div className="text-sm">
-                          <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                      <div className="flex items-center gap-2">
+                        <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.associateEmail} size="sm" />
+                        <div className="min-w-0">
+                          <div className="text-sm">
+                            <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                          </div>
+                          <div className="text-xs text-silver">{c.associateEmail}</div>
                         </div>
-                        <div className="text-xs text-silver">{c.associateEmail}</div>
-                      </>
+                      </div>
                     ),
                   },
                   { key: 'category', header: 'Category', accessor: (c) => CATEGORY_LABELS[c.category], sortable: true, cardMeta: true, className: 'text-sm text-silver' },
@@ -788,6 +793,7 @@ function CaseDetailDrawer({
                         {c.internalNote && (
                           <Lock className="h-3 w-3 text-warning" />
                         )}
+                        <Avatar src={c.authorPhotoUrl} name={c.authorName} email={c.authorEmail} size="xs" />
                         <span>{c.authorEmail ?? c.authorName ?? t('hrc.unknownAuthor')}</span>
                         <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (

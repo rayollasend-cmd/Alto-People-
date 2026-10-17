@@ -1,11 +1,13 @@
 import { useMemo, useRef } from 'react';
 import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
 function ymd(d: Date): string {
@@ -266,13 +268,23 @@ export function MobileScheduleList({
                           <span className="text-silver"> · {s.location}</span>
                         )}
                       </div>
-                      <div className="text-xs text-silver mt-0.5 truncate">
-                        {assigneeName ?? (
+                      {assigneeName ? (
+                        <div className="flex items-center gap-1.5 text-xs text-silver mt-1 min-w-0">
+                          <Avatar
+                            src={associatePhotoUrl(s.assignedAssociateId)}
+                            name={assigneeName}
+                            email={assignee?.email}
+                            size="xs"
+                          />
+                          <span className="truncate">{assigneeName}</span>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-silver mt-0.5 truncate">
                           <span className="text-warning">
                             Open · tap to assign
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>

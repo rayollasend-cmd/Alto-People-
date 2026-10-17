@@ -1958,6 +1958,8 @@ export const ShiftSupervisorSchema = /* @__PURE__ */ (() => z.object({
   userId: UuidSchema,
   name: z.string(),
   associateId: UuidSchema.nullable(),
+  /** Their associate headshot, else the staff account's own photo. */
+  photoUrl: z.string().nullable().optional(),
 }))();
 export type ShiftSupervisor = z.infer<typeof ShiftSupervisorSchema>;
 

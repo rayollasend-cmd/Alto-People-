@@ -38,6 +38,7 @@ import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { listPositions } from '@/lib/positionsApi';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { useSelection } from '@/lib/useSelection';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -1260,6 +1261,7 @@ function CandidateNameCell({
   return (
     <div className="flex items-center gap-2.5 min-w-0">
       <Avatar
+        src={associatePhotoUrl(c.hiredAssociateId)}
         name={`${c.firstName} ${c.lastName}`}
         email={c.email}
         size="sm"

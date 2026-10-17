@@ -35,6 +35,7 @@ import {
   parseYmd,
   ymdLocal,
 } from '@/lib/format';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -78,6 +79,7 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { DocumentViewer } from '@/components/DocumentViewer';
 import { previewDocumentUrl } from '@/lib/documentsApi';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
@@ -491,21 +493,28 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
       <header className="mb-6">
         {mode === 'page' && (
           <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
-                {canManage ? (
-                  <Link
-                    to={`/people?associateId=${detail.associateId}`}
-                    className="hover:text-gold transition-colors"
-                    title={`Open this ${workerLc}'s profile`}
-                  >
-                    {detail.associateName}
-                  </Link>
-                ) : (
-                  detail.associateName
-                )}
-              </h1>
-              <DetailMeta detail={detail} />
+            <div className="flex min-w-0 items-center gap-4">
+              <Avatar
+                src={personPhotoUrl({ photoUrl: detail.photoUrl, associateId: detail.associateId })}
+                name={detail.associateName}
+                size="xl"
+              />
+              <div className="min-w-0">
+                <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
+                  {canManage ? (
+                    <Link
+                      to={`/people?associateId=${detail.associateId}`}
+                      className="hover:text-gold transition-colors"
+                      title={`Open this ${workerLc}'s profile`}
+                    >
+                      {detail.associateName}
+                    </Link>
+                  ) : (
+                    detail.associateName
+                  )}
+                </h1>
+                <DetailMeta detail={detail} />
+              </div>
             </div>
             {canManage && (
               <DetailActions

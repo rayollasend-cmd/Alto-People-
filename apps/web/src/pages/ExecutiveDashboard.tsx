@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
 import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
 import { cn } from '@/lib/cn';
@@ -2115,7 +2116,10 @@ export function ExecutiveDashboard() {
                       key={r.associateId}
                       className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
                     >
-                      <span className="min-w-0 truncate text-white">{r.associateName}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} size="xs" />
+                        <span className="truncate text-white">{r.associateName}</span>
+                      </span>
                       <span className="tabular-nums text-silver">
                         {(r.projectedOtMinutes / 60).toFixed(1)}h OT projected
                         {r.estOtBilled !== null ? ` · ${fmtMoney(r.estOtBilled)} billed` : ''}

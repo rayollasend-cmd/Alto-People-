@@ -72,6 +72,8 @@ export interface CaseComment {
   createdAt: string;
   authorEmail: string | null;
   authorName: string | null;
+  /** The author's face — cache-busted; null when the author is unknown. */
+  authorPhotoUrl: string | null;
 }
 
 export interface CaseSummary {

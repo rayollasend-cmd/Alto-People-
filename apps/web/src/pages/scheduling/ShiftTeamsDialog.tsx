@@ -15,6 +15,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { AssociatePicker } from '@/components/ui/AssociatePicker';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
@@ -27,6 +28,7 @@ import {
 import { Input } from '@/components/ui/Input';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 
 function minuteToTime(m: number | null): string {
   if (m == null) return '';
@@ -399,6 +401,12 @@ export function ShiftTeamsDialog({
                           key={m.associateId}
                           className="flex items-center gap-2 px-3 py-2 text-sm"
                         >
+                          <Avatar
+                            src={associatePhotoUrl(m.associateId)}
+                            name={`${m.firstName} ${m.lastName}`}
+                            email={m.email}
+                            size="xs"
+                          />
                           <span className="text-white">
                             {m.firstName} {m.lastName}
                           </span>

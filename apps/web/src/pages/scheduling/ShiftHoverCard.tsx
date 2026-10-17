@@ -3,7 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
 import type { AutoFillCandidate, Shift } from '@alto-people/shared';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { cn } from '@/lib/cn';
 import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import {
@@ -240,14 +242,19 @@ export function ShiftHoverCard({
         <Fact icon={Calendar} text={fmtTimeRange(shift)} />
         <Fact icon={Clock} text={fmtDuration(shift)} />
         {shift.location && <Fact icon={MapPin} text={shift.location} />}
-        <Fact
-          icon={User}
-          text={
-            shift.assignedAssociateName ?? (
-              <span className="text-warning">Unassigned</span>
-            )
-          }
-        />
+        {shift.assignedAssociateId ? (
+          <div className="flex items-center gap-2 text-xs text-silver">
+            <Avatar
+              src={associatePhotoUrl(shift.assignedAssociateId)}
+              name={shift.assignedAssociateName}
+              size="xs"
+              className="-my-1"
+            />
+            <span className="truncate">{shift.assignedAssociateName}</span>
+          </div>
+        ) : (
+          <Fact icon={User} text={<span className="text-warning">Unassigned</span>} />
+        )}
         {shift.notes && (
           <div className="flex items-start gap-2 text-xs text-silver/80">
             <StickyNote className="h-3.5 w-3.5 text-silver/70 mt-0.5 shrink-0" />

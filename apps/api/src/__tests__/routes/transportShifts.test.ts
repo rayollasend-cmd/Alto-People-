@@ -197,7 +197,7 @@ describe('who rides with whom', () => {
     await w.mikeAgent.post(`/transport/driver/requests/${b.id}/accept`);
 
     const annRide = (await ann.agent.get('/transport/me')).body.rides.find((r: { id: string }) => r.id === a.id);
-    expect(annRide.coRiders).toEqual([{ photoUrl: `/api/associates/${bo.associate.id}/photo` }]);
+    expect(annRide.coRiders).toEqual([{ photoUrl: expect.stringMatching(new RegExp(`^/api/associates/${bo.associate.id}/photo\\?v=`)) }]);
     expect(JSON.stringify(annRide)).not.toMatch(/Bo /);
     const boRide = (await bo.agent.get('/transport/me')).body.rides.find((r: { id: string }) => r.id === b.id);
     expect(boRide.coRiders).toEqual([{ photoUrl: null }]);

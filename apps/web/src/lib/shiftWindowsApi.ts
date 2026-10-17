@@ -121,6 +121,8 @@ export interface LeadFloorTeam {
     userId: string;
     name: string;
     associateId: string | null;
+    /** Associate headshot, else the account's own photo. */
+    photoUrl?: string | null;
     /** ISO clock-in time while on the clock, else null. */
     onClockSince: string | null;
     windows: FloorTeamWindow[];
@@ -137,6 +139,8 @@ export interface FloorSupervisorTeam {
     userId: string;
     name: string;
     associateId: string | null;
+    /** Associate headshot, else the account's own photo. */
+    photoUrl?: string | null;
     onClockSince: string | null;
     windows: FloorTeamWindow[];
   } | null;

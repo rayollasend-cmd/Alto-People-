@@ -7,6 +7,7 @@ import {
   utcInstantOfLocalMidnight,
 } from '../lib/timeAnomalies.js';
 import { soonestPayday } from '../lib/payday.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 /**
  * The Workforce Manager's field cockpit — one round trip behind the
@@ -578,8 +579,10 @@ workforceOverviewRouter.get(
           email: true,
           role: true,
           clientId: true,
+          photoS3Key: true,
+          photoUpdatedAt: true,
           associate: {
-            select: { id: true, firstName: true, lastName: true, phone: true },
+            select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true },
           },
         },
         take: 200,
@@ -605,6 +608,9 @@ workforceOverviewRouter.get(
             : u.email.split('@')[0]!,
           phone: u.associate?.phone ?? null,
           associateId: u.associate?.id ?? null,
+          // A supervisor is a staff login: their account photo when there's
+          // no associate headshot.
+          photoUrl: accountPhotoUrlFor(u),
           clientId: u.clientId,
           clientName: u.clientId ? clients.get(u.clientId) ?? null : null,
         }))

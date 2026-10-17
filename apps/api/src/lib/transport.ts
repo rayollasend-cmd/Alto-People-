@@ -5,6 +5,7 @@ import { dateKeyInZone } from './timeAnomalies.js';
 import { placedClientIds } from './openShiftEligibility.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { rideRateOn } from './rideAuthorization.js';
+import { accountPhotoUrlFor } from './profilePhotoUrl.js';
 
 /**
  * Transportation — the Alto vans.
@@ -192,14 +193,22 @@ export const rideSelect = {
   createdAt: true,
   location: { select: { id: true, name: true, timezone: true, client: { select: { id: true, name: true } } } },
   stop: { select: { id: true, name: true, address: true, lat: true, lng: true } },
-  associate: { select: { id: true, firstName: true, lastName: true, phone: true } },
+  associate: { select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true } },
   run: {
     select: {
       id: true,
       status: true,
       departAt: true,
       van: { select: { id: true, name: true, plate: true, make: true, model: true, color: true, year: true } },
-      driver: { select: { id: true, email: true, associate: { select: { id: true, firstName: true, lastName: true } } } },
+      driver: {
+        select: {
+          id: true,
+          email: true,
+          photoS3Key: true,
+          photoUpdatedAt: true,
+          associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
+        },
+      },
     },
   },
   acceptedAt: true,
@@ -260,8 +269,10 @@ export function toRideView(r: RideRow) {
           driver: {
             userId: r.run.driver.id,
             name: personName(r.run.driver),
-            /** For the driver's photo on the rider's card. */
             associateId: r.run.driver.associate?.id ?? null,
+            /** The driver's photo on the rider's card: their associate
+             *  headshot, else the account's own (a driver is a staff login). */
+            photoUrl: accountPhotoUrlFor(r.run.driver),
           },
         }
       : null,

@@ -293,7 +293,7 @@ export function MyShiftHero({
             )}
             {supervisors.length > 0 && (
               <div className="flex items-center gap-2.5">
-                <Avatar src={photoUrl(supervisors[0]!.associateId)} name={supervisors[0]!.name} email="" size="sm" />
+                <Avatar src={supervisors[0]!.photoUrl ?? photoUrl(supervisors[0]!.associateId)} name={supervisors[0]!.name} email="" size="sm" />
                 <div className="min-w-0 text-sm">
                   <span className="text-silver/70">{t('hero.supervisor')} · </span>
                   <span className="text-white">{supervisors.map((s) => s.name).join(', ')}</span>

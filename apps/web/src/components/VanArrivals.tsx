@@ -2,9 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Bus } from 'lucide-react';
 import { fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import { getVanArrivals, type VanArrival } from '@/lib/transportApi';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 
 /**
  * The store supervisor's heads-up: who's coming in on an Alto van, and
@@ -62,6 +64,7 @@ function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
           <span className="block text-2xs text-silver">{fmtRelativeDayTz(a.arriveBy)}</span>
         )}
       </span>
+      <Avatar src={associatePhotoUrl(a.associateId)} name={a.name} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-white">{a.name}</div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">

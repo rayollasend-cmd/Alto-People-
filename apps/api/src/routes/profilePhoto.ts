@@ -1,4 +1,6 @@
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
+import type { Prisma } from '@prisma/client';
+import type { SessionUser } from '../types/express.js';
 import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +18,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor, userPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
+import { scopeAssociates, scopeShifts, scopeTimeEntries } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { env } from '../config/env.js';
 
@@ -272,7 +275,7 @@ profilePhotoRouter.delete(
 );
 
 /** Stream a stored photo, or 404 when none is on file (or the blob is gone). */
-async function sendPhoto(res: Response, key: string | null | undefined): Promise<void> {
+async function sendPhoto(req: Request, res: Response, key: string | null | undefined): Promise<void> {
   if (!key) {
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
@@ -294,9 +297,35 @@ async function sendPhoto(res: Response, key: string | null | undefined): Promise
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   res.setHeader('Content-Length', String(blob.length));
-  // Cache-bustable via the ?v=<updatedAt> param consumers attach.
-  res.setHeader('Cache-Control', 'private, max-age=3600');
+  // A ?v=<updatedAt> URL names one version of the photo, so it can be kept
+  // for an hour. A bare URL (the many places that build it from an id)
+  // must revalidate every time — Express answers with an ETag and a 304
+  // when nothing changed — or a new photo hid behind the old one for an hour.
+  res.setHeader(
+    'Cache-Control',
+    req.query.v ? 'private, max-age=3600' : 'private, no-cache',
+  );
   res.send(blob);
+}
+
+/**
+ * Any signed-in user in the tenant can see an associate's headshot — they
+ * appear next to names everywhere in the app — except a client's own
+ * account: a store manager sees the people who work, or worked, for them
+ * (their roster, or a shift or punch at their client or store), not every
+ * associate on Alto's books. A region-wide portal account (no client, store
+ * or org unit) keeps the tenant-wide view its command center draws from.
+ */
+function portalAssociateScope(u: SessionUser): Prisma.AssociateWhereInput {
+  const bounded = u.role === 'CLIENT_PORTAL' && Boolean(u.clientId || u.locationId || u.orgUnitPath);
+  if (!bounded) return {};
+  return {
+    OR: [
+      scopeAssociates(u),
+      { assignedShifts: { some: scopeShifts(u) } },
+      { timeEntries: { some: scopeTimeEntries(u) } },
+    ],
+  };
 }
 
 profilePhotoRouter.get(
@@ -304,19 +333,20 @@ profilePhotoRouter.get(
   requireAuth,
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
-    // Any authenticated user can see another user's profile photo — these
-    // appear next to names everywhere in the app. We don't tenant-scope:
-    // CLIENT_PORTAL still sees their associates' headshots, HR sees all.
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, ...portalAssociateScope(req.user!) },
       select: { photoS3Key: true },
     });
-    await sendPhoto(res, associate?.photoS3Key);
+    await sendPhoto(req, res, associate?.photoS3Key);
   },
 );
 
-// A login's own photo (staff accounts with no associate). Visible to any
-// signed-in user in the tenant, like an associate's headshot.
+// A login's face, by user id — the same pick as accountPhotoUrlFor: the
+// linked associate's headshot, else the account's own photo (staff with no
+// associate) — so a screen that only
+// knows who someone is as a user (an audit actor, a note author, a
+// recipient) gets the right face for everyone. Visible to any signed-in
+// user in the tenant, like an associate's headshot.
 profilePhotoRouter.get(
   '/users/:id/photo',
   requireAuth,
@@ -324,9 +354,17 @@ profilePhotoRouter.get(
     await assertSameTenant('user', String(req.params.id));
     const user = await prisma.user.findFirst({
       where: { id: req.params.id, deletedAt: null },
-      select: { photoS3Key: true },
+      select: { photoS3Key: true, associateId: true },
     });
-    await sendPhoto(res, user?.photoS3Key);
+    // The associate fallback under the same rule as /associates/:id/photo.
+    const linked = user?.associateId
+      ? await prisma.associate.findFirst({
+          where: { id: user.associateId, deletedAt: null, ...portalAssociateScope(req.user!) },
+          select: { photoS3Key: true },
+        })
+      : null;
+    const associateKey = linked?.photoS3Key ?? null;
+    await sendPhoto(req, res, associateKey ?? user?.photoS3Key);
   },
 );
 

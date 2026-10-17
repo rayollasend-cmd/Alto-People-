@@ -8,6 +8,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { ledWindows } from '../lib/shiftWindows.js';
 import { dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   FLOOR_WHERE,
   LEAD_WHERE,
@@ -48,7 +49,9 @@ const personSelect = {
   email: true,
   clientId: true,
   associateId: true,
-  associate: { select: { firstName: true, lastName: true } },
+  photoS3Key: true,
+  photoUpdatedAt: true,
+  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 /** "Today" on the user's store clock — the first store of their shift. */
@@ -100,6 +103,7 @@ async function leadView(lead: { id: string; clientId: string | null }) {
         userId: m.id,
         name: personName(m),
         associateId: m.associateId,
+        photoUrl: accountPhotoUrlFor(m),
         onClockSince: await presence(m),
         windows: await windowsOf(m.id),
         coveringToday: covers.some((c) => c.cover.id === m.id && c.fromDate <= today && c.toDate >= today),
@@ -147,6 +151,7 @@ floorTeamRouter.get('/me/floor-team', requireAuth, async (req, res) => {
           userId: lead.id,
           name: personName(lead),
           associateId: lead.associateId,
+          photoUrl: accountPhotoUrlFor(lead),
           onClockSince: await presence(lead),
           windows: await windowsOf(lead.id),
         }

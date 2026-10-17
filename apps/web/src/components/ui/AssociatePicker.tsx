@@ -4,11 +4,19 @@ import { X } from 'lucide-react';
 import { listDirectory } from '@/lib/directoryApi';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
+import { Avatar } from './Avatar';
 import { Input } from './Input';
 
 export interface PickedAssociate {
   id: string;
   name: string;
+}
+
+/** A search hit — the pick plus the directory's cache-busted photo, which
+ *  stays inside the picker (onChange still hands back just {id, name}). */
+interface PickerResult extends PickedAssociate {
+  photoUrl: string | null;
 }
 
 /**
@@ -36,6 +44,9 @@ export function AssociatePicker({
 }) {
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(false);
+  // The photo of the row just picked, so the chip shows the same
+  // cache-busted face; a value set from outside falls back to the id.
+  const [pickedPhoto, setPickedPhoto] = useState<{ id: string; url: string | null } | null>(null);
   const debouncedTerm = useDebouncedValue(term.trim(), 250);
   const canSearch = !value && debouncedTerm.length >= 2;
 
@@ -47,10 +58,11 @@ export function AssociatePicker({
     enabled: canSearch,
     staleTime: 30_000,
     retry: false,
-    select: (r): PickedAssociate[] =>
+    select: (r): PickerResult[] =>
       r.associates.slice(0, 8).map((a) => ({
         id: a.id,
         name: `${a.firstName} ${a.lastName}`.trim(),
+        photoUrl: a.photoUrl,
       })),
   });
   const results = canSearch ? (search.data ?? []) : [];
@@ -80,7 +92,19 @@ export function AssociatePicker({
           className,
         )}
       >
-        <span className="text-white">{value.name}</span>
+        <span className="flex min-w-0 items-center gap-2 text-white">
+          <Avatar
+            src={
+              pickedPhoto?.id === value.id
+                ? personPhotoUrl({ photoUrl: pickedPhoto.url, associateId: value.id })
+                : associatePhotoUrl(value.id)
+            }
+            name={value.name}
+            size="xs"
+            className="-my-1"
+          />
+          <span className="truncate">{value.name}</span>
+        </span>
         <button
           type="button"
           onClick={() => {
@@ -117,13 +141,20 @@ export function AssociatePicker({
             <button
               key={r.id}
               type="button"
-              className="block w-full px-3 py-2 text-left text-sm text-silver hover:bg-navy-secondary hover:text-white"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-silver hover:bg-navy-secondary hover:text-white"
               onClick={() => {
-                onChange(r);
+                setPickedPhoto({ id: r.id, url: r.photoUrl });
+                onChange({ id: r.id, name: r.name });
                 setOpen(false);
               }}
             >
-              {r.name}
+              <Avatar
+                src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.id })}
+                name={r.name}
+                size="xs"
+                className="-my-1"
+              />
+              <span className="truncate">{r.name}</span>
             </button>
           ))}
         </div>

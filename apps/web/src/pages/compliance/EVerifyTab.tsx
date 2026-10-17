@@ -42,11 +42,13 @@ import {
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
 import { toast } from 'sonner';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -603,6 +605,7 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void
       title={onOpen ? undefined : 'View only — opening a case requires compliance management access.'}
       className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left transition-colors enabled:hover:bg-navy-secondary/40 disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
+      <Avatar src={associatePhotoUrl(row.associateId)} name={row.associateName} email={row.associateEmail} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm text-white">{row.associateName}</span>

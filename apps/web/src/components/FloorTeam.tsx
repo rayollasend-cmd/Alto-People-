@@ -42,7 +42,11 @@ import { toast } from '@/components/ui/Toaster';
  * No money anywhere — these are store supervisors.
  */
 
-const photoUrl = (associateId: string | null) => (associateId ? `/api/associates/${associateId}/photo` : undefined);
+// Supervisors are staff logins: the API sends their associate headshot, else
+// their account photo. The bare associate path is the fallback for an API
+// that predates the field.
+const photoUrl = (p: { photoUrl?: string | null; associateId: string | null }) =>
+  p.photoUrl ?? (p.associateId ? `/api/associates/${p.associateId}/photo` : undefined);
 
 export function useFloorTeam() {
   return useQuery({
@@ -141,7 +145,7 @@ export function FloorTeamStrip({ className }: { className?: string }) {
           <ul className="mt-3 divide-y divide-navy-secondary/60">
             {data.team.map((m) => (
               <li key={m.userId} className="flex items-center gap-3 py-2.5">
-                <Avatar src={photoUrl(m.associateId)} name={m.name} email="" size="md" />
+                <Avatar src={photoUrl(m)} name={m.name} email="" size="md" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span className="truncate text-sm font-medium text-white">{m.name}</span>
@@ -289,7 +293,7 @@ export function HandOverDialog({
                         onChange={() => setCoverId(m.userId)}
                         className="h-4 w-4 accent-gold"
                       />
-                      <Avatar src={photoUrl(m.associateId)} name={m.name} email="" size="sm" />
+                      <Avatar src={photoUrl(m)} name={m.name} email="" size="sm" />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-white">{m.name}</div>
                         <div className="text-xs2 text-silver/80">
@@ -381,7 +385,7 @@ export function MyLeadStrip({ className }: { className?: string }) {
         </h2>
         {lead ? (
           <div className="mt-3 flex items-center gap-3">
-            <Avatar src={photoUrl(lead.associateId)} name={lead.name} email="" size="lg" />
+            <Avatar src={photoUrl(lead)} name={lead.name} email="" size="lg" />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="truncate text-base font-medium text-white">{lead.name}</span>

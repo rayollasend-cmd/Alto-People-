@@ -6,6 +6,7 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
@@ -28,6 +29,8 @@ interface WorkNoteRow {
   createdAt: string;
   authorEmail: string | null;
   authorName: string | null;
+  /** The author's face — cache-busted; null when they have no login. */
+  authorPhotoUrl: string | null;
   decisionDesk: string | null;
   decisionStatus: 'PENDING' | 'APPROVED' | 'DECLINED' | null;
   decisionNote: string | null;
@@ -162,7 +165,13 @@ export function WorkThreadPanel({
         <ul className="space-y-3">
           {notes.map((n) => (
             <li key={n.id} className="rounded border border-navy-secondary p-3">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <Avatar
+                  src={n.authorPhotoUrl}
+                  name={n.authorName}
+                  email={n.authorEmail}
+                  size="xs"
+                />
                 <span className="font-medium text-white">
                   {n.authorName ?? n.authorEmail ?? 'Someone'}
                 </span>

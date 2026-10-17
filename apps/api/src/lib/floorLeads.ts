@@ -55,7 +55,9 @@ const personSelect = {
   email: true,
   clientId: true,
   associateId: true,
-  associate: { select: { firstName: true, lastName: true } },
+  photoS3Key: true,
+  photoUpdatedAt: true,
+  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } satisfies Prisma.UserSelect;
 
 export type Person = Prisma.UserGetPayload<{ select: typeof personSelect }>;

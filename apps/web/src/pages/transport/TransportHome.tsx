@@ -76,6 +76,7 @@ import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
 import { SoundToggle } from '@/components/transport/SoundToggle';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -760,6 +761,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                             {manage && (
                               <PickBox label={`Pick ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
                             )}
+                            <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
                                 {r.rider.name}
@@ -881,7 +883,10 @@ function RunPanel({
         <div className="flex flex-wrap items-center gap-2">
           <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
           <span className="font-semibold text-white">{run.van.name}</span>
-          <span className="text-sm text-silver">· {run.driver.name}</span>
+          <span className="flex items-center gap-1.5 text-sm text-silver">
+            · <Avatar src={personPhotoUrl({ userId: run.driver.userId })} name={run.driver.name} size="xs" />
+            {run.driver.name}
+          </span>
           <span className="text-sm tabular-nums text-silver">· leaves {fmtTimeTz(run.departAt, tz)}</span>
           <span className="ml-auto flex items-center gap-2">
             <span className={cn('text-xs tabular-nums', full ? 'text-warning' : 'text-silver')}>
@@ -920,6 +925,7 @@ function RunPanel({
             return (
               <li key={r.id} className="flex items-center gap-3 py-2">
                 <span className="w-5 shrink-0 text-right text-xs tabular-nums text-silver">{i + 1}</span>
+                <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-white">
                     {r.rider.name}
@@ -2055,7 +2061,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
 
                   <div className="mt-3 flex items-center gap-2">
                     {v.driver ? (
-                      <Avatar src={v.driver.associateId ? `/api/associates/${v.driver.associateId}/photo` : undefined} name={v.driver.name} email="" size="sm" />
+                      <Avatar src={personPhotoUrl(v.driver)} name={v.driver.name} email="" size="sm" />
                     ) : (
                       <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-silver/50 text-silver" aria-hidden="true">
                         ?

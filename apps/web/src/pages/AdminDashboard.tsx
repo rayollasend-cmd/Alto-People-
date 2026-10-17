@@ -37,7 +37,9 @@ import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { userPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -914,12 +916,12 @@ function ActivityFeed({
                       key={e.id}
                       className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
                     >
-                      <div className="h-8 w-8 rounded-full bg-navy-secondary/60 grid place-items-center shrink-0 text-silver text-xs">
-                        {(e.actorEmail ?? 'S')
-                          .split(/[@._-]+/)[0]
-                          ?.slice(0, 2)
-                          .toUpperCase() ?? '••'}
-                      </div>
+                      <Avatar
+                        src={userPhotoUrl(e.actorUserId)}
+                        name={e.actorEmail ? null : 'System'}
+                        email={e.actorEmail}
+                        size="sm"
+                      />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm text-white truncate">
                           <span className="text-silver">

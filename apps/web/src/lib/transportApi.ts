@@ -78,7 +78,7 @@ export interface Ride {
     status: RideRunStatus;
     departAt: string;
     van: VanLook & { id: string; name: string; plate: string | null };
-    driver: { userId: string; name: string; associateId: string | null };
+    driver: { userId: string; name: string; associateId: string | null; photoUrl?: string | null };
   } | null;
   fareCents: number;
   noShowFeeCents: number;
@@ -580,7 +580,7 @@ export interface Van {
   year: number | null;
   look: string;
   /** The van's driver — they accept seat requests in it. */
-  driver: { userId: string; name: string; associateId: string | null; phone: string | null } | null;
+  driver: { userId: string; name: string; associateId: string | null; photoUrl?: string | null; phone: string | null } | null;
 }
 
 export interface VanInput {
@@ -742,7 +742,7 @@ export const declineSeat = (rideId: string, reason?: string) =>
 
 export interface RideCrew {
   van: VanLook & { name: string; plate: string | null; capacity: number; look: string };
-  driver: { name: string; associateId: string | null; since: string; trips: number; riders: number };
+  driver: { name: string; associateId: string | null; photoUrl?: string | null; since: string; trips: number; riders: number };
 }
 export const getMyCrew = (rideId: string) => apiFetch<{ crew: RideCrew | null }>(`/transport/me/rides/${rideId}/crew`);
 

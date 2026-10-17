@@ -5,6 +5,7 @@ import { createApp } from '../../app.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
+  createClient,
   createUser,
   prisma,
   truncateAll,
@@ -105,5 +106,53 @@ describe('profile photo storage health', () => {
     const agent = await loginAs(user.email);
     expect((await agent.get('/profile-photos/health')).status).toBe(403);
     expect((await agent.post('/profile-photos/clear-missing').send({})).status).toBe(403);
+  });
+});
+
+describe('a face by user id, and when a browser may keep it', () => {
+  it("/users/:id/photo serves an associate-linked login's headshot", async () => {
+    const associate = await createAssociate();
+    const { user } = await createUser({ role: 'ASSOCIATE', associateId: associate.id });
+    const me = await loginAs(user.email);
+    await me.post('/me/profile-photo').attach('file', PNG, { filename: 'me.png', contentType: 'image/png' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const res = await (await loginAs(hr.email)).get(`/users/${user.id}/photo`);
+    expect(res.status).toBe(200);
+  });
+
+  it('a versioned URL may be kept; a bare one revalidates', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+    const up = await agent.post('/me/profile-photo').attach('file', PNG, { filename: 'me.png', contentType: 'image/png' });
+    const versioned = await agent.get(up.body.photoUrl.replace(/^\/api/, ''));
+    expect(versioned.headers['cache-control']).toBe('private, max-age=3600');
+    const bare = await agent.get(`/users/${hr.id}/photo`);
+    expect(bare.headers['cache-control']).toBe('private, no-cache');
+    expect(bare.headers.etag).toBeTruthy();
+  });
+});
+
+describe("a client's account sees its own people's faces, not everyone's", () => {
+  it('portal: their roster yes, another client\'s associate no', async () => {
+    const mine = await createClient('Walmart 1234');
+    const theirs = await createClient('Walmart 9999');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const withPhoto = async (clientId: string) => {
+      const a = await createAssociate();
+      const site = await prisma.site.findFirstOrThrow({ where: { clientId } });
+      await prisma.associateAssignment.create({ data: { associateId: a.id, locationId: site.id, startedAt: new Date() } });
+      await hrAgent.post(`/associates/${a.id}/photo`).attach('file', PNG, { filename: 'a.png', contentType: 'image/png' });
+      return a;
+    };
+    const ours = await withPhoto(mine.id);
+    const other = await withPhoto(theirs.id);
+    const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: mine.id });
+    const p = await loginAs(portal.email);
+
+    expect((await p.get(`/associates/${ours.id}/photo`)).status).toBe(200);
+    expect((await p.get(`/associates/${other.id}/photo`)).status).toBe(404);
+    // HR still sees everyone.
+    expect((await hrAgent.get(`/associates/${other.id}/photo`)).status).toBe(200);
   });
 });

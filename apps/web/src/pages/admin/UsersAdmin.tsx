@@ -18,6 +18,7 @@ import { roleOfferedFor } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import {
   forcePasswordReset,
   listAdminUsers,
@@ -32,6 +33,7 @@ import { listRegions } from '@/lib/regionsApi';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { SupervisorShiftDialog } from './SupervisorShiftDialog';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -556,13 +558,21 @@ export function UsersAdmin() {
       cell: (u) => {
         const isMe = me?.id === u.id;
         return (
-          <>
-            <div className="text-white">
-              {u.associateName ?? u.email}
-              {isMe && <span className="ml-2 text-xs text-gold">(you)</span>}
+          <div className="flex items-center gap-2">
+            <Avatar
+              src={personPhotoUrl({ associateId: u.associateId, userId: u.id })}
+              name={u.associateName}
+              email={u.email}
+              size="sm"
+            />
+            <div className="min-w-0">
+              <div className="text-white">
+                {u.associateName ?? u.email}
+                {isMe && <span className="ml-2 text-xs text-gold">(you)</span>}
+              </div>
+              {u.associateName && <div className="text-xs text-silver">{u.email}</div>}
             </div>
-            {u.associateName && <div className="text-xs text-silver">{u.email}</div>}
-          </>
+          </div>
         );
       },
     },

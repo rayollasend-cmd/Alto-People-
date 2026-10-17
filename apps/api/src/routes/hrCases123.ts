@@ -5,6 +5,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { hasCapability, rolesWithCapability, type Role } from '@alto-people/shared';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   ADMIN_EMAIL_HR_ONLY,
   notifyAllAdmins,
@@ -196,8 +197,16 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
       assignedTo: { select: { id: true, email: true } },
       comments: {
         include: {
-          authorUser: { select: { email: true } },
-          authorAssociate: { select: { firstName: true, lastName: true } },
+          authorUser: {
+            select: {
+              id: true,
+              email: true,
+              photoS3Key: true,
+              photoUpdatedAt: true,
+              associate: { select: { id: true, photoS3Key: true, photoUpdatedAt: true } },
+            },
+          },
+          authorAssociate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         },
         orderBy: { createdAt: 'asc' },
       },
@@ -241,6 +250,11 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
         authorName: cm.authorAssociate
           ? `${cm.authorAssociate.firstName} ${cm.authorAssociate.lastName}`
           : null,
+        authorPhotoUrl: cm.authorUser
+          ? accountPhotoUrlFor(cm.authorUser)
+          : cm.authorAssociate
+            ? profilePhotoUrlFor(cm.authorAssociate)
+            : null,
       })),
   });
 });

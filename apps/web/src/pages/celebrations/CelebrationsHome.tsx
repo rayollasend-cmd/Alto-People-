@@ -28,6 +28,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { Avatar } from '@/components/ui/Avatar';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, parseYmd } from '@/lib/format';
 
@@ -158,12 +160,20 @@ export function CelebrationsHome() {
                               : 'cursor-pointer hover:border-gold/40 hover:bg-navy-secondary/40'
                           }`}
                         >
-                          <div className={`h-10 w-10 rounded-full grid place-items-center ${
-                            c.kind === 'BIRTHDAY'
-                              ? 'bg-warning/20 text-warning'
-                              : 'bg-gold/20 text-gold'
-                          }`}>
-                            {c.kind === 'BIRTHDAY' ? <Cake className="h-5 w-5" /> : <PartyPopper className="h-5 w-5" />}
+                          {/* Their face, with the occasion pinned to it. The
+                              badge sits on an opaque navy disc so the tint
+                              reads over a photo. */}
+                          <div className="relative shrink-0">
+                            <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.email} size="md" />
+                            <span className="absolute -bottom-1 -right-1 rounded-full bg-navy ring-2 ring-navy">
+                              <span className={`h-5 w-5 rounded-full grid place-items-center ${
+                                c.kind === 'BIRTHDAY'
+                                  ? 'bg-warning/20 text-warning'
+                                  : 'bg-gold/20 text-gold'
+                              }`}>
+                                {c.kind === 'BIRTHDAY' ? <Cake className="h-3 w-3" aria-hidden="true" /> : <PartyPopper className="h-3 w-3" aria-hidden="true" />}
+                              </span>
+                            </span>
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-white truncate">

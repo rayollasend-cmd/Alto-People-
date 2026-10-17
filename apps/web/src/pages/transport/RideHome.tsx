@@ -41,6 +41,7 @@ import { useRiderAlerts } from './useRiderAlerts';
 import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
 import { fmtWindow, shiftTargetIso, windowForShift } from './shiftTrips';
 import { Avatar } from '@/components/ui/Avatar';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -691,7 +692,7 @@ function NextRideHero({
               aria-label={t('ride.crewOpen')}
             >
               <Avatar
-                src={next.run.driver.associateId ? `/api/associates/${next.run.driver.associateId}/photo` : undefined}
+                src={personPhotoUrl(next.run.driver)}
                 name={next.run.driver.name}
                 email=""
                 size="md"
@@ -857,7 +858,7 @@ function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }
             </div>
             <div className="flex items-center gap-3">
               <Avatar
-                src={crew.driver.associateId ? `/api/associates/${crew.driver.associateId}/photo` : undefined}
+                src={personPhotoUrl(crew.driver)}
                 name={crew.driver.name}
                 email=""
                 size="lg"

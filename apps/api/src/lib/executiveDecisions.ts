@@ -17,7 +17,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
-import { profilePhotoUrlFor } from './profilePhotoUrl.js';
+import { accountPhotoUrlFor } from './profilePhotoUrl.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
 const DAY_MS = 24 * 3600_000;
@@ -505,6 +505,8 @@ export async function computeExecutiveDecisions(
           select: {
             id: true,
             email: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
             associate: {
               select: {
                 id: true,
@@ -531,7 +533,7 @@ export async function computeExecutiveDecisions(
     return {
       id: u.id,
       name: name.charAt(0).toUpperCase() + name.slice(1),
-      photoUrl: u.associate ? profilePhotoUrlFor(u.associate) : null,
+      photoUrl: accountPhotoUrlFor(u),
     };
   };
 

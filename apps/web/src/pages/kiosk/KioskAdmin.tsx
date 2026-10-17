@@ -82,6 +82,8 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
+import { Avatar } from '@/components/ui/Avatar';
 import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
@@ -1615,6 +1617,7 @@ function PinsTab({
                   className: 'font-medium text-white',
                   cell: (pn) => (
                     <div className="flex items-center gap-2 min-w-0">
+                      <Avatar src={associatePhotoUrl(pn.associateId)} name={pn.associateName} email={pn.associateEmail} size="xs" />
                       <span className="truncate">
                         <AssociateLink associateId={pn.associateId}>{pn.associateName}</AssociateLink>
                       </span>

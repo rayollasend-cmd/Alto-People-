@@ -13,6 +13,7 @@ import type { Candidate, CandidateBoardResponse, CandidateStage } from '@alto-pe
 import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -434,7 +435,7 @@ function CandidateCard({
         )}
       >
         <div className="flex items-start gap-2 pr-6">
-          {!compact && <Avatar name={fullName} email={candidate.email} size="sm" />}
+          {!compact && <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="sm" />}
           <div className="min-w-0 flex-1">
             <div className="truncate font-medium text-white">{fullName}</div>
             {compact ? (

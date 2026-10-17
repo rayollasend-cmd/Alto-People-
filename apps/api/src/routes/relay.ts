@@ -321,8 +321,11 @@ relayRouter.get('/work-notes', STAFF, async (req, res, next) => {
       include: {
         authorUser: {
           select: {
+            id: true,
             email: true,
-            associate: { select: { firstName: true, lastName: true } },
+            photoS3Key: true,
+            photoUpdatedAt: true,
+            associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
           },
         },
         decidedBy: { select: { email: true } },
@@ -338,6 +341,7 @@ relayRouter.get('/work-notes', STAFF, async (req, res, next) => {
         authorName: n.authorUser?.associate
           ? `${n.authorUser.associate.firstName} ${n.authorUser.associate.lastName}`.trim()
           : (n.authorUser?.email.split('@')[0] ?? null),
+        authorPhotoUrl: n.authorUser ? accountPhotoUrlFor(n.authorUser) : null,
         decisionDesk: n.decisionDesk,
         decisionStatus: n.decisionStatus,
         decisionNote: n.decisionNote,

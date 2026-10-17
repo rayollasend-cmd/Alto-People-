@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { CalendarCheck, Mail, MapPin, Phone } from 'lucide-react';
+import { Avatar } from '@/components/ui/Avatar';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
+import { userPhotoUrl } from '@/lib/photoUrl';
 import { useI18n } from '@/lib/i18n';
 import { getMyReadyToWork, storeAddress } from '@/lib/readyToWorkApi';
 
@@ -53,24 +55,27 @@ export function ReadyToWorkCard({ className }: { className?: string }) {
         ) : (
           <ul className="mt-1.5 space-y-2">
             {kit.supervisors.map((s) => (
-              <li key={s.userId} className="rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
-                <div className="text-sm text-white">
-                  {s.name}
-                  {s.windows.length > 0 && (
-                    <span className="ml-2 text-xs text-silver/70">{s.windows.join(' · ')}</span>
-                  )}
-                </div>
-                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  {s.phone && (
-                    <a href={`tel:${s.phone}`} className="inline-flex items-center gap-1 text-gold hover:underline">
-                      <Phone className="h-3 w-3" aria-hidden="true" />
-                      {s.phone}
+              <li key={s.userId} className="flex items-center gap-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
+                <Avatar src={userPhotoUrl(s.userId)} name={s.name} email={s.email} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-white">
+                    {s.name}
+                    {s.windows.length > 0 && (
+                      <span className="ml-2 text-xs text-silver/70">{s.windows.join(' · ')}</span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    {s.phone && (
+                      <a href={`tel:${s.phone}`} className="inline-flex items-center gap-1 text-gold hover:underline">
+                        <Phone className="h-3 w-3" aria-hidden="true" />
+                        {s.phone}
+                      </a>
+                    )}
+                    <a href={`mailto:${s.email}`} className="inline-flex items-center gap-1 text-gold hover:underline">
+                      <Mail className="h-3 w-3" aria-hidden="true" />
+                      {s.email}
                     </a>
-                  )}
-                  <a href={`mailto:${s.email}`} className="inline-flex items-center gap-1 text-gold hover:underline">
-                    <Mail className="h-3 w-3" aria-hidden="true" />
-                    {s.email}
-                  </a>
+                  </div>
                 </div>
               </li>
             ))}

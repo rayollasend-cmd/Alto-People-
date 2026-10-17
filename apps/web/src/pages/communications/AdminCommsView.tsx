@@ -21,6 +21,7 @@ import { listAdminUsers } from '@/lib/usersAdminApi';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDateTime, ymdLocal } from '@/lib/format';
+import { userPhotoUrl } from '@/lib/photoUrl';
 import {
   AssociatePicker,
   Avatar,
@@ -203,7 +204,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         className: 'text-silver',
         cell: (n) => (
           <span className="flex min-w-0 items-center gap-2.5">
-            <Avatar name={recipientOf(n)} email={n.recipientEmail ?? undefined} size="xs" />
+            <Avatar src={userPhotoUrl(n.recipientUserId)} name={recipientOf(n)} email={n.recipientEmail ?? undefined} size="xs" />
             <span className="min-w-0 break-words">{recipientOf(n)}</span>
           </span>
         ),
@@ -548,6 +549,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
+            src={userPhotoUrl(n.recipientUserId)}
             name={recipient}
             email={n.recipientEmail ?? undefined}
             size="md"

@@ -39,6 +39,7 @@ import {
 import { RIDE_AUTHORIZATION_VERSION } from '../lib/rideAuthorizationContent.js';
 import { approvedForClient, assertDriverMayServe, driverAccessFor, ridesForAccess } from '../lib/driverAccess.js';
 import { clusterAndOrder, type ClusterMember } from '../lib/rideClusters.js';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   MIN_PING_GAP_MS,
   afterPing,
@@ -125,14 +126,14 @@ async function coRiders(pairs: Array<{ rideId: string; runId: string }>) {
   const onboard = await prisma.ride.findMany({
     where: { runId: { in: [...new Set(pairs.map((p) => p.runId))] }, status: { in: ['SCHEDULED', 'BOARDED'] } },
     orderBy: { pickupOrder: 'asc' },
-    select: { id: true, runId: true, associate: { select: { id: true, photoS3Key: true } } },
+    select: { id: true, runId: true, associate: { select: { id: true, photoS3Key: true, photoUpdatedAt: true } } },
   });
   for (const p of pairs) {
     out.set(
       p.rideId,
       onboard
         .filter((x) => x.runId === p.runId && x.id !== p.rideId)
-        .map((x) => ({ photoUrl: x.associate.photoS3Key ? `/api/associates/${x.associate.id}/photo` : null })),
+        .map((x) => ({ photoUrl: profilePhotoUrlFor(x.associate) })),
     );
   }
   return out;
@@ -1523,6 +1524,7 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
   if (!location.client) throw new HttpError(403, 'client_required', 'This store has no client to serve.');
   await assertDriverMayServe(req, location.client.id);
   const members: ClusterMember[] = [];
+  const photoOf = new Map(rides.map((r) => [r.associate.id, profilePhotoUrlFor(r.associate)]));
   for (const r of rides) {
     members.push({
       rideId: r.id,
@@ -1562,7 +1564,8 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
       ...c,
       riders: c.riders.map((m) => ({
         ...m,
-        photoUrl: `/api/associates/${m.associateId}/photo`,
+        // Null when no photo is on file — no request that can only 404.
+        photoUrl: photoOf.get(m.associateId) ?? null,
       })),
     })),
     unmapped: clusters.filter((c) => !c.mapped).length,
@@ -1666,7 +1669,7 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
             address: true,
             stop: { select: { name: true } },
             location: { select: { id: true, name: true, timezone: true } },
-            associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true } },
+            associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
           },
         },
       },
@@ -1717,7 +1720,7 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
           rideId: r.id,
           associateId: r.associate.id,
           name: `${r.associate.firstName} ${r.associate.lastName}`,
-          photoUrl: r.associate.photoS3Key ? `/api/associates/${r.associate.id}/photo` : null,
+          photoUrl: profilePhotoUrlFor(r.associate),
           pickupAt: iso(r.pickupAt),
           place: run.direction === 'TO_WORK' ? (r.stop?.name ?? r.address ?? '') : r.location.name,
           status: r.status,
@@ -1918,7 +1921,14 @@ transportRouter.get('/me/rides/:id/crew', RIDE, async (req, res) => {
   }
   const driver = await prisma.user.findUniqueOrThrow({
     where: { id: ride.run.driverUserId },
-    select: { createdAt: true, email: true, associate: { select: { id: true, firstName: true, lastName: true } } },
+    select: {
+      id: true,
+      createdAt: true,
+      email: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+      associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
+    },
   });
   const [trips, riders] = await Promise.all([
     prisma.rideRun.count({ where: { driverUserId: ride.run.driverUserId, status: 'COMPLETED' } }),
@@ -1933,6 +1943,7 @@ transportRouter.get('/me/rides/:id/crew', RIDE, async (req, res) => {
         // not have their full name.
         name: `${firstName}${rest.length ? ` ${rest[rest.length - 1]![0]}.` : ''}`,
         associateId: driver.associate?.id ?? null,
+        photoUrl: accountPhotoUrlFor(driver),
         since: driver.createdAt.toISOString(),
         trips,
         riders,
@@ -2448,7 +2459,15 @@ const vanSelect = {
   model: true,
   color: true,
   year: true,
-  driver: { select: { id: true, email: true, associate: { select: { id: true, firstName: true, lastName: true, phone: true } } } },
+  driver: {
+    select: {
+      id: true,
+      email: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+      associate: { select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true } },
+    },
+  },
 } satisfies Prisma.VanSelect;
 
 function toVanView(v: Prisma.VanGetPayload<{ select: typeof vanSelect }>) {
@@ -2465,7 +2484,13 @@ function toVanView(v: Prisma.VanGetPayload<{ select: typeof vanSelect }>) {
     year: v.year,
     look: vanLook(v),
     driver: v.driver
-      ? { userId: v.driver.id, name: personName(v.driver), associateId: v.driver.associate?.id ?? null, phone: v.driver.associate?.phone ?? null }
+      ? {
+          userId: v.driver.id,
+          name: personName(v.driver),
+          associateId: v.driver.associate?.id ?? null,
+          photoUrl: accountPhotoUrlFor(v.driver),
+          phone: v.driver.associate?.phone ?? null,
+        }
       : null,
   };
 }

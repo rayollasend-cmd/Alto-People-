@@ -29,6 +29,8 @@ import { useClients } from '@/lib/useClients';
 import { usePeopleSearch, useUniversalSearch } from '@/lib/usePaletteSearch';
 import type { SearchKind } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
+import { Avatar } from './Avatar';
 import {
   Dialog,
   DialogContent,
@@ -441,7 +443,13 @@ export function CommandPalette({
                       }}
                       className={ITEM_CLASS}
                     >
-                      <User className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+                      <Avatar
+                        src={personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.id })}
+                        name={fullName}
+                        email={p.email}
+                        size="xs"
+                        className="-my-1"
+                      />
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{fullName}</div>
                         {hint && (

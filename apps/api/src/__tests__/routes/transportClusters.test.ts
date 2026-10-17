@@ -153,6 +153,8 @@ describe('GET /transport/driver/trip-map', () => {
 
   it('groups the shift’s riders into stops, in the order to work them, and says who still needs a pin', async () => {
     const w = await world();
+    // Kim has a photo on file; the others don't.
+    await prisma.associate.update({ where: { id: w.kim.associate.id }, data: { photoS3Key: 'profile-photos/kim.jpg' } });
     const agent = await loginAs(w.driver.email);
     const res = await agent.get(
       `/transport/driver/trip-map?locationId=${w.store.id}&direction=TO_WORK&date=${w.serviceDate}&windowLabel=Morning`,
@@ -168,7 +170,9 @@ describe('GET /transport/driver/trip-map', () => {
     expect(first.riders.map((r: { name: string }) => r.name)).toEqual(['Rosa Rider', 'Tomas Rider']);
     expect(first.riders[0].pinned).toBe(true);
     expect(second).toMatchObject({ order: 2, mapped: true });
-    expect(second.riders[0].photoUrl).toContain('/photo');
+    expect(second.riders[0].photoUrl).toMatch(new RegExp(`^/api/associates/${w.kim.associate.id}/photo\\?v=`));
+    // No photo on file: no URL that can only 404.
+    expect(first.riders[0].photoUrl).toBeNull();
     expect(last).toMatchObject({ order: 3, mapped: false, address: '900 Nowhere Rd' });
     expect(res.body.unmapped).toBe(1);
   });

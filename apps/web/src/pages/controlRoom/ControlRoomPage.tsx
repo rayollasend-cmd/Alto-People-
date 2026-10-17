@@ -6,6 +6,7 @@ import { AlertTriangle, Bot, Hand, OctagonX, Play, ShieldAlert, ShieldCheck, Use
 import { ROBOT_STATUS_LABELS, WORKER_STATUS_LABELS, type ControlRoomException, type ControlRoomResponse, type ControlRoomRobot, type ControlRoomWaiting } from '@alto-people/shared';
 import { DeskTemplate } from '@/components/templates';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -19,6 +20,7 @@ import { useAuth, useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePrompt } from '@/lib/confirm';
 import { fmtRelativeDate, fmtTime } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { resumeAllAgents } from '@/lib/agentsApi';
 import { getControlRoom, listControlRoomSites } from '@/lib/controlRoomApi';
 import { resumeRobot, stopRobot } from '@/lib/robotsApi';
@@ -195,6 +197,7 @@ export function ControlRoomPage() {
               {data.people.map((p) => (
                 <li key={p.associateId} className="flex flex-wrap items-center gap-3 px-3 py-2">
                   <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', p.clockedIn ? 'bg-positive' : p.late ? 'bg-negative' : 'bg-ink-subtle')} aria-hidden="true" />
+                  <Avatar src={associatePhotoUrl(p.associateId)} name={p.name} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link to={p.workerId ? `/people?associateId=${p.associateId}` : '/people'} className="font-medium text-ink hover:text-accent">
