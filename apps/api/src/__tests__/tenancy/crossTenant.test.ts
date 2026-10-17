@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
@@ -25,7 +26,9 @@ import { createAssociate, createClient, createUser, DEFAULT_TEST_PASSWORD, prism
  *   baseline from what this run saw (print + file).
  */
 
-const BASELINE = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'crossTenant.baseline.json');
+// fileURLToPath, not URL.pathname: a checkout under a folder with a space
+// read "Alto%20People", missed the baseline and tried to write a new one.
+const BASELINE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'crossTenant.baseline.json');
 const T2 = '22222222-2222-4222-8222-222222222222';
 const RANDOM = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
 

@@ -15,6 +15,7 @@ import {
 } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import {
@@ -318,7 +319,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                           aria-label={`Select draft review for ${r.associateName}`}
                         />
                       )}
-                      <Avatar name={r.associateName} size="md" />
+                      <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} size="md" />
                       <div className="min-w-0 flex-1">
                         <div className="text-white font-medium">
                           <AssociateLink associateId={r.associateId}>
@@ -429,7 +430,7 @@ function ReviewDetailPanel({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar name={r.associateName} size="md" />
+          <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">
               <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>

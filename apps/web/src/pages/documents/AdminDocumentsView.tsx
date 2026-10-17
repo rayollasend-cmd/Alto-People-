@@ -81,6 +81,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { ListTemplate } from '@/components/templates';
@@ -1063,7 +1064,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 className="flex items-center gap-2.5 text-left transition-colors hover:text-white"
                 title="Open this associate's folder"
               >
-                <Avatar name={d.associateName ?? '—'} size="xs" />
+                <Avatar src={associatePhotoUrl(d.associateId)} name={d.associateName ?? '—'} size="xs" />
                 <span className="truncate">{d.associateName ?? '—'}</span>
               </button>
             ),
@@ -1299,7 +1300,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     key: (d) => d.associateId,
                     header: (id, docs) => (
                       <span className="flex items-center gap-2">
-                        <Avatar name={docs[0]?.associateName ?? '—'} size="xs" />
+                        <Avatar src={associatePhotoUrl(id)} name={docs[0]?.associateName ?? '—'} size="xs" />
                         <span className="truncate text-xs font-medium text-white">
                           <AssociateLink associateId={id} tab="documents">
                             {docs[0]?.associateName ?? '—'}
@@ -1403,7 +1404,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   primary: true,
                   cell: (g) => (
                     <div className="flex items-center gap-2.5">
-                      <Avatar name={g.associateName} size="sm" />
+                      <Avatar src={associatePhotoUrl(g.associateId)} name={g.associateName} size="sm" />
                       <span className="text-white font-medium truncate">
                         <AssociateLink associateId={g.associateId} tab="documents">
                           {g.associateName}
@@ -1434,7 +1435,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           <>
             <DrawerHeader>
               <div className="flex items-center gap-3">
-                <Avatar name={folder.associateName} size="md" />
+                <Avatar src={associatePhotoUrl(folder.associateId)} name={folder.associateName} size="md" />
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">
                     <AssociateLink associateId={folder.associateId} tab="documents">

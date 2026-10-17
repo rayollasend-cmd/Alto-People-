@@ -13,7 +13,7 @@ import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
-import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   canMessageAsync,
   canUseMessenger,
@@ -77,6 +77,8 @@ const USER_SELECT = {
   role: true,
   clientId: true,
   locationId: true,
+  photoS3Key: true,
+  photoUpdatedAt: true,
   associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
@@ -88,7 +90,7 @@ function person(u: UserRow) {
     name: displayName(u),
     role: u.role,
     roleLabel: roleLabel(u.role),
-    photoUrl: u.associate ? profilePhotoUrlFor(u.associate) : null,
+    photoUrl: accountPhotoUrlFor(u),
   };
 }
 

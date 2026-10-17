@@ -1244,7 +1244,7 @@ export function ApplicationsList() {
                   return (
                     <div className="flex items-center gap-2.5">
                       <div className="relative">
-                        <Avatar name={a.associateName} size="sm" />
+                        <Avatar src={a.photoUrl} name={a.associateName} size="sm" />
                         {(a.lastInviteDelivery?.status === 'FAILED' || stale) && (
                           <span
                             className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-alert border-2 border-navy grid place-items-center"
@@ -1541,7 +1541,7 @@ function ApplicationCard({
             className="mt-1 h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
           />
         )}
-        <Avatar name={a.associateName} size="md" />
+        <Avatar src={a.photoUrl} name={a.associateName} size="md" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="font-medium text-white group-hover:text-gold-bright transition-colors truncate">

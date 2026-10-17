@@ -65,6 +65,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useSelection } from '@/lib/useSelection';
 import { TIME_ANOMALY_LABELS, timeAnomalyLabel } from '@/lib/timeLabels';
@@ -228,10 +229,12 @@ function LateChip({ entry }: { entry: TimeEntry }) {
  * and status chips below keep working — this only pins the WHO.
  */
 function FocusBanner({
+  associateId,
   name,
   entries,
   onClear,
 }: {
+  associateId: string;
   name: string;
   entries: TimeEntry[] | null;
   onClear: () => void;
@@ -258,7 +261,7 @@ function FocusBanner({
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-md border border-gold/40 bg-gold/5 px-3 py-2">
-      <Avatar name={name} size="sm" />
+      <Avatar src={associatePhotoUrl(associateId)} name={name} size="sm" />
       <div className="min-w-0">
         <div className="text-sm text-white font-medium truncate">{name}</div>
         <div className="text-xs2 text-silver/70">
@@ -1715,7 +1718,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             title="View individual timesheet"
             className="flex items-center gap-2.5 rounded text-left font-medium hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
-            <Avatar name={e.associateName ?? '—'} size="sm" />
+            <Avatar src={associatePhotoUrl(e.associateId)} name={e.associateName ?? '—'} size="sm" />
             <span className="underline-offset-2 hover:underline">{e.associateName ?? '—'}</span>
           </button>
         ),
@@ -2223,6 +2226,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           <CardHeader className="pb-3 gap-3">
             {focusAssociate && (
               <FocusBanner
+                associateId={focusAssociate.id}
                 name={focusAssociate.name}
                 entries={entries}
                 onClear={clearFocus}
@@ -3065,7 +3069,7 @@ function TimeEntryDetailPanel({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar name={entry.associateName ?? '—'} size="md" />
+          <Avatar src={associatePhotoUrl(entry.associateId)} name={entry.associateName ?? '—'} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">
               {entry.associateName ?? '—'}

@@ -33,7 +33,7 @@ import {
   verifyMfaPending,
 } from '../lib/jwt.js';
 import { mfaPolicyAppliesTo } from '@alto-people/shared';
-import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { ACCOUNT_PHOTO_SELECT, accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import {
   generateAuthenticationOptions,
@@ -329,29 +329,24 @@ async function scopeNamesFor(u: {
 }
 
 /**
- * Look up profile fields (name + photo) for the linked Associate so we can
- * surface them in `AuthUser`. Skips the query when the user has no associate
- * row (HR-only / portal accounts) — they always carry null.
+ * Look up profile fields (name + photo) for `AuthUser`: the linked
+ * Associate's name, and their headshot — or, for an account with no
+ * associate (HR-only / portal), the photo on the account itself.
  */
-async function loadProfileFor(associateId: string | null) {
-  if (!associateId) {
-    return { firstName: null, lastName: null, photoUrl: null };
-  }
-  const a = await prisma.associate.findUnique({
-    where: { id: associateId },
+async function loadProfileFor(user: { id: string; associateId: string | null }) {
+  const row = await prisma.user.findUnique({
+    where: { id: user.id },
     select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      photoS3Key: true,
-      photoUpdatedAt: true,
+      ...ACCOUNT_PHOTO_SELECT,
+      associate: {
+        select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true },
+      },
     },
   });
-  if (!a) return { firstName: null, lastName: null, photoUrl: null };
   return {
-    firstName: a.firstName,
-    lastName: a.lastName,
-    photoUrl: profilePhotoUrlFor(a),
+    firstName: row?.associate?.firstName ?? null,
+    lastName: row?.associate?.lastName ?? null,
+    photoUrl: row ? accountPhotoUrlFor(row) : null,
   };
 }
 
@@ -532,7 +527,7 @@ authRouter.post(
       // A portal account's first sign-in is a milestone the account team hears once.
       void trackNotificationWork(notePortalSignIn(user.id));
 
-      const profile = await loadProfileFor(user.associateId);
+      const profile = await loadProfileFor(user);
       res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) } });
     } catch (err) {
       next(err);
@@ -683,7 +678,7 @@ authRouter.post(
         );
       }
 
-      const profile = await loadProfileFor(user.associateId);
+      const profile = await loadProfileFor(user);
       res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) } });
     } catch (err) {
       next(err);
@@ -884,7 +879,7 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
     // they got the invite in the first place.
     const nextPath = await pickPostAcceptPath(updatedUser.id);
 
-    const profile = await loadProfileFor(updatedUser.associateId);
+    const profile = await loadProfileFor(updatedUser);
     res.json({ user: { ...toAuthUser({ ...updatedUser, ...profile }), ...(await scopeNamesFor(updatedUser)) }, nextPath });
   } catch (err) {
     next(err);
@@ -2654,7 +2649,7 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
     const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion, amr: 'passkey' });
     res.cookie(SESSION_COOKIE, token, cookieOptions());
     await recordLoginSuccess({ email: user.email, req, userId: user.id, clientId: user.clientId });
-    const profile = await loadProfileFor(user.associateId);
+    const profile = await loadProfileFor(user);
     res.json({
       user: {
         ...toAuthUser({ ...user, ...profile }),

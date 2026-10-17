@@ -17,7 +17,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
 import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
 import { computeNoShowRisk } from '../lib/noShowRisk.js';
-import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
 import { deskMayDecide } from '../lib/agentCapabilities.js';
 import { decideApproval } from '../lib/agents.js';
@@ -72,6 +72,8 @@ const CLAIMER_SELECT = {
   id: true,
   email: true,
   role: true,
+  photoS3Key: true,
+  photoUpdatedAt: true,
   associate: {
     select: {
       id: true,
@@ -87,6 +89,8 @@ type ClaimerRow = {
   id: string;
   email: string;
   role: string;
+  photoS3Key?: string | null;
+  photoUpdatedAt?: Date | null;
   associate: {
     id: string;
     firstName: string;
@@ -99,7 +103,7 @@ type ClaimerRow = {
 const personOf = (u: ClaimerRow) => ({
   id: u.id,
   name: claimantName(u),
-  photoUrl: u.associate ? profilePhotoUrlFor(u.associate) : null,
+  photoUrl: accountPhotoUrlFor(u),
   roleLabel: ROLE_LABELS[u.role as Role] ?? u.role,
   role: u.role,
 });

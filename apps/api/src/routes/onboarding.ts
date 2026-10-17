@@ -55,6 +55,7 @@ import { generateInviteToken } from '../lib/inviteToken.js';
 import { INVITE_UNDO_SECONDS, invitesAreEmailed, scheduleInviteDelivery, sendInviteEmail } from '../lib/inviteDelivery.js';
 import { CANCEL_REASONS, cancelApplication, reopenApplication } from '../lib/onboardingUndo.js';
 import { ensureWorkerForAssociate } from '../lib/workers.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { runStaleNudgeSweep } from '../lib/staleNudge.js';
@@ -664,7 +665,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
-          associate: { select: { firstName: true, lastName: true } },
+          associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
           client: { select: { name: true } },
           checklist: {
             include: {
@@ -718,6 +719,11 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
         blockedOnTitle: blocked?.title ?? null,
         lastActivityAt: new Date(lastActivityMs).toISOString(),
+        photoUrl: profilePhotoUrlFor({
+          id: row.associateId,
+          photoS3Key: row.associate.photoS3Key,
+          photoUpdatedAt: row.associate.photoUpdatedAt,
+        }),
       };
     });
 

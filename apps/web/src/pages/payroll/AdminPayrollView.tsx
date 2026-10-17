@@ -100,6 +100,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import { FilterChip } from '@/components/ui/FilterBar';
@@ -2368,7 +2369,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
           ) : (
             <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
           )}
-          <Avatar name={item.associateName ?? '—'} size="sm" />
+          <Avatar src={associatePhotoUrl(item.associateId)} name={item.associateName ?? '—'} size="sm" />
           <div className="min-w-0">
             <div className="text-sm text-white truncate">
               {item.associateName ?? '—'}

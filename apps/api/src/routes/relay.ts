@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -37,18 +38,23 @@ interface Person {
 const personSelect = {
   id: true,
   email: true,
-  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true } },
+  photoS3Key: true,
+  photoUpdatedAt: true,
+  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 function personOf(u: {
   id: string;
   email: string;
-  associate: { id: string; firstName: string; lastName: string; photoS3Key: string | null } | null;
+  photoS3Key: string | null;
+  photoUpdatedAt: Date | null;
+  associate: { id: string; firstName: string; lastName: string; photoS3Key: string | null; photoUpdatedAt: Date | null } | null;
 }): Person {
   return {
     userId: u.id,
     name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : (u.email.split('@')[0] ?? u.email),
-    photoUrl: u.associate?.photoS3Key ? `/api/associates/${u.associate.id}/photo` : null,
+    // A desk is staff: their account photo when there's no associate headshot.
+    photoUrl: accountPhotoUrlFor(u),
   };
 }
 

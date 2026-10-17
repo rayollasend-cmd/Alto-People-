@@ -10,7 +10,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
 import { verifyMfaEnroll, verifySession } from '../lib/jwt.js';
-import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const SESSION_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.session'
@@ -161,6 +161,8 @@ export async function attachUser(
         timezone: true,
         language: true,
         mfaEnabledAt: true,
+        photoS3Key: true,
+        photoUpdatedAt: true,
         tenantRole: { select: { id: true, name: true, archetype: true, capabilities: true, deletedAt: true } },
         associate: {
           select: {
@@ -217,6 +219,8 @@ export async function attachUser(
     const {
       associate: _a,
       associateId: _aid,
+      photoS3Key,
+      photoUpdatedAt,
       mfaEnabledAt,
       additionalRoles: _additionalRoles,
       activeRole: _activeRole,
@@ -239,7 +243,7 @@ export async function attachUser(
       associateId,
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
-      photoUrl: associate ? profilePhotoUrlFor(associate) : null,
+      photoUrl: accountPhotoUrlFor({ id: user.id, photoS3Key, photoUpdatedAt, associate }),
       mfaEnabled: mfaEnabledAt !== null,
       orgUnitPath: orgUnit?.path ?? null,
       capabilities: custom?.capabilities ?? null,
@@ -374,6 +378,8 @@ export async function allowMfaEnrollToken(
         timezone: true,
         language: true,
         mfaEnabledAt: true,
+        photoS3Key: true,
+        photoUpdatedAt: true,
         associate: {
           select: {
             id: true,
@@ -396,6 +402,8 @@ export async function allowMfaEnrollToken(
 
     const {
       associate,
+      photoS3Key,
+      photoUpdatedAt,
       mfaEnabledAt,
       additionalRoles: _additionalRoles,
       activeRole: _activeRole,
@@ -409,7 +417,7 @@ export async function allowMfaEnrollToken(
       availableRoles: rolesAvailableTo(user),
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
-      photoUrl: associate ? profilePhotoUrlFor(associate) : null,
+      photoUrl: accountPhotoUrlFor({ id: user.id, photoS3Key, photoUpdatedAt, associate }),
       mfaEnabled: mfaEnabledAt !== null,
       orgUnitPath: orgUnit?.path ?? null,
     };

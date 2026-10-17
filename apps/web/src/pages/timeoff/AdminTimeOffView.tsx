@@ -17,6 +17,7 @@ import {
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { usePrompt } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import {
@@ -413,7 +414,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     className: 'text-white',
                     cell: (r) => (
                       <div className="flex items-center gap-2.5">
-                        <Avatar name={r.associateName ?? '—'} size="sm" />
+                        <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName ?? '—'} size="sm" />
                         <div className="min-w-0 truncate">
                           <AssociateLink associateId={r.associateId}>{r.associateName ?? '—'}</AssociateLink>
                         </div>

@@ -23,6 +23,7 @@ import {
 } from '@/lib/teamApi';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import {
@@ -384,7 +385,7 @@ function InboxTab() {
           className: 'font-medium',
           cell: (item) => (
             <div className="flex items-center gap-2.5">
-              <Avatar name={item.associateName} size="sm" />
+              <Avatar src={associatePhotoUrl(item.associateId)} name={item.associateName} size="sm" />
               <div className="truncate">{item.associateName}</div>
             </div>
           ),
@@ -508,7 +509,7 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
                   to={`/people?associateId=${r.id}`}
                   className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
                 >
-                  <Avatar name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
+                  <Avatar src={associatePhotoUrl(r.id)} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
                   <div className="truncate group-hover:text-gold-bright transition-colors">
                     {r.firstName} {r.lastName}
                   </div>
@@ -825,7 +826,7 @@ function TimesheetsTab() {
             className: 'font-medium',
             cell: (e) => (
               <div className="flex items-center gap-2.5">
-                <Avatar name={e.associateName} size="sm" />
+                <Avatar src={associatePhotoUrl(e.associateId)} name={e.associateName} size="sm" />
                 <div className="truncate">{e.associateName}</div>
               </div>
             ),
@@ -1085,7 +1086,7 @@ function TimeOffTab() {
             className: 'font-medium',
             cell: (r) => (
               <div className="flex items-center gap-2.5">
-                <Avatar name={r.associateName} size="sm" />
+                <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} size="sm" />
                 <div className="truncate">{r.associateName}</div>
               </div>
             ),

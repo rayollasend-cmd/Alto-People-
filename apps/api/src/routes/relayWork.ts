@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -50,14 +51,18 @@ const personSelect = {
   id: true,
   email: true,
   role: true,
-  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true } },
+  photoS3Key: true,
+  photoUpdatedAt: true,
+  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 type PersonRow = {
   id: string;
   email: string;
   role: string;
-  associate: { id: string; firstName: string; lastName: string; photoS3Key: string | null } | null;
+  photoS3Key: string | null;
+  photoUpdatedAt: Date | null;
+  associate: { id: string; firstName: string; lastName: string; photoS3Key: string | null; photoUpdatedAt: Date | null } | null;
 };
 
 function person(u: PersonRow | null) {
@@ -65,7 +70,7 @@ function person(u: PersonRow | null) {
   return {
     userId: u.id,
     name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : (u.email.split('@')[0] ?? u.email),
-    photoUrl: u.associate?.photoS3Key ? `/api/associates/${u.associate.id}/photo` : null,
+    photoUrl: accountPhotoUrlFor(u),
     desk: deskOfRole(u.role),
   };
 }

@@ -232,6 +232,8 @@ export const ApplicationSummarySchema = /* @__PURE__ */ (() => z.object({
   blockedOnTitle: z.string().nullable().optional(),
   /** Most recent movement: latest task completion, else the invite. */
   lastActivityAt: z.string().datetime().nullable().optional(),
+  /** The hire's headshot (cache-busted); null when none is on file. */
+  photoUrl: z.string().nullable().optional(),
 }))();
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 

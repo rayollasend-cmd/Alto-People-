@@ -22,6 +22,7 @@ import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   bulkApproveTeamTimesheets,
   getTeamDashboard,
@@ -672,6 +673,7 @@ function TeamRoster({
                         className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                       >
                         <Avatar
+                          src={associatePhotoUrl(r.id)}
                           name={`${r.firstName} ${r.lastName}`}
                           email={r.email}
                           size="sm"

@@ -458,6 +458,11 @@ model User {
   orgUnitId           String?          @db.Uuid
   // The name an invite addressed (portal accounts carry no associate).
   displayName         String?          @db.VarChar(120)
+  // Profile photo for a login with no associate record (HR, recruiters,
+  // managers). An associate-linked login keeps theirs on the Associate;
+  // lib/profilePhotoUrl.accountPhotoUrlFor picks whichever is on file.
+  photoS3Key          String?
+  photoUpdatedAt      DateTime?        @db.Timestamptz(6)
   /// Brief 1A-4: a deactivation is reversible for 30 days (purgeAfter =
   /// the day the sweep soft-deletes the account); Region scope on a
   /// portal account carries the named approver.

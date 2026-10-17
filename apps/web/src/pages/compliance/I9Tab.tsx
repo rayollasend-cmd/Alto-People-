@@ -23,6 +23,7 @@ import {
   IDENTITY_DOC_KINDS,
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
@@ -464,7 +465,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-3 min-w-0">
-                        <Avatar name={r.associateName} email={r.associateEmail} size="md" />
+                        <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} email={r.associateEmail} size="md" />
                         <div className="min-w-0">
                           <div className="text-white font-medium truncate">
                             {r.associateName}
@@ -609,6 +610,7 @@ function I9DetailPanel({
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
+            src={associatePhotoUrl(current.associateId)}
             name={current.associateName}
             email={current.associateEmail}
             size="md"

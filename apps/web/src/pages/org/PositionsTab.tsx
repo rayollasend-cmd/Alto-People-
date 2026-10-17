@@ -26,6 +26,7 @@ import {
 } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
@@ -178,7 +179,7 @@ export function PositionsTab({
               cell: (p) =>
                 p.filledByName ? (
                   <div className="flex items-center gap-2">
-                    <Avatar name={p.filledByName} size="xs" />
+                    <Avatar src={associatePhotoUrl(p.filledByAssociateId)} name={p.filledByName} size="xs" />
                     <span>{p.filledByName}</span>
                   </div>
                 ) : (

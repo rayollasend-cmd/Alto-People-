@@ -617,3 +617,22 @@ export const createSite = (body: SiteCreateInput) => apiFetch<{ site: SiteRow }>
 export type SiteUpdateInput = Partial<SiteCreateInput> & { isActive?: boolean };
 export const updateSite = (id: string, body: SiteUpdateInput) =>
   apiFetch<{ site: Omit<SiteRow, 'clientName' | 'orgUnitName' | 'orgUnitType'> }>(`/admin/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+
+export interface ProfilePhotoHealth {
+  /** 'local' or 's3'. */
+  driver: string;
+  /** False when uploads are written somewhere a redeploy wipes. */
+  durable: boolean;
+  onFile: number;
+  /** Photos the database points at whose file is gone. */
+  missing: number;
+  truncated: boolean;
+}
+
+/** Whether this deployment keeps profile photos, and how many are already lost. */
+export const getProfilePhotoHealth = () =>
+  apiFetch<ProfilePhotoHealth>('/profile-photos/health');
+
+/** Forget photos whose file is gone, so those people are asked again. */
+export const clearMissingProfilePhotos = () =>
+  apiFetch<{ cleared: number }>('/profile-photos/clear-missing', { method: 'POST', body: {} });

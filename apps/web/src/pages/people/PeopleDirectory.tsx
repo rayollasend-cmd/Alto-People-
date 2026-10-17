@@ -97,6 +97,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
+import { PhotoStorageBanner } from '@/components/PhotoStorageBanner';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import {
   assignOrgFields,
@@ -221,6 +222,8 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
 export function PeopleDirectory() {
   const term = useTerm();
   const queryClient = useQueryClient();
+  const { user: viewer } = useAuth();
+  const canManagePhotos = viewer ? hasCapability(viewer.role, 'manage:org') : false;
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
@@ -559,6 +562,7 @@ export function PeopleDirectory() {
         }
         summary={
               <>
+          {canManagePhotos && <PhotoStorageBanner />}
           {/* KPI strip. Counts cover the pages loaded so far; the "+" is the
               honest signal that more exist beyond the fetch horizon (status
               is derived server-side per page, so exact totals would need a

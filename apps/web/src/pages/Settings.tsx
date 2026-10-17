@@ -106,7 +106,9 @@ export function Settings() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="space-y-6">
           {user?.associateId && <ProfileCard />}
-          {user?.associateId && <ProfilePhotoCard />}
+          {/* Everyone gets a photo: an associate's headshot, or the photo on
+              a staff account (HR, recruiters, managers have no associate). */}
+          <ProfilePhotoCard />
           <EmailCard />
           <TimezoneCard />
           <LanguageCard />

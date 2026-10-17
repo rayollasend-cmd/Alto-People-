@@ -8,6 +8,7 @@ import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { fmtDate, parseYmd } from '@/lib/format';
+import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   Avatar,
   Badge,
@@ -223,7 +224,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
               className: 'font-medium',
               cell: (pr) => (
                 <div className="flex items-center gap-2.5">
-                  <Avatar name={pr.associateName} email={pr.associateEmail} size="sm" />
+                  <Avatar src={associatePhotoUrl(pr.associateId)} name={pr.associateName} email={pr.associateEmail} size="sm" />
                   <div className="truncate">{pr.associateName}</div>
                 </div>
               ),
@@ -309,6 +310,7 @@ function J1DetailPanel({
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
+            src={associatePhotoUrl(profile.associateId)}
             name={profile.associateName}
             email={profile.associateEmail}
             size="md"
