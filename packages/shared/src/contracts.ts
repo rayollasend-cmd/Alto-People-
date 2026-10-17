@@ -573,7 +573,11 @@ export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
 export const MeResponseSchema = /* @__PURE__ */ (() => z.object({
   user: AuthUserSchema.nullable(),
   /** Brief 2-1b: the signed-in user's tenant profile (modules, terminology); null when anonymous. */
-  tenant: TenantProfileSchema.extend({ id: UuidSchema }).nullable().optional(),
+  tenant: TenantProfileSchema.extend({
+    id: UuidSchema,
+    /** What this tenant's team calls the assistant (OrgSetting.assistantName), so every screen can name it at once. */
+    assistantName: z.string().min(1).max(60).optional(),
+  }).nullable().optional(),
 }))();
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 
@@ -8344,7 +8348,10 @@ export interface WorkerSummary {
   type: WorkerType;
   name: string;
   associateId: string | null;
-  owner: { id: string; name: string; email: string } | null;
+  /** The accountable account; `associateId` is their own person record when they have one, so a row can show a face and link to it. */
+  owner: { id: string; name: string; email: string; associateId?: string | null } | null;
+  /** PERSON rows only: who they report to, read from the associate record. Absent on agents and robots. */
+  manager?: { associateId: string; name: string } | null;
   status: WorkerStatus;
   capabilities: string[];
   notes: string | null;
@@ -8529,6 +8536,43 @@ export type AgentRequestInput = z.infer<typeof AgentRequestInputSchema>;
 
 export const AgentDecisionSchema = /* @__PURE__ */ (() => z.object({ note: z.string().trim().max(500).optional() }))();
 
+/**
+ * One decision on a proposal: POST /agents/approvals/:id/decide. A rejection
+ * carries its reason; it is kept on the proposal and on the trail.
+ */
+export const AgentDecideInputSchema = /* @__PURE__ */ (() =>
+  z
+    .object({
+      decision: z.enum(['APPROVE', 'REJECT']),
+      reason: z.string().trim().max(500).optional(),
+    })
+    .superRefine((v, ctx) => {
+      if (v.decision === 'REJECT' && !(v.reason && v.reason.length >= 3)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'Say why you are rejecting this proposal.' });
+      }
+    }))();
+export type AgentDecideInput = z.infer<typeof AgentDecideInputSchema>;
+
+/** What a proposal touches: a record a person can open. */
+export const ProposalAffectedKindSchema = /* @__PURE__ */ (() => z.enum(['person', 'site', 'shift', 'case', 'client']))();
+export type ProposalAffectedKind = z.infer<typeof ProposalAffectedKindSchema>;
+
+/**
+ * The evidence behind a proposal — what a person reads before deciding:
+ * why this (and not something else), what it changes, the rule that put it
+ * in front of them, and who it touches. Written by the capability that made
+ * the proposal; a generic block stands in when a creator has nothing more.
+ */
+export const ProposalEvidenceSchema = /* @__PURE__ */ (() =>
+  z.object({
+    why: z.string().max(2000),
+    alternatives: z.array(z.object({ label: z.string().max(200), note: z.string().max(500) })).max(20),
+    impact: z.array(z.object({ label: z.string().max(80), value: z.string().max(200) })).max(20),
+    policy: z.string().max(500).nullable(),
+    affects: z.array(z.object({ kind: ProposalAffectedKindSchema, id: z.string().min(1), name: z.string().max(200) })).max(20),
+  }))();
+export type ProposalEvidence = z.infer<typeof ProposalEvidenceSchema>;
+
 export const AgentSpendInputSchema = /* @__PURE__ */ (() => z.object({
   amountCents: z.number().int().min(0).max(100_000_000),
   taskRef: z.string().trim().max(120).optional(),
@@ -8565,6 +8609,9 @@ export interface AgentApprovalSummary {
   id: string;
   workerId: string;
   agentName: string;
+  /** The agent's family (its glyph) and accountable owner, so the decision names who stands behind it. */
+  agentFamily: AgentFamily | null;
+  agentOwner: { id: string; name: string } | null;
   action: AgentGatedAction;
   summary: string;
   payload: Record<string, unknown>;
@@ -8575,6 +8622,13 @@ export interface AgentApprovalSummary {
   decidedAt: string | null;
   decisionNote: string | null;
   consumedAt: string | null;
+  /** The proposal this request carries, when a capability filed it. */
+  proposalId: string | null;
+  capabilityKey: string | null;
+  /** What a person reads before deciding. Always present; generic when the creator wrote nothing more. */
+  evidence: ProposalEvidence;
+  /** Set by routes that know the caller: may this person decide it under the server's rule? */
+  mayDecide?: boolean;
 }
 
 export interface AgentTrailEntry {
@@ -8629,6 +8683,8 @@ export interface AgentRegistryResponse {
   pendingApprovals: number;
   /** Built-in agents the boot sweep could not register (no owner account yet). */
   builtInMissing: string[];
+  /** The same agents with the names the page shows; the keys above stay for callers that match on them. */
+  builtInMissingAgents?: { key: string; name: string }[];
   /** Brief 1D-3: the switch. Agent families step 0: this organization's switch. */
   control?: AgentControlState;
   /** The operator's switch over every tenant; an agent stops when either is set. */

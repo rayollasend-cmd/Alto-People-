@@ -20,8 +20,9 @@ import {
   assignProposalMoot,
   earlierAssignProposals,
   executeAssignProposal,
+  assignEvidence,
   holderCannotWork,
-  pickFillCandidate,
+  rankBench,
   replacesOf,
   shiftWhen,
   siteName,
@@ -132,8 +133,9 @@ export async function repairShifts(db: Db, shiftIds: readonly string[], cause: R
     const earlier = await earlierAssignProposals(db, tenantId, shift.id);
     if (earlier.pending) continue;
     const exclude = [...earlier.turnedDown, ...(holderId ? [holderId] : [])];
-    const candidate = await pickFillCandidate(db, shift, now, { tenantId, exclude });
-    const holder = holderId && shift.assignedAssociate ? { name: fullName(shift.assignedAssociate), why: why! } : null;
+    const holder = holderId && shift.assignedAssociate ? { id: holderId, name: fullName(shift.assignedAssociate), why: why! } : null;
+    const ranking = await rankBench(db, shift, now, { tenantId, exclude, ...(holderId ? { excludeWhy: { [holderId]: `holds the shift now and ${why}` } } : {}) });
+    const candidate = ranking.pick;
     const overlap = overlapLine(cause, holder, releasedPerson ? fullName(releasedPerson) : null);
     if (!candidate) {
       out.noCandidate += 1;
@@ -152,6 +154,11 @@ export async function repairShifts(db: Db, shiftIds: readonly string[], cause: R
         subjectId: shift.id,
         summary,
         payload: { associateId: candidate.associateId, replacesAssociateId: holderId, cause: cause.kind },
+        evidence: assignEvidence(shift, ranking, {
+          context: `${overlap}, so the shift is uncovered.`,
+          holder,
+          leaveOpen: holder ? `${holder.name} stays on the schedule for a shift they cannot work; cover it from the schedule instead.` : 'The shift stays open; cover it from the schedule instead.',
+        }),
       },
       now,
     );
@@ -272,7 +279,7 @@ export function registerScheduleRepair(): void {
     if (!shiftId) return { output: { proposedRef: null }, actions: [] };
     const replaces = ctx.refs[String(ctx.input.replacesRef)];
     const shift = await ctx.db.shift.findUniqueOrThrow({ where: { id: shiftId }, select: SHIFT_SELECT });
-    const c = await pickFillCandidate(ctx.db, shift, ctx.now, { tenantId: ctx.tenantId, exclude: replaces ? [replaces] : [] });
+    const c = (await rankBench(ctx.db, shift, ctx.now, { tenantId: ctx.tenantId, exclude: replaces ? [replaces] : [] })).pick;
     return c ? { output: { proposedRef: c.associateId }, actions: ['propose'] } : { output: { proposedRef: null }, actions: [] };
   });
   registerCapabilityMetrics(SCHEDULE_REPAIR, async (db, workerId, since) => {

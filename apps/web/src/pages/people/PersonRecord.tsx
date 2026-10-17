@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { sendNotification } from '@/lib/communicationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useAssistantRecord } from '@/lib/assistantContext';
 import { getDirectoryEntry } from '@/lib/directoryApi';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import { fmtDate, fmtHours, fmtMinutes, fmtTime, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
@@ -72,6 +73,8 @@ export function PersonRecord() {
     queryFn: () => getDirectoryEntry(associateId),
     enabled: associateId.length > 0,
   });
+  // The pane knows whose record this is: "this {term('worker')}" means them.
+  useAssistantRecord(detail.data ? { type: term('worker'), id: detail.data.id, name: `${detail.data.firstName} ${detail.data.lastName}` } : null);
   const a = detail.data;
 
   const time = usePersonTime(associateId, canSeeTime && Boolean(a));

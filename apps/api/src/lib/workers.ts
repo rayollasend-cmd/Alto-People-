@@ -120,9 +120,21 @@ export async function syncPersonWorkerStatus(db: Db, associateId: string): Promi
 /* ---------------------------------------------------------------- shapes */
 
 const WORKER_INCLUDE = {
-  owner: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
+  owner: { select: { id: true, email: true, associateId: true, associate: { select: { firstName: true, lastName: true } } } },
   assignments: { include: { location: { select: { id: true, name: true, clientId: true, client: { select: { name: true } } } } }, orderBy: { startedAt: 'desc' } },
 } satisfies Prisma.WorkerInclude;
+
+/** A person's manager, from the associate record: the roster shows it where an agent shows its owner. */
+async function personManagers(db: Db, associateIds: string[]): Promise<Map<string, { associateId: string; name: string } | null>> {
+  const out = new Map<string, { associateId: string; name: string } | null>();
+  if (associateIds.length === 0) return out;
+  const rows = await db.associate.findMany({
+    where: { id: { in: associateIds } },
+    select: { id: true, manager: { select: { id: true, firstName: true, lastName: true } } },
+  });
+  for (const r of rows) out.set(r.id, r.manager ? { associateId: r.manager.id, name: `${r.manager.firstName} ${r.manager.lastName}`.trim() } : null);
+  return out;
+}
 type WorkerRow = Prisma.WorkerGetPayload<{ include: typeof WORKER_INCLUDE }>;
 
 async function personSites(db: Db, associateIds: string[]): Promise<Map<string, WorkerSiteRef[]>> {
@@ -153,7 +165,7 @@ async function personSites(db: Db, associateIds: string[]): Promise<Map<string, 
 
 async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSummary[]> {
   const personIds = rows.map((r) => r.associateId).filter((x): x is string => !!x);
-  const sitesByAssociate = await personSites(db, personIds);
+  const [sitesByAssociate, managerByAssociate] = await Promise.all([personSites(db, personIds), personManagers(db, personIds)]);
   const upcoming = rows.length
     ? await db.shift.groupBy({ by: ['workerId'], where: { workerId: { in: rows.map((r) => r.id) }, startsAt: { gte: now }, status: { notIn: ['CANCELLED'] } }, _count: { _all: true } })
     : [];
@@ -164,8 +176,9 @@ async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSu
     name: r.name,
     associateId: r.associateId,
     owner: r.owner
-      ? { id: r.owner.id, name: r.owner.associate ? `${r.owner.associate.firstName} ${r.owner.associate.lastName}`.trim() : r.owner.email, email: r.owner.email }
+      ? { id: r.owner.id, name: r.owner.associate ? `${r.owner.associate.firstName} ${r.owner.associate.lastName}`.trim() : r.owner.email, email: r.owner.email, associateId: r.owner.associateId ?? null }
       : null,
+    ...(r.type === 'PERSON' && r.associateId ? { manager: managerByAssociate.get(r.associateId) ?? null } : {}),
     status: r.status,
     capabilities: r.capabilities,
     notes: r.notes,

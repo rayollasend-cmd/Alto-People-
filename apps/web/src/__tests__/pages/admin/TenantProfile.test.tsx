@@ -1,10 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { ROLE_CAPABILITIES, defaultTenantProfile, type Capability } from '@alto-people/shared';
-import { AuthContext, DEFAULT_TENANT } from '@/lib/auth';
+import { AuthContext, DEFAULT_TENANT, type TenantSession } from '@/lib/auth';
 
 vi.mock('@/lib/tenantProfileApi', () => ({ getTenantProfile: vi.fn(), saveTenantProfile: vi.fn() }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn() }));
@@ -15,7 +15,7 @@ import { TenantProfileHome } from '@/pages/admin/TenantProfileHome';
 const profile = defaultTenantProfile('WORKFORCE_PROVIDER');
 const refreshUser = vi.fn().mockResolvedValue(undefined);
 
-function renderPage() {
+function renderPage(tenant: TenantSession = DEFAULT_TENANT) {
   const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -30,7 +30,7 @@ function renderPage() {
             primaryRole: 'HR_ADMINISTRATOR',
             availableRoles: ['HR_ADMINISTRATOR'],
             capabilities: caps,
-            tenant: DEFAULT_TENANT,
+            tenant,
             signIn: vi.fn(),
             submitMfaChallenge: vi.fn(),
             signOut: vi.fn(),
@@ -77,6 +77,20 @@ describe('Organization profile', () => {
       terminology: { worker: { en: 'Team member' } },
     });
     await waitFor(() => expect(refreshUser).toHaveBeenCalled());
+  });
+
+  it('names the assistant by what this tenant calls it: two tenants, two names, never a fixed one', async () => {
+    renderPage({ ...DEFAULT_TENANT, assistantName: 'Coco' });
+    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    expect(screen.getByText(/The words here reach the navigation, the roles and Coco\./)).toBeInTheDocument();
+    expect(screen.getByText(/the screens and Coco use/)).toBeInTheDocument();
+    expect(screen.queryByText(/Hugo/)).toBeNull();
+    cleanup();
+
+    renderPage({ ...DEFAULT_TENANT, assistantName: 'Max' });
+    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    expect(screen.getByText(/the roles and Max\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Coco/)).toBeNull();
   });
 
   it('resets to the model\'s defaults after a confirm', async () => {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentFamily, AgentGatedAction, AgentScope } from './contracts.js';
+import { ProposalEvidenceSchema, type AgentFamily, type AgentGatedAction, type AgentScope, type ProposalEvidence } from './contracts.js';
 import type { TenantModule, TenantModules } from './tenantProfile.js';
 
 /**
@@ -378,6 +378,8 @@ export interface AgentProposalSummary {
   outcome: Record<string, unknown> | null;
   outcomeAt: string | null;
   createdAt: string;
+  /** What the capability wrote down for the person deciding; null when it wrote nothing more than the summary. */
+  evidence: ProposalEvidence | null;
 }
 
 export interface CapabilityScorecard {
@@ -410,5 +412,7 @@ export const AgentProposalInputSchema = /* @__PURE__ */ z.object({
   /** What a person approves, in words. Required when the capability files a gate. */
   summary: z.string().trim().min(3).max(500).optional(),
   payload: z.record(z.string(), z.unknown()).default({}),
+  /** The case for it, for the person deciding. A creator with nothing more leaves it out and a generic block stands in. */
+  evidence: ProposalEvidenceSchema.optional(),
 });
 export type AgentProposalInput = z.infer<typeof AgentProposalInputSchema>;

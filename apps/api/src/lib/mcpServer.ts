@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { capabilitiesFor, type AgentCapabilityDef, type AgentCapabilityKey } from '@alto-people/shared';
+import { ProposalEvidenceSchema, capabilitiesFor, type AgentCapabilityDef, type AgentCapabilityKey, type ProposalEvidence } from '@alto-people/shared';
 import type { PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
 import { createProposal } from './agentCapabilities.js';
@@ -105,6 +105,8 @@ const ProposalArgs = z
     subjectId: z.string().uuid().nullable().optional(),
     summary: z.string().trim().min(3).max(500),
     payload: z.record(z.string(), z.unknown()).default({}),
+    /** The case for it, for the person deciding (optional; a generic block stands in). */
+    evidence: ProposalEvidenceSchema.optional(),
   })
   .strict();
 const RunArgs = z.object({}).strict();
@@ -131,11 +133,11 @@ async function callTool(db: Db, agent: AgentContext, name: string, args: Record<
   if (!found) return toolError(`No tool ${name} for this agent: it is not offered here, not held, or suspended.`, 'tool_not_available');
   const { def, tool } = found;
 
-  let input: { subjectType: string; subjectId: string | null; summary?: string; payload: Record<string, unknown> };
+  let input: { subjectType: string; subjectId: string | null; summary?: string; payload: Record<string, unknown>; evidence?: ProposalEvidence };
   if (tool.effect === 'propose') {
     const parsed = ProposalArgs.safeParse(args);
     if (!parsed.success) return toolError(`Invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'arguments'} ${i.message}`).join('; ')}.`, 'invalid_arguments');
-    input = { subjectType: parsed.data.subjectType, subjectId: parsed.data.subjectId ?? null, summary: parsed.data.summary, payload: parsed.data.payload };
+    input = { subjectType: parsed.data.subjectType, subjectId: parsed.data.subjectId ?? null, summary: parsed.data.summary, payload: parsed.data.payload, ...(parsed.data.evidence ? { evidence: parsed.data.evidence } : {}) };
   } else {
     if (!RunArgs.safeParse(args).success) return toolError('This tool takes no arguments.', 'invalid_arguments');
     input = { subjectType: 'Run', subjectId: null, payload: {} };

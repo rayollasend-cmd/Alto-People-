@@ -143,6 +143,43 @@ export function resumeAllAgents(): Promise<AgentControlState> {
   return apiFetch<AgentControlState>('/agents/resume-all', { method: 'POST' });
 }
 
+/* The platform switch: the operator tenant's alone (404 elsewhere). Stops every organization's agents at once. */
+export function getPlatformControl(): Promise<AgentControlState> {
+  return apiFetch<AgentControlState>('/agents/platform/control');
+}
+
+export function suspendPlatformAgents(reason: string): Promise<{ revoked: number; agents: number }> {
+  return apiFetch<{ revoked: number; agents: number }>('/agents/platform/suspend-all', { method: 'POST', body: { reason } });
+}
+
+export function resumePlatformAgents(): Promise<AgentControlState> {
+  return apiFetch<AgentControlState>('/agents/platform/resume-all', { method: 'POST' });
+}
+
+/* ------------------------------------ the decision record across agents */
+
+export interface DecisionRecordRow {
+  id: string;
+  at: string;
+  agentId: string;
+  agentName: string;
+  capabilityKey: string;
+  decisionType: string;
+  subject: string | null;
+  subjectAssociateId: string | null;
+  outcome: 'FAVORABLE' | 'ADVERSE' | 'NONE';
+  summary: string;
+  humanDecidedAt: string | null;
+  noticeGivenAt: string | null;
+  explanationSentAt: string | null;
+  reviewRequestedAt: string | null;
+}
+
+/** Every automated decision about a person this organization's agents recorded, newest first. */
+export function listDecisionRecords(): Promise<{ total: number; decisions: DecisionRecordRow[] }> {
+  return apiFetch<{ total: number; decisions: DecisionRecordRow[] }>('/agents/decision-records');
+}
+
 /** Suspend one agent; its credentials are revoked in the same transaction. */
 export function suspendAgent(id: string, reason: string): Promise<{ revoked: number; agent: AgentDetail }> {
   return apiFetch<{ revoked: number; agent: AgentDetail }>(`/agents/${encodeURIComponent(id)}/suspend`, { method: 'POST', body: { reason } });

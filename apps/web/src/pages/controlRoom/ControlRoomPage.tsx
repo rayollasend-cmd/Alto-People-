@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Bot, Hand, OctagonX, Play, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
+import { AlertTriangle, Bot, Cpu, Hand, OctagonX, Play, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
 import { ROBOT_STATUS_LABELS, WORKER_STATUS_LABELS, type ControlRoomException, type ControlRoomResponse, type ControlRoomRobot, type ControlRoomWaiting } from '@alto-people/shared';
 import { DeskTemplate } from '@/components/templates';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
@@ -228,7 +228,7 @@ export function ControlRoomPage() {
         <section aria-labelledby="control-room-robots">
           <SectionTitle title={`Robots (${data.robots.length})`} />
           {data.robots.length === 0 ? (
-            <EmptyState icon={Bot} title="No robots here" description="No robot is placed at this site or on shift here." className="mt-2" />
+            <EmptyState icon={Cpu} title="No robots here" description="No robot is placed at this site or on shift here." className="mt-2" />
           ) : (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {data.robots.map((r) => (
@@ -343,7 +343,7 @@ function RobotRow({ r, canAct, onChanged }: { r: ControlRoomRobot; canAct: boole
   const stopped = r.status === 'SUSPENDED';
   return (
     <li className="flex flex-wrap items-center gap-3 px-3 py-2">
-      <Bot className={cn('h-4 w-4 shrink-0', stopped ? 'text-negative' : 'text-ink-muted')} aria-hidden="true" />
+      <Cpu className={cn('h-4 w-4 shrink-0', stopped ? 'text-negative' : 'text-ink-muted')} aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <Link to={`/robots/${r.id}`} className="font-medium text-ink hover:text-accent">
@@ -531,7 +531,7 @@ function SiteMap({ data }: { data: ControlRoomResponse }) {
               ))}
           </svg>
         ) : (
-          <EmptyState icon={Bot} title="No map yet" description="Draw the site's safety zones, or wait for a robot's first reading." className="h-40" />
+          <EmptyState icon={Cpu} title="No map yet" description="Draw the site's safety zones, or wait for a robot's first reading." className="h-40" />
         )}
         <div className="text-sm">
           <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">On the floor, no position</div>

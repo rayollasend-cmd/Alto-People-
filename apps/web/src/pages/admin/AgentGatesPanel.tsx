@@ -23,6 +23,7 @@ import { QueryError } from "@/components/ui/QueryError";
  * not, and name who decides and how long a request waits; it can never
  * remove an approval the platform requires (a NOT_REQUIRED policy on one
  * shows, and changes nothing). The preview says what would happen now.
+ * Rendered open inside Settings & trust › Agents & gates (AgentGovernance).
  */
 
 interface GatePolicy {
@@ -70,11 +71,9 @@ export function AgentGatesPanel({
   canManage: boolean;
 }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const q = useQuery({
     queryKey: ["agents", "gates"],
     queryFn: () => apiFetch<{ policies: GatePolicy[] }>("/agents/gates"),
-    enabled: open,
   });
   const [scope, setScope] = useState<GatePolicy["scope"]>("TENANT");
   const [scopeKey, setScopeKey] = useState("");
@@ -96,7 +95,7 @@ export function AgentGatesPanel({
         `/agents/gates/preview?workerId=${previewAgent}&${isPlatform ? "action" : "capability"}=${encodeURIComponent(previewAction)}`,
       );
     },
-    enabled: open && !!previewAgent,
+    enabled: !!previewAgent,
   });
 
   const save = async () => {
@@ -150,17 +149,8 @@ export function AgentGatesPanel({
           p.scopeKey);
 
   return (
-    <details
-      className="rounded-md border border-navy-secondary px-4 py-3"
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="cursor-pointer text-sm text-white">
-        Gates: who approves what
-      </summary>
-      {/* Collapsed by default; nothing below renders (or queries) until it is opened. */}
-      {open && (
-        <>
-          <p className="mt-2 text-xs2 text-silver">
+    <div className="space-y-2" data-testid="agent-gates">
+          <p className="text-xs2 text-silver">
             Require approval where the platform does not, and name who decides.
             A platform approval (pay, separations, client messages, exports,
             shift assignments, HR cases) can never be removed.
@@ -399,8 +389,6 @@ export function AgentGatesPanel({
                   : "Pick an agent to see what would happen."}
             </p>
           </div>
-        </>
-      )}
-    </details>
+    </div>
   );
 }

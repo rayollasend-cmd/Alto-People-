@@ -56,6 +56,7 @@ describe('GET /approvals/count', () => {
       timeOff: 1,
       timesheets: 1,
       clockIns: 0,
+      proposals: 0,
       total: 2,
     });
   });

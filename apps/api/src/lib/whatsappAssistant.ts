@@ -8,7 +8,8 @@ import { placedClientIds } from './openShiftEligibility.js';
 import { resolveStoreForAssociate, storeSupervisors } from './readyToWork.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
 import { sendWhatsApp } from './whatsapp.js';
-import { logBuiltInAgentAction } from './agents.js';
+import { discloserFor } from './agentDisclosure.js';
+import { inProcessAgent, logBuiltInAgentAction } from './agents.js';
 import { tenantIdForWrite } from './tenant.js';
 import { getBrandingSync } from './branding.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
@@ -105,7 +106,8 @@ export async function answerSchedule(db: Db, associateId: string, lang: WaLang, 
  * thread in the app (reused when one exists) carrying the question, so
  * the answer comes back through the inbox the supervisor already works.
  */
-export async function handoff(db: Db, associateId: string, userId: string | null, text: string, now: Date, channel: 'WhatsApp' | 'Hugo' = 'WhatsApp'): Promise<{ conversationId: string | null; who: string | null }> {
+/** `channel` is the label the thread's first message is tagged with: "WhatsApp", or the tenant's name for the assistant when the question came from the app. */
+export async function handoff(db: Db, associateId: string, userId: string | null, text: string, now: Date, channel: string = 'WhatsApp'): Promise<{ conversationId: string | null; who: string | null }> {
   if (!userId) return { conversationId: null, who: null };
   const clientIds = await placedClientIds(associateId, db);
   const clientId = clientIds[0];
@@ -172,12 +174,20 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
   const running = await runningCapabilityKeys(db, tenantIdForWrite());
   const { intent, lang: wanted } = detectHugoIntent(msg.text, { channel: 'whatsapp', audience: 'associate', moduleOn: (m) => profile.modules[m], capabilityOn: (k) => running.has(k) });
 
+  // AI disclosure (lib/agentDisclosure): an answer or a handoff ends by saying the assistant is an AI
+  // agent and who answers for it (its registry record's owner). A SYSTEM reply — the opt-in with its
+  // self-introduction, the opt-out, the language switch, a YES/NO acknowledgement — echoes the
+  // person's own command and carries no line.
+  const tenantId = tenantIdForWrite();
+  const me = await inProcessAgent(db, 'whatsapp-assistant', tenantId);
+  const disclose = await discloserFor(db, { workerId: me?.workerId ?? '', name: getBrandingSync(tenantId).assistantName, ownerUserId: me?.ownerUserId ?? null, tenantId }, lang);
   const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null) => {
-    const sent = await sendWhatsApp(db, { associateId, text: () => text, lang, category: 'assistant', kind, replyToId: replyTo }, now);
+    const out = kind === 'SYSTEM' ? text : disclose(text, lang);
+    const sent = await sendWhatsApp(db, { associateId, text: () => out, lang, category: 'assistant', kind, replyToId: replyTo }, now);
     if (sent && conversationId) await db.whatsAppMessage.update({ where: { id: sent.id }, data: { conversationId } });
     // Brief 1D-2: the assistant is a registered agent; every reply is on its trail.
     await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId } });
-    return text;
+    return out;
   };
 
   // A bare YES/NO answers the Workforce agent's open ask, when there is one; otherwise it falls through.

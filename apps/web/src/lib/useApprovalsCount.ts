@@ -11,6 +11,8 @@ interface ApprovalsCount {
   timesheets: number;
   /** Walk-in clock-ins parked by the kiosk schedule gate. */
   clockIns: number;
+  /** Agent proposals this person may decide. */
+  proposals: number;
   total: number;
 }
 

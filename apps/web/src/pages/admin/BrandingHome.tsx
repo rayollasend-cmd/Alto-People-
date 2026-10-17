@@ -4,9 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import { ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  ASSISTANT_NAME_PROMPT,
+  ASSISTANT_PLATFORM_NAME,
   HEX_COLOR_REGEX,
   ORG_LOGO_ALLOWED_TYPES,
   ORG_LOGO_MAX_BYTES,
+  PRODUCT_NAME,
   UNVERIFIED_PAYOUT_POLICY_LABELS,
   type MfaRequirement,
   type OrgBranding,
@@ -14,6 +17,7 @@ import {
   SUPPORTED_TIMEZONES,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
@@ -47,11 +51,13 @@ const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
  */
 export function BrandingHome() {
   const confirm = useConfirm();
+  // The assistant's name rides with the session (useTenant); a save refreshes it so every screen renames at once.
+  const { refreshUser } = useAuth();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [orgName, setOrgName] = useState('');
-  const [assistantName, setAssistantName] = useState('Hugo');
+  const [assistantName, setAssistantName] = useState(ASSISTANT_PLATFORM_NAME);
   const [weekStartsOn, setWeekStartsOn] = useState(6);
   const [timezone, setTimezone] = useState('America/New_York');
   const [senderName, setSenderName] = useState('');
@@ -78,7 +84,7 @@ export function BrandingHome() {
     if (b === undefined) return;
     setBranding(b);
     setOrgName(b.orgName);
-    setAssistantName(b.assistantName ?? 'Hugo');
+    setAssistantName(b.assistantName ?? ASSISTANT_PLATFORM_NAME);
     setWeekStartsOn(b.weekStartsOn ?? 6);
     setTimezone(b.timezone ?? 'America/New_York');
     setSenderName(b.senderName ?? '');
@@ -142,7 +148,7 @@ export function BrandingHome() {
     try {
       const updated = await patchOrgBranding({
         orgName: orgName.trim(),
-        assistantName: assistantName.trim() || 'Hugo',
+        assistantName: assistantName.trim() || ASSISTANT_PLATFORM_NAME,
         weekStartsOn,
         timezone,
         senderName: senderName.trim() === '' ? null : senderName.trim(),
@@ -151,6 +157,8 @@ export function BrandingHome() {
       });
       setBranding(updated);
       toast.success('Branding saved.');
+      // The assistant's name reaches every screen through the session.
+      if (updated.assistantName !== branding?.assistantName) void refreshUser();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
@@ -289,15 +297,15 @@ export function BrandingHome() {
                 )}
               </Field>
               <Field
-                label="What would you like your team to call me?"
-                hint="Hugo is the AI assistant in Alto People. This is the name your team sees on WhatsApp and in every message he sends; he always says he is an AI assistant."
+                label={ASSISTANT_NAME_PROMPT}
+                hint={`I'm the AI assistant in ${PRODUCT_NAME}. This is the name your team sees on WhatsApp and in every message I send; I always say I'm an AI assistant and who answers for me.`}
               >
                 {(p) => (
                   <Input
                     value={assistantName}
                     onChange={(e) => setAssistantName(e.target.value)}
                     maxLength={60}
-                    placeholder="Hugo"
+                    placeholder={ASSISTANT_PLATFORM_NAME}
                     {...p}
                   />
                 )}

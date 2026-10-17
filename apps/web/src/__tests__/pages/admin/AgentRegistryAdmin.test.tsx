@@ -48,6 +48,12 @@ vi.mock('@/lib/agentsApi', () => ({
   resumeAgentCapability: vi.fn(),
 }));
 vi.mock('@/lib/usersAdminApi', () => ({ listAdminUsers: vi.fn() }));
+// The queue renders each request as a decision card (components/agents/ProposalDecision); one decide call.
+vi.mock('@/lib/agentProposalsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/agentProposalsApi')>()),
+  decideProposal: vi.fn(),
+  listMyProposals: vi.fn(),
+}));
 // Hugo's panel sits under the queue (agent families step 3); its own tests are HugoPanel.test.tsx.
 vi.mock('@/lib/hugoApi', () => ({
   getHugo: vi.fn().mockResolvedValue({ name: 'Hugo', audience: 'admin', intro: 'I am Hugo.', can: [] }),
@@ -56,6 +62,7 @@ vi.mock('@/lib/hugoApi', () => ({
 }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn().mockResolvedValue('') }));
 
+import { decideProposal } from '@/lib/agentProposalsApi';
 import { certifyAgent, decideAgentApproval, getAgent, getAgentScorecard, getCapabilityScorecard, issueAgentCredential, listAgentApprovals, listAgentCapabilities, listAgentScenarios, listAgents, resumeAllAgents, suspendAgentCapability } from '@/lib/agentsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { AgentRegistryAdmin } from '@/pages/admin/AgentRegistryAdmin';
@@ -153,12 +160,25 @@ const approval: AgentApprovalSummary = {
   summary: 'Tell Coastal Resort the Friday crew is confirmed.',
   payload: { conversationId: 'c1' },
   status: 'PENDING',
-  requestedAt: '2026-10-13T08:00:00.000Z',
-  expiresAt: '2026-10-14T08:00:00.000Z',
+  requestedAt: new Date(Date.now() - 3_600_000).toISOString(),
+  // Still waiting: an expired request offers no Approve.
+  expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   decidedBy: null,
   decidedAt: null,
   decisionNote: null,
   consumedAt: null,
+  agentFamily: null,
+  agentOwner: { id: OWNER.id, name: OWNER.name },
+  proposalId: null,
+  capabilityKey: null,
+  // A request filed without a proposal: the generic block the API derives.
+  evidence: {
+    why: 'Tell Coastal Resort the Friday crew is confirmed.',
+    alternatives: [],
+    impact: [],
+    policy: "Message to a client always needs a person's approval (platform rule).",
+    affects: [],
+  },
 };
 
 const registry: AgentRegistryResponse = {
@@ -224,6 +244,7 @@ beforeEach(() => {
   vi.mocked(listAgentApprovals).mockResolvedValue({ approvals: [approval] });
   vi.mocked(getAgent).mockResolvedValue(detail);
   vi.mocked(decideAgentApproval).mockResolvedValue({ ...approval, status: 'APPROVED' });
+  vi.mocked(decideProposal).mockResolvedValue({ ...approval, status: 'APPROVED', decidedBy: { id: OWNER.id, name: OWNER.name }, decidedAt: '2026-10-13T09:00:00.000Z' });
   vi.mocked(issueAgentCredential).mockResolvedValue({ id: 'cred-new', plaintext: 'alto_agent_SECRETVALUE_xyz9', last4: 'xyz9', expiresAt: '2026-10-14T08:00:00.000Z' });
   vi.mocked(listAgentScenarios).mockResolvedValue({ scenarios: [scenario] });
   vi.mocked(getAgentScorecard).mockResolvedValue(scorecard7);
@@ -239,29 +260,43 @@ beforeEach(() => {
 });
 
 describe('AgentRegistryAdmin', () => {
-  it('renders the queue with a pending client message and approving it records the decision with the note', async () => {
+  it('renders the queue as decision cards with the evidence, and approving sends one decision', async () => {
     const user = userEvent.setup();
     renderPage();
-    expect(await screen.findByText('Tell Coastal Resort the Friday crew is confirmed.')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Tell Coastal Resort the Friday crew is confirmed.' })).toBeInTheDocument();
     expect(screen.getByText('Waiting for a person')).toBeInTheDocument();
     expect(screen.getByText('Message to a client')).toBeInTheDocument();
+    // The card names the agent's owner and the rule that put it here.
+    expect(screen.getByText(/owned by Jo Park/)).toBeInTheDocument();
+    expect(screen.getByText(/platform rule/)).toBeInTheDocument();
     // The hero line names the human-only actions.
-    expect(screen.getByText(/Pay change and Separation approvals are carried out by the approver/)).toBeInTheDocument();
+    expect(screen.getByText(/Always a person:/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Approve' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Approve this request?')).toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText(/Note/), 'Go ahead');
-    await user.click(within(dialog).getByRole('button', { name: 'Approve' }));
-    await waitFor(() => expect(decideAgentApproval).toHaveBeenCalledWith(APPROVAL_ID, 'approve', 'Go ahead'));
+    await waitFor(() => expect(decideProposal).toHaveBeenCalledWith(APPROVAL_ID, { decision: 'APPROVE' }));
+    expect(await screen.findByText(/^Approved$/)).toBeInTheDocument();
   });
 
-  it('opens the decision dialog from the ?approval= deep link and drops the param', async () => {
+  it('rejecting asks for a reason and sends it with the decision', async () => {
+    const user = userEvent.setup();
+    vi.mocked(decideProposal).mockResolvedValue({ ...approval, status: 'REJECTED', decisionNote: 'Not this week', decidedBy: { id: OWNER.id, name: OWNER.name }, decidedAt: '2026-10-13T09:00:00.000Z' });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Reject' }));
+    const confirm = screen.getByRole('button', { name: 'Confirm rejection' });
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByTestId('reject-reason'), 'Not this week');
+    await user.click(confirm);
+    await waitFor(() => expect(decideProposal).toHaveBeenCalledWith(APPROVAL_ID, { decision: 'REJECT', reason: 'Not this week' }));
+    expect(await screen.findByText(/^Rejected$/)).toBeInTheDocument();
+  });
+
+  it('lands on the request’s card from the ?approval= deep link, ringed, with both decisions', async () => {
     renderPage('HR_ADMINISTRATOR', `/agents?approval=${APPROVAL_ID}`);
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Decide this request')).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    const card = await screen.findByTestId('proposal-card');
+    expect(card).toHaveAttribute('id', `proposal-${APPROVAL_ID}`);
+    await waitFor(() => expect(card.className).toMatch(/ring-2/));
+    expect(within(card).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });
 
   it('shows the agent, its scopes and spend in the grid', async () => {
@@ -325,14 +360,46 @@ describe('AgentRegistryAdmin', () => {
     await waitFor(() => expect(resumeAllAgents).toHaveBeenCalledTimes(1));
   });
 
-  it('offers Suspend all agents when the switch is not thrown, and hides it from a read-only role', async () => {
+  it('keeps Suspend all agents in the overflow menu, not the hero, and hides the menu from a read-only role', async () => {
+    const user = userEvent.setup();
     const first = renderPage();
-    expect(await screen.findByRole('button', { name: /Suspend all agents/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Agents' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Suspend all agents/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    // Governance lives under Settings & trust; the page points there.
+    expect(screen.getByRole('link', { name: 'Agents & gates' })).toHaveAttribute('href', '/admin/agents');
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Suspend all agents/ })).toBeInTheDocument();
     first.unmount();
     renderPage('EXECUTIVE_CHAIRMAN');
-    expect(await screen.findByText('Tell Coastal Resort the Friday crew is confirmed.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Suspend all agents/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Agents' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
+  });
+
+  it('groups the cards by family in the taxonomy’s order, names the owner as a person, and names missing built-ins', async () => {
+    vi.mocked(listAgents).mockResolvedValue({
+      ...registry,
+      agents: [
+        agent({ id: '88888888-8888-4888-8888-888888888888', name: 'Deploy flow', pendingApprovals: 0, profile: { ...agent().profile, family: 'deployment', vendor: 'unknown', model: 'unknown', modelVersion: 'unconfirmed', lastActiveAt: null } }),
+        agent({ profile: { ...agent().profile, family: 'workforce' }, owner: { ...OWNER, associateId: 'assoc-jo' } }),
+      ],
+      builtInMissing: ['compliance-agent'],
+      builtInMissingAgents: [{ key: 'compliance-agent', name: 'Compliance agent' }],
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: /Agents for the Workforce/ });
+    const headings = screen.getAllByRole('heading', { level: 3 });
+    const titles = headings.map((h) => h.textContent ?? '');
+    expect(titles.findIndex((t) => t.includes('Agents for the Workforce'))).toBeLessThan(titles.findIndex((t) => t.includes('Agents for IT and Developers')));
+    // The owner is a person with a record; placeholders never read as words.
+    expect(screen.getByRole('link', { name: /Jo Park/ })).toHaveAttribute('href', '/people/assoc-jo');
+    expect(screen.getByText(/Model not set/)).toBeInTheDocument();
+    expect(screen.queryByText(/unconfirmed/)).not.toBeInTheDocument();
+    expect(screen.getByText('Not yet active')).toBeInTheDocument();
+    // Built-ins by name, never by key.
+    const banner = screen.getByTestId('built-in-missing');
+    expect(within(banner).getByText('Compliance agent')).toBeInTheDocument();
+    expect(within(banner).queryByText(/compliance-agent/)).not.toBeInTheDocument();
   });
 
   it('shows Recertify in the grid for an agent whose certification is not current', async () => {
@@ -390,8 +457,9 @@ describe('AgentRegistryAdmin', () => {
     await within(dialog).findByText(/Answers schedule questions/);
     await user.click(within(dialog).getByRole('tab', { name: /Certification/ }));
     expect(await within(dialog).findByText('Tomorrow shift question')).toBeInTheDocument();
-    expect(within(dialog).getByText('{"text":"when do I work tomorrow?"}')).toBeInTheDocument();
-    expect(within(dialog).getByText('Actions: schedule.read')).toBeInTheDocument();
+    // Scenarios read in words; the JSON stays one hover away.
+    expect(within(dialog).getByText('Asked: “when do I work tomorrow?”')).toBeInTheDocument();
+    expect(within(dialog).getByText('May only: schedule.read')).toBeInTheDocument();
     expect(within(dialog).getByText('Pass')).toBeInTheDocument();
     expect(within(dialog).getByText(/Jo Park$/)).toBeInTheDocument();
     expect(within(dialog).getByText('Certified for 4.5')).toBeInTheDocument();

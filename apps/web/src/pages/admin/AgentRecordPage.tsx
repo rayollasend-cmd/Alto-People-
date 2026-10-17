@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Pencil } from 'lucide-react';
 import { toast } from 'sonner';
-import { AGENT_ENVIRONMENT_LABELS, WORKER_STATUS_LABELS } from '@alto-people/shared';
+import { AGENT_ENVIRONMENT_LABELS, AGENT_SCOPES, WORKER_STATUS_LABELS, type AgentDetail } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { Badge } from '@/components/ui/Badge';
@@ -10,16 +11,17 @@ import { Button } from '@/components/ui/Button';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtMoney, fmtPercent } from '@/lib/format';
-import { getAgent, updateAgent } from '@/lib/agentsApi';
-import { AgentDecisionRecordTab } from '@/pages/admin/AgentDecisionRecordTab';
+import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';
+import { getAgent, listAgentCapabilities, updateAgent } from '@/lib/agentsApi';
+import { AgentDecisionRecordTab, decisionRecordQuery } from '@/pages/admin/AgentDecisionRecordTab';
 import {
   CapabilitiesSection,
   CertificationSection,
   CredentialsSection,
   KillSwitchRow,
+  OwnerPerson,
   ProfileFields,
   RequestsSection,
   ScorecardSection,
@@ -32,26 +34,37 @@ import {
   formValid,
   hoursLabel,
   limitsFromForm,
+  modelLine,
+  versionLabel,
   type ProfileForm,
 } from '@/pages/admin/AgentRegistryAdmin';
 
 const TABS = ['profile', 'capabilities', 'credentials', 'certification', 'scorecard', 'requests', 'spend', 'trail', 'record'] as const;
 type TabKey = (typeof TABS)[number];
 
+const SCOPE_LABEL = new Map<string, string>(AGENT_SCOPES.map((s) => [s.code, s.label]));
+
 /**
  * An agent's record (UX upgrade, 2026-10-15): the Record template, like a
- * person's or a client's, instead of a dialog over the registry. The
- * header is the agent's mark, name and status; the summary strip is the
- * week's numbers and the kill switch; the tabs are what the dialog held.
- * `?tab=` is the open tab, so a notification can land on Certification.
+ * person's or a client's. The header is the agent's mark, name and status;
+ * the subtitle says family, owner and status in words; the actions are
+ * Edit (the profile becomes a form) and Suspend (destructive, confirmed);
+ * the summary strip is the week's numbers; the tabs are the facets, with
+ * counts where a count means something. `?tab=` is the open tab, so a
+ * notification can land on Certification.
  */
 export function AgentRecordPage() {
   const { id = '' } = useParams();
   const { can } = useAuth();
+  const term = useTerm();
   const canManage = can('manage:org');
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [editing, setEditing] = useState(false);
   const detail = useQuery({ queryKey: ['agents', 'detail', id], queryFn: () => getAgent(id), enabled: id.length > 0 });
+  // The counts on two tabs come from reads the tabs themselves make; one cache entry each.
+  const capabilities = useQuery({ queryKey: ['agents', 'capabilities', id], queryFn: () => listAgentCapabilities(id), enabled: id.length > 0, select: (d) => d.capabilities });
+  const decisions = useQuery({ ...decisionRecordQuery(id), enabled: id.length > 0 });
   const onChanged = async () => {
     await qc.invalidateQueries({ queryKey: ['agents'] });
   };
@@ -63,6 +76,10 @@ export function AgentRecordPage() {
     else next.set('tab', key);
     setSearchParams(next, { replace: true });
   };
+  // Leaving the Profile tab ends an edit; the form keeps nothing unsaved.
+  useEffect(() => {
+    if (activeTab !== 'profile') setEditing(false);
+  }, [activeTab]);
 
   if (detail.error) {
     return (
@@ -99,10 +116,12 @@ export function AgentRecordPage() {
     agent.drift?.driftErrorRatePct !== null &&
     agent.drift?.driftErrorRatePct !== undefined &&
     s.errorRatePct >= agent.drift.driftErrorRatePct;
+  const ownerName = agent.owner ? agent.owner.name || agent.owner.email : 'no owner';
+  const statusWords = WORKER_STATUS_LABELS[agent.status].toLowerCase();
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Agents', to: '/agents' }, { label: agent.name }]}
+      breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Agents', to: '/agents' }, { label: agent.name }]}
       identity={<AgentGlyph family={agent.profile.family} status={agent.status} size="lg" />}
       title={agent.name}
       status={
@@ -110,12 +129,23 @@ export function AgentRecordPage() {
           {WORKER_STATUS_LABELS[agent.status]}
         </Badge>
       }
-      subtitle={
-        <>
-          {familyLabel(agent.profile.family) || 'Unplaced'} · {agent.profile.vendor} · {agent.profile.model} {agent.profile.modelVersion} ·{' '}
-          {AGENT_ENVIRONMENT_LABELS[agent.profile.environment]}
-          {agent.profile.builtInKey ? ' · built in' : ''} · {hoursLabel(agent.profile.allowedHoursStart, agent.profile.allowedHoursEnd)} · {agent.profile.rateLimitPerMinute}/min
-        </>
+      subtitle={`${familyLabel(agent.profile.family) || 'Not yet placed in a family'} · owned by ${ownerName} · ${statusWords}`}
+      actions={
+        <span className="flex flex-wrap items-center gap-2">
+          {canManage && !editing && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setTab('profile');
+                setEditing(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+            </Button>
+          )}
+          <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} placement="actions" />
+        </span>
       }
       summary={
         <div className="space-y-[var(--d-stack)]">
@@ -132,33 +162,96 @@ export function AgentRecordPage() {
               value={fmtMoney(agent.spendThisMonthCents / 100)}
               hint={agent.profile.spendCapCents !== null ? `of ${fmtMoney(agent.profile.spendCapCents / 100)} cap` : 'No cap set'}
             />
-            <MetricCard label="Waiting for a person" value={String(agent.pendingApprovals)} accent={agent.pendingApprovals > 0} hint={agent.pendingApprovals > 0 ? 'Gated actions it asked for' : 'Nothing waiting'} />
+            <MetricCard label="Waiting for a person" value={String(agent.pendingApprovals)} accent={agent.pendingApprovals > 0} hint={agent.pendingApprovals > 0 ? 'Proposals it made' : 'Nothing waiting'} />
           </div>
-          <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} />
+          <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} placement="summary" />
         </div>
       }
       activeTab={activeTab}
       onTabChange={setTab}
       tabs={[
-        { key: 'profile', label: 'Profile', content: <ProfileTab key={agent.id} agent={agent} canManage={canManage} onChanged={onChanged} /> },
-        { key: 'capabilities', label: 'Capabilities & gates', content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
+        {
+          key: 'profile',
+          label: 'Profile',
+          content: editing ? (
+            <ProfileEditForm key={agent.id} agent={agent} onChanged={onChanged} onDone={() => setEditing(false)} />
+          ) : (
+            <ProfileView agent={agent} />
+          ),
+        },
+        { key: 'capabilities', label: 'Capabilities & gates', count: capabilities.data?.length, content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
         { key: 'credentials', label: 'Credentials', count: liveCredentials, content: <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
         {
           key: 'certification',
-          label: agent.certification ? `Certification (${agent.certification.passing}/${agent.certification.scenarios})` : 'Certification',
+          label: agent.certification && agent.certification.scenarios > 0 ? `Certification (${agent.certification.passing}/${agent.certification.scenarios})` : 'Certification',
           content: <CertificationSection agent={agent} canManage={canManage} onChanged={onChanged} />,
         },
         { key: 'scorecard', label: 'Scorecard', content: <ScorecardSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
-        { key: 'requests', label: 'Requests', count: agent.approvals.length, content: <RequestsSection approvals={agent.approvals} /> },
+        { key: 'requests', label: 'Proposals', count: agent.approvals.length, content: <RequestsSection approvals={agent.approvals} /> },
         { key: 'spend', label: 'Spend', count: agent.spend.length, content: <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
         { key: 'trail', label: 'Trail', count: agent.trail.length, content: <TrailSection agent={agent} /> },
-        { key: 'record', label: 'Decision record', content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> },
+        { key: 'record', label: 'Decision record', count: decisions.data?.decisions.length, content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> },
       ]}
     />
   );
 }
 
-function ProfileTab({ agent, canManage, onChanged }: { agent: Parameters<typeof formFromAgent>[0]; canManage: boolean; onChanged: () => Promise<unknown> }) {
+/* ------------------------------------------------------------ profile */
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1 py-2 sm:grid-cols-[12rem_1fr] sm:gap-4">
+      <dt className="text-sm text-ink-muted">{label}</dt>
+      <dd className="min-w-0 text-sm text-ink">{children}</dd>
+    </div>
+  );
+}
+
+/** The profile as a record reads: who answers for it, what it is for, what it runs on, where, and its limits. */
+function ProfileView({ agent }: { agent: AgentDetail }) {
+  const p = agent.profile;
+  return (
+    <dl className="max-w-3xl divide-y divide-line" data-testid="agent-profile">
+      <Row label="Owner">
+        <OwnerPerson owner={agent.owner} size="sm" />
+      </Row>
+      <Row label="Purpose">{p.purpose || '—'}</Row>
+      <Row label="Family">{familyLabel(p.family) || 'Not yet placed'}</Row>
+      {p.capability && <Row label="Capability">{p.capability}</Row>}
+      <Row label="Model">{modelLine(p)}</Row>
+      <Row label="Model version">{versionLabel(p.modelVersion)}</Row>
+      <Row label="Environment">{AGENT_ENVIRONMENT_LABELS[p.environment]}</Row>
+      <Row label="Status">
+        <Badge variant={STATUS_VARIANT[agent.status]} size="sm">
+          {WORKER_STATUS_LABELS[agent.status]}
+        </Badge>
+      </Row>
+      <Row label="Scopes">
+        {p.scopes.length ? (
+          <span className="flex flex-wrap gap-1">
+            {p.scopes.map((sc) => (
+              <Badge key={sc} variant="outline" size="sm" withDot={false}>
+                {SCOPE_LABEL.get(sc) ?? sc}
+              </Badge>
+            ))}
+          </span>
+        ) : (
+          'None'
+        )}
+      </Row>
+      <Row label="Limits">
+        {p.spendCapCents === null ? 'No spend cap' : `${fmtMoney(p.spendCapCents / 100)} a month`} · {p.rateLimitPerMinute} calls a minute · {hoursLabel(p.allowedHoursStart, p.allowedHoursEnd)}
+      </Row>
+      <Row label="Registered">
+        {fmtDate(agent.createdAt)}
+        {p.builtInKey ? ' · ships with the product' : ''}
+      </Row>
+      {agent.notes && <Row label="Notes">{agent.notes}</Row>}
+    </dl>
+  );
+}
+
+function ProfileEditForm({ agent, onChanged, onDone }: { agent: AgentDetail; onChanged: () => Promise<unknown>; onDone: () => void }) {
   const confirm = useConfirm();
   const [form, setForm] = useState<ProfileForm>(() => formFromAgent(agent));
   const [saving, setSaving] = useState(false);
@@ -168,11 +261,11 @@ function ProfileTab({ agent, canManage, onChanged }: { agent: Parameters<typeof 
   const valid = formValid(form);
 
   const save = async () => {
-    if (!valid || !canManage || !dirty) return;
+    if (!valid || !dirty) return;
     if ((form.status === 'SUSPENDED' || form.status === 'OFFBOARDED') && form.status !== agent.status) {
       const ok = await confirm({
         title: form.status === 'SUSPENDED' ? `Suspend ${agent.name}?` : `Offboard ${agent.name}?`,
-        description: 'Every credential is revoked at once and the agent stops being able to call Alto. The record and its trail stay for audit.',
+        description: 'Every credential is revoked at once and the agent stops being able to call the product. The record and its trail stay for audit.',
         confirmLabel: form.status === 'SUSPENDED' ? 'Suspend' : 'Offboard',
         destructive: true,
       });
@@ -195,6 +288,7 @@ function ProfileTab({ agent, canManage, onChanged }: { agent: Parameters<typeof 
       });
       toast.success('Saved.');
       await onChanged();
+      onDone();
     } catch (err) {
       toast.error(errorMessage(err, 'Could not save the agent.'));
     } finally {
@@ -205,22 +299,21 @@ function ProfileTab({ agent, canManage, onChanged }: { agent: Parameters<typeof 
   return (
     <form
       className="max-w-3xl space-y-4"
+      aria-label="Edit the agent"
       onSubmit={(e) => {
         e.preventDefault();
         void save();
       }}
     >
-      <ProfileFields form={form} set={set} canManage={canManage} owner={agent.owner} />
-      {canManage && (
-        <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => setForm(formFromAgent(agent))} disabled={!dirty || saving}>
-            Discard
-          </Button>
-          <Button type="submit" disabled={!valid || !dirty || saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      )}
+      <ProfileFields form={form} set={set} canManage owner={agent.owner} />
+      <div className="flex items-center justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onDone} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={!valid || !dirty || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
     </form>
   );
 }

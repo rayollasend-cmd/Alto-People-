@@ -68,6 +68,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { AdminUnconfirmedPanel } from '@/pages/scheduling/AdminApprovalPanels';
 import { useTerm } from '@/lib/auth';
+import { ProposalList } from '@/components/agents/ProposalDecision';
+import { listMyProposals, MY_PROPOSALS_KEY } from '@/lib/agentProposalsApi';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this
@@ -125,6 +127,14 @@ const pickupsQuery = {
   queryKey: PICKUPS_KEY,
   queryFn: () => listOpenShiftClaims(),
 };
+/* What an agent proposes and this person may decide ("agents propose,
+ * people decide"): the server filters the list to the caller's own rule,
+ * so a site supervisor sees their shifts' proposals and nothing else. */
+const proposalsQuery = {
+  queryKey: MY_PROPOSALS_KEY,
+  queryFn: async () => (await listMyProposals()).approvals,
+  refetchInterval: 60_000,
+};
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
@@ -133,7 +143,7 @@ const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
 
 
 /** The queues on the desk, in the order they are worked. */
-type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'unconfirmed';
+type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'unconfirmed';
 
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
@@ -144,10 +154,29 @@ export function ApprovalsHome() {
   // lands on time off, ?walkin= on the kiosk queue). Nothing picked: the
   // desk opens the first queue with work on desktop, and on a phone the
   // queue list is the page.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [picked, setPicked] = useState<QueueKey | null>(() =>
-    searchParams.get('request') ? 'time-off' : searchParams.get('walkin') ? 'walk-ins' : null,
+    searchParams.get('request')
+      ? 'time-off'
+      : searchParams.get('walkin')
+        ? 'walk-ins'
+        : searchParams.get('tab') === 'proposals' || searchParams.get('proposal')
+          ? 'proposals'
+          : null,
   );
+  // ?proposal=<id> (an agent's notification, the decision queue, the control
+  // room) lands on that proposal's card; consumed once seen so Back and
+  // refetches do not re-open it.
+  const [focusProposal, setFocusProposal] = useState<string | null>(() => searchParams.get('proposal'));
+  useEffect(() => {
+    if (!searchParams.get('proposal') && !searchParams.get('tab')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('proposal');
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+    // Consumed once; the params' identity changes on the consume itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Timesheets are reviewed on Time & attendance; the tile is best-effort
   // and carries its own retry when the count fails.
   const timesheetQuery = useQuery({
@@ -158,6 +187,7 @@ export function ApprovalsHome() {
   const timeOffQ = useQuery(timeOffQuery);
   const swaps = useQuery(swapsQuery);
   const pickups = useQuery(pickupsQuery);
+  const proposals = useQuery(proposalsQuery);
 
   const timesheetCount = timesheetQuery.data?.count ?? null;
   const timesheetFailed = timesheetQuery.isError;
@@ -175,15 +205,17 @@ export function ApprovalsHome() {
     timeOff: timeOff?.length,
     swaps: swaps.data?.requests.length,
     pickups: pickups.data?.claims.length,
+    proposals: proposals.isError ? 0 : proposals.data?.length,
   };
   const loaded =
     counts.walkIns !== undefined &&
     counts.timeOff !== undefined &&
     counts.swaps !== undefined &&
-    counts.pickups !== undefined;
+    counts.pickups !== undefined &&
+    counts.proposals !== undefined;
   const decisions =
-    (counts.walkIns ?? 0) + (counts.timeOff ?? 0) + (counts.swaps ?? 0) + (counts.pickups ?? 0);
-  const anyError = !!timeOffError || clockIns.isError || swaps.isError || pickups.isError;
+    (counts.walkIns ?? 0) + (counts.timeOff ?? 0) + (counts.swaps ?? 0) + (counts.pickups ?? 0) + (counts.proposals ?? 0);
+  const anyError = !!timeOffError || clockIns.isError || swaps.isError || pickups.isError || proposals.isError;
   const oldestWalkIn = (clockIns.data ?? [])
     .map((r) => r.requestedAt)
     .sort()[0];
@@ -222,6 +254,7 @@ export function ApprovalsHome() {
     { key: 'time-off', label: 'Time off', value: timeOffError ? null : counts.timeOff, sub: counts.timeOff ? 'Decide before the dates' : 'Nothing pending' },
     { key: 'swaps', label: 'Swaps', value: swaps.isError ? null : counts.swaps, sub: counts.swaps ? 'Peer already said yes' : 'Nothing pending' },
     { key: 'pickups', label: 'Pickups', value: pickups.isError ? null : counts.pickups, sub: counts.pickups ? 'Approve to fill the shift' : 'Nothing pending' },
+    { key: 'proposals', label: 'Agent proposals', value: proposals.isError ? null : counts.proposals, sub: counts.proposals ? 'An agent proposes; you decide' : 'Nothing pending' },
   ];
   const firstWithWork = queues.find((q) => typeof q.value === 'number' && q.value > 0)?.key ?? null;
   const openQueue: QueueKey | null = picked ?? (loaded ? firstWithWork : null);
@@ -292,6 +325,20 @@ export function ApprovalsHome() {
       <SwapsPanel />
     ) : key === 'pickups' ? (
       <PickupsPanel />
+    ) : key === 'proposals' ? (
+      <ProposalList
+        approvals={proposals.data}
+        loading={proposals.isLoading}
+        error={proposals.error}
+        onRetry={() => void proposals.refetch()}
+        focusId={focusProposal}
+        onFocusMissing={() => {
+          setFocusProposal(null);
+          toast.info('That proposal is no longer waiting — it may already be decided.');
+        }}
+        emptyTitle="No agent proposals waiting"
+        emptyDescription="When an agent proposes a shift fill, a case or another action that needs a person, it lands here with its reasons."
+      />
     ) : (
       <AdminUnconfirmedPanel
         className=""
@@ -317,7 +364,7 @@ export function ApprovalsHome() {
           <div>
             <div className="font-medium text-white">Nothing waiting on you</div>
             <div className="text-sm text-silver">
-              No one at the kiosk, and no time off, swaps, or pickups to decide.
+              No one at the kiosk, and no time off, swaps, pickups or agent proposals to decide.
             </div>
           </div>
         </CardContent>
@@ -353,12 +400,13 @@ export function ApprovalsHome() {
             {/* Four queues polling every minute owe the reader the minute. */}
             <AsOf
               at={timeOffQ.dataUpdatedAt}
-              refreshing={clockIns.isFetching || timeOffQ.isFetching || swaps.isFetching || pickups.isFetching}
+              refreshing={clockIns.isFetching || timeOffQ.isFetching || swaps.isFetching || pickups.isFetching || proposals.isFetching}
               onRefresh={() => {
                 void clockIns.refetch();
                 void timeOffQ.refetch();
                 void swaps.refetch();
                 void pickups.refetch();
+                void proposals.refetch();
               }}
             />
             <Button size="sm" variant="outline" asChild>

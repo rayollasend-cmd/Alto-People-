@@ -23,7 +23,7 @@ import { listAdminUsers } from '@/lib/usersAdminApi';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import { WorkerTypesAdmin } from '@/pages/admin/WorkerTypesAdmin';
 
-const OWNER = { id: '11111111-1111-4111-8111-111111111111', name: 'Jo Park', email: 'jo@alto.example' };
+const OWNER = { id: '11111111-1111-4111-8111-111111111111', name: 'Jo Park', email: 'jo@alto.example', associateId: 'assoc-jo' };
 
 function worker(over: Partial<WorkerSummary>): WorkerSummary {
   return {
@@ -121,16 +121,20 @@ describe('WorkerTypesAdmin', () => {
     expect(screen.getByRole('button', { name: 'Create them now' })).toBeInTheDocument();
   });
 
-  it('creates an agent with an owner and capabilities; Create stays disabled without an owner', async () => {
+  it('creates a robot with an owner and capabilities; Create stays disabled without an owner; agents go to the Agents page', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('Roster Bot');
-    await user.click(screen.getByRole('button', { name: /Add agent or robot/ }));
+    // One create path for agents: the Agents page's Register form (its profile has no place in the roster's schema).
+    expect(screen.getByRole('link', { name: /Register agent/ })).toHaveAttribute('href', '/agents?register=1');
+    await user.click(screen.getByRole('button', { name: /Add robot/ }));
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Add robot')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/Type/)).not.toBeInTheDocument();
     const create = within(dialog).getByRole('button', { name: 'Create' });
     expect(create).toBeDisabled();
 
-    await user.type(within(dialog).getByLabelText(/Name/), 'Roster Bot 2');
+    await user.type(within(dialog).getByLabelText(/Name/), 'Scrubber 8');
     expect(create).toBeDisabled();
 
     // Portal accounts are not offered as owners.
@@ -140,25 +144,41 @@ describe('WorkerTypesAdmin', () => {
     await user.selectOptions(ownerSelect, OWNER.id);
     expect(create).toBeEnabled();
 
-    // Agent capabilities only: schedule-read applies, floor-care does not.
-    expect(within(dialog).queryByLabelText('Floor care')).not.toBeInTheDocument();
-    await user.click(within(dialog).getByLabelText('Read schedules'));
-    await user.click(within(dialog).getByLabelText('Send messages to associates'));
+    // Robot capabilities only: floor-care applies, schedule-read does not.
+    expect(within(dialog).queryByLabelText('Read schedules')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByLabelText('Floor care'));
 
     await user.click(create);
     await waitFor(() => expect(createWorker).toHaveBeenCalledTimes(1));
     expect(vi.mocked(createWorker).mock.calls[0][0]).toMatchObject({
-      type: 'AGENT',
-      name: 'Roster Bot 2',
+      type: 'ROBOT',
+      name: 'Scrubber 8',
       ownerUserId: OWNER.id,
       status: 'ONBOARDING',
-      capabilities: ['schedule-read', 'messaging'],
+      capabilities: ['floor-care'],
     });
+  });
+
+  it('a person answers to their manager, an agent or robot to its owner, and each name opens its own record', async () => {
+    vi.mocked(listWorkers).mockResolvedValue({
+      ...response,
+      workers: [worker({ manager: { associateId: 'm1', name: 'Dana Reyes' } }), response.workers[1], response.workers[2]],
+    });
+    renderPage();
+    expect(await screen.findByText('Roster Bot')).toBeInTheDocument();
+    // The column says both while every type shows (the default tenant's word for manager is "Supervisor").
+    expect(screen.getByRole('columnheader', { name: /Supervisor or owner/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Dana Reyes/ })).toHaveAttribute('href', '/people/m1');
+    expect(screen.getAllByRole('link', { name: /Jo Park/ })).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'Maria Lopez' })).toHaveAttribute('href', '/people/a1');
+    expect(screen.getByRole('link', { name: 'Roster Bot' })).toHaveAttribute('href', '/agents/w2');
+    expect(screen.getByRole('link', { name: 'Scrubber 7' })).toHaveAttribute('href', '/robots/w3');
   });
 
   it('hides the manage actions from a read-only role', async () => {
     renderPage('EXECUTIVE_CHAIRMAN');
     expect(await screen.findByText('Roster Bot')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add agent or robot/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add robot/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Register agent/ })).not.toBeInTheDocument();
   });
 });

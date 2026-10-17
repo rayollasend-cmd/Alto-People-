@@ -17,6 +17,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
+import { ensureBrandingLoaded } from './branding.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
 
 /**
@@ -129,9 +130,10 @@ function mergeTerms(base: Terminology, patch: UpdateTenantProfileInput['terminol
   return out;
 }
 
-/** What the session carries: the profile of the user's tenant (Alto HR when the user has none). */
-export async function tenantForSession(user: object | null | undefined): Promise<(TenantProfile & { id: string }) | null> {
+/** What the session carries: the profile of the user's tenant (Alto HR when the user has none), and what its team calls the assistant. */
+export async function tenantForSession(user: object | null | undefined): Promise<(TenantProfile & { id: string; assistantName: string }) | null> {
   if (!user) return null;
   const id = (user as { tenantId?: string | null }).tenantId ?? ALTO_TENANT_ID;
-  return { id, ...(await loadTenantProfile(id)) };
+  const [profile, branding] = await Promise.all([loadTenantProfile(id), ensureBrandingLoaded(prisma, id)]);
+  return { id, assistantName: branding.assistantName, ...profile };
 }

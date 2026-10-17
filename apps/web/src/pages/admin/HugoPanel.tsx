@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { fmtRelativeDate } from '@/lib/format';
 import { askHugo, getHugo, listProposals, type HugoAnswer } from '@/lib/hugoApi';
 import { Badge } from '@/components/ui/Badge';
+import { useAssistant } from '@/lib/assistantContext';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -45,6 +46,8 @@ interface Turn {
 }
 
 export function HugoPanel() {
+  // With the pane mounted, asking here opens it — one thread, not a second.
+  const assistant = useAssistant();
   const me = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 60_000 });
   const proposals = useQuery({ queryKey: ['agents', 'proposals', {}], queryFn: () => listProposals() });
   const [text, setText] = useState('');
@@ -60,6 +63,11 @@ export function HugoPanel() {
   const send = (q: string) => {
     const trimmed = q.trim();
     if (!trimmed || ask.isPending) return;
+    if (assistant.mounted && assistant.available) {
+      assistant.ask(trimmed);
+      setText('');
+      return;
+    }
     ask.mutate(trimmed);
   };
 

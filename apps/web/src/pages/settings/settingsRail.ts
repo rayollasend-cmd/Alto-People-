@@ -16,7 +16,6 @@ import {
   ShieldCheck,
   Store,
   Users,
-  Workflow,
   ListTodo,
   Briefcase,
 } from 'lucide-react';
@@ -53,8 +52,8 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'audit', label: 'Audit & integrity', to: '/audit', icon: ScrollText, section: 'Access & trust', description: 'Every event, searchable and exportable, on a chain you can verify.', show: can('view:audit') },
       { key: 'compliance-evidence', label: 'Security & compliance', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', description: 'Every control with its latest evidence, and the sign-offs a person owes.', show: can('view:org') },
       { key: 'trust', label: 'Trust Center', to: '/trust', icon: ShieldCheck, section: 'Access & trust', description: 'How the platform is run, with the evidence, and your own numbers.', show: can('manage:org') || can('view:executive') || can('view:audit') },
-      { key: 'agents', label: 'Agents & gates', to: '/agents', icon: Bot, section: 'Access & trust', description: 'Every agent, who owns it, what it may do, and the gates it waits at.', show: can('view:org') },
-      { key: 'workers', label: 'Workforce roster', to: '/workers', icon: Workflow, section: 'Access & trust', description: 'People, agents and robots in one roster, each with an accountable owner.', show: can('view:org') },
+      // The agents themselves are a People page (/agents); this is their governance.
+      { key: 'agents', label: 'Agents & gates', to: '/admin/agents', icon: Bot, section: 'Access & trust', description: 'Who approves what, certification and credentials across agents, the MCP tools, the decision record, and the switch that stops every agent.', show: can('view:org') },
       // Platform
       { key: 'billing', label: 'Billing', to: '/admin/billing', icon: CreditCard, section: 'Platform', description: 'Your plan, this month, and your invoices.', show: can('manage:org') || can('process:payroll') },
       { key: 'integrations', label: 'Integrations', to: '/integrations', icon: Plug, section: 'Platform', description: 'API keys, webhooks, and the systems this one talks to.', show: can('view:integrations') },

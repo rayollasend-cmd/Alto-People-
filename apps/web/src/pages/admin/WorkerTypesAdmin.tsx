@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, Plus, Users } from 'lucide-react';
+import { BookUser, Bot, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   WORKER_CAPABILITIES,
@@ -13,9 +13,10 @@ import {
   capabilityDef,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth, useTenant } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate } from '@/lib/format';
+import { associatePhotoUrl, userPhotoUrl } from '@/lib/photoUrl';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import {
@@ -27,6 +28,7 @@ import {
   type WorkerFilters,
 } from '@/lib/workersApi';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -46,10 +48,14 @@ import {
 } from '@/components/ui/Dialog';
 
 /**
- * The workforce roster (Brief 1D-1; UX upgrade step 5) — people, AI agents
- * and robots in one list, each row opening its record. Every worker has an owner (a user who answers for it), a
- * status and a capability list. People are mirrored from the associate
- * record by the server's sweep; agents and robots are added here.
+ * The workforce roster (Brief 1D-1; UX upgrade step 5) — people, agents and
+ * robots in one list, each row opening its record: a person in People, an
+ * agent in Agents, a robot in Robots. A person answers to their manager; an
+ * agent or a robot has an owner (a user who answers for it). People are
+ * mirrored from the associate record by the server's sweep; robots are
+ * added here; an agent is registered on the Agents page, the one form that
+ * takes its profile (vendor, model, scopes, limits) — the roster's create
+ * schema has none of that.
  */
 
 type TypeFilter = 'ALL' | WorkerType;
@@ -94,16 +100,49 @@ function otherStatusesHint(counts: Record<WorkerStatus, number> | undefined): st
   return parts.length ? parts.join(' · ') : 'Active now';
 }
 
+/** A person's face and name, opening their record when they have one. */
+function Person({ name, email, photo, to }: { name: string; email?: string | null; photo: string | undefined; to: string | null }) {
+  const inner = (
+    <>
+      <Avatar src={photo} name={name} email={email} size="xs" />
+      <span className="truncate">{name}</span>
+    </>
+  );
+  return to ? (
+    <Link to={to} className="inline-flex min-w-0 items-center gap-2 hover:text-accent" onClick={(e) => e.stopPropagation()} title={email ?? undefined}>
+      {inner}
+    </Link>
+  ) : (
+    <span className="inline-flex min-w-0 items-center gap-2" title={email ?? undefined}>
+      {inner}
+    </span>
+  );
+}
+
+const TYPE_PARAM: Record<string, TypeFilter> = { PERSON: 'PERSON', AGENT: 'AGENT', ROBOT: 'ROBOT' };
+
 export function WorkerTypesAdmin() {
   const { can } = useAuth();
   const tenant = useTenant();
+  const term = useTerm();
   const canManage = can('manage:org');
   const qc = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ?type=ROBOT preselects the chip (the Robots page links here); ?add=1 opens the robot form.
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>(() => TYPE_PARAM[searchParams.get('type') ?? ''] ?? 'ALL');
   const [statusFilter, setStatusFilter] = useState<'' | WorkerStatus>('');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [ensuring, setEnsuring] = useState(false);
+  const addTarget = searchParams.get('add');
+  useEffect(() => {
+    if (!addTarget) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('add');
+    setSearchParams(next, { replace: true });
+    if (canManage) setCreating(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addTarget, canManage]);
 
   const filters: WorkerFilters = useMemo(
     () => ({ type: typeFilter === 'ALL' ? undefined : typeFilter, status: statusFilter || undefined }),
@@ -147,7 +186,7 @@ export function WorkerTypesAdmin() {
         // The row opens the record behind it: a person in People, an agent in
         // Agents (UX upgrade step 5: one roster, the records where they live).
         cell: (w) => {
-          const to = w.type === 'PERSON' && w.associateId ? `/people?associateId=${w.associateId}` : w.type === 'AGENT' ? `/agents?agent=${w.id}` : w.type === 'ROBOT' ? `/robots/${w.id}` : null;
+          const to = w.type === 'PERSON' && w.associateId ? `/people/${w.associateId}` : w.type === 'AGENT' ? `/agents/${w.id}` : w.type === 'ROBOT' ? `/robots/${w.id}` : null;
           return (
             <span className="inline-flex items-center gap-2">
               {to ? (
@@ -167,21 +206,24 @@ export function WorkerTypesAdmin() {
       },
       {
         key: 'owner',
-        header: 'Owner',
-        accessor: (w) => w.owner?.name ?? w.owner?.email ?? '',
+        // A person answers to their manager; an agent or a robot to its owner. The
+        // header says which when the type chip has picked one, both otherwise.
+        header: typeFilter === 'PERSON' ? term('manager') : typeFilter === 'ALL' ? `${term('manager')} or owner` : 'Owner',
+        accessor: (w) => (w.type === 'PERSON' ? w.manager?.name ?? '' : w.owner?.name ?? w.owner?.email ?? ''),
         sortable: true,
         searchable: true,
         cardMeta: true,
-        cell: (w) =>
-          w.owner ? (
-            <span className="flex flex-col">
-              <span>{w.owner.name || w.owner.email}</span>
-              {w.owner.name && <span className="text-xs2 text-silver/70">{w.owner.email}</span>}
-            </span>
+        cell: (w) => {
+          if (w.type === 'PERSON') {
+            return w.manager ? <Person name={w.manager.name} photo={associatePhotoUrl(w.manager.associateId)} to={`/people/${w.manager.associateId}`} /> : <span className="text-silver/60">—</span>;
+          }
+          return w.owner ? (
+            <Person name={w.owner.name || w.owner.email} email={w.owner.email} photo={userPhotoUrl(w.owner.id)} to={w.owner.associateId ? `/people/${w.owner.associateId}` : null} />
           ) : (
             <Badge variant="destructive" size="sm">No owner</Badge>
-          ),
-        csv: (w) => (w.owner ? `${w.owner.name} <${w.owner.email}>` : ''),
+          );
+        },
+        csv: (w) => (w.type === 'PERSON' ? w.manager?.name ?? '' : w.owner ? `${w.owner.name} <${w.owner.email}>` : ''),
       },
       {
         key: 'status',
@@ -230,18 +272,28 @@ export function WorkerTypesAdmin() {
       { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right' },
       { key: 'created', header: 'Created', accessor: (w) => w.createdAt, sortable: true, cell: (w) => fmtDate(w.createdAt) },
     ],
-    [],
+    [typeFilter, term],
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-template="list">
       <PageHeader
         title="Workforce roster"
-        subtitle="People, AI agents and robots in one registry. Every worker has an owner who answers for it, a status and a list of what it can do."
+        subtitle={`People, agents and robots in one roster. A person answers to their ${term('manager').toLowerCase()}; an agent or a robot has an owner who answers for it. Each row opens the record behind it.`}
+        breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Workforce roster' }]}
         primaryAction={
-          canManage ? (
+          canManage && tenant.modules.robotics ? (
             <Button onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" aria-hidden="true" /> Add agent or robot
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add robot
+            </Button>
+          ) : undefined
+        }
+        secondaryActions={
+          canManage ? (
+            <Button asChild variant="outline">
+              <Link to="/agents?register=1">
+                <Bot className="h-4 w-4" aria-hidden="true" /> Register agent
+              </Link>
             </Button>
           ) : undefined
         }
@@ -257,7 +309,7 @@ export function WorkerTypesAdmin() {
           hint={withoutOwner > 0 ? 'Must be zero — every worker needs an owner' : 'Every worker is owned'}
         />
         <MetricCard label="People" value={totals.isLoading ? '—' : String(counts?.PERSON.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.PERSON)} />
-        <MetricCard label="AI agents" value={totals.isLoading ? '—' : String(counts?.AGENT.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.AGENT)} />
+        <MetricCard label="Agents" value={totals.isLoading ? '—' : String(counts?.AGENT.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.AGENT)} />
         <MetricCard label="Robots" value={totals.isLoading ? '—' : String(counts?.ROBOT.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.ROBOT)} />
       </div>
 
@@ -308,14 +360,19 @@ export function WorkerTypesAdmin() {
           </div>
         }
         empty={{
-          icon: Bot,
+          icon: BookUser,
           title: 'No workers match',
-          description: typeFilter === 'PERSON' ? 'People appear here once the sweep has mirrored each associate.' : 'Add an agent or robot to see it here.',
+          description:
+            typeFilter === 'PERSON'
+              ? 'People appear here once the sweep has mirrored each associate.'
+              : typeFilter === 'AGENT'
+                ? 'Register an agent on the Agents page to see it here.'
+                : 'Add a robot, or register an agent on the Agents page, to see it here.',
         }}
       />
 
       {creating && (
-        <CreateWorkerDialog
+        <CreateRobotDialog
           onClose={() => setCreating(false)}
           onCreated={async () => {
             setCreating(false);
@@ -421,8 +478,14 @@ function SiteSelect({ value, onChange, id, ...aria }: { value: string; onChange:
 
 /* ------------------------------------------------------------- create */
 
-function CreateWorkerDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
-  const [type, setType] = useState<'AGENT' | 'ROBOT'>('AGENT');
+/**
+ * Robots only: the roster's create schema is a worker (name, owner, status,
+ * capabilities, site). An agent needs its profile too — vendor, model and
+ * version, purpose, scopes, limits — so it is registered on the Agents page,
+ * the one form that takes all of it.
+ */
+function CreateRobotDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+  const type = 'ROBOT' as const;
   const [name, setName] = useState('');
   const [ownerUserId, setOwnerUserId] = useState('');
   const [status, setStatus] = useState<WorkerStatus>('ONBOARDING');
@@ -432,12 +495,6 @@ function CreateWorkerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   const [saving, setSaving] = useState(false);
   const dirty = name !== '' || ownerUserId !== '' || capabilities.length > 0 || notes !== '';
   const valid = name.trim().length >= 2 && ownerUserId !== '';
-
-  const changeType = (next: 'AGENT' | 'ROBOT') => {
-    setType(next);
-    // Keep only the capabilities that still apply to the new type.
-    setCapabilities((prev) => prev.filter((code) => (WORKER_CAPABILITIES.find((c) => c.code === code)?.types as readonly string[] | undefined)?.includes(next)));
-  };
 
   const submit = async () => {
     if (!valid) return;
@@ -465,8 +522,14 @@ function CreateWorkerDialog({ onClose, onCreated }: { onClose: () => void; onCre
     <Dialog open onOpenChange={(o) => !o && onClose()} confirmDiscard={dirty && !saving}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add agent or robot</DialogTitle>
-          <DialogDescription>People are mirrored from the associate record. Agents and robots are added here, and every one needs an owner.</DialogDescription>
+          <DialogTitle>Add robot</DialogTitle>
+          <DialogDescription>
+            People are mirrored from the associate record; an agent is registered on the{' '}
+            <Link to="/agents?register=1" className="underline underline-offset-2">
+              Agents page
+            </Link>
+            . A robot is added here, and needs an owner who answers for it.
+          </DialogDescription>
         </DialogHeader>
         <form
           className="space-y-4"
@@ -475,18 +538,10 @@ function CreateWorkerDialog({ onClose, onCreated }: { onClose: () => void; onCre
             void submit();
           }}
         >
-          <Field label="Type" required>
-            {(p) => (
-              <Select {...p} value={type} onChange={(e) => changeType(e.target.value as 'AGENT' | 'ROBOT')}>
-                <option value="AGENT">{WORKER_TYPE_LABELS.AGENT}</option>
-                <option value="ROBOT">{WORKER_TYPE_LABELS.ROBOT}</option>
-              </Select>
-            )}
-          </Field>
           <Field label="Name" required hint="How it appears on schedules and in audit.">
             {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={160} autoFocus />}
           </Field>
-          <Field label="Owner" required hint="The person who answers for what this worker does.">
+          <Field label="Owner" required hint="The person who answers for what this robot does.">
             {(p) => <OwnerSelect {...p} value={ownerUserId} onChange={setOwnerUserId} />}
           </Field>
           <Field label="Status">

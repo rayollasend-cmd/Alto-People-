@@ -144,6 +144,7 @@ const RegionsAdmin = lazyNamed(() => import('@/pages/admin/RegionsAdmin'), 'Regi
 const WorkerTypesAdmin = lazyNamed(() => import('@/pages/admin/WorkerTypesAdmin'), 'WorkerTypesAdmin');
 const AgentRegistryAdmin = lazyNamed(() => import('@/pages/admin/AgentRegistryAdmin'), 'AgentRegistryAdmin');
 const AgentRecordPage = lazyNamed(() => import('@/pages/admin/AgentRecordPage'), 'AgentRecordPage');
+const AgentGovernance = lazyNamed(() => import('@/pages/admin/AgentGovernance'), 'AgentGovernance');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
@@ -278,7 +279,8 @@ registerPrefetch('/programs', () => import('@/pages/programs/ProgramsHome'));
 registerPrefetch('/season-planner', () => import('@/pages/planner/SeasonPlannerHome'));
 registerPrefetch('/forecast', () => import('@/pages/forecast/ForecastHome'));
 registerPrefetch('/workers', () => import('@/pages/admin/WorkerTypesAdmin'));
-registerPrefetch('/agents', () => import('@/pages/admin/AgentRegistryAdmin'));
+registerPrefetch('/agents', () => Promise.all([import('@/pages/admin/AgentRegistryAdmin'), import('@/pages/admin/AgentRecordPage')]));
+registerPrefetch('/admin/agents', () => import('@/pages/admin/AgentGovernance'));
 registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHome'));
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
@@ -480,6 +482,16 @@ const LAYOUT_ROUTES = [
   { path: 'tasks', element: <RequireCapability cap="view:time-live"><TasksBoard /></RequireCapability> },
   { path: 'control-room', element: <RequireCapability cap="view:time-live"><ControlRoomPage /></RequireCapability> },
   { path: 'support', element: <SupportPage /> },
+  // People: the workforce roster and the agents (the People door, lib/modules.ts).
+  // One address each — not inside the Settings area, whose rail would otherwise
+  // sit beside the sidebar's People door. Governance is /admin/agents, below.
+  { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },
+  { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
+  { path: 'agents/:id', element: <RequireCapability cap="view:org"><AgentRecordPage /></RequireCapability> },
+  // Brief 3-1: the robot fleet (Operations), one robot's record, a site's safety zones.
+  { path: 'robots', element: <RequireCapability cap="view:org"><RobotsHome /></RequireCapability> },
+  { path: 'robots/sites/:locationId/zones', element: <RequireCapability cap="view:org"><SiteSafetyZones /></RequireCapability> },
+  { path: 'robots/:id', element: <RequireCapability cap="view:org"><RobotRecord /></RequireCapability> },
   // UX upgrade step 3: Settings & Trust — one area (rail + eyebrow) around the pages
   // an organization configures and an auditor checks. Paths unchanged.
   {
@@ -488,17 +500,13 @@ const LAYOUT_ROUTES = [
     { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
     { path: 'design-system', element: <RequireCapability cap="view:product-analytics"><DesignSystemPage /></RequireCapability> },
     { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><ReliabilityHome /></RequireCapability> },
-    // Brief 3-1: the robot fleet, one robot's record, a site's safety zones.
-    { path: 'robots', element: <RequireCapability cap="view:org"><RobotsHome /></RequireCapability> },
-    { path: 'robots/sites/:locationId/zones', element: <RequireCapability cap="view:org"><SiteSafetyZones /></RequireCapability> },
-    { path: 'robots/:id', element: <RequireCapability cap="view:org"><RobotRecord /></RequireCapability> },
     // Settings & trust — the one door to the admin pages below (SettingsHome).
     { path: 'admin', element: <RequireCapability cap="view:hr-admin"><SettingsHome /></RequireCapability> },
     { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
     { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
-    { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },
-    { path: 'agents', element: <RequireCapability cap="view:org"><AgentRegistryAdmin /></RequireCapability> },
-    { path: 'agents/:id', element: <RequireCapability cap="view:org"><AgentRecordPage /></RequireCapability> },
+    // Agents & gates: who approves what, certification, credentials, the MCP tools,
+    // the decision record and the kill switches. The agents themselves live in People (/agents).
+    { path: 'admin/agents', element: <RequireCapability cap="view:org"><AgentGovernance /></RequireCapability> },
     { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
     { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
     { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },

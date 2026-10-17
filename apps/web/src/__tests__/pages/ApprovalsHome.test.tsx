@@ -33,6 +33,12 @@ vi.mock('@/lib/timeApi', () => ({
   approveClockInRequest: vi.fn(),
   denyClockInRequest: vi.fn(),
 }));
+// Agent proposals: their own queue on this page ("agents propose, people decide").
+vi.mock('@/lib/agentProposalsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/agentProposalsApi')>()),
+  listMyProposals: vi.fn(async () => ({ approvals: [] })),
+  decideProposal: vi.fn(),
+}));
 
 import {
   approveAdminRequest,
@@ -40,6 +46,7 @@ import {
 } from '@/lib/timeOffApi';
 import { listAdminSwaps, listOpenShiftClaims } from '@/lib/schedulingApi';
 import { countAdminTimeEntries } from '@/lib/timeApi';
+import { listMyProposals } from '@/lib/agentProposalsApi';
 import { ApprovalsHome } from '@/pages/approvals/ApprovalsHome';
 
 const requestFixture: TimeOffRequest = {
@@ -60,7 +67,7 @@ const requestFixture: TimeOffRequest = {
   createdAt: new Date().toISOString(),
 } as TimeOffRequest;
 
-function renderPage(role: Role = 'HR_ADMINISTRATOR') {
+function renderPage(role: Role = 'HR_ADMINISTRATOR', initialPath = '/approvals') {
   // Fresh client per render so cached lists never leak between tests;
   // retry off so mocked failures surface immediately.
   const queryClient = new QueryClient({
@@ -93,7 +100,7 @@ function renderPage(role: Role = 'HR_ADMINISTRATOR') {
         {/* main.tsx wraps the whole app in this; approving past a balance
             asks for a reason through it. */}
         <ConfirmProvider>
-          <MemoryRouter>
+          <MemoryRouter initialEntries={[initialPath]}>
             <ApprovalsHome />
           </MemoryRouter>
         </ConfirmProvider>
@@ -126,6 +133,51 @@ beforeEach(() => {
     claims: [],
   } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
   vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 3 });
+  vi.mocked(listMyProposals).mockResolvedValue({ approvals: [] });
+});
+
+const proposalFixture = {
+  id: '33333333-3333-4333-8333-333333333333',
+  workerId: '22222222-2222-4222-8222-222222222222',
+  agentName: 'Workforce agent',
+  agentFamily: 'workforce' as const,
+  agentOwner: { id: 'u-hr', name: 'Dana Ortiz' },
+  action: 'SHIFT_ASSIGN' as const,
+  summary: 'Assign Tess Free to Housekeeper at The Grand Hotel, Oct 14 7:00 AM–3:00 PM. The open-shift broadcast went unanswered.',
+  payload: {},
+  status: 'PENDING' as const,
+  requestedAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  decidedBy: null,
+  decidedAt: null,
+  decisionNote: null,
+  consumedAt: null,
+  proposalId: 'p-1',
+  capabilityKey: 'shift.fill',
+  evidence: {
+    why: 'Tess Free is placed at The Grand Hotel and is free.',
+    alternatives: [{ label: 'Omar Busy', note: 'already on a shift that overlaps' }],
+    impact: [{ label: 'Overtime', value: 'None expected' }],
+    policy: "Shift assignment always needs a person's approval (platform rule).",
+    affects: [{ kind: 'person' as const, id: 'a-1', name: 'Tess Free' }],
+  },
+  mayDecide: true,
+};
+
+describe('<ApprovalsHome> agent proposals', () => {
+  it('a proposal waiting on the supervisor is its own queue, counted, and opens with its evidence from ?tab=proposals&proposal=', async () => {
+    vi.mocked(listMyProposals).mockResolvedValue({ approvals: [proposalFixture] });
+    renderPage('SHIFT_SUPERVISOR', `/approvals?tab=proposals&proposal=${proposalFixture.id}`);
+    // The queue tile with its count…
+    expect(await screen.findByText('Agent proposals')).toBeInTheDocument();
+    expect(await screen.findByText('1 decision waiting.')).toBeInTheDocument();
+    // …and the open item: the card with the proposal, the evidence and the decision.
+    expect(await screen.findByRole('heading', { name: /Assign Tess Free to Housekeeper/ })).toBeInTheDocument();
+    expect(screen.getByText(/Tess Free is placed at The Grand Hotel/)).toBeInTheDocument();
+    expect(screen.getByText('Omar Busy')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
 });
 
 describe('<ApprovalsHome>', () => {

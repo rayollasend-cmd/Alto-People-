@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { capabilityDef, rolesWithCapability } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { EMPLOYED_WHERE } from './activeDefinition.js';
+import { discloserFor } from './agentDisclosure.js';
 import { inProcessAgent, logAgentAction, type AgentContext } from './agents.js';
 import { registerCapabilityMetrics, registerCapabilityRunner } from './agentCapabilities.js';
 import { addBusinessDays, evaluateEVerifyReadiness, EVERIFY_DUE_BUSINESS_DAYS } from './everifyReadiness.js';
@@ -250,6 +251,8 @@ export async function runDocumentChase(db: Db = defaultPrisma, now: Date = new D
     const stage = chaseStage(i.expiresAt, now);
     if (stage > rows.get(i.itemKey)!.stage) (due.get(i.associateId) ?? due.set(i.associateId, []).get(i.associateId)!).push(i);
   }
+  // AI disclosure: each chase ends by saying the agent sent it and who answers for it, in the person's language.
+  const disclose = due.size ? await discloserFor(db, agent) : null;
   for (const [associateId, list] of due) {
     const recent = await db.documentChase.findFirst({ where: { associateId, lastSentAt: { gt: new Date(now.getTime() - ONE_PER_DAY_MS) } }, select: { id: true } });
     if (recent) continue;
@@ -258,7 +261,7 @@ export async function runDocumentChase(db: Db = defaultPrisma, now: Date = new D
     list.sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
     const msg = chaseMessage(lang, list);
     // The link opens the soonest one's renewal (AssociateDocumentsView reads ?renew / ?kind).
-    await notifyAssociate(associateId, { subject: msg.subject, body: msg.body, category: CHASE_CATEGORY, linkUrl: list[0]!.linkUrl, emailFallback: true });
+    await notifyAssociate(associateId, { subject: msg.subject, body: disclose!(msg.body, lang), category: CHASE_CATEGORY, linkUrl: list[0]!.linkUrl, emailFallback: true, byAgentId: agent.workerId });
     for (const i of list) {
       await db.documentChase.update({ where: { itemKey: i.itemKey }, data: { stage: chaseStage(i.expiresAt, now), lastSentAt: now } });
     }
@@ -362,7 +365,9 @@ export async function runSection2Clock(db: Db = defaultPrisma, now: Date = new D
   const hires = await pendingSection2(db, tenantId);
   out.pending = hires.length;
   const today = orgDateKey(now);
-  const hr = await db.user.findMany({ where: { tenantId, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:onboarding') } }, select: { id: true } });
+  const hr = await db.user.findMany({ where: { tenantId, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:onboarding') } }, select: { id: true, language: true } });
+  // AI disclosure: the reminder says the agent sent it and who answers for it, in each reader's language.
+  const disclose = hires.length ? await discloserFor(db, agent) : null;
   for (const h of hires) {
     if (!h.dueBy) continue;
     const dueKey = h.dueBy.toISOString().slice(0, 10);
@@ -375,9 +380,10 @@ export async function runSection2Clock(db: Db = defaultPrisma, now: Date = new D
     for (const u of hr) {
       await notifyUser(u.id, {
         subject: stage === 'late' ? `I-9 Section 2 is late: ${h.name}` : `I-9 Section 2 due ${dueKey}: ${h.name}`,
-        body: `${stage === 'late' ? `Section 2 was due ${dueKey} (three business days from the start date).` : `Section 2 is due ${dueKey}, three business days from the start date.`} ${ready}`,
+        body: disclose!(`${stage === 'late' ? `Section 2 was due ${dueKey} (three business days from the start date).` : `Section 2 is due ${dueKey}, three business days from the start date.`} ${ready}`, toWaLang(u.language)),
         category: I9_CATEGORY,
         linkUrl: section2Link(h),
+        byAgentId: agent.workerId,
       });
     }
     if (stage === 'late') out.late += 1;

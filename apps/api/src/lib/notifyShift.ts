@@ -49,6 +49,8 @@ export interface NotifyShiftParams {
   linkUrl?: string;
   /** The WhatsApp template for this event, with its parameters per language (Brief 1C-4). */
   wa?: NotifyOpts['wa'];
+  /** AI disclosure: the agent (Worker id) whose action this is, when an agent caused it. */
+  byAgentId?: string | null;
 }
 
 /**
@@ -115,6 +117,7 @@ async function notifyShiftInner(
       body: params.body,
       category: params.category,
       senderUserId: params.senderUserId ?? null,
+      byAgentId: params.byAgentId ?? null,
       linkUrl,
     },
   });
@@ -134,6 +137,7 @@ async function notifyShiftInner(
     category: params.category,
     linkUrl,
     wa: params.wa,
+    byAgentId: params.byAgentId ?? null,
   });
 }
 

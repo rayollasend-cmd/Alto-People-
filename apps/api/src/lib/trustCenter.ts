@@ -36,10 +36,21 @@ async function platformChain(db: Db) {
   return { verifiedAt: last?.checkedAt.toISOString() ?? null, ok: last?.ok ?? null };
 }
 
+/**
+ * "Certified" means what the agent's own record means by it: certified for
+ * the model version it runs now (lib/agentControls certification().current).
+ * Counting `certifiedAt` alone over-counted — an agent whose version moved
+ * past its certificate still had the date, and its record said "Recertify".
+ */
+async function certifiedCurrent(db: Db, where: { worker?: { tenantId: string } } = {}): Promise<number> {
+  const rows = await db.agentProfile.findMany({ where: { certifiedAt: { not: null }, ...where }, select: { modelVersion: true, certifiedModelVersion: true } });
+  return rows.filter((r) => r.certifiedModelVersion === r.modelVersion).length;
+}
+
 async function platformAgents(db: Db) {
   const [registered, certified] = await Promise.all([
     db.worker.count({ where: { type: 'AGENT', status: { in: ['ONBOARDING', 'ACTIVE', 'SUSPENDED'] } } }),
-    db.agentProfile.count({ where: { certifiedAt: { not: null } } }),
+    certifiedCurrent(db),
   ]);
   return { registered, certified, governed: true as const };
 }
@@ -84,7 +95,7 @@ export async function trustSummary(db: Db, tenantId: string, now: Date = new Dat
     db.identityConnection.findMany({ where: { tenantId, enabled: true }, select: { ssoRequiredForStaff: true } }),
     db.scimToken.count({ where: { tenantId, revokedAt: null } }),
     db.worker.groupBy({ by: ['status'], where: { tenantId, type: 'AGENT' }, _count: true }),
-    db.agentProfile.count({ where: { certifiedAt: { not: null }, worker: { tenantId } } }),
+    certifiedCurrent(db, { worker: { tenantId } }),
     db.agentProfile.count({ where: { suspendedAt: { not: null }, worker: { tenantId } } }),
     db.agentGatePolicy.count({ where: { tenantId, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] } }),
     db.automatedDecisionRecord.count({ where: { tenantId } }),

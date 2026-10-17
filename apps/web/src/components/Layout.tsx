@@ -25,6 +25,8 @@ import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 import { useChunkLoading } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
+import { AssistantProvider } from '@/lib/assistantContext';
+import { AssistantPane } from '@/components/assistant/AssistantPane';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -195,6 +197,7 @@ export function Layout() {
   }, [location.key, location.pathname, navigationType]);
 
   return (
+    <AssistantProvider>
     <TooltipProvider delayDuration={250}>
       <NavigationProgress />
       <RouteAnnouncer />
@@ -324,6 +327,8 @@ export function Layout() {
           </main>
           <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>
+        {/* The assistant's column, right of the page, when open (lib/assistantContext). */}
+        <AssistantPane />
         <CommandPalette
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
@@ -345,5 +350,6 @@ export function Layout() {
         <WhatsNew />
       </div>
     </TooltipProvider>
+    </AssistantProvider>
   );
 }

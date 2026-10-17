@@ -9,6 +9,7 @@ import {
   registerCapabilityRunner,
   supersedeProposal,
 } from './agentCapabilities.js';
+import { associateLang, discloserFor, userLang } from './agentDisclosure.js';
 import { enqueueAudit } from './audit.js';
 import { attendancePoints, RISK_THRESHOLD } from './noShowRisk.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
@@ -25,8 +26,9 @@ import {
   WORKFORCE_AGENT_KEY,
   assignProposalMoot,
   earlierAssignProposals,
+  assignEvidence,
   executeAssignProposal,
-  pickFillCandidate,
+  rankBench,
   replacesOf,
   shiftDeepLink,
   shiftWhen,
@@ -168,12 +170,16 @@ async function ask(db: Db, agent: AgentContext, shift: AskShift, points: number,
   const tz = shift.locationRel?.timezone ?? null;
   const line = formatShiftLine({ position: shift.position, clientName: shift.client?.name ?? shift.locationRel?.name ?? null, startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: tz });
   const by = cutoffLabel(shift);
+  // AI disclosure: the ask says an agent is asking and who answers for it, in the holder's language.
+  const disclose = await discloserFor(db, agent);
+  const lang = await associateLang(db, associateId);
   void notifyShift(db, {
     associateId,
     subject: 'Are you coming to your shift?',
-    body: `${line}. Tap "I'll be there" or "I can't make it" by ${by}. If we don't hear from you, the shift may go to someone else.`,
+    body: disclose(`${line}. Tap "I'll be there" or "I can't make it" by ${by}. If we don't hear from you, the shift may go to someone else.`, lang),
     category: 'shift_confirm',
     senderUserId: null,
+    byAgentId: agent.workerId,
     wa: {
       template: 'alto_shift_confirm',
       params: (lang) => {
@@ -219,17 +225,20 @@ async function proposeBackup(db: Db, agent: AgentContext, shiftId: string, holde
   if (earlier.pending) return false;
   const holder = shift.assignedAssociate ? `${shift.assignedAssociate.firstName} ${shift.assignedAssociate.lastName}`.trim() : 'The holder';
   const why = reason === 'NO' ? `${holder} said they can't make it` : `${holder} did not confirm by ${cutoffLabel(shift)}`;
-  const candidate = await pickFillCandidate(db, shift, now, { tenantId, exclude: [...earlier.turnedDown, holderId] });
+  const ranking = await rankBench(db, shift, now, { tenantId, exclude: [...earlier.turnedDown, holderId], excludeWhy: { [holderId]: reason === 'NO' ? 'holds the shift and said no' : 'holds the shift and did not confirm' } });
+  const candidate = ranking.pick;
   if (!candidate) {
     const seen = await db.auditLog.findFirst({ where: { workerId: agent.workerId, action: NO_CANDIDATE_ACTION, entityId: shift.id, createdAt: { gte: new Date(now.getTime() - DAY_MS) } }, select: { id: true } });
     if (seen) return false;
     logAgentAction(agent, { action: NO_CANDIDATE_ACTION, entityType: 'Shift', entityId: shift.id, scopes: [...capabilityDef(ATTENDANCE_CONFIRM)!.scopes], metadata: { reason, holderId } });
+    const disclose = await discloserFor(db, agent);
     for (const userId of await deskFor(db, shift)) {
       await notifyUser(userId, {
         subject: `No backup on the bench: ${shift.position} at ${siteName(shift)}`,
-        body: `${why}. Nobody placed there is free for ${shiftWhen(shift)}; cover it from the schedule.`,
+        body: disclose(`${why}. Nobody placed there is free for ${shiftWhen(shift)}; cover it from the schedule.`, await userLang(db, userId)),
         category: 'agent_shift_fill',
         linkUrl: shiftDeepLink(shift),
+        byAgentId: agent.workerId,
       });
     }
     return false;
@@ -243,6 +252,11 @@ async function proposeBackup(db: Db, agent: AgentContext, shiftId: string, holde
       subjectId: shift.id,
       summary: `Give ${holder}'s ${shift.position} shift at ${siteName(shift)}, ${shiftWhen(shift)}, to ${candidate.name}. ${why}.`,
       payload: { associateId: candidate.associateId, replacesAssociateId: holderId, reason },
+      evidence: assignEvidence(shift, ranking, {
+        context: `${why}, so the shift is at risk of a no-show.`,
+        holder: { id: holderId, name: holder, why: reason === 'NO' ? 'said no' : 'did not confirm' },
+        leaveOpen: reason === 'NO' ? `${holder} said they cannot make it; the shift would go uncovered unless you assign someone from the schedule.` : `${holder} may still turn up; a no-show leaves the shift uncovered.`,
+      }),
     },
     now,
   );

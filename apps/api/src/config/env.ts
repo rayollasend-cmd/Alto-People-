@@ -206,6 +206,12 @@ const EnvSchema = z.object({
   // when a token is present, else nominatim — off under NODE_ENV=test.
   GEOCODER: z.enum(['nominatim', 'mapbox', 'off']).optional(),
   MAPBOX_TOKEN: z.string().optional(),
+  // The assistant's model. Unset: the assistant answers from its intent
+  // registry alone (lib/hugo) — no model call, nothing leaves the server.
+  // Set: Claude answers with the same intents as tools, knowing the page
+  // the person is on (lib/assistantModel).
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ASSISTANT_MODEL: z.string().default('claude-opus-5'),
   // Van trail retention sweep (RideRunPing rows >30 days). 0 disables.
   VAN_TRAIL_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Daily compliance-score snapshot (org + per-client). The interval is only

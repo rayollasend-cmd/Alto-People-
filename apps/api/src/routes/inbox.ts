@@ -14,7 +14,8 @@ import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { effectiveClientIdFilter, scopeApplications } from '../lib/scope.js';
 import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
-import { countApprovalQueues } from './approvals.js';
+import { countApprovalQueues, deciderOf } from './approvals.js';
+import { countDecidableApprovals } from '../lib/proposalDecisions.js';
 import { countUnreadMessages } from './messages.js';
 import { deskOf } from './relay.js';
 
@@ -75,7 +76,19 @@ const SOURCES: SourceDef[] = [
     path: '/approvals',
     module: 'scheduling',
     visible: (u) => can(u, 'manage:scheduling'),
-    count: async (u) => (await countApprovalQueues(u)).total,
+    // Agent proposals are their own source below; the badge total carries both.
+    count: async (u) => {
+      const c = await countApprovalQueues(u);
+      return c.total - c.proposals;
+    },
+  },
+  {
+    key: 'agent-proposals',
+    label: 'Agent proposals',
+    description: 'Shifts to fill, cases to open and other actions an agent proposes. Nothing happens until you decide.',
+    path: '/approvals?tab=proposals',
+    visible: (u) => can(u, 'manage:org') || can(u, 'manage:scheduling') || can(u, 'manage:onboarding'),
+    count: (u) => countDecidableApprovals(prisma, tenantIdForWrite(), deciderOf(u)),
   },
   {
     key: 'kiosk-review',

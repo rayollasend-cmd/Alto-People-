@@ -652,12 +652,14 @@ roleDecisionsRouter.post('/decisions/quick', requireAuth, async (req: Request, r
     // Agent families step 1: the desk approves or rejects the Workforce agent's proposed fill.
     const approvalId = z.string().uuid().parse(key.slice('agents:shift-fill:'.length));
     const decline = req.body?.decline === true;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
     const tenantId = tenantIdForWrite();
     const orgAdmin = can(me, 'manage:org');
     if (!orgAdmin && !(await deskMayDecide(prisma, tenantId, approvalId, 'SHIFT_ASSIGN', { clientId: me.clientId, locationId: me.locationId }))) {
       throw new HttpError(403, 'not_your_desk', 'This shift is not on your desk.');
     }
-    await decideApproval(prisma, approvalId, decline ? 'REJECTED' : 'APPROVED', req.user!.id, null, new Date(), tenantId);
+    // A rejection from the queue keeps the reason the person typed (the Approvals page requires one).
+    await decideApproval(prisma, approvalId, decline ? 'REJECTED' : 'APPROVED', req.user!.id, decline && reason ? reason : null, new Date(), tenantId);
     const proposal = await prisma.agentProposal.findUnique({ where: { approvalId }, select: { status: true, outcome: true } });
     const outcome = (proposal?.outcome as Record<string, unknown> | null) ?? {};
     summary = decline

@@ -27,6 +27,7 @@ const SHORTCUTS: ShortcutGroup[] = [
     label: 'Navigation',
     items: [
       { keys: ['⌘', 'K'], description: 'Open command palette (search & jump)' },
+      { keys: ['⌘', 'J'], description: 'Open the assistant' },
       { keys: ['Esc'], description: 'Close dialogs and overlays' },
       { keys: ['?'], description: 'Show this overlay' },
     ],

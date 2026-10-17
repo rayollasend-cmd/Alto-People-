@@ -13,6 +13,7 @@ import {
   type AgentTenantControlState,
   type CapabilityScenarioFixture,
   type CapabilityScorecard,
+  type ProposalEvidence,
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -238,7 +239,55 @@ function proposalSummary(p: ProposalRow): AgentProposalSummary {
     outcome: (p.outcome as Record<string, unknown> | null) ?? null,
     outcomeAt: p.outcomeAt?.toISOString() ?? null,
     createdAt: p.createdAt.toISOString(),
+    evidence: (p.evidence as ProposalEvidence | null) ?? null,
   };
+}
+
+/**
+ * The evidence a proposal carries when its creator wrote none: the summary
+ * as the reason, and the subject it names as what it touches, resolved to a
+ * record a person can open. The policy line is read from the request itself.
+ */
+export async function genericProposalEvidence(db: Db, tenantId: string, input: { summary?: string; subjectType: string; subjectId?: string | null }, fallbackWhy: string): Promise<ProposalEvidence> {
+  const affects: ProposalEvidence['affects'] = [];
+  const id = input.subjectId ?? null;
+  if (id) {
+    switch (input.subjectType) {
+      case 'Shift': {
+        const sh = await db.shift.findFirst({ where: { id, tenantId }, select: { id: true, position: true, locationId: true, clientId: true, locationRel: { select: { name: true } }, client: { select: { name: true } } } });
+        if (sh) {
+          affects.push({ kind: 'shift', id: sh.id, name: `${sh.position} shift` });
+          if (sh.locationId && sh.locationRel?.name) affects.push({ kind: 'site', id: sh.locationId, name: sh.locationRel.name });
+          if (sh.clientId && sh.client?.name) affects.push({ kind: 'client', id: sh.clientId, name: sh.client.name });
+        }
+        break;
+      }
+      case 'Associate':
+      case 'Person': {
+        const a = await db.associate.findFirst({ where: { id, tenantId }, select: { id: true, firstName: true, lastName: true } });
+        if (a) affects.push({ kind: 'person', id: a.id, name: `${a.firstName} ${a.lastName}`.trim() });
+        break;
+      }
+      case 'HrCase': {
+        const c = await db.hrCase.findFirst({ where: { id, tenantId }, select: { id: true, subject: true } });
+        if (c) affects.push({ kind: 'case', id: c.id, name: c.subject });
+        break;
+      }
+      case 'Site': {
+        const st = await db.site.findFirst({ where: { id, tenantId }, select: { id: true, name: true } });
+        if (st) affects.push({ kind: 'site', id: st.id, name: st.name });
+        break;
+      }
+      case 'Client': {
+        const cl = await db.client.findFirst({ where: { id, tenantId }, select: { id: true, name: true } });
+        if (cl) affects.push({ kind: 'client', id: cl.id, name: cl.name });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { why: input.summary ?? fallbackWhy, alternatives: [], impact: [], policy: null, affects };
 }
 
 export async function listProposals(db: Db, tenantId: string, f: { capability?: string; status?: AgentProposalStatus; workerId?: string } = {}, limit = 200): Promise<AgentProposalSummary[]> {
@@ -291,6 +340,8 @@ export async function createProposal(db: Db, agent: AgentContext, input: AgentPr
     const existing = await db.agentProposal.findUnique({ where: { approvalId } });
     if (existing) return { proposal: proposalSummary(existing), approvalId, created: false };
   }
+  // The case for it, for the person deciding: the creator's, or a generic one from the summary and the subject.
+  const evidence = input.evidence ?? (await genericProposalEvidence(db, tenantId, input, `${agent.name} proposes ${def.label.toLowerCase()} for ${input.subjectType}.`));
   const row = await db.agentProposal.create({
     data: {
       workerId: agent.workerId,
@@ -298,6 +349,7 @@ export async function createProposal(db: Db, agent: AgentContext, input: AgentPr
       subjectType: input.subjectType,
       subjectId: input.subjectId ?? null,
       payload: input.payload as Prisma.InputJsonObject,
+      evidence: evidence as unknown as Prisma.InputJsonObject,
       approvalId,
       tenantId,
       statusAt: now,

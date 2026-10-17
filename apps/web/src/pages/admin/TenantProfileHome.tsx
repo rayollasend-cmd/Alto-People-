@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  ASSISTANT_PLATFORM_NAME,
   BUSINESS_MODELS,
   BUSINESS_MODEL_LABEL,
   TENANT_MODULES,
@@ -16,7 +17,7 @@ import {
   type Terminology,
   type UpdateTenantProfileInput,
 } from '@alto-people/shared';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { getTenantProfile, saveTenantProfile } from '@/lib/tenantProfileApi';
 import { Button } from '@/components/ui/Button';
@@ -110,6 +111,8 @@ function termLabel(key: TermKey): string {
 export function TenantProfileHome() {
   const { can, refreshUser } = useAuth();
   const term = useTerm();
+  // What this tenant's team calls the assistant (Branding sets it); the platform's name only before the session answers.
+  const assistantName = useTenant().assistantName ?? ASSISTANT_PLATFORM_NAME;
   const canManage = can('manage:org');
   const confirm = useConfirm();
   const queryClient = useQueryClient();
@@ -178,7 +181,7 @@ export function TenantProfileHome() {
     <div className="space-y-6">
       <PageHeader
         title="Organization profile"
-        subtitle="What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and Hugo."
+        subtitle={`What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and ${assistantName}.`}
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile' }]}
       />
 
@@ -257,7 +260,7 @@ export function TenantProfileHome() {
             </CardHeader>
             <CardContent className="space-y-6">
               <p className="text-sm text-silver">
-                The nouns and the labels the screens and Hugo use, in each language. Leave a cell as it is to keep the current word.
+                The nouns and the labels the screens and {assistantName} use, in each language. Leave a cell as it is to keep the current word.
               </p>
               {TERM_GROUPS.map((group) => (
                 <section key={group.title} aria-labelledby={`terms-${group.title}`}>

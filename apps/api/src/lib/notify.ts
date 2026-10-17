@@ -209,6 +209,12 @@ export interface NotifyOpts {
    * the subject and body ride the generic template.
    */
   wa?: { template: WaTemplateKey; params: (lang: WaLang) => string[] };
+  /**
+   * AI disclosure (lib/agentDisclosure): the agent (Worker id) whose action
+   * this notice reports. Stored on the Notification row so the bell can
+   * badge it; the body itself carries the disclosure line.
+   */
+  byAgentId?: string | null;
 }
 
 /** notifyAllAdmins email tiers — the bell row still reaches every admin
@@ -279,6 +285,7 @@ function sendEmailNotification(
           subject: opts.subject,
           body: opts.body,
           category: opts.category ?? null,
+          byAgentId: opts.byAgentId ?? null,
           externalRef,
           providerMessageId,
           failureReason,
@@ -354,6 +361,7 @@ export function notifyUser(
           body: opts.body,
           category: opts.category ?? null,
           linkUrl: opts.linkUrl ?? null,
+          byAgentId: opts.byAgentId ?? null,
           sentAt: new Date(),
         },
       });

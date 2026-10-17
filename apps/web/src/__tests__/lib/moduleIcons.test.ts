@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   BarChart3,
+  BookUser,
   Bot,
   Building2,
   CalendarDays,
   CalendarPlus,
   Clock,
+  Cpu,
   House,
   MapPin,
   ScrollText,
@@ -59,6 +61,9 @@ describe('MODULE_ICONS', () => {
     expect(MODULE_ICONS.agents).toBe(Bot);
     expect(MODULE_ICONS.audit).toBe(ScrollText);
     expect(MODULE_ICONS.settings).toBe(Settings2);
+    // One glyph per kind of worker, the same in the rail, the roster, Tasks and the Control Room.
+    expect(MODULE_ICONS.robots).toBe(Cpu);
+    expect(MODULE_ICONS.workers).toBe(BookUser);
   });
 
   it('the pairs that used to collide are told apart', () => {

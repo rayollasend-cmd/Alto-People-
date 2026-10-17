@@ -4,10 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
-import { AuthContext, DEFAULT_TENANT } from '@/lib/auth';
+import { AuthContext, DEFAULT_TENANT, type TenantSession } from '@/lib/auth';
 
-/** An HR administrator (view:org + manage:org) on the default tenant. */
-export function renderAsAdmin(ui: ReactNode, route = '/') {
+/** An HR administrator (view:org + manage:org) on the default tenant, or on the tenant given. */
+export function renderAsAdmin(ui: ReactNode, route = '/', tenant: TenantSession = DEFAULT_TENANT) {
   const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -22,7 +22,7 @@ export function renderAsAdmin(ui: ReactNode, route = '/') {
             primaryRole: 'HR_ADMINISTRATOR',
             availableRoles: ['HR_ADMINISTRATOR'],
             capabilities: caps,
-            tenant: DEFAULT_TENANT,
+            tenant,
             signIn: vi.fn(),
             submitMfaChallenge: vi.fn(),
             signOut: vi.fn(),

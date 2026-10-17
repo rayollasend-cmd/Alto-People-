@@ -37,9 +37,14 @@ const OUTCOME: Record<DecisionRecord['decisions'][number]['outcome'], 'success' 
 const OUTCOME_LABEL: Record<DecisionRecord['decisions'][number]['outcome'], string> = { FAVORABLE: 'Favorable', ADVERSE: 'Adverse', NONE: 'None' };
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : '—');
 
+/** The record's read, shared with the record page so the tab's count and the tab read one cache entry. */
+export function decisionRecordQuery(agentId: string) {
+  return { queryKey: ['agents', 'decision-record', agentId] as const, queryFn: () => apiFetch<DecisionRecord>(`/agents/${agentId}/decision-record`) };
+}
+
 export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string; canManage: boolean }) {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['agents', 'decision-record', agentId], queryFn: () => apiFetch<DecisionRecord>(`/agents/${agentId}/decision-record`) });
+  const q = useQuery(decisionRecordQuery(agentId));
   const mark = async (id: string, event: 'notice_given' | 'explanation_sent') => {
     try {
       await apiFetch(`/agents/decisions/${id}/events`, { method: 'POST', body: { event } });

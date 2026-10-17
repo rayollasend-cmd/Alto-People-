@@ -1,5 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -22,13 +21,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
-import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { getHugo } from '@/lib/hugoApi';
-
-// The assistant's panel lives with the Agents page; here it opens from the
-// chrome for everyone, so it loads only when first asked for.
-const AssistantPanel = lazy(() => import('@/pages/admin/HugoPanel').then((m) => ({ default: m.HugoPanel })));
+import { useAssistant } from '@/lib/assistantContext';
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
@@ -281,12 +274,12 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
       <button
         type="button"
         onClick={onOpenCommandPalette}
-        className="hidden md:inline-flex items-center gap-2 w-72 h-9 px-3 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="hidden md:inline-flex items-center gap-2 w-72 min-w-[9rem] shrink h-9 px-3 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label="Open command palette"
         data-tour="search"
       >
         <Search className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="flex-1 text-left">Search or jump to…</span>
+        <span className="min-w-0 flex-1 truncate whitespace-nowrap text-left">Search or jump to…</span>
         <kbd className="hidden lg:inline-flex items-center gap-0.5 h-5 px-1.5 rounded border border-navy-secondary bg-navy-secondary/40 font-mono text-3xs text-silver">
           ⌘K
         </kbd>
@@ -441,44 +434,33 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
 
 
 /**
- * The way in to the assistant, for every signed-in person — the taxonomy
- * makes it the router of the agents, and until now it had no door of its
- * own in the chrome. Named by the tenant; the panel answers only with what
- * is switched on for this organization and this desk.
+ * The way in to the assistant from the chrome — the same pane the home
+ * seat, ⌘J, the phone menu and the palette open. Hidden for an account
+ * the assistant has nothing for (the provider asked the API once).
  */
 function AssistantButton() {
-  const [open, setOpen] = useState(false);
-  // Shared with the panel (same key), so opening it costs no second fetch.
-  const hugo = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 5 * 60_000 });
-  const name = hugo.data?.name ?? 'the assistant';
+  const { available, me, open, toggle } = useAssistant();
+  if (!available || !me) return null;
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setOpen(true)}
-            aria-label={`Ask ${name}`}
-            data-tour="assistant"
-          >
-            <Sparkles className="h-5 w-5" aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Ask {name}</TooltipContent>
-      </Tooltip>
-      {open && (
-        <Drawer open onOpenChange={(o) => !o && setOpen(false)}>
-          <DrawerHeader>
-            <DrawerTitle>{hugo.data?.name ?? 'Assistant'}</DrawerTitle>
-          </DrawerHeader>
-          <DrawerBody>
-            <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-              <AssistantPanel />
-            </Suspense>
-          </DrawerBody>
-        </Drawer>
-      )}
-    </>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={toggle}
+          aria-label={`Ask ${me.name}`}
+          aria-pressed={open}
+          aria-keyshortcuts="Meta+J Control+J"
+          data-tour="assistant"
+          className={open ? 'text-accent' : undefined}
+        >
+          <Sparkles className="h-5 w-5" aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        Ask {me.name}
+        <span className="ml-2 text-silver/70">⌘J</span>
+      </TooltipContent>
+    </Tooltip>
   );
 }

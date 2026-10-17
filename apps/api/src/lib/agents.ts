@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   AGENT_EXECUTABLE_ACTIONS,
   AGENT_GATED_ACTION_LABELS,
+  ASSISTANT_PLATFORM_NAME,
   capabilityDef,
   rolesWithCapability,
   type AgentApprovalSummary,
@@ -18,6 +19,7 @@ import {
   type AgentSummary,
   type AgentTrailEntry,
   type AgentUpdate,
+  type ProposalEvidence,
   type WorkerStatus,
   type WorkerSummary,
 } from '@alto-people/shared';
@@ -34,10 +36,24 @@ import { emitAgentApproval } from './webhookEvents.js';
 import { moduleOn } from './tenantProfile.js';
 import { approverMayDecide, gateFor } from './agentGates.js';
 import { recordDecisionsForApproval } from './decisionRecord.js';
+import { discloserFor, userLang } from './agentDisclosure.js';
+import { getBrandingSync } from './branding.js';
+import { toWaLang } from './whatsappContent.js';
 
 /** Agent families step 0: the tenant the registry works in — the request's or job's, Alto HR when none. */
 function registryTenant(tenantId?: string | null): string {
   return tenantId ?? currentTenantId() ?? ALTO_TENANT_ID;
+}
+
+/**
+ * A registry record's name as the tenant reads it. The WhatsApp assistant's
+ * record is named after what this tenant's team calls the assistant
+ * (OrgSetting.assistantName), computed here at read time; the stored
+ * Worker.name is the platform's seed and is never shown as is.
+ */
+export function agentDisplayName(name: string, builtInKey: string | null | undefined, tenantId?: string | null): string {
+  if (builtInKey !== 'whatsapp-assistant') return name;
+  return `${getBrandingSync(tenantId ?? registryTenant()).assistantName} on WhatsApp`;
 }
 
 /**
@@ -164,7 +180,8 @@ export const BUILT_IN_AGENTS = [
   },
   {
     key: 'whatsapp-assistant',
-    name: 'Hugo on WhatsApp',
+    // The seed name only: every read goes through agentDisplayName, which puts the tenant's own name for the assistant here.
+    name: `${ASSISTANT_PLATFORM_NAME} on WhatsApp`,
     family: 'associate-self-service',
     capability: 'Payday, ride and schedule answers on WhatsApp; supervisor handoff',
     purpose: "Answers payday, ride and schedule questions on WhatsApp from the associate's own records and hands anything else to their supervisor (Brief 1C-4). Runs inside the API; every reply is logged under this record.",
@@ -358,7 +375,7 @@ export async function inProcessAgent(db: Db, key: BuiltInAgentKey, tenantIdArg?:
   if (await tenantAgentsSuspended(db, tenantId)) return null;
   return {
     workerId: p.workerId,
-    name: p.worker.name,
+    name: agentDisplayName(p.worker.name, p.builtInKey, tenantId),
     ownerUserId: p.worker.ownerUserId,
     status: p.worker.status,
     scopes: p.scopes as AgentScope[],
@@ -428,6 +445,7 @@ async function decorate(db: Db, workers: WorkerSummary[], profiles: ProfileRow[]
     const suspendedBy = p.suspendedById ? await db.user.findUnique({ where: { id: p.suspendedById }, select: PERSON_SELECT }) : null;
     out.push({
       ...w,
+      name: agentDisplayName(w.name, p.builtInKey, p.tenantId),
       profile: profileSummary(p),
       activeCredentials: credBy.get(w.id) ?? 0,
       pendingApprovals: pendBy.get(w.id) ?? 0,
@@ -448,8 +466,16 @@ export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = n
   const profiles = await db.agentProfile.findMany({ where: { workerId: { in: workers.map((w) => w.id) }, tenantId } });
   const agents = await decorate(db, workers, profiles, now);
   const pendingApprovals = await db.agentApprovalRequest.count({ where: { status: 'PENDING', agent: { tenantId } } });
-  const builtInMissing = BUILT_IN_AGENTS.filter((b) => !profiles.some((p) => p.builtInKey === b.key)).map((b) => b.key);
-  return { agents, counts: counts.AGENT, pendingApprovals, builtInMissing, control: await tenantControlState(db, tenantId), platformControl: await controlState(db) };
+  const missingBuiltIns = BUILT_IN_AGENTS.filter((b) => !profiles.some((p) => p.builtInKey === b.key));
+  return {
+    agents,
+    counts: counts.AGENT,
+    pendingApprovals,
+    builtInMissing: missingBuiltIns.map((b) => b.key),
+    builtInMissingAgents: missingBuiltIns.map((b) => ({ key: b.key, name: b.name })),
+    control: await tenantControlState(db, tenantId),
+    platformControl: await controlState(db),
+  };
 }
 
 /** The agent, if it is this tenant's; 404 otherwise (cross-tenant suite). */
@@ -488,14 +514,56 @@ function credentialSummary(c: Prisma.AgentCredentialGetPayload<{ include: { issu
   };
 }
 
-type ApprovalRow = Prisma.AgentApprovalRequestGetPayload<{ include: { decidedBy: { select: typeof PERSON_SELECT }; agent: { include: { worker: { select: { name: true } } } } } }>;
-const APPROVAL_INCLUDE = { decidedBy: { select: PERSON_SELECT }, agent: { include: { worker: { select: { name: true } } } } } as const;
+const APPROVAL_INCLUDE = {
+  decidedBy: { select: PERSON_SELECT },
+  agent: { include: { worker: { select: { name: true, owner: { select: PERSON_SELECT } } } } },
+  proposal: { select: { id: true, capabilityKey: true, evidence: true } },
+} as const;
+type ApprovalRow = Prisma.AgentApprovalRequestGetPayload<{ include: typeof APPROVAL_INCLUDE }>;
+
+/**
+ * The rule that put this request in front of a person, in words: the
+ * customer's gate policy in force when it was filed, or the platform floor.
+ * Read from the request's own approver fields, so it names the rule that
+ * applied then, not today's.
+ */
+export function approvalPolicyLine(a: { action: AgentGatedAction; gatePolicyId: string | null; approverKind: string | null; approverRole: string | null }, capabilityLabel: string | null): string {
+  const what = a.action === 'POLICY_GATE' ? (capabilityLabel ?? 'This capability') : AGENT_GATED_ACTION_LABELS[a.action];
+  if (!a.gatePolicyId) return `${what} always needs a person's approval (platform rule).`;
+  const who =
+    a.approverKind === 'ROLE' && a.approverRole
+      ? `anyone in the ${a.approverRole.toLowerCase().replace(/_/g, ' ')} role`
+      : a.approverKind === 'USER'
+        ? 'the person your policy names'
+        : a.approverKind === 'DESK'
+          ? 'the desk the subject belongs to'
+          : "the agent's owner";
+  return `${what} needs approval by ${who} (your organization's gate policy).`;
+}
+
+/** The block a person reads when the creator wrote nothing more than the summary. */
+function genericEvidence(a: ApprovalRow): ProposalEvidence {
+  const capability = a.proposal?.capabilityKey ? capabilityDef(a.proposal.capabilityKey) : null;
+  return {
+    why: a.summary,
+    alternatives: [],
+    impact: [],
+    policy: approvalPolicyLine(a, capability?.label ?? null),
+    affects: [],
+  };
+}
 
 function approvalSummary(a: ApprovalRow): AgentApprovalSummary {
+  const written = (a.proposal?.evidence as ProposalEvidence | null) ?? null;
+  const evidence: ProposalEvidence = written
+    ? { ...written, policy: written.policy ?? approvalPolicyLine(a, a.proposal?.capabilityKey ? (capabilityDef(a.proposal.capabilityKey)?.label ?? null) : null) }
+    : genericEvidence(a);
   return {
     id: a.id,
     workerId: a.workerId,
-    agentName: a.agent.worker.name,
+    agentName: agentDisplayName(a.agent.worker.name, a.agent.builtInKey, a.agent.tenantId),
+    agentFamily: (a.agent.family as AgentFamily | null) ?? null,
+    agentOwner: personName(a.agent.worker.owner),
     action: a.action,
     summary: a.summary,
     payload: (a.payload as Record<string, unknown>) ?? {},
@@ -506,6 +574,9 @@ function approvalSummary(a: ApprovalRow): AgentApprovalSummary {
     decidedAt: a.decidedAt?.toISOString() ?? null,
     decisionNote: a.decisionNote,
     consumedAt: a.consumedAt?.toISOString() ?? null,
+    proposalId: a.proposal?.id ?? null,
+    capabilityKey: a.proposal?.capabilityKey ?? null,
+    evidence,
   };
 }
 
@@ -777,12 +848,15 @@ export async function createApprovalRequest(
       : gate.policyId && gate.approver === 'ROLE' && gate.approverRole
         ? (await db.user.findMany({ where: { role: gate.approverRole, status: 'ACTIVE', deletedAt: null, tenantId: agent.tenantId ?? ALTO_TENANT_ID }, select: { id: true }, take: 25 })).map((u) => u.id)
         : [agent.ownerUserId];
+  // AI disclosure: the ask itself says an agent is asking and who answers for it, in the approver's language.
+  const disclose = await discloserFor(db, agent);
   for (const to of recipients) {
     await notifyUser(to, {
       subject: `${agent.name} is asking for approval`,
-      body: `${AGENT_GATED_ACTION_LABELS[input.action]}: ${input.summary}`,
+      body: disclose(`${AGENT_GATED_ACTION_LABELS[input.action]}: ${input.summary}`, await userLang(db, to)),
       category: AGENT_APPROVAL_CATEGORY,
-      linkUrl: `/agents?approval=${row.id}`,
+      linkUrl: `/approvals?tab=proposals&proposal=${row.id}`,
+      byAgentId: agent.workerId,
     });
   }
   return { approval: approvalSummary(row), created: true };
@@ -796,6 +870,14 @@ export async function listApprovals(db: Db, f: { status?: AgentApprovalSummary['
     include: APPROVAL_INCLUDE,
   });
   return rows.map(approvalSummary);
+}
+
+/** These requests, in the order given (the decidable list keeps its own order). */
+export async function listApprovalsByIds(db: Db, ids: readonly string[], tenantIdArg?: string | null): Promise<AgentApprovalSummary[]> {
+  if (!ids.length) return [];
+  const rows = await db.agentApprovalRequest.findMany({ where: { id: { in: [...ids] }, agent: { tenantId: registryTenant(tenantIdArg) } }, include: APPROVAL_INCLUDE });
+  const byId = new Map(rows.map((r) => [r.id, approvalSummary(r)]));
+  return ids.map((id) => byId.get(id)).filter((a): a is AgentApprovalSummary => !!a);
 }
 
 export async function getApproval(db: Db, id: string, tenantIdArg?: string | null): Promise<AgentApprovalSummary> {
@@ -817,10 +899,11 @@ export async function decideApproval(db: Db, id: string, decision: 'APPROVED' | 
   if (row.expiresAt <= now) throw new HttpError(409, 'approval_expired', 'This request expired before it was decided.');
   const updated = await db.agentApprovalRequest.update({ where: { id }, data: { status: decision, decidedById: userId, decidedAt: now, decisionNote: note }, include: APPROVAL_INCLUDE });
   enqueueAudit(
-    { actorUserId: userId, clientId: null, workerId: row.workerId, action: decision === 'APPROVED' ? 'agent.approval.approved' : 'agent.approval.rejected', entityType: 'AgentApprovalRequest', entityId: id, metadata: { gated: row.action, note } },
+    { actorUserId: userId, clientId: null, workerId: row.workerId, action: decision === 'APPROVED' ? 'agent.approval.approved' : 'agent.approval.rejected', entityType: 'AgentApprovalRequest', entityId: id, metadata: { gated: row.action, note, ...(decision === 'REJECTED' && note ? { reason: note } : {}) } },
     'agents',
   );
-  await syncProposalWithApproval(db, id, decision, now);
+  // A rejection's reason stays on the proposal, where the scorecard and the agent's record read it.
+  await syncProposalWithApproval(db, id, decision, now, decision === 'REJECTED' && note ? { reason: note, decidedById: userId } : undefined);
   // Brief 2-6 step 3: a decision about people goes on the automated-decision record.
   await recordDecisionsForApproval(db, id, decision, userId, now);
   emitAgentApproval('agent.approval_decided', { id, action: row.action, status: decision, summary: updated.summary, workerId: row.workerId }, registryTenant(tenantIdArg));
@@ -896,7 +979,7 @@ export async function postAgentMessage(
 ): Promise<{ gated: true; approval: AgentApprovalSummary; created: boolean } | { gated: false; messageId: string; approvalId: string | null }> {
   const conv = await db.conversation.findUnique({
     where: { id: input.conversationId },
-    include: { participants: { include: { user: { select: { id: true, role: true } } } } },
+    include: { participants: { include: { user: { select: { id: true, role: true, language: true } } } } },
   });
   if (!conv) throw new HttpError(404, 'conversation_not_found', 'No such conversation.');
   const reachesClient = conv.clientId != null || conv.participants.some((p) => p.user.role === 'CLIENT_PORTAL');
@@ -909,9 +992,14 @@ export async function postAgentMessage(
     }
     approvalId = (await claimApproval(db, agent, input.approvalId, 'CLIENT_MESSAGE', payload, now)).id;
   }
-  const body = `${input.body}\n\n— ${agent.name} (AI agent)`;
+  // AI disclosure (lib/agentDisclosure): the message ends by saying an AI agent wrote it and who answers
+  // for it — in the readers' language when everyone in the thread shares one, English otherwise.
+  const disclose = await discloserFor(db, agent);
+  const langs = new Set(conv.participants.map((p) => toWaLang(p.user.language)));
+  const lang = langs.size === 1 ? [...langs][0]! : 'en';
+  const body = disclose(input.body, lang);
   const preview = clip(input.body, 160);
-  const m = await db.message.create({ data: { conversationId: conv.id, senderId: null, body }, select: { id: true, createdAt: true } });
+  const m = await db.message.create({ data: { conversationId: conv.id, senderId: null, byAgentId: agent.workerId, body }, select: { id: true, createdAt: true } });
   await db.conversation.update({ where: { id: conv.id }, data: { lastMessageAt: m.createdAt, lastPreview: clip(`${agent.name}: ${preview}`, 160) } });
   const synced = conv.kind === 'STORE_CHANNEL' ? await syncStoreChannel(conv.id, db as PrismaClient) : null;
   const recipientIds = synced ?? conv.participants.map((p) => p.userId);

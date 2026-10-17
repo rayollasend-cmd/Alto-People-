@@ -15,6 +15,7 @@ import { listRobots, listZones } from './robots.js';
 import { listTasks, policyFor } from './tasks/engine.js';
 import { crewLeadsOnFloor, spanOfControl } from './tasks/spanOfControl.js';
 import { moduleOn } from './tenantProfile.js';
+import { DEFAULT_TIMEZONE, formatDateTimeInZone } from './timezone.js';
 
 /**
  * Brief 3-3 — the control room's one read: every worker on shift at a site
@@ -219,9 +220,25 @@ export async function controlRoom(db: Db = defaultPrisma, locationId: string, te
       if (z.guestOccupied && !z.robotsAllowedWhenOccupied) exceptions.push({ kind: 'ZONE_OCCUPIED', id: `zone:${z.id}`, title: z.name, detail: 'Occupied by guests: robots keep out', at: z.occupiedSince, link: `/robots/sites/${locationId}/zones` });
     }
   }
-  const approvals = await listApprovals(db, { status: 'PENDING', tenantId }, 50);
+  // What an agent proposes for THIS site: the requests whose shift is here, or that name the site itself.
+  const approvals = await listApprovals(db, { status: 'PENDING', tenantId }, 200);
+  const shiftIds = approvals.map((a) => a.payload.subjectId).filter((v): v is string => typeof v === 'string');
+  const shiftsHere = new Set(
+    shiftIds.length ? (await db.shift.findMany({ where: { id: { in: shiftIds }, locationId }, select: { id: true } })).map((s) => s.id) : [],
+  );
+  const siteTz = site.timezone ?? DEFAULT_TIMEZONE;
   for (const a of approvals) {
-    waiting.push({ kind: 'AGENT_APPROVAL', id: `approval:${a.id}`, title: `${a.agentName} asks: ${a.summary}`, detail: `Expires ${a.expiresAt.slice(0, 16).replace('T', ' ')}`, at: a.requestedAt, link: `/agents?approval=${a.id}` });
+    const subjectId = typeof a.payload.subjectId === 'string' ? a.payload.subjectId : null;
+    const here = (subjectId && shiftsHere.has(subjectId)) || a.evidence.affects.some((x) => x.kind === 'site' && x.id === locationId);
+    if (!here) continue;
+    waiting.push({
+      kind: 'AGENT_APPROVAL',
+      id: `approval:${a.id}`,
+      title: `${a.agentName} asks: ${a.summary}`,
+      detail: `Expires ${formatDateTimeInZone(new Date(a.expiresAt), siteTz)}`,
+      at: a.requestedAt,
+      link: `/approvals?tab=proposals&proposal=${a.id}`,
+    });
   }
   exceptions.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''));
   waiting.sort((a, b) => a.at.localeCompare(b.at));

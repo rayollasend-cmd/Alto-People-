@@ -7,6 +7,7 @@ import {
   AgentCapabilityKeySchema,
   AgentGatedActionSchema,
   AgentCredentialIssueSchema,
+  AgentDecideInputSchema,
   AgentDecisionSchema,
   AgentDriftSchema,
   AgentInputSchema,
@@ -18,20 +19,20 @@ import {
   AgentUpdateSchema,
   hasCapability,
   PLATFORM_OPERATOR_TENANT_ID,
-  type AgentGatedAction,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { GatePolicyInputSchema, approverMayDecide, createGatePolicy, endGatePolicy, gateFor } from '../lib/agentGates.js';
+import { GatePolicyInputSchema, createGatePolicy, endGatePolicy, gateFor } from '../lib/agentGates.js';
 import { BiasAuditInputSchema, DECISION_EVENTS, DecisionProfileInputSchema, addBiasAudit, decisionProfileFor, markDecisionEvent, saveDecisionProfile } from '../lib/decisionRecord.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { mcpCatalogFor } from '../lib/mcpCatalog.js';
-import { approvalAction, assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
+import { assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, getAgent, getApproval, issueCredential, listAgents, listApprovals, recordSpend, revokeCredential, updateAgent } from '../lib/agents.js';
 import { addScenario, certifyAgent, controlState, listScenarios, removeScenario, resumeAgent, resumeAllAgents, runScenarios, scorecard, suspendAgent, suspendAllAgents } from '../lib/agentControls.js';
-import { capabilityScorecard, deskMayDecide, listAgentCapabilities, listProposals, resumeCapability, resumeTenantAgents, suspendCapability, suspendTenantAgents, tenantControlState } from '../lib/agentCapabilities.js';
+import { capabilityScorecard, listAgentCapabilities, listProposals, resumeCapability, resumeTenantAgents, suspendCapability, suspendTenantAgents, tenantControlState } from '../lib/agentCapabilities.js';
+import { decidableIdsAmong, mayDecideApproval } from '../lib/proposalDecisions.js';
 
 /**
  * The agent registry, for people (Brief 1D-2).
@@ -42,6 +43,7 @@ import { capabilityScorecard, deskMayDecide, listAgentCapabilities, listProposal
  *   GET   /agents/approvals?status=             the queue
  *   GET   /agents/approvals/:id
  *   POST  /agents/approvals/:id/approve|reject  the decision, logged
+ *   POST  /agents/approvals/:id/decide          { decision: APPROVE | REJECT, reason? } — one decision; a rejection says why
  *   GET   /agents/gates · POST /agents/gates · POST /agents/gates/:gid/end   Brief 2-6: the organization's own gates over the floor
  *   GET   /agents/gates/preview?workerId&action|capability                   what would happen
  *   GET   /agents/:id                           profile, credentials, requests, spend, the trail
@@ -95,47 +97,39 @@ function operatorOnly(_req: Request, _res: Response, next: NextFunction): void {
   next();
 }
 
-/** Who may decide a gated request: an org admin always; the desk that owns the subject for the two desk actions. */
-const DESK_DECIDERS: Partial<Record<AgentGatedAction, Parameters<typeof hasCapability>[1]>> = {
-  SHIFT_ASSIGN: 'manage:scheduling',
-  CASE_OPEN: 'manage:onboarding',
-};
-
+/**
+ * Who may decide a gated request — lib/proposalDecisions, the one rule every
+ * surface reads: an org admin always (a request a customer's gate names an
+ * approver for is re-checked by decideApproval, which names the approver in
+ * its answer); the named approver; the desk that owns the subject (a bound
+ * supervisor for its own shifts); the agent's owner under today's rule.
+ */
 async function canDecide(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
-    const role = req.user!.role;
-    if (hasCapability(role, 'manage:org')) {
+    const user = req.user!;
+    if (hasCapability(user.role, 'manage:org')) {
       next();
       return;
     }
     const parsed = Id.safeParse(req.params.id);
-    if (!parsed.success) {
-      next(new HttpError(403, 'forbidden', 'You cannot decide this request.'));
-      return;
-    }
-    const approvalId = parsed.data;
-    // Brief 2-6 step 2: the approver a customer's gate names may decide it, whatever their role's capabilities
-    // (decideApproval checks it again, for every path).
-    const named = await prisma.agentApprovalRequest.findFirst({ where: { id: approvalId, tenantId: tenantIdForWrite(), approverKind: { in: ['OWNER', 'ROLE', 'USER'] } }, select: { approverKind: true, approverRole: true, approverUserId: true, workerId: true } });
-    if (named && (await approverMayDecide(prisma, named, { id: req.user!.id, role }))) {
+    const u = user as { id: string; role: typeof user.role; clientId?: string | null; locationId?: string | null };
+    if (parsed.success && (await mayDecideApproval(prisma, tenantIdForWrite(), parsed.data, { id: u.id, role: u.role, clientId: u.clientId ?? null, locationId: u.locationId ?? null }))) {
       next();
       return;
-    }
-    const action = await approvalAction(prisma, approvalId, tenantIdForWrite());
-    const desk = action ? DESK_DECIDERS[action] : undefined;
-    if ((action === 'SHIFT_ASSIGN' || action === 'CASE_OPEN') && desk && hasCapability(role, desk)) {
-      // A client- or site-bound supervisor decides only for its own shifts.
-      const u = req.user as { clientId?: string | null; locationId?: string | null };
-      if (await deskMayDecide(prisma, tenantIdForWrite(), approvalId, action, { clientId: u.clientId ?? null, locationId: u.locationId ?? null })) {
-        next();
-        return;
-      }
     }
     // Not this desk's to decide, or not found: the same answer the capability gate gives.
     next(new HttpError(403, 'forbidden', 'You cannot decide this request.'));
   } catch (err) {
     next(err);
   }
+}
+
+/** The caller's own view of a list: which of these pending requests the server's rule lets them decide. */
+async function markDecidable<T extends { id: string; status: string }>(req: Request, rows: T[]): Promise<Array<T & { mayDecide: boolean }>> {
+  const u = req.user as { id: string; role: Parameters<typeof hasCapability>[0]; clientId?: string | null; locationId?: string | null };
+  const pendingIds = rows.filter((r) => r.status === 'PENDING').map((r) => r.id);
+  const ok = await decidableIdsAmong(prisma, tenantIdForWrite(), { id: u.id, role: u.role, clientId: u.clientId ?? null, locationId: u.locationId ?? null }, pendingIds);
+  return rows.map((r) => ({ ...r, mayDecide: ok.has(r.id) }));
 }
 
 agentsRouter.get('/', VIEW, async (_req, res, next) => {
@@ -159,7 +153,7 @@ agentsRouter.post('/ensure-built-in', MANAGE, async (req, res, next) => {
 agentsRouter.get('/approvals', VIEW, async (req, res, next) => {
   try {
     const q = z.object({ status: AgentApprovalStatusSchema.optional(), workerId: Id.optional() }).parse(req.query);
-    res.json({ approvals: await listApprovals(prisma, { ...q, tenantId: tenantIdForWrite() }) });
+    res.json({ approvals: await markDecidable(req, await listApprovals(prisma, { ...q, tenantId: tenantIdForWrite() })) });
   } catch (err) {
     next(err);
   }
@@ -184,10 +178,66 @@ for (const decision of ['approve', 'reject'] as const) {
   });
 }
 
+/**
+ * One decision on a proposal: APPROVE, or REJECT with the reason (required;
+ * kept as the decision note, on the proposal's outcome and on the trail).
+ * The same people as approve/reject: the rule in canDecide.
+ */
+agentsRouter.post('/approvals/:id/decide', requireAuth, canDecide, async (req, res, next) => {
+  try {
+    const { decision, reason } = AgentDecideInputSchema.parse(req.body ?? {});
+    const decided = await decideApproval(prisma, Id.parse(req.params.id), decision === 'APPROVE' ? 'APPROVED' : 'REJECTED', req.user!.id, reason ?? null, new Date(), tenantIdForWrite());
+    res.json({ ...decided, mayDecide: false });
+  } catch (err) {
+    next(err);
+  }
+});
+
 agentsRouter.get('/proposals', VIEW, async (req, res, next) => {
   try {
     const q = z.object({ capability: AgentCapabilityKeySchema.optional(), status: AgentProposalStatusSchema.optional(), workerId: Id.optional() }).parse(req.query);
     res.json({ proposals: await listProposals(prisma, tenantIdForWrite(), q) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- The decision record across agents (Settings & trust › Agents & gates) ----
+// Every automated decision about a person this organization's agents recorded,
+// newest first, with the agent named. The per-agent view stays /:id/decision-record.
+// Before /:id so the literal wins.
+agentsRouter.get('/decision-records', VIEW, async (_req, res, next) => {
+  try {
+    const tenantId = tenantIdForWrite();
+    const rows = await prisma.automatedDecisionRecord.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, take: 500 });
+    const [people, agents] = await Promise.all([
+      prisma.associate.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.subjectAssociateId).filter((x): x is string => !!x))] } },
+        select: { id: true, firstName: true, lastName: true },
+      }),
+      prisma.worker.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.workerId))] } }, select: { id: true, name: true } }),
+    ]);
+    const nameOf = new Map(people.map((p) => [p.id, `${p.firstName} ${p.lastName}`.trim()]));
+    const agentName = new Map(agents.map((a) => [a.id, a.name]));
+    res.json({
+      total: await prisma.automatedDecisionRecord.count({ where: { tenantId } }),
+      decisions: rows.map((r) => ({
+        id: r.id,
+        at: r.createdAt.toISOString(),
+        agentId: r.workerId,
+        agentName: agentName.get(r.workerId) ?? 'An agent',
+        capabilityKey: r.capabilityKey,
+        decisionType: r.decisionType,
+        subject: r.subjectAssociateId ? (nameOf.get(r.subjectAssociateId) ?? 'A person') : r.subjectRef,
+        subjectAssociateId: r.subjectAssociateId,
+        outcome: r.outcome,
+        summary: r.summary,
+        humanDecidedAt: r.humanDecidedAt?.toISOString() ?? null,
+        noticeGivenAt: r.noticeGivenAt?.toISOString() ?? null,
+        explanationSentAt: r.explanationSentAt?.toISOString() ?? null,
+        reviewRequestedAt: r.reviewRequestedAt?.toISOString() ?? null,
+      })),
+    });
   } catch (err) {
     next(err);
   }

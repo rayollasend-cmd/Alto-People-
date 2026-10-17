@@ -762,7 +762,7 @@ export const MODULES: ModuleNav[] = [
     path: '/workers',
     label: 'Workforce roster',
     description:
-      'People, AI agents and robots in one roster: who owns each worker, what it can do, where it is in its lifecycle, and the record behind it.',
+      'People, agents and robots in one roster: who each one answers to, what it can do, where it is in its lifecycle, and the record behind it.',
     requires: 'view:org',
     group: 'workforce-management',
   },
@@ -785,9 +785,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'agents',
     path: '/agents',
-    label: 'AI agents',
+    label: 'Agents',
     description:
-      'Every AI agent the company runs: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person.',
+      'Every agent the organization runs, by family: who owns it, what it may do, its limits, spend and the trail of what it did. Its proposals wait here for a person.',
     requires: 'view:org',
     group: 'platform',
   },

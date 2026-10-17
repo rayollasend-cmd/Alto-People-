@@ -154,13 +154,28 @@ export function RoleDecisionQueue({
     }
   };
 
+  // Styled prompt dialog — window.prompt() rendered as a raw OS dialog,
+  // jarringly off-brand (and unstylable) on phones.
+  const promptDialog = usePrompt();
   const quick = async (item: RoleDecision, decline = false) => {
     if (busyKey) return;
+    // Rejecting an agent's proposal says why: the reason stays on the proposal and the trail.
+    let reason: string | undefined;
+    if (decline && item.key.startsWith('agents:')) {
+      const typed = await promptDialog({
+        title: 'Reject this proposal?',
+        reasonLabel: 'Why? Kept with the decision.',
+        confirmLabel: 'Reject',
+        required: false,
+      });
+      if (typed === null) return;
+      reason = typed.trim() || undefined;
+    }
     setBusyKey(`${item.key}:${decline ? 'decline' : 'quick'}`);
     try {
       const r = await apiFetch<{ summary: string }>('/me/decisions/quick', {
         method: 'POST',
-        body: decline ? { key: item.key, decline: true } : { key: item.key },
+        body: decline ? { key: item.key, decline: true, ...(reason ? { reason } : {}) } : { key: item.key },
       });
       toast.success(r.summary);
       load();
@@ -171,9 +186,6 @@ export function RoleDecisionQueue({
     }
   };
 
-  // Styled prompt dialog — window.prompt() rendered as a raw OS dialog,
-  // jarringly off-brand (and unstylable) on phones.
-  const promptDialog = usePrompt();
   const escalate = async (item: RoleDecision) => {
     const typed = await promptDialog({
       title: 'Escalate to admins',

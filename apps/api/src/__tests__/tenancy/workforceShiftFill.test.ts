@@ -89,7 +89,8 @@ describe('shift.fill: the gated path, end to end', () => {
     expect(queue.status).toBe(200);
     const item = (queue.body.decisions ?? queue.body.items ?? queue.body).find((d: { key: string }) => d.key === `agents:shift-fill:${approval.id}`);
     expect(item, JSON.stringify(queue.body)).toMatchObject({ quickAction: 'Approve', declineAction: 'Reject' });
-    expect(item.linkUrl).toContain(`location=${w.hotel.id}`);
+    // The item opens the proposal itself, with its evidence, on the Approvals page.
+    expect(item.linkUrl).toBe(`/approvals?tab=proposals&proposal=${approval.id}`);
 
     const approve = await manager.post('/me/decisions/quick').send({ key: item.key });
     expect(approve.status, JSON.stringify(approve.body)).toBe(200);

@@ -1279,6 +1279,8 @@ model Message {
   id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   conversationId String      @db.Uuid
   senderId       String?     @db.Uuid
+  /// AI disclosure: the agent (Worker id) that wrote this message (senderId is null), so the thread can badge it "AI".
+  byAgentId      String?     @db.Uuid
   kind           MessageKind @default(TEXT)
   body           String      @db.VarChar(4000)
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
@@ -4266,6 +4268,8 @@ model Notification {
   seenAt            DateTime?           @db.Timestamptz(6)
   // Sender: HR user, or null for system-triggered notifications.
   senderUserId      String?             @db.Uuid
+  /// AI disclosure: the agent (Worker id) whose action this notice reports, so the bell can badge it "AI". Null for people and the system.
+  byAgentId         String?             @db.Uuid
   // Optional deeplink for IN_APP notifications. The bell renders the row
   // as a link when set; un-set means click only marks-read. First use:
   // payroll Branch-webhook FAILED/RETURNED → "/payroll?run={runId}".
@@ -8202,8 +8206,8 @@ model OrgSetting {
   primaryColor           String?                @db.VarChar(7)
   // PNG/JPEG/WebP/SVG, ≤1MB. Embedded as data: URI in HTML emails so we
   // don't depend on a CDN being reachable.
-  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId               String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// One row per tenant (unique): the assistant's name and the rest of the branding are each tenant's own. Alto HR's row keeps id 'singleton'.
+  tenantId               String?                @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   logoBytes              Bytes?
   logoContentType        String?                @db.VarChar(64)
   logoUpdatedAt          DateTime?              @db.Timestamptz(6)
@@ -8227,8 +8231,6 @@ model OrgSetting {
   // closes closes before a grace period after this — see recruitingCleanup.
   recruitingCleanupSince DateTime?              @db.Timestamptz(6)
   updatedAt              DateTime               @updatedAt @db.Timestamptz(6)
-
-  @@index([tenantId])
 }
 
 // IRS payroll-tax constants that change yearly. One row per calendar year.
@@ -10173,6 +10175,8 @@ model AgentProposal {
   createdAt     DateTime            @default(now()) @db.Timestamptz(6)
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId      String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// The case for the proposal, for the person deciding (shared ProposalEvidence): why, alternatives, impact, who it touches. Null: generic on read.
+  evidence      Json?
 
   agent    AgentProfile          @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
   approval AgentApprovalRequest? @relation(fields: [approvalId], references: [id], onDelete: SetNull)

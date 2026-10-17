@@ -151,9 +151,13 @@ describe('attendance.confirm: the answers', () => {
     expect((await prisma.shift.findUniqueOrThrow({ where: { id: w.rheaShift.id } })).assignedAssociateId).toBe(w.tess.id);
     await flushPendingNotifications();
     const told = await prisma.notification.findFirst({ where: { recipientUserId: w.rheaUser.id, category: 'shift_unassigned', channel: 'IN_APP' } });
-    expect(told?.body).toMatch(/^You told us you can't make .* It is covered and off your schedule\.$/);
+    // AI disclosure: the notice ends by saying the agent did it and who answers for it; the record names the agent.
+    expect(told?.body).toMatch(/^You told us you can't make .* It is covered and off your schedule\.\n\nSent by Workforce agent, an AI agent — .+ answers for it\.$/);
+    expect(told?.byAgentId).toBe(w.workerId);
     const closure = await prisma.notification.findFirst({ where: { recipientUserId: w.manager.id, category: 'agent_shift_fill', channel: 'IN_APP' } });
     expect(closure?.subject).toBe('Backup assigned: Tess Free for Rhea Risky');
+    expect(closure?.body).toMatch(/Assigned by Workforce agent on your approval\.\n\nSent by Workforce agent, an AI agent — .+ answers for it\.$/);
+    expect(closure?.byAgentId).toBe(w.workerId);
   });
 
   it('silence past the cut-off files a backup; the holder confirming afterwards retires it', async () => {

@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { BotMessageSquare, Copy, LayoutGrid, Plus, ShieldAlert, TableProperties } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from 'lucide-react';
 import { AgentCards } from '@/components/agents/AgentCards';
+import { ProposalList } from '@/components/agents/ProposalDecision';
+import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { Avatar } from '@/components/ui/Avatar';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
+import { userPhotoUrl } from '@/lib/photoUrl';
+import { getHugo } from '@/lib/hugoApi';
 import { toast } from 'sonner';
 import {
   AGENT_APPROVAL_STATUS_LABELS,
@@ -14,6 +20,7 @@ import {
   AGENT_SCOPES,
   PLATFORM_OPERATOR_TENANT_ID,
   WORKER_STATUS_LABELS,
+  capabilityDef,
   type AgentCapabilitySummary,
   type AgentApprovalStatus,
   type AgentApprovalSummary,
@@ -30,7 +37,7 @@ import {
   type WorkerStatus,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth, useTenant } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime, fmtMoney, fmtPercent, fmtRelativeDate } from '@/lib/format';
 import { listAdminUsers } from '@/lib/usersAdminApi';
@@ -38,7 +45,6 @@ import {
   addAgentScenario,
   certifyAgent,
   createAgent,
-  decideAgentApproval,
   ensureBuiltInAgents,
   getAgentControl,
   getAgentScorecard,
@@ -62,9 +68,7 @@ import {
 } from '@/lib/agentsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { HugoPanel } from './HugoPanel';
-import { McpCatalogPreview } from './McpCatalogPreview';
 import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
-import { AgentGatesPanel } from './AgentGatesPanel';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -140,6 +144,89 @@ export function familyLabel(code: string | null | undefined): string {
   return AGENT_FAMILIES.find((f) => f.code === code)?.label ?? '';
 }
 
+/** Values the registry stores when nobody has said: never shown as words on screen. */
+const PLACEHOLDER_WORDS = new Set(['', 'unknown', 'unconfirmed', 'n/a', 'tbd', '-', '—']);
+const said = (v: string | null | undefined): string => {
+  const t = (v ?? '').trim();
+  return PLACEHOLDER_WORDS.has(t.toLowerCase()) ? '' : t;
+};
+
+/** "Anthropic · Claude Sonnet 4.5", with whatever was never confirmed left out; "Model not set" when nothing was. */
+export function modelLine(p: Pick<AgentSummary['profile'], 'vendor' | 'model' | 'modelVersion'>): string {
+  const parts = [said(p.vendor), [said(p.model), said(p.modelVersion)].filter(Boolean).join(' ')].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Model not set';
+}
+
+/** A model version as the page says it: the version, or "not set". */
+export function versionLabel(v: string | null | undefined): string {
+  return said(v) || 'not set';
+}
+
+const UNPLACED_GROUP = 'Not yet placed in a family';
+
+export interface AgentFamilyGroup {
+  key: string;
+  label: string;
+  agents: AgentSummary[];
+}
+
+/**
+ * The agents in the taxonomy's order (packages/shared AGENT_FAMILIES): the
+ * Workforce group first, then Operations, Compliance, Finance and Clients,
+ * IT and Developers, Everyone — so the organization's own working agents
+ * (Workforce, Compliance) read before the vendor-seeded ones (Boardroom,
+ * the deployment workflow). Within a group, by family then by name; agents
+ * with no family yet close the list.
+ */
+export function groupAgentsByFamily(agents: readonly AgentSummary[]): AgentFamilyGroup[] {
+  const familyOrder = AGENT_FAMILIES.map((f) => f.code as string);
+  const groupOrder: string[] = [];
+  for (const f of AGENT_FAMILIES) if (!groupOrder.includes(f.group)) groupOrder.push(f.group);
+  const byGroup = new Map<string, AgentSummary[]>();
+  for (const a of agents) {
+    const g = AGENT_FAMILIES.find((f) => f.code === a.profile.family)?.group ?? UNPLACED_GROUP;
+    byGroup.set(g, [...(byGroup.get(g) ?? []), a]);
+  }
+  const rank = (a: AgentSummary) => {
+    const i = familyOrder.indexOf(a.profile.family ?? '');
+    return i === -1 ? familyOrder.length : i;
+  };
+  return [...groupOrder, UNPLACED_GROUP]
+    .filter((g) => byGroup.has(g))
+    .map((g) => ({ key: g, label: g, agents: (byGroup.get(g) ?? []).slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)) }));
+}
+
+/**
+ * The person who answers for an agent, as a person: their face and name,
+ * opening their record when they have one. Inside a clickable row the click
+ * stays on the person, not the row.
+ */
+export function OwnerPerson({ owner, size = 'xs', className = '' }: { owner: AgentSummary['owner']; size?: 'xs' | 'sm'; className?: string }) {
+  if (!owner) {
+    return (
+      <Badge variant="destructive" size="sm">
+        No owner
+      </Badge>
+    );
+  }
+  const name = owner.name || owner.email;
+  const inner = (
+    <>
+      <Avatar src={userPhotoUrl(owner.id)} name={owner.name} email={owner.email} size={size} />
+      <span className="truncate">{name}</span>
+    </>
+  );
+  return owner.associateId ? (
+    <Link to={`/people/${owner.associateId}`} className={`relative z-10 inline-flex min-w-0 items-center gap-2 hover:text-accent ${className}`} onClick={(e) => e.stopPropagation()} title={owner.email}>
+      {inner}
+    </Link>
+  ) : (
+    <span className={`inline-flex min-w-0 items-center gap-2 ${className}`} title={owner.email}>
+      {inner}
+    </span>
+  );
+}
+
 export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
     const code = (err as { code?: string }).code ?? '';
@@ -175,13 +262,41 @@ function compactJson(value: unknown): string {
 }
 
 /**
+ * A scenario's input in words: the question when it is one ({ text }), the
+ * fixture's own description when it carries one, else "its fields: a, b".
+ * The JSON stays one hover away for whoever wrote it.
+ */
+export function describeScenarioInput(input: Record<string, unknown>): string {
+  if (typeof input.description === 'string' && input.description.trim()) return input.description.trim();
+  if (typeof input.text === 'string' && input.text.trim()) return `Asked: “${input.text.trim()}”`;
+  if (typeof input.message === 'string' && input.message.trim()) return `Message: “${input.message.trim()}”`;
+  if (typeof input.fixture === 'string' && input.fixture.trim()) return `Fixture: ${input.fixture.trim()}`;
+  if (typeof input.capability === 'string' && input.capability.trim()) return `Runs ${capabilityDef(input.capability)?.label ?? input.capability}`;
+  const keys = Object.keys(input);
+  if (keys.length === 0) return 'No input';
+  return `Given ${keys.join(', ')}`;
+}
+
+/** What a passing run must do or answer, in words. */
+export function describeScenarioExpected(expected: AgentScenarioSummary['expected']): string {
+  if (expected.output !== undefined) {
+    const o = expected.output as Record<string, unknown>;
+    if (o && typeof o === 'object' && typeof o.reply === 'string') return `Answers “${o.reply}”`;
+    const keys = o && typeof o === 'object' ? Object.keys(o) : [];
+    return keys.length ? `Answers with ${keys.join(', ')} exactly as written` : 'Answers exactly as written';
+  }
+  const actions = expected.allowedActions ?? [];
+  return actions.length ? `May only: ${actions.join(', ')}` : 'Takes no action';
+}
+
+/**
  * ✓ + version when certified for the version it runs now; the onboarding
  * count while it is still onboarding; "Recertify" for a live agent whose
  * model version moved past its certificate (or that never had one).
  */
-function certificationLabel(c: AgentCertification | undefined, status: WorkerStatus): { text: string; variant: 'success' | 'pending' | 'destructive' | 'outline' } {
+export function certificationLabel(c: AgentCertification | undefined, status: WorkerStatus): { text: string; variant: 'success' | 'pending' | 'destructive' | 'outline' } {
   if (!c) return { text: '—', variant: 'outline' };
-  if (c.current) return { text: `✓ ${c.certifiedModelVersion ?? c.modelVersion}`, variant: 'success' };
+  if (c.current) return { text: `✓ ${versionLabel(c.certifiedModelVersion ?? c.modelVersion)}`, variant: 'success' };
   if (status === 'ONBOARDING') return { text: `Onboarding: ${c.passing}/${c.scenarios} scenarios`, variant: 'pending' };
   return { text: 'Recertify', variant: 'destructive' };
 }
@@ -231,6 +346,10 @@ export function AgentRegistryAdmin() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const term = useTerm();
+  // The assistant's name comes from the API — a tenant may call him something else.
+  const assistant = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 60_000 });
+  const assistantName = assistant.data?.name ?? 'the assistant';
   const [creating, setCreating] = useState(false);
   // Cards are how a buyer meets five agents; the table is how an operator
   // works fifty. The choice sticks per browser.
@@ -238,7 +357,6 @@ export function AgentRegistryAdmin() {
   const [ensuring, setEnsuring] = useState(false);
   const [suspendingAll, setSuspendingAll] = useState(false);
   const [resumingAll, setResumingAll] = useState(false);
-  const [deciding, setDeciding] = useState<{ approval: AgentApprovalSummary; decision: 'approve' | 'reject' | null } | null>(null);
 
   const registry = useQuery({ queryKey: ['agents', 'list'], queryFn: listAgents });
   const queueFilters = useMemo(() => ({ status: 'PENDING' as const }), []);
@@ -255,9 +373,13 @@ export function AgentRegistryAdmin() {
   const platform = registry.data?.platformControl;
   const isOperator = useTenant().id === PLATFORM_OPERATOR_TENANT_ID;
 
-  const agents = registry.data?.agents ?? [];
+  const agents = useMemo(() => registry.data?.agents ?? [], [registry.data]);
+  const groups = useMemo(() => groupAgentsByFamily(agents), [agents]);
   const counts = registry.data?.counts;
+  // Named, never keyed: "Workforce agent", not `workforce-agent`.
   const builtInMissing = registry.data?.builtInMissing ?? [];
+  const builtInName = useMemo(() => new Map((registry.data?.builtInMissingAgents ?? []).map((b) => [b.key, b.name])), [registry.data]);
+  const builtInMissingNames = builtInMissing.map((k) => builtInName.get(k) ?? k);
   const pendingCount = registry.data?.pendingApprovals ?? queue.data?.approvals.length ?? 0;
   const pending = useMemo(
     () => (queue.data?.approvals ?? []).slice().sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)),
@@ -266,25 +388,24 @@ export function AgentRegistryAdmin() {
 
   const refetchAll = () => qc.invalidateQueries({ queryKey: ['agents'] });
 
-  // Deep link: ?approval=<id> opens the decision dialog once the queue has
-  // loaded, and the param is consumed so Back and refetches don't re-open
-  // it. A request that is no longer waiting gets a toast instead.
-  const target = searchParams.get('approval');
+  // Deep link: ?approval=<id> (older notifications) lands on that proposal's
+  // card in the queue below, ringed; the param is consumed once the queue has
+  // loaded so Back and refetches don't re-focus it. A request that is no
+  // longer waiting gets a toast from the list instead.
+  const [target, setTarget] = useState<string | null>(() => searchParams.get('approval'));
   const queueLoaded = queue.data !== undefined;
   useEffect(() => {
-    if (!target || !queueLoaded) return;
+    if (!searchParams.get('approval') || !queueLoaded) return;
     const next = new URLSearchParams(searchParams);
     next.delete('approval');
     setSearchParams(next, { replace: true });
-    const approval = pending.find((a) => a.id === target);
-    if (!approval) {
-      toast.info('That request is no longer waiting — it may already be decided.');
-      return;
-    }
-    setDeciding({ approval, decision: null });
     // searchParams/setSearchParams change identity on the consume above;
-    // target going null ends the cycle, so they're deliberately not deps.
+    // the param going null ends the cycle, so they're deliberately not deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueLoaded]);
+  useEffect(() => {
+    // Once decided or gone, stop ringing it.
+    if (target && queueLoaded && !pending.some((a) => a.id === target && a.status === 'PENDING')) setTarget(null);
   }, [target, queueLoaded, pending]);
 
   // Deep link: ?agent=<id> (the kill, recertification and drift
@@ -296,6 +417,18 @@ export function AgentRegistryAdmin() {
     // The redirect consumes the param; navigate is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentTarget]);
+
+  // Deep link: ?register=1 (the roster's "Register agent") opens the one
+  // registration form there is, and the param is dropped once consumed.
+  const registerTarget = searchParams.get('register');
+  useEffect(() => {
+    if (!registerTarget) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('register');
+    setSearchParams(next, { replace: true });
+    if (canManage) setCreating(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerTarget, canManage]);
 
   const onResumeAll = async () => {
     setResumingAll(true);
@@ -316,7 +449,7 @@ export function AgentRegistryAdmin() {
       const r = await ensureBuiltInAgents();
       const n = r.created.length;
       toast.success(n === 1 ? '1 built-in agent registered.' : `${n} built-in agents registered.`);
-      if (r.missing.length) toast.info(`Still waiting for an owner account: ${r.missing.join(', ')}.`);
+      if (r.missing.length) toast.info(`Still waiting for an owner account: ${r.missing.map((k) => builtInName.get(k) ?? k).join(', ')}.`);
       await refetchAll();
     } catch (err) {
       toast.error(errorMessage(err, 'Could not register the built-in agents.'));
@@ -335,10 +468,11 @@ export function AgentRegistryAdmin() {
         sortable: true,
         searchable: true,
         cell: (a) => (
-          <span className="flex flex-col">
-            <span className="font-medium text-white">{a.name}</span>
-            <span className="text-xs2 text-silver/70">
-              {a.profile.vendor} · {a.profile.model} {a.profile.modelVersion}
+          <span className="flex items-center gap-2">
+            <AgentGlyph family={a.profile.family} status={a.status} size="sm" />
+            <span className="flex min-w-0 flex-col">
+              <span className="font-medium text-ink">{a.name}</span>
+              <span className="text-xs2 text-ink-muted">{modelLine(a.profile)}</span>
             </span>
           </span>
         ),
@@ -364,15 +498,7 @@ export function AgentRegistryAdmin() {
         sortable: true,
         searchable: true,
         cardMeta: true,
-        cell: (a) =>
-          a.owner ? (
-            <span className="flex flex-col">
-              <span>{a.owner.name || a.owner.email}</span>
-              {a.owner.name && <span className="text-xs2 text-silver/70">{a.owner.email}</span>}
-            </span>
-          ) : (
-            <Badge variant="destructive" size="sm">No owner</Badge>
-          ),
+        cell: (a) => <OwnerPerson owner={a.owner} />,
         csv: (a) => (a.owner ? `${a.owner.name} <${a.owner.email}>` : ''),
       },
       {
@@ -477,12 +603,12 @@ export function AgentRegistryAdmin() {
         header: 'Last active',
         accessor: (a) => a.profile.lastActiveAt ?? '',
         sortable: true,
-        cell: (a) => (a.profile.lastActiveAt ? fmtRelativeDate(a.profile.lastActiveAt) : <span className="text-silver/60">Never</span>),
+        cell: (a) => (a.profile.lastActiveAt ? fmtRelativeDate(a.profile.lastActiveAt) : <span className="text-silver/60">Not yet active</span>),
         csv: (a) => a.profile.lastActiveAt ?? '',
       },
       {
         key: 'pending',
-        header: 'Pending requests',
+        header: 'Proposals waiting',
         accessor: (a) => a.pendingApprovals,
         sortable: true,
         align: 'right',
@@ -493,10 +619,11 @@ export function AgentRegistryAdmin() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-template="list">
       <PageHeader
-        title="Agents, orchestrated by Hugo"
-        subtitle="Every AI agent Alto People runs, by family: who owns it, what it may do, its credentials, limits, spend and the trail of what it did. Gated actions wait here for a person."
+        title="Agents"
+        subtitle={`The agents that work beside your ${term('workers').toLowerCase()}, routed by ${assistantName}. Each has a person who answers for it, the scopes it may use, and limits on spend, rate and hours; anything gated waits for a person.`}
+        breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Agents' }]}
         primaryAction={
           canManage ? (
             <Button onClick={() => setCreating(true)}>
@@ -505,11 +632,32 @@ export function AgentRegistryAdmin() {
           ) : undefined
         }
         secondaryActions={
-          canManage && control && !control.allSuspendedAt ? (
-            <Button variant="outline" className="border-alert/50 text-alert hover:border-alert hover:text-alert" onClick={() => setSuspendingAll(true)}>
-              <ShieldAlert className="h-4 w-4" aria-hidden="true" /> Suspend all agents
+          <span className="flex items-center gap-2">
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/admin/agents">
+                <Settings2 className="h-4 w-4" aria-hidden="true" /> Agents &amp; gates
+              </Link>
             </Button>
-          ) : undefined
+            {canManage && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" aria-label="More actions">
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={onEnsure} disabled={ensuring || builtInMissing.length === 0}>
+                    <Bot className="h-4 w-4" aria-hidden="true" /> Register built-in agents
+                  </DropdownMenuItem>
+                  {control && !control.allSuspendedAt && (
+                    <DropdownMenuItem destructive onSelect={() => setSuspendingAll(true)}>
+                      <ShieldAlert className="h-4 w-4" aria-hidden="true" /> Suspend all agents
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </span>
         }
       />
 
@@ -535,15 +683,20 @@ export function AgentRegistryAdmin() {
         </div>
       )}
 
-      {platform && (isOperator || platform.allSuspendedAt) && (
-        <p
-          className={platform.allSuspendedAt ? 'rounded-md border border-alert/40 bg-alert/10 px-4 py-2 text-sm text-white' : 'text-xs2 text-silver/80'}
-          role={platform.allSuspendedAt ? 'alert' : undefined}
-          data-testid="platform-switch"
-        >
-          {platform.allSuspendedAt
-            ? `The platform switch is on since ${fmtDateTime(platform.allSuspendedAt)}${platform.suspendedBy ? ` by ${platform.suspendedBy.name}` : ''}: every organization’s agents are stopped${platform.reason ? ` — ${platform.reason}` : ''}.`
-            : 'Platform switch: off. It stops every organization’s agents at once and is lifted from the operator’s Agents page.'}
+      {/* The platform switch, when thrown, stops every organization's agents: everyone is told.
+          Its resting state is the operator's business alone, on Settings & trust › Agents & gates. */}
+      {platform?.allSuspendedAt && (
+        <p className="rounded-md border border-alert/40 bg-alert/10 px-4 py-2 text-sm text-ink" role="alert" data-testid="platform-switch">
+          The platform switch is on since {fmtDateTime(platform.allSuspendedAt)}
+          {platform.suspendedBy ? ` by ${platform.suspendedBy.name}` : ''}: every organization’s agents are stopped{platform.reason ? ` — ${platform.reason}` : ''}.
+          {isOperator && (
+            <>
+              {' '}
+              <Link to="/admin/agents#platform-switch" className="underline underline-offset-2">
+                Lift it under Agents &amp; gates.
+              </Link>
+            </>
+          )}
         </p>
       )}
 
@@ -563,60 +716,48 @@ export function AgentRegistryAdmin() {
         <h2 id="agent-queue-heading" className="sr-only">
           Approval queue
         </h2>
-        {queue.error && <QueryError what="the approval queue" query={queue} />}
-        {pending.length > 0 && (
-          <ul className="divide-y divide-navy-secondary rounded-md border border-navy-secondary">
-            {pending.map((a) => (
-              <li key={a.id} id={`approval-${a.id}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-medium text-white">{a.agentName}</span>
-                    <Badge variant="pending" size="sm">
-                      {AGENT_GATED_ACTION_LABELS[a.action]}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-silver">{a.summary}</p>
-                  <p className="text-xs2 text-silver/70">
-                    Requested {fmtRelativeDate(a.requestedAt)} · expires {fmtDateTime(a.expiresAt)}
-                  </p>
-                </div>
-                {canManage && (
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => setDeciding({ approval: a, decision: 'reject' })}>
-                      Reject
-                    </Button>
-                    <Button size="sm" onClick={() => setDeciding({ approval: a, decision: 'approve' })}>
-                      Approve
-                    </Button>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
+        {/* Each proposal as a decision: the evidence, the agent and its owner, Approve / Reject with a
+            reason. Who may decide comes from the server's rule (`mayDecide`), not from manage:org. */}
+        {(pending.length > 0 || queue.isLoading || queue.error) && (
+          <ProposalList
+            approvals={queue.data?.approvals}
+            loading={queue.isLoading}
+            error={queue.error}
+            onRetry={() => void queue.refetch()}
+            canDecide={canManage}
+            focusId={target}
+            onFocusMissing={() => toast.info('That request is no longer waiting — it may already be decided.')}
+            onDecided={refetchAll}
+          />
         )}
-        <p className="text-xs2 text-silver/70">
-          {HUMAN_ONLY_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a]).join(' and ')} approvals are carried out by the approver in the app; the agent never does them itself.{' '}
-          {AGENT_EXECUTABLE_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a]).join(' and ')} may be carried out by the agent once approved.
-        </p>
+        <ul className="grid gap-1 text-xs2 text-ink-muted sm:grid-cols-2" aria-label="Who carries out what">
+          <li>
+            <span className="font-medium text-ink">Always a person:</span> {HUMAN_ONLY_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The approver does these in the app; the agent only asks.
+          </li>
+          <li>
+            <span className="font-medium text-ink">Needs approval first:</span> {AGENT_EXECUTABLE_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The agent carries these out once a person approves.
+          </li>
+        </ul>
       </section>
 
 
-      {builtInMissing.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
-          <BotMessageSquare className="h-4 w-4 text-warning" aria-hidden="true" />
+      {builtInMissingNames.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm" data-testid="built-in-missing">
+          <Bot className="h-4 w-4 text-warning" aria-hidden="true" />
           <span>
-            Not yet registered: <strong>{builtInMissing.join(', ')}</strong>. Alto already runs these; they need an owner account before they can be registered.
+            {builtInMissingNames.length === 1 ? 'One agent the product already runs is not registered here yet: ' : 'Agents the product already runs are not registered here yet: '}
+            <strong>{builtInMissingNames.join(', ')}</strong>. Each needs an account to answer for it.
           </span>
           {canManage && (
             <Button size="sm" variant="secondary" onClick={onEnsure} disabled={ensuring}>
-              {ensuring ? 'Registering…' : 'Register built-in agents'}
+              {ensuring ? 'Registering…' : 'Register them'}
             </Button>
           )}
         </div>
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <SectionTitle title="The agents" />
+        <SectionTitle title="The agents" description={agents.length ? `${agents.length} registered, by family.` : undefined} />
         <div role="radiogroup" aria-label="Agents view" className="inline-flex gap-0.5 rounded-md border border-line bg-navy-secondary/30 p-0.5">
           <Button size="xs" variant={view === 'cards' ? 'secondary' : 'ghost'} role="radio" aria-checked={view === 'cards'} onClick={() => { setView('cards'); writeAgentsView('cards'); }}>
             <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" /> Cards
@@ -626,11 +767,20 @@ export function AgentRegistryAdmin() {
           </Button>
         </div>
       </div>
-      {view === 'cards' && agents.length > 0 && !registry.isLoading && <AgentCards agents={agents} />}
+      {view === 'cards' && agents.length > 0 && !registry.isLoading && (
+        <div className="space-y-6">
+          {groups.map((g) => (
+            <section key={g.key} aria-labelledby={`agents-group-${g.key.replace(/\W+/g, '-')}`} className="space-y-3">
+              <SectionTitle as="h3" id={`agents-group-${g.key.replace(/\W+/g, '-')}`} title={g.label} trailing={<span className="text-xs tabular-nums text-ink-muted">{g.agents.length}</span>} />
+              <AgentCards agents={g.agents} />
+            </section>
+          ))}
+        </div>
+      )}
       {(view === 'table' || agents.length === 0 || registry.isLoading) && (
       <DataGrid
         id="agents"
-        caption="AI agents"
+        caption="Agents"
         rows={agents}
         rowKey={(a) => a.id}
         loading={registry.isLoading}
@@ -643,19 +793,24 @@ export function AgentRegistryAdmin() {
         columns={columns}
         onRowClick={(a) => navigate(`/agents/${a.id}`)}
         rowActionLabel={(a) => `Open ${a.name}`}
-        defaultSort={{ key: 'name', direction: 'asc' }}
+        defaultSort={{ key: 'family', direction: 'asc' }}
         empty={{
-          icon: BotMessageSquare,
+          icon: Bot,
           title: 'No agents registered',
-          description: canManage ? 'Register an agent, or register the built-in ones Alto already runs.' : 'Agents appear here once they are registered.',
+          description: canManage ? 'Register an agent, or register the built-in ones the product already runs.' : 'Agents appear here once they are registered.',
         }}
       />
       )}
 
-      {/* Hugo: ask him, and see what the agents he routes to are doing (agent families step 3). */}
+      {/* The assistant: ask him, and see what the agents he routes to are doing (agent families step 3). */}
       <HugoPanel />
-      <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} />
-      <McpCatalogPreview />
+      <p className="text-xs2 text-ink-muted">
+        Who approves what, certification and credentials across agents, the MCP tools and the decision record are under{' '}
+        <Link to="/admin/agents" className="underline underline-offset-2 hover:text-accent">
+          Settings &amp; trust › Agents &amp; gates
+        </Link>
+        .
+      </p>
 
       {creating && (
         <CreateAgentDialog
@@ -676,103 +831,7 @@ export function AgentRegistryAdmin() {
           }}
         />
       )}
-      {deciding && (
-        <DecisionDialog
-          approval={deciding.approval}
-          decision={deciding.decision}
-          canManage={canManage}
-          onClose={() => setDeciding(null)}
-          onDecided={async () => {
-            setDeciding(null);
-            await refetchAll();
-          }}
-        />
-      )}
     </div>
-  );
-}
-
-/* ---------------------------------------------------------- decisions */
-
-function DecisionDialog({
-  approval,
-  decision,
-  canManage,
-  onClose,
-  onDecided,
-}: {
-  approval: AgentApprovalSummary;
-  /** Preselected from the row's button; null (deep link) offers both. */
-  decision: 'approve' | 'reject' | null;
-  canManage: boolean;
-  onClose: () => void;
-  onDecided: () => Promise<void>;
-}) {
-  const [note, setNote] = useState('');
-  const [saving, setSaving] = useState<'approve' | 'reject' | null>(null);
-  const humanOnly = !AGENT_EXECUTABLE_ACTIONS.includes(approval.action);
-
-  const decide = async (d: 'approve' | 'reject') => {
-    setSaving(d);
-    try {
-      await decideAgentApproval(approval.id, d, note.trim() || undefined);
-      toast.success(d === 'approve' ? 'Approved.' : 'Rejected.');
-      await onDecided();
-    } catch (err) {
-      toast.error(errorMessage(err, 'Could not record the decision.'));
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  const title = decision === 'approve' ? 'Approve this request?' : decision === 'reject' ? 'Reject this request?' : 'Decide this request';
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} confirmDiscard={note !== '' && saving === null}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-            <span className="font-medium text-white">{approval.agentName}</span> asks for <span className="font-medium text-white">{AGENT_GATED_ACTION_LABELS[approval.action].toLowerCase()}</span>
-            {' · '}requested {fmtDateTime(approval.requestedAt)}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <p className="rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm">{approval.summary}</p>
-          {Object.keys(approval.payload).length > 0 && (
-            <details className="rounded-md border border-navy-secondary px-3 py-2">
-              <summary className="cursor-pointer text-sm text-silver">Details</summary>
-              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-silver">{JSON.stringify(approval.payload, null, 2)}</pre>
-            </details>
-          )}
-          {humanOnly && (
-            <p className="text-xs2 text-warning">
-              Approving does not carry this out. {AGENT_GATED_ACTION_LABELS[approval.action]} is done by you in the app; the agent only asked.
-            </p>
-          )}
-          {canManage && (
-            <Field label="Note" hint="Optional. Kept with the decision.">
-              {(p) => <Textarea {...p} value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} />}
-            </Field>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={saving !== null}>
-              {canManage ? 'Cancel' : 'Close'}
-            </Button>
-            {canManage && decision !== 'approve' && (
-              <Button type="button" variant="secondary" onClick={() => decide('reject')} disabled={saving !== null}>
-                {saving === 'reject' ? 'Rejecting…' : 'Reject'}
-              </Button>
-            )}
-            {canManage && decision !== 'reject' && (
-              <Button type="button" onClick={() => decide('approve')} disabled={saving !== null}>
-                {saving === 'approve' ? 'Approving…' : 'Approve'}
-              </Button>
-            )}
-          </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -1113,7 +1172,18 @@ function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCrea
  * reason) or resume (the owner, and only the owner). Suspending revokes
  * every credential; resuming gives none back.
  */
-export function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDetail; canManage: boolean; onChanged: () => Promise<unknown> }) {
+export function KillSwitchRow({
+  agent,
+  canManage,
+  onChanged,
+  placement = 'summary',
+}: {
+  agent: AgentDetail;
+  canManage: boolean;
+  onChanged: () => Promise<unknown>;
+  /** `actions`: the Suspend button alone, for the record header. `summary`: the suspended banner and the resumed notice. */
+  placement?: 'actions' | 'summary';
+}) {
   const { user } = useAuth();
   const prompt = usePrompt();
   const [busy, setBusy] = useState(false);
@@ -1164,6 +1234,7 @@ export function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDet
   };
 
   if (agent.status === 'SUSPENDED') {
+    if (placement === 'actions') return null;
     return (
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-alert/40 bg-alert/10 px-3 py-2 text-sm" data-testid="kill-switch">
         <ShieldAlert className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
@@ -1186,19 +1257,20 @@ export function KillSwitchRow({ agent, canManage, onChanged }: { agent: AgentDet
 
   if (agent.status === 'OFFBOARDED') return null;
 
+  if (placement === 'actions') {
+    if (!canManage) return null;
+    return (
+      <Button size="sm" variant="outline" className="border-alert/50 text-alert hover:border-alert hover:text-alert" onClick={suspend} disabled={busy} data-testid="kill-switch">
+        <ShieldAlert className="h-4 w-4" aria-hidden="true" /> {busy ? 'Suspending…' : 'Suspend'}
+      </Button>
+    );
+  }
+
+  if (!resumed) return null;
   return (
-    <div className="flex flex-wrap items-center gap-3 text-sm" data-testid="kill-switch">
-      {resumed && (
-        <p className="min-w-0 flex-1 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs2 text-warning" role="status">
-          Resumed. No credential was restored — issue a new one under Credentials.
-        </p>
-      )}
-      {canManage && (
-        <Button size="sm" variant="outline" className="ml-auto border-alert/50 text-alert hover:border-alert hover:text-alert" onClick={suspend} disabled={busy}>
-          <ShieldAlert className="h-4 w-4" aria-hidden="true" /> {busy ? 'Suspending…' : 'Suspend'}
-        </Button>
-      )}
-    </div>
+    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs2 text-warning" role="status" data-testid="kill-switch">
+      Resumed. No credential was restored — issue a new one under Credentials.
+    </p>
   );
 }
 
@@ -1475,10 +1547,12 @@ export function CertificationSection({ agent, canManage, onChanged }: { agent: A
                 </Badge>
               </p>
               <p className="text-xs2 text-silver/80">
-                {cert.passing} of {cert.scenarios} {cert.scenarios === 1 ? 'scenario' : 'scenarios'} passing under {cert.modelVersion}
+                {cert.scenarios === 0 && cert.current
+                  ? `Attested at registration: it was already running when it was registered, so it counts as certified for ${versionLabel(cert.modelVersion)} with no scenario yet.`
+                  : `${cert.passing} of ${cert.scenarios} ${cert.scenarios === 1 ? 'scenario' : 'scenarios'} passing under ${versionLabel(cert.modelVersion)}`}
                 {cert.certifiedAt ? ` · last certified ${fmtDateTime(cert.certifiedAt)}` : ''}
                 {' · '}
-                {cert.ready ? 'ready to certify' : cert.scenarios === 0 ? 'add at least one scenario' : 'not ready'}
+                {cert.ready ? 'ready to certify' : cert.scenarios === 0 ? 'add at least one scenario to prove it' : 'not ready'}
               </p>
             </>
           ) : (
@@ -1500,8 +1574,7 @@ export function CertificationSection({ agent, canManage, onChanged }: { agent: A
       </div>
       {cert && !cert.runnable && (
         <p className="text-xs2 text-silver/70">
-          This agent answers its scenarios itself: it reads them from <code className="font-mono text-silver">GET /agent/v1/certification</code> and answers each with{' '}
-          <code className="font-mono text-silver">POST /agent/v1/certification/:scenarioId</code>, using its credential. Each answer is recorded as a run under its current model version.
+          This agent answers its scenarios itself, through the agent API with its own credential. Each answer is recorded here as a run under the model version it runs now; the vendor's integration guide under Developers says how.
         </p>
       )}
       {cert && !cert.current && agent.status !== 'ONBOARDING' && (
@@ -1534,21 +1607,15 @@ export function CertificationSection({ agent, canManage, onChanged }: { agent: A
               {rows.map((s) => (
                 <tr key={s.id}>
                   <td className="py-1.5 pr-3 font-medium text-white">{s.name}</td>
-                  <td className="max-w-[14rem] py-1.5 pr-3">
-                    <code className="block truncate font-mono text-xs text-silver" title={compactJson(s.input)}>
-                      {compactJson(s.input)}
-                    </code>
+                  <td className="max-w-[16rem] py-1.5 pr-3">
+                    <span className="block truncate text-xs text-silver" title={compactJson(s.input)}>
+                      {describeScenarioInput(s.input)}
+                    </span>
                   </td>
-                  <td className="max-w-[14rem] py-1.5 pr-3">
-                    {s.expected.output !== undefined ? (
-                      <code className="block truncate font-mono text-xs text-silver" title={compactJson(s.expected.output)}>
-                        {compactJson(s.expected.output)}
-                      </code>
-                    ) : (
-                      <span className="text-xs text-silver" title={(s.expected.allowedActions ?? []).join(', ')}>
-                        Actions: {(s.expected.allowedActions ?? []).join(', ') || '—'}
-                      </span>
-                    )}
+                  <td className="max-w-[16rem] py-1.5 pr-3">
+                    <span className="block truncate text-xs text-silver" title={s.expected.output !== undefined ? compactJson(s.expected.output) : (s.expected.allowedActions ?? []).join(', ')}>
+                      {describeScenarioExpected(s.expected)}
+                    </span>
                   </td>
                   <td className="py-1.5 pr-3">
                     {s.latest ? (
@@ -1564,7 +1631,7 @@ export function CertificationSection({ agent, canManage, onChanged }: { agent: A
                         </span>
                       </span>
                     ) : (
-                      <span className="text-xs2 text-silver/60">Not run under {cert?.modelVersion ?? 'this version'}</span>
+                      <span className="text-xs2 text-silver/60">Not run under {cert ? versionLabel(cert.modelVersion) : 'this version'}</span>
                     )}
                   </td>
                   {canManage && (
@@ -1797,7 +1864,7 @@ export function CredentialsSection({ agent, canManage, onChanged }: { agent: Age
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3" role="status">
           <p className="text-sm font-medium text-warning">Copy this credential now. It will not be shown again.</p>
           <p className="text-xs2 text-silver">
-            Ends in …{issued.last4} · expires {fmtDateTime(issued.expiresAt)}. The agent sends it as a bearer token to the agent API.
+            Ends in …{issued.last4} · expires {fmtDateTime(issued.expiresAt)}. The agent sends it as a bearer token to the agent API. It is stored nowhere else: only a hash is kept, so a lost credential is revoked and reissued, never recovered.
           </p>
           <div className="break-all rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 font-mono text-xs text-white" data-testid="issued-credential">
             {issued.plaintext}
@@ -1873,8 +1940,9 @@ export function CredentialsSection({ agent, canManage, onChanged }: { agent: Age
 
 /* ----------------------------------------------------------- requests */
 
+/** Everything this agent proposed that needed a person: gated actions and what became of them. */
 export function RequestsSection({ approvals }: { approvals: AgentApprovalSummary[] }) {
-  if (approvals.length === 0) return <p className="text-sm text-silver/70">This agent has not asked for anything.</p>;
+  if (approvals.length === 0) return <p className="text-sm text-silver/70">This agent has not proposed anything that needed a person.</p>;
   return (
     <ul className="divide-y divide-navy-secondary rounded-md border border-navy-secondary text-sm">
       {approvals.map((a) => (
@@ -1991,15 +2059,99 @@ export function SpendSection({ agent, canManage, onChanged }: { agent: AgentDeta
 
 /* -------------------------------------------------------------- trail */
 
+/** Every action an agent's trail can carry (apps/api, `action: 'agent.…'`), in words. */
+export const AGENT_TRAIL_ACTION_LABELS: Record<string, string> = {
+  'agent.registered': 'Registered',
+  'agent.updated': 'Profile updated',
+  'agent.built_in_ensured': 'Built-in agents registered',
+  'agent.scopes_added': 'Scopes added',
+  'agent.credential.issued': 'Credential issued',
+  'agent.credential.revoked': 'Credential revoked',
+  'agent.credentials.measured': 'Credentials measured',
+  'agent.spend.recorded': 'Spend recorded',
+  'agent.approval.requested': 'Asked for approval',
+  'agent.approval.approved': 'Approval decided',
+  'agent.denied': 'Call refused',
+  'agent.suspended': 'Suspended',
+  'agent.resumed': 'Resumed',
+  'agent.all_suspended': 'Every agent suspended',
+  'agent.all_resumed': 'Every agent resumed',
+  'agent.tenant_suspended': 'The organization’s agents suspended',
+  'agent.tenant_resumed': 'The organization’s agents resumed',
+  'agent.certified': 'Certified',
+  'agent.recertification_required': 'Recertification required',
+  'agent.scenario.added': 'Scenario added',
+  'agent.scenario.removed': 'Scenario removed',
+  'agent.drift.configured': 'Drift thresholds set',
+  'agent.drift_alert': 'Drift alert raised',
+  'agent.capability_suspended': 'Capability suspended',
+  'agent.capability_resumed': 'Capability resumed',
+  'agent.proposal_created': 'Proposal made',
+  'agent.proposal_superseded': 'Proposal superseded',
+  'agent.gate_policy_created': 'Gate policy added',
+  'agent.gate_policy_ended': 'Gate policy ended',
+  'agent.decision_profile_saved': 'Decision profile saved',
+  'agent.bias_audit_added': 'Bias audit recorded',
+  'agent.message.sent': 'Message sent',
+  'agent.whatsapp.reply': 'Replied on WhatsApp',
+  'agent.app.reply': 'Replied in the app',
+  'agent.app.handoff': 'Handed to a person',
+  'agent.attendance.asked': 'Asked about tomorrow’s attendance',
+  'agent.coverage.forecast': 'Coverage forecast',
+  'agent.document_chase.sent': 'Document reminder sent',
+  'agent.document_chase.escalated': 'Document reminder escalated',
+  'agent.document_chase.resolved': 'Document chase closed',
+  'agent.incident.chased': 'Incident followed up',
+  'agent.schedule_repair.no_candidate': 'No one found for a shift',
+  'agent.me': 'Identified itself',
+  'agent.nothing': 'Nothing to do',
+  'hugo.asked': 'Asked the assistant',
+};
+
+/** A trail action in words: the map, else the code read out ("agent.foo_bar" → "Foo bar"). */
+export function trailActionLabel(action: string): string {
+  const known = AGENT_TRAIL_ACTION_LABELS[action];
+  if (known) return known;
+  const tail = action.replace(/^(agent|hugo)\./, '').replace(/[._]+/g, ' ').trim();
+  return tail ? tail.charAt(0).toUpperCase() + tail.slice(1) : action;
+}
+
+/** The entity a trail row touched, by name; the id stays in the title for whoever needs it. */
+export function trailEntityName(t: AgentDetail['trail'][number], agent: Pick<AgentDetail, 'name' | 'approvals'>): string {
+  const meta = t.metadata ?? {};
+  switch (t.entityType) {
+    case 'Worker':
+    case 'AgentProfile':
+      return agent.name;
+    case 'AgentCredential':
+      return typeof meta.last4 === 'string' ? `Credential …${meta.last4}` : 'A credential';
+    case 'AgentApprovalRequest': {
+      const a = agent.approvals.find((x) => x.id === t.entityId);
+      return a ? `Proposal: ${a.summary}` : 'A proposal';
+    }
+    case 'AgentProposal':
+      return typeof meta.capability === 'string' ? `Proposal: ${capabilityDef(meta.capability)?.label ?? meta.capability}` : 'A proposal';
+    case 'AgentCapability':
+      return typeof meta.key === 'string' ? (capabilityDef(meta.key)?.label ?? meta.key) : 'A capability';
+    case 'AgentScenario':
+      return typeof meta.name === 'string' ? `Scenario: ${meta.name}` : 'A scenario';
+    case 'Associate':
+      return typeof meta.name === 'string' ? meta.name : 'A person';
+    case 'AgentSpend':
+      return 'Spend';
+    default:
+      return t.entityType.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+}
+
 /** The few metadata keys worth a glance; the rest stays in the audit log. */
 function summariseMeta(meta: Record<string, unknown> | null): string {
   if (!meta) return '';
   const parts: string[] = [];
   if (Array.isArray(meta.scopes)) parts.push(`scopes: ${(meta.scopes as string[]).map((s) => SCOPE_LABEL.get(s) ?? s).join(', ')}`);
-  if (typeof meta.status === 'string') parts.push(`status: ${meta.status}`);
-  if (typeof meta.approvalId === 'string') parts.push(`approval ${meta.approvalId.slice(0, 8)}`);
-  if (typeof meta.code === 'string') parts.push(meta.code);
-  if (typeof meta.last4 === 'string') parts.push(`…${meta.last4}`);
+  if (Array.isArray(meta.added)) parts.push(`added: ${(meta.added as string[]).map((s) => SCOPE_LABEL.get(s) ?? s).join(', ')}`);
+  if (typeof meta.status === 'string') parts.push(`status: ${WORKER_STATUS_LABELS[meta.status as WorkerStatus]?.toLowerCase() ?? meta.status.toLowerCase()}`);
+  if (typeof meta.modelVersion === 'string') parts.push(`version ${versionLabel(meta.modelVersion)}`);
   if (typeof meta.reason === 'string' && meta.reason) parts.push(meta.reason);
   if (typeof meta.amountCents === 'number') parts.push(fmtMoney(meta.amountCents / 100));
   return parts.join(' · ');
@@ -2013,8 +2165,8 @@ export function TrailSection({ agent }: { agent: AgentDetail }) {
         <thead className="text-left text-xs2 text-silver/70">
           <tr>
             <th scope="col" className="py-1 pr-3 font-medium">When</th>
-            <th scope="col" className="py-1 pr-3 font-medium">Action</th>
-            <th scope="col" className="py-1 pr-3 font-medium">Entity</th>
+            <th scope="col" className="py-1 pr-3 font-medium">What happened</th>
+            <th scope="col" className="py-1 pr-3 font-medium">To</th>
             <th scope="col" className="py-1 font-medium">Details</th>
           </tr>
         </thead>
@@ -2022,9 +2174,9 @@ export function TrailSection({ agent }: { agent: AgentDetail }) {
           {agent.trail.map((t) => (
             <tr key={t.id}>
               <td className="py-1.5 pr-3 whitespace-nowrap">{fmtDateTime(t.createdAt)}</td>
-              <td className="py-1.5 pr-3 font-mono text-xs text-white">{t.action}</td>
-              <td className="py-1.5 pr-3 text-xs2 text-silver/70">
-                {t.entityType} <span className="font-mono">{t.entityId.slice(0, 8)}</span>
+              <td className="py-1.5 pr-3 text-ink" title={t.action}>{trailActionLabel(t.action)}</td>
+              <td className="py-1.5 pr-3 text-xs2 text-silver/70" title={`${t.entityType} ${t.entityId}`}>
+                {trailEntityName(t, agent)}
               </td>
               <td className="py-1.5 text-silver">{summariseMeta(t.metadata) || '—'}</td>
             </tr>

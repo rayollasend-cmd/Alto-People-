@@ -30,9 +30,10 @@ export function TrustCenterPage() {
     { label: 'SIEM stream', value: statusBadge(t.siem), to: '/audit' },
     { label: 'Single sign-on', value: t.sso.connections ? <span className="flex items-center gap-2"><Badge variant="success">{t.sso.connections} connection{t.sso.connections === 1 ? '' : 's'}</Badge>{t.sso.ssoRequiredForStaff && <Badge variant="accent">Required for staff</Badge>}</span> : <Badge variant="outline">Passwords and passkeys</Badge>, to: '/admin/sign-in' },
     { label: 'Directory provisioning (SCIM)', value: statusBadge(t.sso.scim ? 'ON' : 'OFF'), to: '/admin/sign-in' },
-    { label: 'AI agents', value: <span>{t.agents.registered} registered · {t.agents.active} active · {t.agents.certified} certified{t.agents.suspended ? ` · ${t.agents.suspended} suspended` : ''}</span>, to: '/agents' },
-    { label: 'Approval gates in force', value: <span>{t.agents.gates}</span>, to: '/agents' },
-    { label: 'Automated decisions recorded', value: <span>{t.agents.decisionRecords}{t.agents.lastBiasAuditAt ? ` · last bias audit ${fmtDateTime(t.agents.lastBiasAuditAt)}` : ' · no bias audit yet'}</span>, to: '/agents' },
+    // "Certified" here is what each agent's own Certification tab means: certified for the version it runs now.
+    { label: 'Agents', value: <span>{t.agents.registered} registered · {t.agents.active} active · {t.agents.certified} certified{t.agents.suspended ? ` · ${t.agents.suspended} suspended` : ''}</span>, to: '/agents' },
+    { label: 'Approval gates in force', value: <span>{t.agents.gates}</span>, to: '/admin/agents#gates' },
+    { label: 'Automated decisions recorded', value: <span>{t.agents.decisionRecords}{t.agents.lastBiasAuditAt ? ` · last bias audit ${fmtDateTime(t.agents.lastBiasAuditAt)}` : ' · no bias audit yet'}</span>, to: '/admin/agents#decision-record' },
     { label: 'Quarterly access review', value: t.accessReview.lastAt ? <span className="flex items-center gap-2">{statusBadge(t.accessReview.signedOff ? 'PASS' : 'WARN')}<span className="text-xs2 text-ink-muted">{fmtDateTime(t.accessReview.lastAt)}{t.accessReview.signedOff ? '' : ' · waiting for sign-off'}</span></span> : statusBadge('PENDING'), to: '/admin/users' },
   ];
   return (

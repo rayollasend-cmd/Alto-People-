@@ -95,7 +95,8 @@ interface AuthState {
   can: (capability: Capability) => boolean;
 }
 
-export type TenantSession = TenantProfile & { id: string };
+/** The tenant's profile plus what its team calls the assistant (OrgSetting.assistantName); absent from an older server or an offline session. */
+export type TenantSession = TenantProfile & { id: string; assistantName?: string };
 
 /** Everything on, Alto HR's words: what an older server or an offline session implies. */
 export const DEFAULT_TENANT: TenantSession = { id: '', ...defaultTenantProfile('WORKFORCE_PROVIDER') };

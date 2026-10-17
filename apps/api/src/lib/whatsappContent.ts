@@ -1,4 +1,4 @@
-import { defaultTenantProfile, termsIn } from '@alto-people/shared';
+import { PRODUCT_NAME, defaultTenantProfile, termsIn } from '@alto-people/shared';
 import { getBrandingSync } from './branding.js';
 import { tenantProfileSync } from './tenantProfile.js';
 /**
@@ -231,23 +231,27 @@ export const WA_REPLY = {
       },
       lang,
     ),
-  /** The first thing Hugo says in a tenant: who he is, what he is, and what he can do. */
+  /**
+   * The first thing the assistant says in a tenant: who it is (the name the
+   * tenant chose), what it is, and what it can do. The product name appears
+   * once (exempt from the forbidden-word list by the owner's ruling, 2026-10-13).
+   */
   intro: (lang: WaLang, name: string) =>
     say(
       {
-        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. Ask me about your next payday, your ride or your schedule; anything else I pass to your ${manager('en')}.`,
-        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. Pregúntame por tu próximo día de pago, tu viaje o tu horario; todo lo demás se lo paso a tu ${manager('es')}.`,
-        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. Bana bir sonraki maaş gününü, servisini veya programını sorabilirsin; diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
+        en: `I'm ${name}, the AI assistant in ${PRODUCT_NAME}. I'm not a person. Ask me about your next payday, your ride or your schedule; anything else I pass to your ${manager('en')}.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de ${PRODUCT_NAME}. No soy una persona. Pregúntame por tu próximo día de pago, tu viaje o tu horario; todo lo demás se lo paso a tu ${manager('es')}.`,
+        tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım. Bir insan değilim. Bana bir sonraki maaş gününü, servisini veya programını sorabilirsin; diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
       },
       lang,
     ),
-  /** Whenever anyone asks who or what he is. */
+  /** Whenever anyone asks who or what it is. */
   whoAmI: (lang: WaLang, name: string) =>
     say(
       {
-        en: `I'm ${name}, the AI assistant in Alto People, by Alto People. I'm not a person: I answer from your own records (payday, ride, schedule) and hand everything else to your ${manager('en')}.`,
-        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People, por Alto People. No soy una persona: respondo con tus propios datos (pago, viaje, horario) y paso todo lo demás a tu ${manager('es')}.`,
-        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım (Alto People tarafından). Bir insan değilim: kendi kayıtlarından yanıt veririm (maaş, servis, program), diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
+        en: `I'm ${name}, the AI assistant in ${PRODUCT_NAME}. I'm not a person: I answer from your own records (payday, ride, schedule) and hand everything else to your ${manager('en')}.`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de ${PRODUCT_NAME}. No soy una persona: respondo con tus propios datos (pago, viaje, horario) y paso todo lo demás a tu ${manager('es')}.`,
+        tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım. Bir insan değilim: kendi kayıtlarından yanıt veririm (maaş, servis, program), diğer her şeyi ${manager('tr')} adlı kişiye iletirim.`,
       },
       lang,
     ),
@@ -325,13 +329,13 @@ export const WA_REPLY = {
       },
       lang,
     ),
-  /** Hugo in the app (agent families step 3): who he is and what he can do here, in one breath. */
+  /** The assistant in the app (agent families step 3): who it is and what it can do here, in one breath. */
   appIntro: (lang: WaLang, name: string, can: string[]) =>
     say(
       {
-        en: `I'm ${name}, the AI assistant in Alto People. I'm not a person. ${can.length ? `I can help with: ${can.join('; ')}.` : 'Nothing is switched on for me to help with here yet.'}`,
-        es: `Soy ${name}, el asistente de inteligencia artificial de Alto People. No soy una persona. ${can.length ? `Puedo ayudarte con: ${can.join('; ')}.` : 'Todavía no hay nada activado con lo que pueda ayudarte aquí.'}`,
-        tr: `Ben ${name}, Alto People'ın yapay zeka asistanıyım. Bir insan değilim. ${can.length ? `Şunlarda yardımcı olabilirim: ${can.join('; ')}.` : 'Burada yardımcı olabileceğim açık bir şey henüz yok.'}`,
+        en: `I'm ${name}, the AI assistant in ${PRODUCT_NAME}. I'm not a person. ${can.length ? `I can help with: ${can.join('; ')}.` : 'Nothing is switched on for me to help with here yet.'}`,
+        es: `Soy ${name}, el asistente de inteligencia artificial de ${PRODUCT_NAME}. No soy una persona. ${can.length ? `Puedo ayudarte con: ${can.join('; ')}.` : 'Todavía no hay nada activado con lo que pueda ayudarte aquí.'}`,
+        tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım. Bir insan değilim. ${can.length ? `Şunlarda yardımcı olabilirim: ${can.join('; ')}.` : 'Burada yardımcı olabileceğim açık bir şey henüz yok.'}`,
       },
       lang,
     ),

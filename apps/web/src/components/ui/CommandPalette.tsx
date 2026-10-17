@@ -31,6 +31,7 @@ import type { SearchKind, TermKey } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from './Avatar';
+import { useAssistant } from '@/lib/assistantContext';
 import {
   Dialog,
   DialogContent,
@@ -153,6 +154,7 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
+  const assistant = useAssistant();
   const tenant = useTenant();
   const term = useTerm();
   const [search, setSearch] = useState('');
@@ -249,6 +251,24 @@ export function CommandPalette({
         close();
       },
     })),
+    // The assistant, when this account has one: opens the pane, with the
+    // palette's words as the question.
+    ...(assistant.available && assistant.me
+      ? [
+          {
+            id: 'action-ask-assistant',
+            label: `Ask ${assistant.me.name}`,
+            hint: 'AI assistant — answers from your records',
+            icon: Sparkles,
+            keywords: 'ask assistant help ai question',
+            group: 'Actions',
+            perform: ({ close }: PerformCtx) => {
+              close();
+              assistant.setOpen(true);
+            },
+          } satisfies PaletteItem,
+        ]
+      : []),
     // Quick actions — static, capability-gated navigations. Distinct icons
     // so they read as "do a thing", not "go to a page".
     ...(can('view:scheduling') && can('manage:scheduling')
@@ -367,7 +387,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ], [can, user, onShowKeyboardShortcuts, tenant.modules, tenant.id, term, nav, recentKeys]);
+  ], [can, user, onShowKeyboardShortcuts, tenant.modules, tenant.id, term, nav, recentKeys, assistant]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.

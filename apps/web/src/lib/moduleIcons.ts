@@ -24,7 +24,8 @@ import {
   BarChart3 as AnalyticsIcon,
   BookOpen as KbIcon,
   Bot as AgentsIcon,
-  BotMessageSquare as WorkersIcon,
+  // The roster is a book of everyone who works here — people, agents, robots.
+  BookUser as WorkersIcon,
   Building as TenantProfileIcon,
   Bus as RidesIcon,
   Calculator as LaborCostsIcon,

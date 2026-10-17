@@ -7,6 +7,7 @@ import { askHugo, getHugo, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { useAssistant } from '@/lib/assistantContext';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every
@@ -16,6 +17,10 @@ import { Input } from '@/components/ui/Input';
  * nothing, so the home never shows an empty assistant.
  */
 export function HugoSeat({ className }: { className?: string }) {
+  // Inside the app the seat is a way into the one pane; the question is
+  // asked there, where the thread lives. Outside the provider (a test
+  // rendering a home alone) it answers in place, as it first did.
+  const assistant = useAssistant();
   const me = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 60_000, retry: false });
   const [text, setText] = useState('');
   const [turn, setTurn] = useState<{ question: string; answer: HugoAnswer } | null>(null);
@@ -30,7 +35,13 @@ export function HugoSeat({ className }: { className?: string }) {
   if (me.isLoading || me.error || !me.data?.can?.length) return null;
   const send = (q: string) => {
     const t = q.trim();
-    if (t && !ask.isPending) ask.mutate(t);
+    if (!t || ask.isPending) return;
+    if (assistant.mounted && assistant.available) {
+      assistant.ask(t);
+      setText('');
+      return;
+    }
+    ask.mutate(t);
   };
   return (
     <Card className={className} data-testid="hugo-seat">

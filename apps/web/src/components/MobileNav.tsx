@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Monitor, Moon, Search, Sparkles, Sun, X, type LucideIcon } from 'lucide-react';
 import {
   applyTerms,
   DASHBOARD_NAV,
@@ -11,6 +11,7 @@ import {
 } from '@/lib/modules';
 import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useAssistant } from '@/lib/assistantContext';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
 import { useInbox } from '@/lib/inboxApi';
@@ -33,6 +34,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const { can, user } = useAuth();
   const tenant = useTenant();
   const term = useTerm();
+  const assistant = useAssistant();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
   // The same counts the desktop rail shows, from the one inbox request.
@@ -195,6 +197,19 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             >
               <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate">{t('common.search')}</span>
+            </button>
+          )}
+          {assistant.available && assistant.me && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                assistant.setOpen(true);
+              }}
+              className="mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 py-2.5 min-h-11 text-sm text-silver hover:text-ink hover:bg-navy-secondary/50 active:bg-navy-secondary/60 transition-colors"
+            >
+              <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">Ask {assistant.me.name}</span>
             </button>
           )}
           <MobileLink

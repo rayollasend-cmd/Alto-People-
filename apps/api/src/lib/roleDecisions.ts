@@ -14,7 +14,6 @@ import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } fr
 import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
 import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severityWords } from './incidentLoop.js';
 import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
-import { shiftDeepLink } from './workforceAgent.js';
 import { tenantIdForWrite } from './tenant.js';
 
 const DAY_MS = 24 * 3600_000;
@@ -612,34 +611,35 @@ export async function computeRoleDecisions(
   if (can('manage:scheduling')) {
     const bounds = { clientId: user.clientId, locationId: user.locationId ?? null };
     const fills = await pendingDeskShiftFills(prisma, tenantIdForWrite(), bounds);
-    // A handful: one item each, deep-linked to the shift, with Approve and Reject (agent families step 1).
-    if (fills.length > 0 && fills.length <= 5) {
-      for (const f of fills) {
-        out.push({
-          key: `agents:shift-fill:${f.approvalId}`,
-          domain: 'site-ops',
-          severity: 'high',
-          label: f.summary,
-          detail: 'Proposed by the Workforce agent. Nothing is assigned until you approve; it then assigns under the same rules as the schedule.',
-          stakes: null,
-          ageDays: Math.floor((now.getTime() - f.requestedAt.getTime()) / DAY_MS),
-          linkUrl: f.shift ? shiftDeepLink(f.shift) : '/agents?approvals=SHIFT_ASSIGN',
-          quickAction: 'Approve',
-          declineAction: 'Reject',
-        });
-      }
+    // The first few are items of their own, each opening the proposal with its evidence on
+    // the Approvals page, with Approve and Reject here (agent families step 1). Past that, one
+    // item carries the count and opens the whole queue.
+    const SHOWN = 5;
+    for (const f of fills.slice(0, SHOWN)) {
+      out.push({
+        key: `agents:shift-fill:${f.approvalId}`,
+        domain: 'site-ops',
+        severity: 'high',
+        label: f.summary,
+        detail: 'Proposed by an agent. Nothing is assigned until you approve; it then assigns under the same rules as the schedule. Open it to read why this person.',
+        stakes: null,
+        ageDays: Math.floor((now.getTime() - f.requestedAt.getTime()) / DAY_MS),
+        linkUrl: `/approvals?tab=proposals&proposal=${f.approvalId}`,
+        quickAction: 'Approve',
+        declineAction: 'Reject',
+      });
     }
-    const n = fills.length > 5 ? fills.length : 0;
-    if (n > 0) {
+    if (fills.length > SHOWN) {
+      const n = fills.length;
       out.push({
         key: scoped('agents:shift-assign'),
         domain: 'site-ops',
         severity: 'high',
-        label: `${n} shift fill${n === 1 ? '' : 's'} proposed by an agent, waiting on you`,
-        detail: 'Nothing is assigned until you approve. Each one names the shift and the person.',
+        label: `${n} shift fills proposed by an agent, waiting on you — see all`,
+        detail: `${SHOWN} are listed here. Nothing is assigned until you approve; each one names the shift, the person and why.`,
         stakes: null,
         ageDays: null,
-        linkUrl: '/agents?approvals=SHIFT_ASSIGN',
+        linkUrl: '/approvals?tab=proposals',
       });
     }
   }
@@ -651,10 +651,10 @@ export async function computeRoleDecisions(
         domain: 'people',
         severity: 'high',
         label: `${n} HR case${n === 1 ? '' : 's'} an agent proposes to open`,
-        detail: 'Nothing is opened until you approve.',
+        detail: 'Nothing is opened until you approve. Each one says why.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/agents?approvals=CASE_OPEN',
+        linkUrl: '/approvals?tab=proposals',
       });
     }
   }

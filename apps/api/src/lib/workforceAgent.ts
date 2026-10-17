@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { capabilityDef, paidMinutesForRange } from '@alto-people/shared';
+import { capabilityDef, paidMinutesForRange, type ProposalEvidence } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { benchFor } from './scope.js';
@@ -21,6 +21,7 @@ import { moduleOn } from './tenantProfile.js';
 import { notifyUser } from './notify.js';
 import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
 import { maybeNotifyFinanceNewWorker } from './fieldglassNotify.js';
+import { associateLang, discloserFor, userLang } from './agentDisclosure.js';
 
 /**
  * The Workforce agent's first capability, `shift.fill` (agent families
@@ -111,14 +112,47 @@ export interface FillCandidate {
   score: number;
 }
 
+/** Someone on the bench the ranking passed over, and why — the alternatives a person reads. */
+export interface ConsideredPerson {
+  associateId: string;
+  name: string;
+  whyNot: string;
+}
+
+/** The pick with the facts behind it, and everyone else who was weighed. */
+export interface BenchRanking {
+  pick: FillCandidate | null;
+  picked: { matchesAvailability: boolean; wouldExceed40: boolean; weeklyScheduledMinutes: number; weeklyActualMinutes: number; fewestHours: boolean } | null;
+  considered: ConsideredPerson[];
+  benchSize: number;
+  shiftMinutes: number;
+}
+
+export interface RankOptions {
+  tenantId: string;
+  /** Not to be proposed: turned down for this shift before, or the holder. */
+  exclude?: string[];
+  /** Why each excluded person is out, in words (default: turned down before). */
+  excludeWhy?: Record<string, string>;
+}
+
+const fmtH = (minutes: number): string => {
+  const h = minutes / 60;
+  return `${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+};
+
 /**
- * The one person to propose: on the shift's bench, free, within the
- * scheduling rules, best by the Suggested ranking (fewer hours this week,
- * then name, break ties). Null when nobody qualifies.
+ * Rank the shift's bench and name the one person to propose: placed there
+ * (lib/scope.benchFor), free, within the scheduling rules, best by the
+ * Suggested ranking (fewer hours this week, then name, break ties). Every
+ * person weighed is kept with the reason they were not picked, so the
+ * proposal can show its alternatives. `pick` is null when nobody qualifies.
  */
-export async function pickFillCandidate(db: Db, shift: FillShift, now: Date, opts: { tenantId: string; exclude?: string[] }): Promise<FillCandidate | null> {
+export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankOptions): Promise<BenchRanking> {
+  const shiftMinutes = paidMinutesForRange(shift.startsAt, shift.endsAt);
+  const none: BenchRanking = { pick: null, picked: null, considered: [], benchSize: 0, shiftMinutes };
   const bench = benchFor(shift);
-  if (!bench) return null;
+  if (!bench) return none;
   const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
   const weekStart = startOfWeekUTC(shift.startsAt);
   const weekEnd = endOfWeekUTC(shift.startsAt);
@@ -129,10 +163,7 @@ export async function pickFillCandidate(db: Db, shift: FillShift, now: Date, opt
       erasedAt: null,
       separatedAt: null,
       deactivatedAt: null,
-      ...(opts.exclude?.length ? { id: { notIn: opts.exclude } } : {}),
       AND: [bench],
-      // No overlapping shift (the hard rule of assignWithinRules, applied up front).
-      assignedShifts: { none: { status: { notIn: ['CANCELLED'] }, startsAt: { lt: shift.endsAt }, endsAt: { gt: shift.startsAt } } },
     },
     select: {
       id: true,
@@ -147,43 +178,139 @@ export async function pickFillCandidate(db: Db, shift: FillShift, now: Date, opt
     },
     take: 200,
   });
-  if (!people.length) return null;
+  if (!people.length) return none;
+  const ids = people.map((p) => p.id);
+  const name = (p: { firstName: string; lastName: string }) => `${p.firstName} ${p.lastName}`.trim();
+  // The hard rule of assignWithinRules, applied up front: no overlapping shift.
+  const overlapping = await db.shift.findMany({
+    where: { tenantId: opts.tenantId, assignedAssociateId: { in: ids }, status: { notIn: ['CANCELLED'] }, startsAt: { lt: shift.endsAt }, endsAt: { gt: shift.startsAt } },
+    select: { assignedAssociateId: true, position: true },
+  });
+  const overlapBy = new Map(overlapping.map((o) => [o.assignedAssociateId!, o.position]));
   // Approved time off and declared days off are a wall, as on assign.
-  const blocked = await blockedForWindow(people.map((p) => p.id), shift.startsAt, shift.endsAt, tz, db);
+  const blocked = await blockedForWindow(ids, shift.startsAt, shift.endsAt, tz, db);
+  const excluded = new Set(opts.exclude ?? []);
   const dow = zonedDayOfWeek(shift.startsAt, tz);
   const startMin = zonedMinutes(shift.startsAt, tz);
   const endMin = zonedMinutes(shift.endsAt, tz);
-  const shiftMinutes = paidMinutesForRange(shift.startsAt, shift.endsAt);
-  const ranked = people
-    .filter((p) => !blocked.has(p.id))
-    .map((p) => {
-      const weeklyScheduled = p.assignedShifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0);
-      const weeklyActual = p.timeEntries.reduce((sum, e) => sum + netWorkedMinutes(e, e.breaks), 0);
-      const score = autoFillScore({
-        matchesAvailability: p.availability.some((w) => w.dayOfWeek === dow && w.startMinute <= startMin && w.endMinute >= endMin),
-        noConflict: true,
-        wouldExceed40: weeklyActual + shiftMinutes > 40 * 60,
-        onApprovedTimeOff: false,
-      });
-      return { p, score, weeklyScheduled };
-    })
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        a.weeklyScheduled - b.weeklyScheduled ||
-        a.p.lastName.localeCompare(b.p.lastName) ||
-        a.p.firstName.localeCompare(b.p.firstName) ||
-        a.p.id.localeCompare(b.p.id),
-    );
-  for (const { p, score } of ranked) {
-    // The rest gap is advisory for a supervisor (overridable); the agent never proposes past it.
-    if (await findRestGapViolation(db, p.id, shift.startsAt, shift.endsAt, [shift.id])) continue;
-    // A petition certifies a client: an H-2B worker is proposed only at that client (marketplace rule).
-    const r = await clientRestrictionFor(db, p.id, now);
-    if (r && r.clientId !== shift.clientId) continue;
-    return { associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), score };
+  const considered: ConsideredPerson[] = [];
+  const ranked: Array<{ p: (typeof people)[number]; score: number; weeklyScheduled: number; weeklyActual: number; matchesAvailability: boolean; wouldExceed40: boolean }> = [];
+  for (const p of people) {
+    if (excluded.has(p.id)) {
+      considered.push({ associateId: p.id, name: name(p), whyNot: opts.excludeWhy?.[p.id] ?? 'turned down for this shift before' });
+      continue;
+    }
+    const overlap = overlapBy.get(p.id);
+    if (overlap) {
+      considered.push({ associateId: p.id, name: name(p), whyNot: `already on a ${overlap} shift that overlaps` });
+      continue;
+    }
+    if (blocked.has(p.id)) {
+      considered.push({ associateId: p.id, name: name(p), whyNot: 'on approved time off or a declared day off' });
+      continue;
+    }
+    const weeklyScheduled = p.assignedShifts.reduce((sum, sh) => sum + paidMinutesForRange(sh.startsAt, sh.endsAt), 0);
+    const weeklyActual = p.timeEntries.reduce((sum, e) => sum + netWorkedMinutes(e, e.breaks), 0);
+    const matchesAvailability = p.availability.some((w) => w.dayOfWeek === dow && w.startMinute <= startMin && w.endMinute >= endMin);
+    const wouldExceed40 = weeklyActual + shiftMinutes > 40 * 60;
+    const score = autoFillScore({ matchesAvailability, noConflict: true, wouldExceed40, onApprovedTimeOff: false });
+    ranked.push({ p, score, weeklyScheduled, weeklyActual, matchesAvailability, wouldExceed40 });
   }
-  return null;
+  ranked.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.weeklyScheduled - b.weeklyScheduled ||
+      a.p.lastName.localeCompare(b.p.lastName) ||
+      a.p.firstName.localeCompare(b.p.firstName) ||
+      a.p.id.localeCompare(b.p.id),
+  );
+  let pick: FillCandidate | null = null;
+  let picked: BenchRanking['picked'] = null;
+  let pickedRow: (typeof ranked)[number] | null = null;
+  for (const r of ranked) {
+    if (pickedRow) {
+      // Below the pick on the same ranking: say which measure decided it.
+      const whyNot =
+        !r.matchesAvailability && pickedRow.matchesAvailability
+          ? 'no availability on file for this window'
+          : r.wouldExceed40 && !pickedRow.wouldExceed40
+            ? 'would pass 40 hours this week'
+            : r.weeklyScheduled > pickedRow.weeklyScheduled
+              ? `more hours scheduled this week (${fmtH(r.weeklyScheduled)} vs ${fmtH(pickedRow.weeklyScheduled)})`
+              : 'equal on every measure; alphabetical tie-break';
+      considered.push({ associateId: r.p.id, name: name(r.p), whyNot });
+      continue;
+    }
+    // The rest gap is advisory for a supervisor (overridable); the agent never proposes past it.
+    if (await findRestGapViolation(db, r.p.id, shift.startsAt, shift.endsAt, [shift.id])) {
+      considered.push({ associateId: r.p.id, name: name(r.p), whyNot: 'would not get the required rest between shifts' });
+      continue;
+    }
+    // A petition certifies a client: an H-2B worker is proposed only at that client (marketplace rule).
+    const restriction = await clientRestrictionFor(db, r.p.id, now);
+    if (restriction && restriction.clientId !== shift.clientId) {
+      considered.push({ associateId: r.p.id, name: name(r.p), whyNot: 'an H-2B petition ties them to another client' });
+      continue;
+    }
+    pickedRow = r;
+    pick = { associateId: r.p.id, name: name(r.p), score: r.score };
+    picked = {
+      matchesAvailability: r.matchesAvailability,
+      wouldExceed40: r.wouldExceed40,
+      weeklyScheduledMinutes: r.weeklyScheduled,
+      weeklyActualMinutes: r.weeklyActual,
+      fewestHours: ranked.every((o) => o.weeklyScheduled >= r.weeklyScheduled),
+    };
+  }
+  return { pick, picked, considered, benchSize: people.length, shiftMinutes };
+}
+
+/**
+ * The one person to propose: on the shift's bench, free, within the
+ * scheduling rules, best by the Suggested ranking (fewer hours this week,
+ * then name, break ties). Null when nobody qualifies.
+ */
+export async function pickFillCandidate(db: Db, shift: FillShift, now: Date, opts: { tenantId: string; exclude?: string[] }): Promise<FillCandidate | null> {
+  return (await rankBench(db, shift, now, opts)).pick;
+}
+
+/**
+ * The evidence behind an assign proposal (shift.fill, schedule.repair,
+ * attendance.confirm): why this person, who else was weighed and why not,
+ * what it does to their week, and who it touches. `context` is the event
+ * that opened the hole, in a sentence; `holder` the person it covers for.
+ */
+export function assignEvidence(
+  shift: FillShift & { location?: string | null },
+  ranking: BenchRanking,
+  ctx: { context: string; holder?: { id: string; name: string; why: string } | null; leaveOpen: string },
+): ProposalEvidence {
+  const pick = ranking.pick!;
+  const facts = ranking.picked!;
+  const after = facts.weeklyScheduledMinutes + ranking.shiftMinutes;
+  const over = facts.weeklyActualMinutes + ranking.shiftMinutes - 40 * 60;
+  const why = [
+    `${pick.name} is placed at ${siteName(shift)}, is free for ${shiftWhen(shift)}`,
+    facts.matchesAvailability ? ', has availability on file for that window' : ' (no availability on file for that window)',
+    ` and has ${fmtH(facts.weeklyScheduledMinutes)} scheduled this week${facts.fewestHours ? ' — the fewest of anyone free on the bench' : ''}.`,
+    ` ${ctx.context}`,
+  ].join('');
+  const alternatives: ProposalEvidence['alternatives'] = ranking.considered.slice(0, 8).map((c) => ({ label: c.name, note: c.whyNot }));
+  if (ranking.considered.length > 8) alternatives.push({ label: `${ranking.considered.length - 8} more on the bench`, note: 'ranked below on the same measures' });
+  alternatives.push({ label: ctx.holder ? 'Leave it uncovered' : 'Leave it open', note: ctx.leaveOpen });
+  const impact: ProposalEvidence['impact'] = [
+    { label: 'Shift', value: `${fmtH(ranking.shiftMinutes)} ${shift.position}, ${shiftWhen(shift)}` },
+    { label: `${pick.name.split(' ')[0]}'s week`, value: `${fmtH(facts.weeklyScheduledMinutes)} → ${fmtH(after)} scheduled` },
+    { label: 'Overtime', value: facts.wouldExceed40 ? `Likely: about ${fmtH(Math.max(over, 0))} past 40` : 'None expected' },
+    { label: 'Bench', value: `${ranking.benchSize} placed here; ${ranking.considered.length} other${ranking.considered.length === 1 ? '' : 's'} weighed` },
+  ];
+  if (ctx.holder) impact.push({ label: 'Replaces', value: `${ctx.holder.name} (${ctx.holder.why})` });
+  const affects: ProposalEvidence['affects'] = [{ kind: 'person', id: pick.associateId, name: pick.name }];
+  if (ctx.holder) affects.push({ kind: 'person', id: ctx.holder.id, name: ctx.holder.name });
+  affects.push({ kind: 'shift', id: shift.id, name: `${shift.position} shift, ${shiftWhen(shift)}` });
+  if (shift.locationId) affects.push({ kind: 'site', id: shift.locationId, name: siteName(shift) });
+  if (shift.clientId && shift.client?.name) affects.push({ kind: 'client', id: shift.clientId, name: shift.client.name });
+  return { why, alternatives, impact, policy: null, affects };
 }
 
 export function siteName(shift: FillShift & { location?: string | null }): string {
@@ -313,8 +440,11 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
     const earlier = await earlierAssignProposals(db, tenantId, shift.id);
     // One live proposal per shift; a shift the agent already filled once is not proposed again.
     if (earlier.pending || earlier.executed) continue;
-    const candidate = await pickFillCandidate(db, shift, now, { tenantId, exclude: earlier.turnedDown });
+    const ranking = await rankBench(db, shift, now, { tenantId, exclude: earlier.turnedDown });
+    const candidate = ranking.pick;
     if (!candidate) continue;
+    const askedHours = Math.max(1, Math.round((now.getTime() - broadcastStartedAt(shift).getTime()) / 3_600_000));
+    const startsInHours = Math.max(1, Math.round((shift.startsAt.getTime() - now.getTime()) / 3_600_000));
     await createProposal(
       db,
       agent,
@@ -324,6 +454,10 @@ export async function runShiftFill(db: PrismaClient = defaultPrisma, now: Date =
         subjectId: shift.id,
         summary: `Assign ${candidate.name} to ${shift.position} at ${siteName(shift)}, ${shiftWhen(shift)}. The open-shift broadcast went unanswered.`,
         payload: { associateId: candidate.associateId },
+        evidence: assignEvidence(shift, ranking, {
+          context: `The open-shift broadcast asked the bench ${askedHours === 1 ? 'an hour' : `${askedHours} hours`} ago and nobody picked it up.`,
+          leaveOpen: `The shift starts in about ${startsInHours === 1 ? 'an hour' : `${startsInHours} hours`}; the broadcast stays open and you can assign from the schedule.`,
+        }),
       },
       now,
     );
@@ -376,6 +510,9 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
   await claimApproval(db, agent, approval.id, 'SHIFT_ASSIGN', payload, now);
   const def = capabilityDef(key)!;
   const link = shiftDeepLink(shift);
+  // AI disclosure: every notice this assignment causes ends by saying the agent did it and who answers for it.
+  const disclose = await discloserFor(db, agent);
+  const deskLang = await userLang(db, approval.decidedById);
   let updated;
   try {
     if (!associate) throw new HttpError(404, 'associate_not_found', 'The proposed person is no longer on file.');
@@ -388,9 +525,10 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
     if (approval.decidedById) {
       await notifyUser(approval.decidedById, {
         subject: `${repair ? 'Cover' : backup ? 'Backup' : 'Shift fill'} not carried out: ${shift.position} at ${siteName(shift)}`,
-        body: `${message} ${holder ? 'The shift is still uncovered' : 'The shift is still open'}; assign it from the schedule.`,
+        body: disclose(`${message} ${holder ? 'The shift is still uncovered' : 'The shift is still open'}; assign it from the schedule.`, deskLang),
         category: CLOSURE_CATEGORY,
         linkUrl: link,
+        byAgentId: agent.workerId,
       });
     }
     return true;
@@ -402,35 +540,43 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
   void maybeNotifyFinanceNewWorker(associate.id);
   const line = formatShiftLine({ position: updated.position, clientName: updated.client?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null });
   if (updated.publishedAt) {
+    const lang = await associateLang(db, associate.id);
     void notifyShift(db, {
       associateId: associate.id,
       subject: 'New shift assigned',
-      body: `You've been assigned: ${line}`,
+      body: disclose(`You've been assigned: ${line}`, lang),
       category: 'shift_assigned',
       ...(approval.decidedById ? { senderUserId: approval.decidedById } : {}),
+      byAgentId: agent.workerId,
       wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
     });
   }
   // The person it covers for, still on the books, hears it is off their schedule.
   if (holder && !holder.separatedAt && !holder.deactivatedAt && !holder.deletedAt) {
+    const lang = await associateLang(db, holder.id);
     void notifyShift(db, {
       associateId: holder.id,
       subject: backup && said !== 'NO' ? 'Your shift was reassigned' : 'Your shift is covered',
-      body: !backup
-        ? `${line} is covered while you are away. It is off your schedule.`
-        : said === 'NO'
-          ? `You told us you can't make ${line}. It is covered and off your schedule.`
-          : `You did not confirm ${line}, so it was given to someone else. It is off your schedule. If this is a mistake, talk to your supervisor.`,
+      body: disclose(
+        !backup
+          ? `${line} is covered while you are away. It is off your schedule.`
+          : said === 'NO'
+            ? `You told us you can't make ${line}. It is covered and off your schedule.`
+            : `You did not confirm ${line}, so it was given to someone else. It is off your schedule. If this is a mistake, talk to your supervisor.`,
+        lang,
+      ),
       category: 'shift_unassigned',
+      byAgentId: agent.workerId,
     });
   }
   // Closure to the desk that approved (handoff spine).
   if (approval.decidedById) {
     await notifyUser(approval.decidedById, {
       subject: holder ? `${backup ? 'Backup assigned' : 'Shift covered'}: ${associate.firstName} ${associate.lastName} for ${holder.firstName} ${holder.lastName}` : `Shift filled: ${associate.firstName} ${associate.lastName}`,
-      body: `${shift.position} at ${siteName(shift)}, ${shiftWhen(shift)}. Assigned by the Workforce agent on your approval.`,
+      body: disclose(`${shift.position} at ${siteName(shift)}, ${shiftWhen(shift)}. Assigned by ${agent.name} on your approval.`, deskLang),
       category: CLOSURE_CATEGORY,
       linkUrl: link,
+      byAgentId: agent.workerId,
     });
   }
   return true;

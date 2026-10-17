@@ -262,7 +262,8 @@ describe('approval gates', () => {
 
     // The owner was told; the queue shows it.
     const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.hr.id, category: 'agent_approval', channel: 'IN_APP' } });
-    expect(bell?.linkUrl).toBe(`/agents?approval=${approvalId}`);
+    // The notice opens the decision where decisions live: the Approvals page's Proposals queue.
+    expect(bell?.linkUrl).toBe(`/approvals?tab=proposals&proposal=${approvalId}`);
     const queue = await w.admin.get('/agents/approvals?status=PENDING');
     expect(queue.body.approvals).toHaveLength(1);
     expect(queue.body.approvals[0]).toMatchObject({ id: approvalId, action: 'CLIENT_MESSAGE', agentName: 'Scheduling helper', payload: { conversationId: t.store.id, body } });
@@ -283,7 +284,9 @@ describe('approval gates', () => {
     const rows = await prisma.message.findMany({ where: { conversationId: t.store.id } });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.senderId).toBeNull();
-    expect(rows[0]!.body).toBe(`${body}\n\n— Scheduling helper (AI agent)`);
+    // AI disclosure: the message ends by saying an AI agent wrote it and who answers for it (the owner, by name or email); the record carries the agent.
+    expect(rows[0]!.body).toBe(`${body}\n\nSent by Scheduling helper, an AI agent — ${w.hr.email} answers for it.`);
+    expect(rows[0]!.byAgentId).toBe(a.id);
     const portalBell = await prisma.notification.findFirst({ where: { recipientUserId: t.portal.id, linkUrl: `/messages/${t.store.id}` } });
     expect(portalBell).not.toBeNull();
 

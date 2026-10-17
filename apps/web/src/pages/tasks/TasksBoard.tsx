@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Bot, ListTodo, Plus, User, Workflow } from 'lucide-react';
+import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from 'lucide-react';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type WorkTaskStatus, type WorkTaskView } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
@@ -48,8 +48,9 @@ const STATUS_VARIANT: Record<WorkTaskStatus, 'default' | 'success' | 'pending' |
 
 const CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => [c.code, c.label]));
 
+/** One glyph per kind of holder, the same the nav uses: a person, an agent (Bot), a robot (Cpu). */
 export function HolderIcon({ type, className }: { type: 'PERSON' | 'AGENT' | 'ROBOT'; className?: string }) {
-  const Icon = type === 'ROBOT' ? Bot : type === 'AGENT' ? Workflow : User;
+  const Icon = type === 'ROBOT' ? Cpu : type === 'AGENT' ? Bot : User;
   return <Icon className={cn('h-3.5 w-3.5 shrink-0', className)} aria-hidden="true" />;
 }
 

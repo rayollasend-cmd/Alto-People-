@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, RefreshCw } from 'lucide-react';
+import { Cpu, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { FLEET_PROVIDERS, type RobotRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -125,7 +125,7 @@ export function RobotsHome() {
     <ListTemplate
       title="Robots"
       subtitle={`Every robot in the registry with its fleet reading. Connected to ${providerLabel}.`}
-      breadcrumbs={[{ label: 'Workforce', to: '/workers' }, { label: 'Robots' }]}
+      breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots' }]}
       secondaryActions={
         canManage ? (
           <Button variant="ghost" size="sm" onClick={() => sample.mutate()} loading={sample.isPending}>
@@ -137,8 +137,8 @@ export function RobotsHome() {
       primaryAction={
         canManage ? (
           <Button asChild>
-            <Link to="/workers?type=ROBOT">
-              <Bot className="h-4 w-4" />
+            <Link to="/workers?type=ROBOT&add=1">
+              <Cpu className="h-4 w-4" />
               Add a robot
             </Link>
           </Button>
@@ -162,7 +162,7 @@ export function RobotsHome() {
       ) : q.isPending ? (
         <Skeleton className="h-64" />
       ) : q.data.robots.length === 0 ? (
-        <EmptyState icon={Bot} title="No robots yet" description="Add a robot on the Workforce roster; its profile, commissioning and checklist live here." />
+        <EmptyState icon={Cpu} title="No robots yet" description="Add a robot on the Workforce roster; its profile, commissioning and checklist live here." />
       ) : (
         <DataGrid id="robots" caption="Robots" rows={q.data.robots} rowKey={(r) => r.id} columns={columns} onRowClick={(r) => navigate(`/robots/${r.id}`)} rowActionLabel={(r) => `Open ${r.name}`} />
       )}

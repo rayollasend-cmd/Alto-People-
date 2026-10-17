@@ -121,7 +121,7 @@ export function RobotRecord() {
   return (
     <RecordTemplate
       className="mx-auto"
-      breadcrumbs={[{ label: 'Workforce', to: '/workers' }, { label: 'Robots', to: '/robots' }, { label: r.name }]}
+      breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots', to: '/robots' }, { label: r.name }]}
       identity={
         <span className="grid h-10 w-10 place-items-center rounded-full bg-accent/15 text-accent">
           <Bot className="h-5 w-5" aria-hidden="true" />

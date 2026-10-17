@@ -1,12 +1,14 @@
 import { Router, type Request } from 'express';
 import { prisma } from '../db.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import {
   effectiveClientIdFilter,
   scopeShifts,
   scopeTimeEntries,
   scopeTimeOffRequests,
 } from '../lib/scope.js';
+import { countDecidableApprovals, listDecidableApprovals, type Decider } from '../lib/proposalDecisions.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * One cheap COUNT per manager decision queue, powering the badge on the
@@ -29,7 +31,15 @@ export interface ApprovalQueueCounts {
   timeOff: number;
   timesheets: number;
   clockIns: number;
+  /** Agent proposals this person may decide (lib/proposalDecisions: the server's one rule). */
+  proposals: number;
   total: number;
+}
+
+/** The session user as the decision rule reads it. */
+export function deciderOf(user: SessionUser): Decider {
+  const u = user as SessionUser & { clientId?: string | null; locationId?: string | null };
+  return { id: u.id, role: u.role, clientId: u.clientId ?? null, locationId: u.locationId ?? null };
 }
 
 /**
@@ -48,7 +58,7 @@ export async function countApprovalQueues(user: SessionUser): Promise<ApprovalQu
     }
     return clamped ? { clientId: clamped } : {};
   })();
-  const [swaps, pickups, timeOff, timesheets, clockIns] = await Promise.all([
+  const [swaps, pickups, timeOff, timesheets, clockIns, proposals] = await Promise.all([
     prisma.shiftSwapRequest.count({
       where: { status: 'PEER_ACCEPTED', shift: { is: scopeShifts(user) } },
     }),
@@ -78,6 +88,8 @@ export async function countApprovalQueues(user: SessionUser): Promise<ApprovalQu
         ...clockInClamp,
       },
     }),
+    // What an agent proposes and this person may decide: the Proposals queue on the same page.
+    countDecidableApprovals(prisma, tenantIdForWrite(), deciderOf(user)),
   ]);
   return {
     swaps,
@@ -85,9 +97,24 @@ export async function countApprovalQueues(user: SessionUser): Promise<ApprovalQu
     timeOff,
     timesheets,
     clockIns,
-    total: swaps + pickups + timeOff + timesheets + clockIns,
+    proposals,
+    total: swaps + pickups + timeOff + timesheets + clockIns + proposals,
   };
 }
+
+/**
+ * GET /approvals/proposals — the agent proposals waiting on the signed-in
+ * person, with their evidence, each decidable by them. Any signed-in person
+ * may ask: the list is already filtered to what the rule lets them decide,
+ * so a site supervisor without view:org sees their own shifts' proposals.
+ */
+approvalsRouter.get('/proposals', requireAuth, async (req, res, next) => {
+  try {
+    res.json({ approvals: await listDecidableApprovals(prisma, tenantIdForWrite(), deciderOf(req.user!)) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 approvalsRouter.get(
   '/count',
