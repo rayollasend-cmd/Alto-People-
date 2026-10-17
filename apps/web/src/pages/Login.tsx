@@ -32,6 +32,11 @@ type Step = 'password' | 'mfa' | 'enroll';
 interface SsoConfig {
   enabled: boolean;
   buttonLabel: string | null;
+  /** Access pack: staff passwords are refused; is the IdP reachable; is there a break-glass path; may a device be remembered. */
+  required?: boolean;
+  reachable?: boolean | null;
+  breakGlass?: boolean;
+  deviceTrust?: boolean;
 }
 
 /**
@@ -63,6 +68,8 @@ export function Login() {
   const [step, setStep] = useState<Step>('password');
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
+  // Access pack: remember this device after the code (when the tenant allows).
+  const [rememberDevice, setRememberDevice] = useState(false);
   // Seed the banner from the ?error= query the OIDC callback redirects with.
   const [error, setError] = useState<string | null>(() =>
     ssoErrorMessage(location.search, t),
@@ -134,7 +141,7 @@ export function Login() {
     setError(null);
     setSubmitting(true);
     try {
-      await submitMfaChallenge({ code: code.trim() });
+      await submitMfaChallenge({ code: code.trim(), ...(rememberDevice ? { rememberDevice: true } : {}) });
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof NetworkError) {
@@ -365,6 +372,12 @@ export function Login() {
               {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
 
+            {sso?.required && sso.reachable === false && (
+              <div role="status" className="mb-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-silver">
+                {sso.breakGlass ? t('login.ssoUnreachableBreakGlass') : t('login.ssoUnreachable')}
+              </div>
+            )}
+
             {(passkeysSupported() || sso?.enabled) && (
               <>
                 <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-widest text-silver/50">
@@ -471,6 +484,13 @@ export function Login() {
             </div>
 
             {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+
+            {sso?.deviceTrust && !useRecovery && (
+              <label className="mt-4 flex items-center gap-2 text-sm text-silver">
+                <input type="checkbox" checked={rememberDevice} onChange={(e) => setRememberDevice(e.target.checked)} />
+                {t('login.rememberDevice')}
+              </label>
+            )}
 
             <Button
               type="submit"

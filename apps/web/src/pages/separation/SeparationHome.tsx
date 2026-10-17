@@ -49,6 +49,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 import { pickOne } from '@/lib/validationCopy';
+import { OffboardingPanel } from './OffboardingPanel';
 
 // Deliberate departure from the shared vocabulary: an IN_PROGRESS offboarding
 // is actively being worked by HR (gold per the Badge contract), not a passive
@@ -613,6 +614,11 @@ function DetailDrawer({
     setBusy(true);
     try {
       const r = await advanceSeparation(row.id);
+      if ('pending' in r) {
+        // Approval engine: completing a separation takes a second person.
+        toast.success('Sent for approval. A second person completes it — access stays on until they do.');
+        return;
+      }
       toast.success(`Advanced to ${STATUS_LABELS[r.status]}.`);
       onChanged({
         status: r.status,
@@ -659,6 +665,10 @@ function DetailDrawer({
           {row.finalPaycheckDate &&
             ` · Final paycheck ${fmtDate(parseYmd(row.finalPaycheckDate))}`}
         </div>
+
+        {/* Final pay, company property and access (HR pack 2026-10).
+            Completion is refused while property is out and not waived. */}
+        <OffboardingPanel separationId={row.id} canManage={canManage} />
 
         {canManage && row.status !== 'COMPLETE' && (
           <Button variant="primary" onClick={advance} disabled={busy}>

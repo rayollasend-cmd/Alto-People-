@@ -3,6 +3,8 @@ import { prisma } from '../db.js';
 import type { GeoPoint } from './geocode.js';
 import { DWELL_S, driveSeconds, haversineM, homePoint, storePoint } from './transportLive.js';
 import { actsAsAny } from './roleScope.js';
+import { legDurations, optimizeOrder, routingAvailable } from './mapboxRouting.js';
+import { dayBounds, driverCredentialStatus, driverShiftsBetween, driverUsersByAssociate } from './transportDrivers.js';
 
 /**
  * Dispatch, planned — the command center's click-saver.
@@ -94,6 +96,36 @@ function nearestOrder<T extends { point: GeoPoint | null }>(items: T[], start: G
   return [...out, ...unknown];
 }
 
+/**
+ * The order to work the stops. To work: the farthest pickup first, then the
+ * road network's shortest way to the store (the Optimization API, first and
+ * last fixed) — nearest-next when routing is off or the load is bigger than
+ * one call takes. From work: the store first, then the shortest way round
+ * the drop-offs. Unplaced pickups ride at the end either way.
+ */
+async function roadOrder<T extends { point: GeoPoint | null }>(items: T[], store: GeoPoint | null, direction: 'TO_WORK' | 'FROM_WORK'): Promise<T[]> {
+  const known = items.filter((x) => x.point);
+  const unknown = items.filter((x) => !x.point);
+  if (direction === 'FROM_WORK') {
+    if (store && routingAvailable() && known.length >= 2) {
+      const order = await optimizeOrder([store, ...known.map((x) => x.point!)], { fixStart: true, fixEnd: false });
+      if (order) return [...order.filter((i) => i > 0).map((i) => known[i - 1]!), ...unknown];
+    }
+    return nearestOrder(items, store);
+  }
+  const far = store ? [...known].sort((a, b) => haversineM(b.point!, store) - haversineM(a.point!, store))[0] : undefined;
+  if (!far) return nearestOrder(items, null);
+  const rest = known.filter((x) => x !== far);
+  if (store && routingAvailable() && rest.length >= 2) {
+    const order = await optimizeOrder([far.point!, ...rest.map((x) => x.point!), store], { fixStart: true, fixEnd: true });
+    if (order) {
+      const middle = order.filter((i) => i > 0 && i <= rest.length).map((i) => rest[i - 1]!);
+      return [far, ...middle, ...unknown];
+    }
+  }
+  return [far, ...nearestOrder(rest, far.point), ...unknown];
+}
+
 export async function orderAndTime(
   rides: PlanRide[],
 ): Promise<{ order: Timed[]; departAt: Date; arriveAt: Date | null }> {
@@ -106,18 +138,20 @@ export async function orderAndTime(
   if (direction === 'FROM_WORK') {
     // Everyone boards at the store once the last of them is off.
     const departAt = new Date(minute(Math.max(...rides.map((r) => r.targetAt.getTime()))));
-    const order = nearestOrder(withPoints, store).map((x) => ({ ...x, pickupAt: departAt }));
+    const order = (await roadOrder(withPoints, store, 'FROM_WORK')).map((x) => ({ ...x, pickupAt: departAt }));
     return { order, departAt, arriveAt: null };
   }
 
-  // To work: start at the pickup farthest from the store, then nearest next.
-  const far = store
-    ? [...withPoints].filter((x) => x.point).sort((a, b) => haversineM(b.point!, store) - haversineM(a.point!, store))[0]
-    : undefined;
-  const ordered = far ? [far, ...nearestOrder(withPoints.filter((x) => x !== far), far.point)] : nearestOrder(withPoints, null);
+  // To work: start at the pickup farthest from the store, then the road
+  // network's shortest way to the store — or nearest-next without it.
+  const ordered = await roadOrder(withPoints, store, 'TO_WORK');
 
-  // Work back from the store.
+  // Work back from the store, by the road where it answers.
   const arriveAt = new Date(minute(first.targetAt.getTime() - BUFFER_MIN * 60_000));
+  const placed = ordered.filter((x) => x.point);
+  const legs = store && placed.length > 0 ? await legDurations([...placed.map((x) => x.point!), store]) : null;
+  const legOf = new Map<Timed['ride'], number>();
+  if (legs && legs.seconds.length === placed.length) placed.forEach((x, i) => legOf.set(x.ride, legs.seconds[i]!));
   const times: number[] = new Array(ordered.length);
   let t = arriveAt.getTime();
   let next: GeoPoint | null = store;
@@ -125,7 +159,8 @@ export async function orderAndTime(
     const here = ordered[i]!.point;
     if (here && next) {
       const sameStop = haversineM(here, next) < SAME_STOP_M && i < ordered.length - 1;
-      t -= sameStop ? 0 : driveSeconds(here, next) * 1000 + DWELL_S * 1000;
+      const road = legOf.get(ordered[i]!.ride);
+      t -= sameStop ? 0 : (road ?? driveSeconds(here, next)) * 1000 + DWELL_S * 1000;
     } else {
       t -= 5 * 60_000; // no map point: a rough five minutes
     }
@@ -161,16 +196,34 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
       where: { serviceDate: date, status: { in: ['PLANNED', 'ACTIVE'] } },
       select: { vanId: true, driverUserId: true, departAt: true },
     }),
-    prisma.van.findMany({ where: { isActive: true }, orderBy: [{ capacity: 'desc' }, { name: 'asc' }] }),
+    // A van out of service (lib/transportDrivers' fleet record) is not planned.
+    prisma.van.findMany({ where: { isActive: true, outOfServiceAt: null }, orderBy: [{ capacity: 'desc' }, { name: 'asc' }] }),
     prisma.user.findMany({
       where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
-      select: { id: true, role: true, additionalRoles: true },
+      select: { id: true, role: true, additionalRoles: true, driverProfile: { select: { licenceExpiresAt: true, dotMedicalRequired: true, dotMedicalExpiresAt: true, trainingExpiresAt: true } } },
     }),
   ]);
-  // Drivers first; the director only when no driver is free.
+  // Drivers first; the director only when no driver is free. A driver
+  // whose licence or DOT card has lapsed is not offered at all.
   const drivesByTrade = (u: { role: string; additionalRoles?: string[] }) =>
     u.role === 'DRIVER' || (u.additionalRoles ?? []).includes('DRIVER') ? 0 : 1;
-  drivers.sort((a, b) => drivesByTrade(a) - drivesByTrade(b));
+  const fit = drivers.filter((d) => !d.driverProfile || driverCredentialStatus(d.driverProfile).ok);
+  fit.sort((a, b) => drivesByTrade(a) - drivesByTrade(b));
+  // When the day schedules drivers at all, only drivers on shift when a
+  // run leaves are offered for it.
+  const { from: dayFrom, to: dayTo } = dayBounds(date);
+  const dayShifts = await driverShiftsBetween(dayFrom, dayTo);
+  const usersByAssociate = dayShifts.length > 0 ? await driverUsersByAssociate() : null;
+  const onShiftAt = (at: number): Set<string> | null => {
+    if (!usersByAssociate) return null;
+    const on = new Set<string>();
+    for (const s of dayShifts) {
+      if (!s.assignedAssociateId || s.startsAt.getTime() > at || s.endsAt.getTime() <= at) continue;
+      const u = usersByAssociate.get(s.assignedAssociateId);
+      if (u) on.add(u.id);
+    }
+    return on;
+  };
 
   const busy: Array<{ vanId: string | null; driverUserId: string | null; from: number; to: number }> = runs.map((r) => ({
     vanId: r.vanId,
@@ -211,13 +264,16 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
       const load = left.slice(0, cap);
       left = left.slice(cap);
       const timed = await orderAndTime(load);
-      // The van's own driver when they're free, else any free driver.
-      const own = van?.driverUserId ? drivers.find((d) => d.id === van.driverUserId && free(from, to, 'driverUserId', d.id)) : undefined;
-      const driver = own ?? drivers.find((d) => free(from, to, 'driverUserId', d.id)) ?? null;
+      // The van's own driver when they're free, else any free driver — on
+      // shift, when the day has driver shifts.
+      const shift = onShiftAt(probe.departAt.getTime());
+      const eligible = shift ? fit.filter((d) => shift.has(d.id)) : fit;
+      const own = van?.driverUserId ? eligible.find((d) => d.id === van.driverUserId && free(from, to, 'driverUserId', d.id)) : undefined;
+      const driver = own ?? eligible.find((d) => free(from, to, 'driverUserId', d.id)) ?? null;
       busy.push({ vanId: van?.id ?? null, driverUserId: driver?.id ?? null, from, to });
       const warnings: string[] = [];
       if (!van) warnings.push('No van is free then — pick one.');
-      if (!driver) warnings.push('No driver is free then — pick one.');
+      if (!driver) warnings.push(shift ? 'No driver on shift is free then — schedule one, or pick one.' : 'No driver is free then — pick one.');
       const noPoint = timed.order.filter((x) => !x.point).length;
       if (noPoint) warnings.push(`${noPoint} pickup${noPoint === 1 ? ' has' : 's have'} no map location — the time is an estimate.`);
       proposals.push({

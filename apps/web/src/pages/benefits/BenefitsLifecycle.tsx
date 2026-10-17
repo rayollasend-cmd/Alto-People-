@@ -17,6 +17,8 @@ import {
   decideQle,
   electCobra,
   get1095c,
+  generate1095cForms,
+  acaAirUrl,
   listCobra,
   listOpenEnrollment,
   listQles,
@@ -921,6 +923,20 @@ function AcaTab() {
   const [error, setError] = useState<string | null>(null);
   const [nameFilter, setNameFilter] = useState('');
   const [missingOnly, setMissingOnly] = useState(false);
+  const { can } = useAuth();
+  const canFile = can('process:payroll');
+  const [generating, setGenerating] = useState(false);
+  const generateForms = async () => {
+    setGenerating(true);
+    try {
+      const r = await generate1095cForms(Number(year));
+      toast.success(`${r.created} 1095-C form${r.created === 1 ? '' : 's'} drafted${r.skipped ? `, ${r.skipped} already on file` : ''}. Review and mark them filed in Payroll → Tax forms.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not generate the forms.');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const refresh = async () => {
     setEmployees(null);
@@ -970,6 +986,18 @@ function AcaTab() {
           </Select>
         </div>
         <Button onClick={refresh}>Load grid</Button>
+        {canFile && (
+          <>
+            <Button variant="secondary" loading={generating} onClick={() => void generateForms()} title="One 1095-C per employee with months on file, plus the 1094-C transmittal. Anyone already on file is skipped.">
+              Generate 1095-C forms
+            </Button>
+            <Button variant="ghost" asChild title="The 1094-C/1095-C AIR file. Your filing partner (or your own TCC) transmits it through the IRS AIR system.">
+              <a href={acaAirUrl(Number(year))} download>
+                <Download className="mr-2 h-4 w-4" /> AIR file
+              </a>
+            </Button>
+          </>
+        )}
         {employees !== null && employees.length > 0 && (
           <>
             <div className="flex-1 min-w-[10rem]">

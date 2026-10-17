@@ -7,6 +7,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  MessageSquare,
+  MessageSquareText,
+  Phone,
   Printer,
   Users,
   FileText,
@@ -28,6 +31,7 @@ import { ServiceReportDialog } from './ServiceReportDialog';
 import { FocusToggle } from './FocusToggle';
 import { clockInInWindows, crewOnFloor, inWindows, summarize, useShiftFocus, windowOf } from './shiftFocus';
 import { ListTemplate } from '@/components/templates';
+import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
 import { scopeParams, shiftDays } from './scope';
 
 /**
@@ -296,6 +300,9 @@ export function PortalToday() {
                   multiStore={multiStore}
                   focused={focusWave === w.startsAt}
                   window={waveWindow(w, data.windowLeads ?? [])}
+                  // The shift supervisor reaches their crew from the wall:
+                  // call, text, message — and one text to the whole wave.
+                  canReach={user?.role === 'SHIFT_SUPERVISOR' && can('message:crew')}
                 />
               ))}
             </>
@@ -439,15 +446,20 @@ function WaveCard({
   multiStore,
   focused = false,
   window: win = null,
+  canReach = false,
 }: {
   wave: Wave;
   multiStore: boolean;
   focused?: boolean;
   /** The store's name for this shift and who leads it, when it has one. */
   window?: WindowLead | null;
+  /** The shift supervisor: contact actions on a face, a text to the wave. */
+  canReach?: boolean;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<WaveRow | null>(null);
+  const [crewTextOpen, setCrewTextOpen] = useState(false);
+  const crew = [...w.clockedIn, ...w.notIn, ...w.upcoming, ...w.worked].filter((r) => r.associateId);
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
   const present = wavePresent(w);
   const short = w.phase === 'live' && w.clockedIn.length < w.expected;
@@ -604,6 +616,49 @@ function WaveCard({
       >
         {selected ? caption(selected) : ''}
       </div>
+      {canReach && selected?.associateId && (
+        <div className="flex flex-wrap gap-2" data-testid="face-reach">
+          {selected.phone && (
+            <Button size="sm" variant="outline" asChild>
+              <a href={`tel:${selected.phone}`}>
+                <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Call
+              </a>
+            </Button>
+          )}
+          {selected.phone && (
+            <Button size="sm" variant="outline" asChild>
+              <a href={`sms:${selected.phone}`}>
+                <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Text
+              </a>
+            </Button>
+          )}
+          {selected.messageUserId && (
+            <Button size="sm" variant="outline" asChild>
+              <Link to={`/messages?to=${selected.messageUserId}`}>
+                <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Message
+              </Link>
+            </Button>
+          )}
+        </div>
+      )}
+      {canReach && crew.length > 0 && w.phase !== 'finished' && (
+        <>
+          <Button size="sm" variant="ghost" onClick={() => setCrewTextOpen(true)}>
+            <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Text the crew ({crew.length})
+          </Button>
+          <CrewTextDialog
+            open={crewTextOpen}
+            onOpenChange={setCrewTextOpen}
+            shiftIds={crew.map((r) => r.shiftId)}
+            label={`${win ? win.label : t(WAVE_KEY[waveName(w.startsAt, w.timezone)])} · ${range}`}
+            count={crew.length}
+          />
+        </>
+      )}
     </div>
   );
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   AlarmClock,
   AlertTriangle,
+  ScrollText,
   ArrowRight,
   Banknote,
   CalendarRange,
@@ -15,6 +16,8 @@ import {
   Inbox,
   Receipt,
   Scale,
+  ShieldCheck,
+  TrendingUp,
   UserCheck,
   Wallet,
 } from 'lucide-react';
@@ -25,7 +28,7 @@ import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
-import type { BillingWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
+import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
 import { useTenant } from '@/lib/auth';
 
 /**
@@ -142,6 +145,8 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
 
         {cycle && <PayCycleSteps cycle={cycle} today={today} />}
 
+        {data.cash && data.cash.weeks.length > 0 && <CashLine weeks={data.cash.weeks} />}
+
         {data.payday.lastDisbursed && (
           <p className="mt-auto pt-4 text-xs text-silver/60 tabular-nums">
             {t('fin.lastPay', {
@@ -206,8 +211,11 @@ function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
         }
         sub={run ? t(`fin.status.${run.status}` as MessageKey) : periodOver ? t('fin.cycle.runReady') : t('fin.cycle.runAfter', { date: md(cycle.periodEnd) })}
       >
-        <Link to="/payroll" className="mt-1 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
-          {run?.status === 'FINALIZED' ? t('fin.disburse') : t('fin.goPayroll')}
+        <Link
+          to={run ? `/payroll/runs/${run.id}/close` : '/payroll'}
+          className="mt-1 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright"
+        >
+          {run ? t('fin.guidedClose') : t('fin.goPayroll')}
           <ArrowRight className="h-3 w-3" aria-hidden="true" />
         </Link>
       </Step>
@@ -218,6 +226,81 @@ function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
         sub={paid ? t('fin.cycle.paid') : cycle.schedule}
       />
     </ol>
+  );
+}
+
+/** The hero's one line about money moving: the next four weeks, net, with the low point. */
+function CashLine({ weeks }: { weeks: CashWeek[] }) {
+  const { t } = useI18n();
+  const net = weeks.reduce((s, w) => s + w.net, 0);
+  const low = Math.min(...weeks.map((w) => w.cumulative));
+  return (
+    <Link
+      to="/finance/cash-forecast"
+      className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gold/20 pt-3 text-xs tabular-nums text-silver hover:text-gold"
+    >
+      <span className="flex items-center gap-1.5 font-medium uppercase tracking-wider text-gold">
+        <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('fin.cashTitle')}
+      </span>
+      <span>
+        {t('fin.cashNet')}{' '}
+        <span className={cn('font-semibold', net >= 0 ? 'text-success' : 'text-alert')}>{fmtMoney(net)}</span>
+      </span>
+      {low < 0 && (
+        <span>
+          {t('fin.cashLow')} <span className="font-semibold text-alert">{fmtMoney(low)}</span>
+        </span>
+      )}
+      <ArrowRight className="h-3 w-3" aria-hidden="true" />
+    </Link>
+  );
+}
+
+/** Four weeks of cash, as bars in and out with the running total. */
+export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
+  const { t } = useI18n();
+  if (!cash) return null;
+  const max = Math.max(1, ...cash.weeks.map((w) => Math.max(w.inflow, w.outflow)));
+  return (
+    <Card className="h-full animate-enter" style={enterStagger(5)}>
+      <CardContent className="p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-ink">
+            <TrendingUp className="h-4 w-4 text-gold" aria-hidden="true" />
+            {t('fin.cashTitle')}
+          </h3>
+          <Link to="/finance/cash-forecast" className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
+            {t('fin.cashOpen')}
+            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </Link>
+        </div>
+        <p className="mt-1 text-xs text-silver">{t('fin.cashSub')}</p>
+        {cash.weeks.every((w) => w.inflow === 0 && w.outflow === 0) ? (
+          <p className="mt-3 text-sm text-silver">{t('fin.cashEmpty')}</p>
+        ) : (
+          <ul className="mt-3 space-y-2" aria-label={t('fin.cashTitle')}>
+            {cash.weeks.map((w) => (
+              <li key={w.weekStart} className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 text-xs tabular-nums">
+                <span className="text-silver">{md(w.weekStart)}</span>
+                <span className="flex flex-col gap-0.5" aria-hidden="true">
+                  <span className="h-1.5 rounded-full bg-success/70" style={{ width: `${(w.inflow / max) * 100}%`, minWidth: w.inflow > 0 ? 2 : 0 }} />
+                  <span className="h-1.5 rounded-full bg-silver/50" style={{ width: `${(w.outflow / max) * 100}%`, minWidth: w.outflow > 0 ? 2 : 0 }} />
+                </span>
+                <span className={cn('font-medium', w.cumulative >= 0 ? 'text-ink' : 'text-alert')} title={`${t('fin.cashIn')} ${fmtMoney(w.inflow)} · ${t('fin.cashOut')} ${fmtMoney(w.outflow)}`}>
+                  {fmtMoney(w.cumulative)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
+          <Money label={t('fin.cashIn')} value={cash.totals.inflow} tone="text-success" />
+          <Money label={t('fin.cashOut')} value={cash.totals.outflow} tone="text-ink" />
+          <Money label={t('fin.cashNet')} value={cash.totals.net} tone={cash.totals.net >= 0 ? 'text-success' : 'text-alert'} />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -344,6 +427,20 @@ export function financeTasks(
       icon: ClipboardCheck,
       title: t('fin.task.statements', { count: data.receivables.draftStatements }),
       to: '/clients/statements',
+    });
+  }
+  // Finance's hold queue: payroll won't pay into these accounts until
+  // someone calls the number that was on file.
+  const fc = data.financialChanges;
+  if (fc && fc.open > 0) {
+    tasks.push({
+      key: 'verify',
+      rank: fc.held > 0 ? 1 : 3,
+      tone: fc.held > 0 ? 'alert' : 'warning',
+      icon: ShieldCheck,
+      title: t('fin.task.verify', { count: fc.open }),
+      sub: t('fin.task.verifySub', { held: fc.held }),
+      to: '/payroll/financial-changes',
     });
   }
   if (data.payrollCases.assignedToMe > 0) {
@@ -592,6 +689,10 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
             {t('fin.marginDefault', { count: margin.defaultRateAssociates, rate: fmtMoney(margin.defaultRate) })}
           </Link>
         )}
+        <Link to="/compensation?tab=changes" className="mt-2 flex items-center gap-1.5 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
+          <ScrollText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {t('fin.payChanges')}
+        </Link>
         {unpriced > 0 && (
           <Link to="/clients" className="mt-1 flex items-center gap-1.5 text-xs text-silver hover:underline">
             <CalendarRange className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

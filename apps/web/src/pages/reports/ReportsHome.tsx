@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowUp,
@@ -32,6 +33,8 @@ import {
   previewReport,
   runReport,
   updateReport,
+  type AggregateFn,
+  type ReportAggregate,
   type ReportEntity,
   type ReportFull,
   type ReportSchedule,
@@ -95,6 +98,30 @@ const isDateColumn = (c: string) =>
   /At$/.test(c) || c === 'periodStart' || c === 'periodEnd' || c === 'clockIn' || c === 'clockOut';
 
 const isAssociateColumn = (c: string) => c === 'associateId';
+
+/** The columns sum/avg/min/max may roll up — mirrors NUMERIC_COLUMNS in apps/api/src/lib/reportRun.ts. */
+const NUMERIC_COLUMNS: Partial<Record<ReportEntity, readonly string[]>> = {
+  PAYROLL_ITEM: ['grossAmount', 'netAmount'],
+  PAYROLL_RUN: ['totalGross', 'totalNet'],
+  EXPENSE: ['amount'],
+};
+
+const AGGREGATE_FNS: { value: AggregateFn; label: string }[] = [
+  { value: 'count', label: 'Count of rows' },
+  { value: 'sum', label: 'Sum of' },
+  { value: 'avg', label: 'Average of' },
+  { value: 'min', label: 'Lowest' },
+  { value: 'max', label: 'Highest' },
+];
+
+interface AggregateRow {
+  fn: AggregateFn;
+  column: string;
+  alias: string;
+}
+
+/** The output key an aggregate lands under when no alias is given — the server's rule. */
+const defaultAlias = (a: AggregateRow) => (a.fn === 'count' ? 'count' : `${a.fn}_${a.column}`);
 
 interface BuilderSeed {
   mode: 'edit' | 'duplicate';
@@ -239,7 +266,11 @@ export function ReportsHome() {
             </div>
           </>
         )}
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-2">
+          {/* The canned people reports: turnover, cohorts, time to fill, absence. */}
+          <Button asChild variant="outline">
+            <Link to="/reports/people">People analytics</Link>
+          </Button>
           <Button onClick={() => setBuilder({ seed: null })}>
             <Plus className="mr-2 h-4 w-4" /> New report
           </Button>
@@ -444,6 +475,13 @@ function ReportBuilder({
     seed ? seed.report.spec.sort.map((s) => ({ column: s.column, dir: s.direction })) : [],
   );
   const [limit, setLimit] = useState(seed ? String(seed.report.spec.limit) : '1000');
+  // Summarize: one row per distinct combination of the group-by columns,
+  // each aggregate beside it. Off, the report lists rows as before.
+  const [summarize, setSummarize] = useState((seed?.report.spec.groupBy?.length ?? 0) > 0);
+  const [groupBy, setGroupBy] = useState<string[]>(seed?.report.spec.groupBy ?? []);
+  const [aggregates, setAggregates] = useState<AggregateRow[]>(
+    (seed?.report.spec.aggregates ?? []).map((a) => ({ fn: a.fn, column: a.column ?? '', alias: a.alias ?? '' })),
+  );
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<{
     columns: string[];
@@ -474,7 +512,18 @@ function ReportBuilder({
     setColumns([]);
     setFilters([]);
     setSorts([]);
+    setGroupBy([]);
+    setAggregates([]);
   }, [entity]);
+
+  const numericColumns = NUMERIC_COLUMNS[entity] ?? [];
+  const toggleGroupBy = (col: string) =>
+    setGroupBy((gs) => (gs.includes(col) ? gs.filter((c) => c !== col) : gs.length >= 4 ? gs : [...gs, col]));
+  const addAggregate = () =>
+    setAggregates((as) => (as.length >= 8 ? as : [...as, { fn: 'count', column: numericColumns[0] ?? '', alias: '' }]));
+  const updateAggregate = (idx: number, patch: Partial<AggregateRow>) =>
+    setAggregates((as) => as.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  const removeAggregate = (idx: number) => setAggregates((as) => as.filter((_, i) => i !== idx));
 
   const toggleColumn = (col: string) => {
     setColumns((cs) =>
@@ -510,7 +559,7 @@ function ReportBuilder({
         }
         return { column: f.column, op: f.op, value };
       });
-    return {
+    const base: ReportSpec = {
       columns,
       filters: compiledFilters,
       sort: sorts
@@ -518,11 +567,26 @@ function ReportBuilder({
         .map((s) => ({ column: s.column, direction: s.dir })),
       limit: Math.max(1, Math.min(10_000, parseInt(limit, 10) || 1000)),
     };
+    if (!summarize || groupBy.length === 0) return base;
+    // A summary's output columns are the group keys and the aggregates;
+    // the spec still names at least one column (the schema's floor), so
+    // the group keys stand in when none were picked.
+    const compiledAggregates: ReportAggregate[] = (aggregates.length ? aggregates : [{ fn: 'count' as const, column: '', alias: '' }])
+      .filter((a) => a.fn === 'count' || a.column)
+      .map((a) => ({ fn: a.fn, column: a.fn === 'count' ? null : a.column, alias: a.alias.trim() || null }));
+    return { ...base, columns: columns.length ? columns : groupBy, groupBy, aggregates: compiledAggregates };
+  };
+
+  /** Summaries group by at least one column; lists pick at least one. */
+  const shapeProblem = (): string | null => {
+    if (summarize) return groupBy.length === 0 ? 'Pick at least one column to group by.' : null;
+    return columns.length === 0 ? 'Pick at least one column.' : null;
   };
 
   const onPreview = async () => {
-    if (columns.length === 0) {
-      toast.error('Pick at least one column.');
+    const problem = shapeProblem();
+    if (problem) {
+      toast.error(problem);
       return;
     }
     try {
@@ -541,8 +605,9 @@ function ReportBuilder({
   };
 
   const onSubmit = async () => {
-    if (!name.trim() || columns.length === 0) {
-      toast.error('Name and at least one column required.');
+    const problem = name.trim() ? shapeProblem() : 'Name the report first.';
+    if (problem) {
+      toast.error(problem);
       return;
     }
     setSaving(true);
@@ -801,6 +866,122 @@ function ReportBuilder({
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-md border border-navy-secondary p-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={summarize}
+                onChange={(e) => setSummarize(e.target.checked)}
+                aria-label="Summarize"
+              />
+              <span className="text-xs font-medium uppercase tracking-widest text-silver">Summarize</span>
+            </label>
+            <span className="text-xs text-silver">
+              One row per group, with a count or a total beside it.
+            </span>
+          </div>
+          {summarize && (
+            <div className="mt-3 space-y-3">
+              <div>
+                <Label>Group by ({groupBy.length} of 4)</Label>
+                <div
+                  className="mt-2 flex flex-wrap gap-1.5 p-2 border border-navy-secondary rounded-md bg-navy-secondary/20"
+                  role="group"
+                  aria-label="Group by"
+                >
+                  {allColumns.map((c) => {
+                    const selected = groupBy.includes(c);
+                    return (
+                      <Button
+                        key={c}
+                        type="button"
+                        variant={selected ? 'secondary' : 'outline'}
+                        size="xs"
+                        onClick={() => toggleGroupBy(c)}
+                        aria-pressed={selected}
+                        className="font-mono"
+                      >
+                        {c}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label>Totals</Label>
+                  <Button size="sm" variant="ghost" type="button" onClick={addAggregate} disabled={aggregates.length >= 8}>
+                    <Plus className="mr-1 h-3 w-3" /> Add total
+                  </Button>
+                </div>
+                {aggregates.length === 0 ? (
+                  <div className="text-xs text-silver italic mt-1">
+                    No totals — each group shows its count of rows.
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {aggregates.map((a, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Select
+                          size="sm"
+                          aria-label={`Total ${i + 1} function`}
+                          value={a.fn}
+                          onChange={(e) => {
+                            const fn = e.target.value as AggregateFn;
+                            updateAggregate(i, { fn, column: fn === 'count' ? '' : a.column || numericColumns[0] || '' });
+                          }}
+                        >
+                          {AGGREGATE_FNS.map((f) => (
+                            <option key={f.value} value={f.value}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </Select>
+                        {a.fn !== 'count' && (
+                          <div className="flex-1">
+                            <Select
+                              size="sm"
+                              className="font-mono"
+                              aria-label={`Total ${i + 1} column`}
+                              value={a.column}
+                              onChange={(e) => updateAggregate(i, { column: e.target.value })}
+                            >
+                              {numericColumns.length === 0 && <option value="">No number columns on this entity</option>}
+                              {numericColumns.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                        )}
+                        <Input
+                          size="sm"
+                          className="max-w-[160px] font-mono"
+                          aria-label={`Total ${i + 1} name`}
+                          placeholder={defaultAlias(a)}
+                          value={a.alias}
+                          maxLength={40}
+                          onChange={(e) => updateAggregate(i, { alias: e.target.value })}
+                        />
+                        <Button size="icon-sm" variant="ghost" type="button" onClick={() => removeAggregate(i)} aria-label={`Remove total ${i + 1}`}>
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {numericColumns.length === 0 && aggregates.some((a) => a.fn !== 'count') && (
+                  <div className="text-xs text-warning mt-1">
+                    Only count works here — this entity has no number columns to total.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

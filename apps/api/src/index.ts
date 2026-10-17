@@ -24,10 +24,15 @@ import { startPortalEngagementDigestCron } from './lib/portalEngagement.js';
 import { startPortalCoverageAlertCron } from './lib/portalCoverageAlert.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
+import { startWorkflowWorkerCron } from './lib/workflow.js';
+import { startAccessGrantSweepCron } from './lib/accessChanges.js';
 import { startComplianceSnapshotCron } from './lib/complianceSnapshot.js';
 import { startForecastCron } from './lib/forecast/cron.js';
+import { startClientNpsCron } from './lib/clientNps.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
+import { startCaseSlaCron } from './lib/hrCaseSla.js';
+import { startPolicyCampaignCron } from './lib/policyCampaigns.js';
 import { startReportScheduleCron } from './lib/reportScheduleRunner.js';
 import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
@@ -52,6 +57,8 @@ import { startProgramDigestCron } from './lib/programDigest.js';
 import { startLaborShadowCron } from './lib/laborRules/shadow.js';
 import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
 import { startBillingCron } from './lib/billing.js';
+import { startStatementDunningCron } from './lib/statementDunning.js';
+import { startTimeOffPolicyCron } from './lib/timeOffPolicy.js';
 import { startSecurityAlertsCron } from './lib/securityAlerts.js';
 import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
@@ -68,7 +75,10 @@ import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { startNotificationRetentionCron } from './lib/notificationRetention.js';
+import { startNotificationDigestCron } from './lib/notificationDelivery.js';
+import { startCertificationReminderCron } from './lib/accessCertification.js';
 import { startVanTrailRetentionCron } from './lib/transportLive.js';
+import { startRideSeriesCron } from './lib/rideSeries.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
@@ -132,9 +142,16 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startPortalCoverageAlertCron();
   startAttestationReminderCron();
   startExpirationDigestCron();
+  // The approval engine: queued workflow runs execute per tenant; temporary access reverts on time.
+  startWorkflowWorkerCron();
+  startAccessGrantSweepCron();
   startComplianceSnapshotCron();
   startKioskMaintenanceCron();
   startDocumentMaintenanceCron();
+  startStatementDunningCron();
+  startTimeOffPolicyCron();
+  startCaseSlaCron();
+  startPolicyCampaignCron();
   startReportScheduleCron();
   startUploadsBackupCron();
   startShiftReminderCron();
@@ -164,6 +181,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startProgramDigestCron();
   // Brief 3-4: monthly per tenant, the forecast scores what came true and recomputes.
   startForecastCron();
+  // Client NPS: one question to every store manager in the first week of a quarter.
+  startClientNpsCron();
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
@@ -228,7 +247,13 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startIdempotencyCleanupCron();
   // Daily: read bell rows >90d and email/SMS delivery-audit rows >365d.
   startNotificationRetentionCron();
+  // Access pack: held notifications (quiet hours, digests) go out together
+  // every ten minutes; overdue access certifications remind their reviewers.
+  startNotificationDigestCron();
+  startCertificationReminderCron();
   startVanTrailRetentionCron();
+  // Hourly: standing ride bookings booked forward a week.
+  startRideSeriesCron();
 
   // Multi-replica safety check. Three independent per-process subsystems
   // assume a single container today: the kiosk PIN rate limiter (brute-

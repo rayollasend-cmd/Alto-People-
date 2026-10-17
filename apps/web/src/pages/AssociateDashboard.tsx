@@ -3,16 +3,11 @@ import { greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  AlertCircle,
   ArrowRight,
-  CalendarCheck,
   CalendarDays,
   CalendarOff,
   Clock,
-  FileSignature,
   FileText,
-  FileWarning,
-  Inbox,
   MapPin,
   Timer,
 } from 'lucide-react';
@@ -29,16 +24,12 @@ import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { listOpenShifts } from '@/lib/qualApi';
-import { listMyAgreements } from '@/lib/agreements122Api';
-import { listMyDocuments } from '@/lib/documentsApi';
-import { listMyInbox } from '@/lib/communicationsApi';
 import { fmtDate, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
 import { EmergencyBanner } from '@/components/EmergencyBanner';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Card, CardContent } from '@/components/ui/Card';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
@@ -57,6 +48,7 @@ import { RideStrip } from '@/pages/transport/RideStrip';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { MyShiftHero, MyWeekStrip, pickNextShift } from '@/pages/associate/MyShiftHero';
+import { AssociateNeedsYou, TrainingNudge, useAssociateNeedsYou } from '@/components/home/AssociateNeedsYou';
 import { workweekBounds } from '@/lib/workweek';
 
 /**
@@ -140,6 +132,9 @@ export function AssociateDashboard() {
   }, [refetchActive, refetchShifts, refetchPay, refetchBalance, refetchOpen]);
 
   const pullState = usePullToRefresh(refreshAll);
+  // The counted "Needs you" the template promises — the same numbers as
+  // the sidebar badge, from GET /me/inbox.
+  const needs = useAssociateNeedsYou();
   // The place, the way the supervisor's floor leads with its store: where
   // their next (or current) shift is.
   const place = nextShift
@@ -210,15 +205,18 @@ export function AssociateDashboard() {
           // person has to do, so it is the hero and the shift follows it.
           openOnboarding ? <OnboardingBanner hero /> : shiftHero
         }
+        decisions={{ title: t('home.needsYou'), count: needs.count, content: <AssociateNeedsYou /> }}
         assistant={<HugoSeat />}
         waysIn={<QuickActions />}
       >
         {openOnboarding && shiftHero}
+        {/* Training in the flow of work: a required course still open, or a
+            certification about to lapse, the day it matters. */}
+        <TrainingNudge nextShiftAt={nextShift?.startsAt ?? null} />
         {/* Their van — the ride that's coming, or a one-tap ride for the
             next shift that needs one. */}
         <RideStrip />
         <EnablePushCard />
-        <ActionNeededCard shifts={shiftsQuery.isError ? null : shifts} />
         {/* The four numbers their week runs on — the supervisor's KPI strip,
             for one person. */}
         <MyNumbers
@@ -305,201 +303,6 @@ function EnablePushCard() {
         </Button>
       </div>
     </div>
-  );
-}
-
-/**
- * Aggregates every pending action across the app into one above-the-fold
- * card: unsigned agreements, expired/rejected documents, unconfirmed
- * upcoming shifts, and unread inbox messages. Each row deep-links to the
- * page where the action is resolved.
- *
- * Every fetch is best-effort — a failed source silently omits its row
- * (`.catch(() => null)`) rather than blocking or erroring the card. When
- * everything has settled and there's nothing to do, a subtle "all caught
- * up" line renders instead of the card.
- */
-function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
-  const { t } = useI18n();
-
-  const agreementsQuery = useQuery({
-    queryKey: ['me', 'agreements'],
-    queryFn: () => listMyAgreements().catch(() => null),
-  });
-  const documentsQuery = useQuery({
-    queryKey: ['me', 'documents'],
-    queryFn: () => listMyDocuments().catch(() => null),
-  });
-  const inboxQuery = useQuery({
-    queryKey: ['me', 'inboxUnread'],
-    queryFn: () => listMyInbox().catch(() => null),
-  });
-
-  const pendingAgreements = (agreementsQuery.data?.agreements ?? []).filter(
-    (a) => a.status === 'PENDING_SIGNATURE'
-  ).length;
-  // Expiring-soon rides along with expired/rejected — this used to be the
-  // one nudge only the (now-removed) decision console surfaced.
-  const expiringSoonCutoff = Date.now() + 60 * 86_400_000;
-  const docsNeedingAttention = (documentsQuery.data?.documents ?? []).filter(
-    (d) =>
-      d.status === 'EXPIRED' ||
-      d.status === 'REJECTED' ||
-      (d.expiresAt !== null &&
-        new Date(d.expiresAt).getTime() <= expiringSoonCutoff)
-  ).length;
-  const now = Date.now();
-  const unconfirmedShifts = (shifts ?? []).filter(
-    (s) =>
-      s.status === 'ASSIGNED' &&
-      new Date(s.startsAt).getTime() > now &&
-      !s.acknowledgedAt
-  ).length;
-  const unreadInbox = (inboxQuery.data?.notifications ?? []).filter(
-    (n) => !n.readAt
-  ).length;
-
-  const rows: {
-    to: string;
-    icon: typeof Clock;
-    label: string;
-  }[] = [];
-  if (pendingAgreements > 0) {
-    rows.push({
-      to: '/agreements',
-      icon: FileSignature,
-      label: t(
-        pendingAgreements === 1
-          ? 'dash.actionAgreements'
-          : 'dash.actionAgreementsPlural',
-        { count: pendingAgreements }
-      ),
-    });
-  }
-  if (docsNeedingAttention > 0) {
-    rows.push({
-      to: '/documents',
-      icon: FileWarning,
-      label: t(
-        docsNeedingAttention === 1 ? 'dash.actionDocs' : 'dash.actionDocsPlural',
-        { count: docsNeedingAttention }
-      ),
-    });
-  }
-  if (unconfirmedShifts > 0) {
-    rows.push({
-      to: '/scheduling',
-      icon: CalendarCheck,
-      label: t(
-        unconfirmedShifts === 1 ? 'dash.actionShifts' : 'dash.actionShiftsPlural',
-        { count: unconfirmedShifts }
-      ),
-    });
-  }
-  if (unreadInbox > 0) {
-    rows.push({
-      to: '/communications',
-      icon: Inbox,
-      label: t(
-        unreadInbox === 1 ? 'dash.actionInbox' : 'dash.actionInboxPlural',
-        { count: unreadInbox }
-      ),
-    });
-  }
-
-  // "Settled" = every source has either loaded or given up. Failed/denied
-  // shifts arrive as null; the three fetches resolve to null on error.
-  const settled =
-    !agreementsQuery.isPending &&
-    !documentsQuery.isPending &&
-    !inboxQuery.isPending &&
-    shifts !== undefined;
-
-  // A source that failed resolved to null, which is indistinguishable from
-  // "nothing pending" once its row is omitted. Claiming "all caught up" off
-  // that is a false all-clear on unsigned agreements and expired documents —
-  // exactly what this card exists to catch. Stay silent instead: the card
-  // under-reporting is survivable, telling someone they're clear is not.
-  const anySourceFailed =
-    agreementsQuery.data === null ||
-    documentsQuery.data === null ||
-    inboxQuery.data === null ||
-    shifts === null;
-
-  // Of those, the three this card fetches itself are the ones with no other
-  // voice on the page. A failed shifts fetch already renders its own
-  // "Couldn't load this" card with its own Retry just below, and two retry
-  // buttons for one outage is worse than one.
-  const ownSourceFailed =
-    agreementsQuery.data === null ||
-    documentsQuery.data === null ||
-    inboxQuery.data === null;
-
-  if (rows.length === 0) {
-    if (!settled) return null;
-    // Vanishing on failure was still a kind of all-clear — the card just
-    // wasn't there, and nothing said why. Say it plainly instead, and give
-    // them the one control that helps.
-    if (ownSourceFailed) {
-      return (
-        <ErrorBanner
-          severity="warning"
-          className="mb-4"
-          action={
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={() => {
-                void agreementsQuery.refetch();
-                void documentsQuery.refetch();
-                void inboxQuery.refetch();
-              }}
-            >
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('dash.checkFailed')}
-        </ErrorBanner>
-      );
-    }
-    // Shifts failed but this card's own sources are fine: stay silent
-    // rather than claim they're clear. The shifts card says what happened.
-    if (anySourceFailed) return null;
-    return (
-      <p className="mb-4 text-xs text-silver/70">{t('dash.allCaughtUp')}</p>
-    );
-  }
-
-  return (
-    <Card className="mb-4 border-gold/40">
-      <CardContent className="pt-5 pb-3">
-        <div className="text-xs2 uppercase tracking-widest text-gold flex items-center gap-1.5">
-          <AlertCircle className="h-3 w-3" aria-hidden="true" />
-          {t('dash.actionNeeded')}
-        </div>
-        <ul className="mt-1 divide-y divide-navy-secondary">
-          {rows.map(({ to, icon: Icon, label }) => (
-            <li key={to}>
-              <Link
-                to={to}
-                className="group flex items-center gap-2.5 py-2.5 coarse:min-h-11 text-sm text-white hover:text-gold-bright active:text-gold-bright focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-              >
-                <Icon
-                  className="h-4 w-4 text-silver group-hover:text-gold transition-colors shrink-0"
-                  aria-hidden="true"
-                />
-                <span className="flex-1 min-w-0">{label}</span>
-                <ArrowRight
-                  className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors shrink-0"
-                  aria-hidden="true"
-                />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
   );
 }
 

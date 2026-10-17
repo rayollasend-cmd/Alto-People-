@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Trash2, UserRound, Wallet } from 'lucide-react';
+import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Repeat, ThumbsDown, ThumbsUp, Trash2, UserRound, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -13,6 +13,11 @@ import {
   addRidePlace,
   bookRide,
   cancelMyRide,
+  cancelSeries,
+  createSeries,
+  getPendingFeedback,
+  listMySeries,
+  sendRideFeedback,
   deleteRidePlace,
   getMyTransport,
   getMyCrew,
@@ -24,6 +29,8 @@ import {
   reportTransportIssue,
   signalDriver,
   type BookRideInput,
+  type FeedbackReason,
+  type SeriesInput,
   type MyLiveRide,
   type MyTransport,
   type Ride,
@@ -52,6 +59,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TripMap, tripStage } from './TripMap';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { PickupPicker, type Pickup } from './PickupPicker';
@@ -180,8 +188,10 @@ export function RideHome() {
       ) : (
         <>
           <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
+          <RideFeedbackCard />
           <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
           <RideCalendar data={data} />
+          <StandingBookings />
           <ChargesCard data={data} />
           <AuthorizationStatusCard data={data} />
           <PastRides
@@ -1241,6 +1251,143 @@ function RidingWith({ ride }: { ride: Ride }) {
   );
 }
 
+/* ----- After the ride: a thumb, and why ----------------------------------- */
+
+/**
+ * "How was the ride?" — one card for the latest finished ride not yet
+ * rated. A thumb up sends at once; a thumb down asks why. Never a public
+ * score: transportation reads the trend by driver and route.
+ */
+export function RideFeedbackCard() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ['transport', 'me', 'feedback'], queryFn: getPendingFeedback, staleTime: 60_000 });
+  const [down, setDown] = useState(false);
+  const [reason, setReason] = useState<FeedbackReason | null>(null);
+  const [note, setNote] = useState('');
+  const send = useMutation({
+    mutationFn: (v: { rideId: string; thumbsUp: boolean }) =>
+      sendRideFeedback(v.rideId, { thumbsUp: v.thumbsUp, reason: v.thumbsUp ? 'GREAT' : reason, note: note.trim() || null }),
+    onSuccess: async () => {
+      hapticConfirm();
+      toast.success(t('ride.fbThanks'));
+      setDown(false);
+      setReason(null);
+      setNote('');
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'me', 'feedback'] });
+    },
+    onError: (err) => toast.error(why(err)),
+  });
+  const ride = q.data?.rides?.[0];
+  if (!ride) return null;
+  const reasons = (q.data?.reasons ?? []).filter((r) => r !== 'GREAT');
+  const when = ride.completedAt ? `${fmtRelativeDayTz(ride.completedAt, ride.timezone)} ${fmtTimeTz(ride.completedAt, ride.timezone)}` : ride.store;
+  return (
+    <Card className="mb-4">
+      <CardContent className="pt-5">
+        <SectionTitle className="mb-0" title={t('ride.fbTitle')} description={t('ride.fbBody', { van: ride.van ?? '', driver: ride.driver ?? '', when })} />
+        <div className="mt-3 flex flex-wrap gap-2 coarse:gap-3">
+          <Button size="sm" variant="secondary" onClick={() => send.mutate({ rideId: ride.rideId, thumbsUp: true })} disabled={send.isPending}>
+            <ThumbsUp className="h-4 w-4" />
+            {t('ride.fbUp')}
+          </Button>
+          <Button size="sm" variant={down ? 'primary' : 'secondary'} onClick={() => setDown(true)} disabled={send.isPending} aria-pressed={down}>
+            <ThumbsDown className="h-4 w-4" />
+            {t('ride.fbDown')}
+          </Button>
+        </div>
+        {down && (
+          <div className="mt-3 space-y-3">
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-silver">{t('ride.fbWhy')}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {reasons.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={reason === r}
+                    onClick={() => setReason(r)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs transition coarse:min-h-11',
+                      reason === r ? 'border-gold bg-gold/15 text-gold' : 'border-navy-secondary text-silver hover:text-ink',
+                    )}
+                  >
+                    {t(`ride.fbReason.${r}` as MessageKey)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Field label={t('ride.fbNote')}>
+              {(p) => <Input {...p} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />}
+            </Field>
+            <Button size="sm" onClick={() => send.mutate({ rideId: ride.rideId, thumbsUp: false })} loading={send.isPending} disabled={send.isPending || !reason}>
+              {t('ride.fbSend')}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ----- Standing bookings -------------------------------------------------- */
+
+/** "Mon, Wed, Fri" in the rider's language. */
+function daysLabel(days: number[], lang: string): string {
+  const fmt = new Intl.DateTimeFormat(lang, { weekday: 'short', timeZone: 'UTC' });
+  // 2026-01-04 is a Sunday.
+  return [...days].sort().map((d) => fmt.format(new Date(Date.UTC(2026, 0, 4 + d)))).join(', ');
+}
+
+export function StandingBookings() {
+  const { t, lang } = useI18n();
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const q = useQuery({ queryKey: ['transport', 'me', 'series'], queryFn: listMySeries, staleTime: 60_000 });
+  const series = q.data?.series ?? [];
+  if (series.length === 0) return null;
+  const stop = async (id: string) => {
+    const ok = await confirm({ title: t('ride.seriesStop'), description: t('ride.seriesStopped'), confirmLabel: t('ride.seriesStop'), destructive: true });
+    if (!ok) return;
+    try {
+      await cancelSeries(id);
+      toast.success(t('ride.seriesStopped'));
+      await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+    } catch (err) {
+      toast.error(why(err));
+    }
+  };
+  return (
+    <Card className="mb-4">
+      <CardContent className="pt-5">
+        <SectionTitle className="mb-0" title={t('ride.seriesTitle')} icon={Repeat} description={t('ride.seriesBody')} />
+        <ul className="mt-2 divide-y divide-navy-secondary/60">
+          {series.map((x) => (
+            <li key={x.id} className="flex items-center gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-ink">
+                  {x.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {x.store.name}
+                </div>
+                <div className="truncate text-xs text-silver">
+                  {daysLabel(x.daysOfWeek, lang)} · {x.windowLabel ? t('ride.shiftTag', { shift: x.windowLabel }) : x.timeOfDay}
+                  {' · '}
+                  {x.pickup.kind === 'stop' ? x.pickup.name : x.pickup.address}
+                </div>
+                {x.bookedThrough && (
+                  <div className="text-xs text-silver/80">{t('ride.seriesThrough', { date: fmtDayShort(x.bookedThrough, { anchored: true }) })}</div>
+                )}
+              </div>
+              <Button size="xs" variant="ghost" onClick={() => void stop(x.id)}>
+                {t('ride.seriesStop')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ChargesCard({ data }: { data: MyTransport }) {
   const { t } = useI18n();
   const c = data.charges;
@@ -1482,7 +1629,7 @@ export function BookRideDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const queryClient = useQueryClient();
   const s = data.settings;
   // Most rides are there and back; most associates ride from the same
@@ -1547,6 +1694,10 @@ export function BookRideDialog({
   const [pinPlaceId, setPinPlaceId] = useState<string | null>(null);
   const [saveAs, setSaveAs] = useState('');
   const [note, setNote] = useState('');
+  // A standing booking: the same ride on these days, every week.
+  const [repeat, setRepeat] = useState(false);
+  const [repeatDays, setRepeatDays] = useState<number[]>([]);
+  const [repeatUntil, setRepeatUntil] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1623,7 +1774,9 @@ export function BookRideDialog({
     // of "I pressed save and it just sat there". tooSoon keeps its silent
     // return because it already has its own banner above the button.
     if (legs.some((l) => !l.at)) return setError(t('ride.pickWhen'));
-    if (tooSoon) return;
+    const days = repeatDays;
+    if (repeat && days.length === 0) return setError(t('ride.repeatPickDays'));
+    if (tooSoon && !repeat) return;
     setBusy(true);
     setError(null);
     try {
@@ -1642,6 +1795,29 @@ export function BookRideDialog({
         home = { placeId: place.id };
       } else {
         home = { address: pickup.address, lat: pickup.lat, lng: pickup.lng };
+      }
+      if (repeat) {
+        // Booked forward by the server under the same rules as a hand booking.
+        let count = 0;
+        for (const leg of legs) {
+          const legTime = leg.direction === 'TO_WORK' ? arrive : leave;
+          const body: SeriesInput = {
+            direction: leg.direction,
+            locationId: store.id,
+            ...home,
+            ...(picked ? { windowLabel: picked.label } : { timeOfDay: legTime }),
+            daysOfWeek: days,
+            startsOn: date,
+            endsOn: repeatUntil || null,
+            ...(note.trim() ? { note: note.trim() } : {}),
+          };
+          count += (await createSeries(body)).booked;
+        }
+        hapticConfirm();
+        toast.success(t('ride.repeatBooked', { count }));
+        await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
+        onOpenChange(false);
+        return;
       }
       let booked = 0;
       let inLine: { position: number; direction: RideDirection } | null = null;
@@ -1868,6 +2044,52 @@ export function BookRideDialog({
             )}
           </Field>
 
+          <div className="rounded-lg border border-navy-secondary p-3">
+            <label className="flex items-center gap-2 text-sm text-ink coarse:min-h-11">
+              <input
+                type="checkbox"
+                className="h-4 w-4 coarse:h-6 coarse:w-6"
+                checked={repeat}
+                onChange={(e) => {
+                  setRepeat(e.target.checked);
+                  if (e.target.checked && repeatDays.length === 0) setRepeatDays([new Date(`${date}T12:00:00Z`).getUTCDay()]);
+                }}
+              />
+              <Repeat className="h-4 w-4 text-silver" aria-hidden="true" />
+              {t('ride.repeatWeekly')}
+            </label>
+            {repeat && (
+              <div className="mt-3 space-y-3">
+                <fieldset>
+                  <legend className="mb-1.5 text-xs font-medium text-silver">{t('ride.repeatDays')}</legend>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+                      const on = repeatDays.includes(d);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => setRepeatDays((x) => (on ? x.filter((y) => y !== d) : [...x, d]))}
+                          className={cn(
+                            'min-w-11 rounded-full border px-3 py-1 text-xs transition coarse:min-h-11',
+                            on ? 'border-gold bg-gold/15 text-gold' : 'border-navy-secondary text-silver hover:text-ink',
+                          )}
+                        >
+                          {daysLabel([d], lang)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+                <Field label={t('ride.repeatUntil')}>
+                  {(p) => <Input {...p} type="date" value={repeatUntil} min={date} onChange={(e) => setRepeatUntil(e.target.value)} className="w-44" />}
+                </Field>
+                <p className="text-xs text-silver">{t('ride.repeatHint')}</p>
+              </div>
+            )}
+          </div>
+
           {tooSoon && (
             <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
               {t('ride.tooSoon', { when: `${fmtRelativeDayTz(earliest, tz)} ${fmtTimeTz(earliest, tz)}` })}
@@ -1905,9 +2127,11 @@ export function BookRideDialog({
             className="shrink-0"
             onClick={() => void submit()}
             loading={busy}
-            disabled={busy || tooSoon || !store || (byShift && !picked)}
+            disabled={busy || (tooSoon && !repeat) || !store || (byShift && !picked) || (repeat && repeatDays.length === 0)}
           >
-            {fullLegs.length === legs.length && fullLegs.length > 0
+            {repeat
+              ? t('ride.repeatBtn')
+              : fullLegs.length === legs.length && fullLegs.length > 0
               ? t('ride.joinWaitlist')
               : legs.length === 2
                 ? t('ride.bookBoth')

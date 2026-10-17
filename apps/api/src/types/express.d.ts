@@ -47,6 +47,12 @@ export interface SessionUser {
   capabilities?: string[] | null;
   tenantRoleId?: string | null;
   tenantRoleName?: string | null;
+  /**
+   * Access pack: an internal role narrowed to these sites and/or regions
+   * (lib/scope internalSites). Empty or absent = the whole tenant.
+   */
+  scopeSiteIds?: string[];
+  scopeRegionIds?: string[];
 }
 
 /**
@@ -91,6 +97,8 @@ declare global {
        * from "stale cookie" (401, signal client to clear).
        */
       sessionStale?: boolean;
+      /** Access pack: why attachUser ended the session, when a policy did (idle / absolute). */
+      sessionEndedReason?: 'idle' | 'absolute';
       /**
        * Set by `allowMfaEnrollToken` when `req.user` was attached from a
        * short-lived mfa_enroll token (org-enforced MFA enrollment) rather

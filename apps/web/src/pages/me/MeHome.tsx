@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { isPending } from '@/lib/approvalRequestsApi';
 import {
   createBeneficiary,
   createDependent,
@@ -403,7 +404,7 @@ function ProfilePanel({
   const onSave = async () => {
     setSaving(true);
     try {
-      await updateSelfProfile({
+      const r = await updateSelfProfile({
         phone: phone.trim() || null,
         addressLine1: addressLine1.trim() || null,
         addressLine2: addressLine2.trim() || null,
@@ -411,7 +412,8 @@ function ProfilePanel({
         state: stateCode.trim() ? stateCode.trim().toUpperCase() : null,
         zip: zip.trim() || null,
       });
-      toast.success(t('me.profileUpdated'));
+      // The organization may ask HR to confirm an address change first (202).
+      toast.success(isPending(r) ? t('me.pendingApproval') : t('me.profileUpdated'));
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));

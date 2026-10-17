@@ -134,6 +134,7 @@ interface LoginFailureContext extends LoginContext {
     | 'passkey_ineligible'
     // Brief 2-3: the tenant requires its SSO for staff (decision 4).
     | 'sso_required'
+    | 'break_glass_needs_mfa'
     // OIDC SSO failures. The suffix is the precise machine reason
     // (state_mismatch, nonce_mismatch, bad_signature, token_expired,
     // unknown_email, disabled, …) — the browser only ever sees the

@@ -12,8 +12,13 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CalendarCheck,
+  Cake,
   ClipboardList,
   Clock,
+  FileWarning,
+  Lightbulb,
+  Sparkles,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -21,17 +26,19 @@ import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, fmtTime, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
   bulkApproveTeamTimesheets,
   getTeamDashboard,
+  getTeamHome,
   listReports,
   listTeamTimeOff,
   listTeamTimesheets,
   type DirectReport,
   type TeamDashboard,
+  type TeamHome,
   type TeamTimeEntry,
   type TeamTimeOffRequest,
 } from '@/lib/teamApi';
@@ -92,6 +99,13 @@ export function ManagerDashboard() {
     queryKey: ['team', 'timeoff', 'APPROVED'],
     queryFn: async () => (await listTeamTimeOff('APPROVED')).requests,
   });
+  // Beyond the queues (HR pack 2026-10): what is due on the team, today on
+  // the team, and the actions those suggest. One call.
+  const homeQuery = useQuery({ queryKey: ['team', 'home'], queryFn: () => getTeamHome() });
+  const home: TeamHome | null = homeQuery.data ?? null;
+  const dueCount = home
+    ? home.due.reviews.length + home.due.oneOnOnes.length + home.due.probations.length + home.due.rampMilestones.length + home.due.documents.length + home.due.credentials.length + home.due.pips.length
+    : null;
 
   const summary: TeamDashboard | null = summaryQuery.data ?? null;
   const reports: DirectReport[] | null = reportsQuery.data ?? null;
@@ -147,8 +161,10 @@ export function ManagerDashboard() {
         topbarTitle="Home"
         subtitle={
           summary && summary.directReports > 0
-            ? `You have ${summary.directReports} direct ${summary.directReports === 1 ? 'report' : 'reports'} on your team.`
-            : 'Your team-scoped overview.'
+            ? summary.directReports === 1
+              ? t('managerHome.oneReport')
+              : t('managerHome.nReports', { n: summary.directReports })
+            : t('managerHome.teamScoped')
         }
         meta={
           <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
@@ -172,12 +188,17 @@ export function ManagerDashboard() {
         }
         assistant={<HugoSeat />}
       >
+        {home && home.suggestions.length > 0 && <Suggestions items={home.suggestions} />}
         <TeamSnapshot
           summary={summary}
           activeCount={activeByReport.size}
           activeError={Boolean(activeQuery.error)}
           onRetryActive={() => void activeQuery.refetch()}
+          dueCount={dueCount}
+          outToday={home ? home.today.out.length : null}
         />
+        <TodayOnYourTeam home={home} error={Boolean(homeQuery.error)} onRetry={() => void homeQuery.refetch()} />
+        <DueOnYourTeam home={home} />
         <MyPlanCard />
         <TeamRoster
           reports={reports}
@@ -215,6 +236,7 @@ function NeedsYou({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const term = useTerm();
+  const { t } = useI18n();
   const bulkApproveM = useMutation({
     mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
     onSuccess: (r) => {
@@ -252,9 +274,9 @@ function NeedsYou({
       key: 'timesheets',
       icon: Clock,
       count: tsCount,
-      label: tsCount === 1 ? 'Timesheet to review' : 'Timesheets to review',
-      hint: 'Approve so payroll can include the hours.',
-      cta: 'Open queue',
+      label: tsCount === 1 ? t('managerHome.timesheetToReview') : t('managerHome.timesheetsToReview'),
+      hint: t('managerHome.timesheetsHint'),
+      cta: t('managerHome.openQueue'),
       severity: (tsCount > 10 ? 'urgent' : 'attention') as 'urgent' | 'attention',
       action: (
         <Button
@@ -263,7 +285,7 @@ function NeedsYou({
           onClick={approveAll}
           loading={bulkApproveM.isPending}
         >
-          Approve all {tsCount}
+          {t('managerHome.approveAllN', { n: tsCount })}
         </Button>
       ),
     },
@@ -271,9 +293,9 @@ function NeedsYou({
       key: 'timeoff',
       icon: CalendarOff,
       count: ptoCount,
-      label: ptoCount === 1 ? 'Time-off request waiting' : 'Time-off requests waiting',
-      hint: 'Approve or reject before the requested dates.',
-      cta: 'Open requests',
+      label: ptoCount === 1 ? t('managerHome.timeOffWaiting') : t('managerHome.timeOffsWaiting'),
+      hint: t('managerHome.timeOffHint'),
+      cta: t('managerHome.openRequests'),
       severity: (ptoCount > 5 ? 'urgent' : 'attention') as 'urgent' | 'attention',
       action: undefined,
     },
@@ -303,7 +325,7 @@ function NeedsYou({
           empty line stays out of the way; with none, it is the only voice. */}
       <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading || error} />
       {error ? (
-        <QueryErrorCard label="Couldn't load your approval queues" onRetry={onRetry} />
+        <QueryErrorCard label={t('managerHome.queuesError')} onRetry={onRetry} />
       ) : loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Array.from({ length: 2 }).map((_, i) => (
@@ -323,7 +345,7 @@ function NeedsYou({
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             </div>
             <div className="text-sm text-silver">
-              <span className="text-white font-medium">Inbox zero</span> — no timesheets or time-off requests waiting on you.
+              <span className="text-white font-medium">{t('managerHome.inboxZero')}</span> — {t('managerHome.inboxZeroBody')}
             </div>
           </CardContent>
         </Card>
@@ -470,12 +492,18 @@ function TeamSnapshot({
   activeCount,
   activeError,
   onRetryActive,
+  dueCount,
+  outToday,
 }: {
   summary: TeamDashboard | null;
   activeCount: number;
   activeError: boolean;
   onRetryActive: () => void;
+  /** Reviews, 1:1s, probations, checkpoints and expiries due on the team; null while loading. */
+  dueCount: number | null;
+  outToday: number | null;
 }) {
+  const { t } = useI18n();
   const toTeam = (card: React.ReactElement) => (
     <Link
       to="/team"
@@ -485,46 +513,46 @@ function TeamSnapshot({
     </Link>
   );
   return (
-    <section aria-label="Team snapshot" className="space-y-3">
-      <SectionTitle icon={Activity} title="Team snapshot" />
+    <section aria-label={t('managerHome.teamSnapshot')} className="space-y-3">
+      <SectionTitle icon={Activity} title={t('managerHome.teamSnapshot')} />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {summary ? (
           <>
             {activeError ? (
               <QueryErrorCard
-                label="Couldn't load who is on the clock right now."
+                label={t('managerHome.onClockError')}
                 onRetry={onRetryActive}
               />
             ) : (
               <MetricCard
-                label="On the clock now"
+                label={t('managerHome.onClockNow')}
                 value={activeCount}
                 hint={
                   summary.directReports > 0
-                    ? `${activeCount} of ${summary.directReports}`
+                    ? t('managerHome.xOfY', { a: activeCount, b: summary.directReports })
                     : undefined
                 }
                 wrap={toTeam}
               />
             )}
+            {/* The queues are counted once, in Needs you above; these two
+                tiles are what the queues cannot say. */}
             <MetricCard
-              label="Pending timesheets"
-              value={summary.pendingTimesheets}
-              accent={summary.pendingTimesheets > 0}
-              hint={summary.pendingTimesheets === 0 ? 'Inbox clear.' : undefined}
+              label="Due on your team"
+              value={dueCount ?? '—'}
+              accent={(dueCount ?? 0) > 0}
+              hint={dueCount === 0 ? 'Nothing due this month.' : 'Reviews, 1:1s, probations and expiries.'}
+            />
+            <MetricCard
+              label="Out today"
+              value={outToday ?? '—'}
+              hint={outToday === 0 ? 'Everyone is in.' : 'On approved leave.'}
               wrap={toTeam}
             />
             <MetricCard
-              label="Pending time off"
-              value={summary.pendingTimeOff}
-              accent={summary.pendingTimeOff > 0}
-              hint={summary.pendingTimeOff === 0 ? 'Nothing waiting.' : undefined}
-              wrap={toTeam}
-            />
-            <MetricCard
-              label="Direct reports"
+              label={t('managerHome.directReports')}
               value={summary.directReports}
-              hint={summary.directReports === 0 ? 'No one currently reports to you.' : undefined}
+              hint={summary.directReports === 0 ? t('managerHome.noReports') : undefined}
               wrap={toTeam}
             />
           </>
@@ -563,6 +591,7 @@ function TeamRoster({
   pendingPto: TeamTimeOffRequest[] | null;
   approvedPto: TeamTimeOffRequest[] | null;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const term = useTerm();
 
@@ -592,14 +621,14 @@ function TeamRoster({
   }, [pendingPto]);
 
   return (
-    <section aria-label="My team" className="space-y-3">
+    <section aria-label={t('managerHome.myTeam')} className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={Users} title="My team" className="mb-0" />
+        <SectionTitle icon={Users} title={t('managerHome.myTeam')} className="mb-0" />
         <Link
           to="/team"
           className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
         >
-          Open team page
+          {t('managerHome.openTeamPage')}
           <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
@@ -731,5 +760,196 @@ function StatusPill({
     <Badge variant="default">
       Off the clock
     </Badge>
+  );
+}
+
+/* ============================ Suggestions ================================ */
+
+/** What the due items add up to, as one line each with a place to go. */
+function Suggestions({ items }: { items: TeamHome['suggestions'] }) {
+  return (
+    <section aria-label="Suggested next steps" className="space-y-3">
+      <SectionTitle icon={Lightbulb} title="Suggested next steps" />
+      <Card>
+        <CardContent className="p-0">
+          <ul className="divide-y divide-line">
+            {items.map((s) => (
+              <li key={s.key}>
+                <Link to={s.link} className="flex items-center gap-3 px-5 py-3 text-sm text-ink hover:bg-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent">
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">{s.text}</span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+/* ========================= Today on your team ============================ */
+
+function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; error: boolean; onRetry: () => void }) {
+  if (error) {
+    return (
+      <section aria-label="Today on your team" className="space-y-3">
+        <SectionTitle icon={CalendarCheck} title="Today on your team" />
+        <QueryErrorCard label="Couldn't load today on your team." onRetry={onRetry} />
+      </section>
+    );
+  }
+  const today = home?.today;
+  return (
+    <section aria-label="Today on your team" className="space-y-3">
+      <SectionTitle icon={CalendarCheck} title="Today on your team" />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <Card>
+          <CardContent className="pt-5">
+            <div className="text-xs2 uppercase tracking-wider text-ink-muted">Shifts today</div>
+            {!today ? (
+              <Skeleton className="mt-3 h-4 w-2/3" />
+            ) : today.shifts.length === 0 ? (
+              <p className="mt-3 text-sm text-ink-muted">No one on your team is scheduled today.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {today.shifts.slice(0, 6).map((sh) => (
+                  <li key={sh.id} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-ink">{sh.associateName}</span>
+                    <span className="shrink-0 tabular-nums text-ink-muted">
+                      {fmtTime(sh.startsAt)}–{fmtTime(sh.endsAt)}
+                    </span>
+                  </li>
+                ))}
+                {today.shifts.length > 6 && <li className="text-xs text-ink-muted">and {today.shifts.length - 6} more</li>}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <div className="text-xs2 uppercase tracking-wider text-ink-muted">Out today</div>
+            {!today ? (
+              <Skeleton className="mt-3 h-4 w-2/3" />
+            ) : today.out.length === 0 ? (
+              <p className="mt-3 text-sm text-ink-muted">Everyone is in.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {today.out.map((o) => (
+                  <li key={o.associateId} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-ink">{o.associateName}</span>
+                    <Badge variant="info">
+                      <CalendarOff className="h-3 w-3" aria-hidden="true" />
+                      Until {fmtDate(o.until)}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <div className="text-xs2 uppercase tracking-wider text-ink-muted">Celebrations</div>
+            {!today ? (
+              <Skeleton className="mt-3 h-4 w-2/3" />
+            ) : today.celebrations.length === 0 ? (
+              <p className="mt-3 text-sm text-ink-muted">No birthdays or anniversaries today.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {today.celebrations.map((c) => (
+                  <li key={`${c.associateId}-${c.kind}`} className="flex items-center gap-2 text-sm text-ink">
+                    <Cake className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+                    <span className="truncate">{c.associateName}</span>
+                    <span className="text-ink-muted">{c.kind === 'BIRTHDAY' ? 'birthday' : `${c.years} ${c.years === 1 ? 'year' : 'years'} with us`}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+/* =========================== Due on your team ============================ */
+
+function DueOnYourTeam({ home }: { home: TeamHome | null }) {
+  const due = home?.due;
+  const groups: Array<{ key: string; label: string; icon: LucideIcon; link: string; rows: Array<{ id: string; name: string; note: string; urgent?: boolean }> }> = due
+    ? [
+        { key: 'reviews', label: 'Reviews due', icon: ClipboardList, link: '/performance', rows: due.reviews.map((r) => ({ id: r.associateId, name: r.associateName, note: r.lastPeriodEnd ? `Last review ended ${fmtDate(r.lastPeriodEnd)}` : 'Never reviewed', urgent: r.overdueDays > 90 })) },
+        { key: 'oneOnOnes', label: '1:1s coming up', icon: Users, link: '/performance?tab=one-on-ones', rows: due.oneOnOnes.map((o) => ({ id: o.id, name: o.associateName, note: fmtRelativeDate(o.scheduledFor) })) },
+        { key: 'probations', label: 'Probation decisions', icon: CalendarCheck, link: '/probation', rows: due.probations.map((p) => ({ id: p.id, name: p.associateName, note: `Ends ${fmtDate(p.endDate)}`, urgent: true })) },
+        { key: 'pips', label: 'Improvement plans ending', icon: AlertCircle, link: '/performance?tab=pips', rows: due.pips.map((p) => ({ id: p.id, name: p.associateName, note: `Ends ${fmtDate(p.endDate)}`, urgent: true })) },
+        { key: 'ramp', label: 'Ramp checkpoints', icon: Activity, link: '/ramp', rows: due.rampMilestones.map((m) => ({ id: m.id, name: m.associateName, note: `${m.title} · ${fmtDate(m.dueOn)}` })) },
+        {
+          key: 'expiring',
+          label: 'Documents and credentials expiring',
+          icon: FileWarning,
+          link: '/expirations',
+          rows: [
+            ...due.documents.map((d) => ({ id: d.id, name: d.associateName, note: `${d.kind.replace(/_/g, ' ').toLowerCase()} · ${d.expired ? 'expired' : 'expires'} ${fmtDate(d.expiresAt)}`, urgent: d.expired })),
+            ...due.credentials.map((c) => ({ id: c.id, name: c.associateName, note: `${c.name} · ${c.expired ? 'expired' : 'expires'} ${fmtDate(c.expiresAt)}`, urgent: c.expired })),
+          ],
+        },
+      ].filter((g) => g.rows.length > 0)
+    : [];
+  return (
+    <section aria-label="Due on your team" className="space-y-3">
+      <SectionTitle icon={Clock} title="Due on your team" />
+      {!due ? (
+        <Card>
+          <CardContent className="pt-5">
+            <Skeleton className="mb-2 h-3 w-1/3" />
+            <Skeleton className="h-3 w-2/3" />
+          </CardContent>
+        </Card>
+      ) : groups.length === 0 ? (
+        <Card className="border-success/30 bg-success/5">
+          <CardContent className="flex items-center gap-3 py-4">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-success/15 text-success">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            </div>
+            <div className="text-sm text-ink-muted">
+              <span className="font-medium text-ink">All clear</span> — no reviews, 1:1s, probations or expiries due on your team this month.
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {groups.map((g) => (
+            <Card key={g.key}>
+              <CardContent className="pt-5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <g.icon className="h-4 w-4 text-ink-muted" aria-hidden="true" />
+                    {g.label}
+                    <span className="rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">{g.rows.length}</span>
+                  </div>
+                  <Link to={g.link} className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                    Open
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                </div>
+                <ul className="mt-3 space-y-2">
+                  {g.rows.slice(0, 5).map((r) => (
+                    <li key={r.id} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="truncate text-ink">{r.name}</span>
+                      <span className={cn('shrink-0 text-xs', r.urgent ? 'text-alert' : 'text-ink-muted')}>{r.note}</span>
+                    </li>
+                  ))}
+                  {g.rows.length > 5 && <li className="text-xs text-ink-muted">and {g.rows.length - 5} more</li>}
+                </ul>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

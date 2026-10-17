@@ -15,6 +15,7 @@ import {
   Phone,
   RotateCcw,
   Route,
+  ShieldAlert,
   Store,
   UserX,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import {
   dropDriverClient,
   type DriverAccessStatus,
   getDriverRunLive,
+  getDriverToday,
   getDriverWeek,
   getDriverRuns,
   markBoarded,
@@ -49,6 +51,7 @@ import {
   undoRideMark,
   type Ride,
   type RideRun,
+  type GeoPoint,
   type SeatRequest,
   type TransportIssueCategory,
 } from '@/lib/transportApi';
@@ -80,6 +83,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { fmtClock, fmtIn } from './rideShifts';
+import { DriverTodayCard, IncidentDialog, OkPrompt, PreTripDialog, SafetyDialog, navigateTo, useNavApp } from './DriverTools';
 
 /**
  * Driver mode — the phone on the dash, built around the STOP, not a list:
@@ -113,8 +117,9 @@ function useTick(ms: number, on = true): number {
   return now;
 }
 
-const directionsUrl = (address: string) =>
-  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+/** Where to point the driver's map app for a stop: the riders' own pin when
+ *  there is one (a home or a housing complex), else the address. */
+const stopPoint = (s: Stop): GeoPoint | null => (s.kind === 'home' ? (s.rides.find((r) => r.point)?.point ?? null) : null);
 
 /* ----- Stops: riders grouped by where the van stops -------------------------- */
 
@@ -167,6 +172,9 @@ const stopDone = (s: Stop) => s.rides.every((r) => r.status !== 'SCHEDULED');
 
 const ShiftMapContext = createContext<(trip: TripKey) => void>(() => {});
 
+/** The safety sheet, from any run on the page. */
+const SafetyContext = createContext<{ open: (run: RideRun | null) => void }>({ open: () => {} });
+
 /** "Stops" — the shift's pickups, clustered and in order. */
 function StopsButton({ trip, className }: { trip: TripKey | null; className?: string }) {
   const { t } = useI18n();
@@ -209,6 +217,10 @@ export function DriverHome() {
   const [reporting, setReporting] = useState<string | null | undefined>(undefined);
   const [rider, setRider] = useState<string | null>(null);
   const [shiftMap, setShiftMap] = useState<TripKey | null>(null);
+  // The safety sheet (undefined: closed; null: open without a run) and the
+  // incident report it can hand on to.
+  const [safetyRun, setSafetyRun] = useState<RideRun | null | undefined>(undefined);
+  const [incidentRun, setIncidentRun] = useState<RideRun | null | undefined>(undefined);
   const all = runs.data?.runs ?? [];
   // A rider's "I'm outside" / "running late", and a run the desk put on
   // them: buzz, chime.
@@ -262,6 +274,7 @@ export function DriverHome() {
   );
 
   return (
+    <SafetyContext.Provider value={{ open: (run) => setSafetyRun(run) }}>
     <ShiftMapContext.Provider value={setShiftMap}>
       <HomeTemplate
         className="mx-auto max-w-2xl"
@@ -281,6 +294,10 @@ export function DriverHome() {
         actions={
           <div className="flex items-center gap-1">
             <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />
+            <Button variant="ghost" size="sm" onClick={() => setSafetyRun(heroRun ?? null)}>
+              <ShieldAlert className="h-4 w-4" />
+              {t('drive.safety')}
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => setReporting(null)}>
               <AlertTriangle className="h-4 w-4" />
               {t('ride.report')}
@@ -298,6 +315,7 @@ export function DriverHome() {
         decisions={{ title: t('drive.requests'), count: requestCount, content: <SeatRequests onRider={setRider} /> }}
         assistant={<HugoSeat />}
       >
+        <DriverTodayCard />
         {all.length > 0 && <DayStats runs={[...active, ...planned, ...done]} />}
         {restActive.map((run) => (
           <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} onRider={setRider} />
@@ -316,7 +334,19 @@ export function DriverHome() {
       )}
       {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
       <ShiftMapDrawer trip={shiftMap} open={!!shiftMap} onClose={() => setShiftMap(null)} />
+      {safetyRun !== undefined && (
+        <SafetyDialog
+          run={safetyRun ? (all.find((r) => r.id === safetyRun.id) ?? safetyRun) : null}
+          onClose={() => setSafetyRun(undefined)}
+          onIncident={() => {
+            setIncidentRun(safetyRun ?? null);
+            setSafetyRun(undefined);
+          }}
+        />
+      )}
+      {incidentRun !== undefined && <IncidentDialog run={incidentRun} onClose={() => setIncidentRun(undefined)} />}
     </ShiftMapContext.Provider>
+    </SafetyContext.Provider>
   );
 }
 
@@ -937,6 +967,7 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
 
 function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => void; onRider: (associateId: string) => void }) {
   const { t } = useI18n();
+  const safety = useContext(SafetyContext);
   const { act, busy } = useAct();
   const sharing = useShareVanLocation(run.id, true);
   const { pickups, drops } = stopsFor(run);
@@ -953,7 +984,23 @@ function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => v
     >
       <div className="p-5">
         <RunHeader run={run} tone="success" />
-        <SharingPill state={sharing} />
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <SharingPill state={sharing} />
+          </div>
+          {/* The shield: 911, the desk, share the trip, an incident. Always
+              in the same corner of the run, never behind a menu. */}
+          <Button
+            size="icon"
+            variant={run.safety?.sosAt && !run.safety.sosAckAt ? 'destructive' : 'secondary'}
+            className="mt-3 shrink-0"
+            aria-label={t('drive.safety')}
+            onClick={() => safety.open(run)}
+          >
+            <ShieldAlert className="h-5 w-5" />
+          </Button>
+        </div>
+        <OkPrompt run={run} onHelp={() => safety.open(run)} />
         <RunMap runId={run.id} />
 
         {current ? (
@@ -1002,6 +1049,53 @@ function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => v
   );
 }
 
+/**
+ * Back from directions. A map app gives a web app no way to be returned to,
+ * so the app notices instead: Navigate notes the stop (in session storage,
+ * which survives the phone reloading the tab while the map had the screen),
+ * and when the driver switches back with that stop still not marked, the
+ * card asks the one question left — "At {stop}?" — with Arrived in reach.
+ */
+export function useBackFromDirections(key: string, arrived: boolean) {
+  const storeKey = `alto:drive:nav:${key}`;
+  const read = () => {
+    try {
+      return window.sessionStorage.getItem(storeKey) !== null;
+    } catch {
+      return false;
+    }
+  };
+  const [back, setBack] = useState(false);
+  useEffect(() => {
+    if (arrived) {
+      try {
+        window.sessionStorage.removeItem(storeKey);
+      } catch {
+        /* storage is a convenience */
+      }
+      setBack(false);
+      return;
+    }
+    // A reload while the map had the screen lands here already "back".
+    if (read() && document.visibilityState === 'visible') setBack(true);
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && read()) setBack(true);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeKey, arrived]);
+  const leaving = () => {
+    try {
+      window.sessionStorage.setItem(storeKey, String(Date.now()));
+    } catch {
+      /* storage is a convenience */
+    }
+    setBack(false);
+  };
+  return { back, leaving, dismiss: () => setBack(false) };
+}
+
 function StopCard({
   run,
   stop,
@@ -1020,13 +1114,28 @@ function StopCard({
   onRider: (associateId: string) => void;
 }) {
   const { t } = useI18n();
+  const { app } = useNavApp();
   const tz = runTz(run);
   const waiting = stop.rides.filter((r) => r.status === 'SCHEDULED');
   const arrivedAt = stop.rides.map((r) => r.vanArrivedAt).find(Boolean) ?? null;
   const now = useTick(1_000, !!arrivedAt);
+  const fromDirections = useBackFromDirections(`${run.id}:${stop.rides.map((r) => r.id).join(',')}`, !!arrivedAt);
+  const arrive = () => void act(() => driverArrived(run.id, waiting.map((r) => r.id)));
 
   return (
     <div className="mt-4 rounded-lg border border-gold/40 bg-gold/[0.06] p-4">
+      {fromDirections.back && !arrivedAt && waiting.length > 0 && (
+        <div role="status" className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-gold/60 bg-gold/15 p-3">
+          <span className="min-w-0 flex-1 text-base font-semibold text-ink">{t('drive.backFromNav', { stop: stop.label })}</span>
+          <Button size="sm" className="coarse:text-sm" onClick={arrive} disabled={busy}>
+            <MapPin className="h-3.5 w-3.5" />
+            {t('drive.arrived')}
+          </Button>
+          <button type="button" onClick={fromDirections.dismiss} className="text-sm text-silver hover:text-ink coarse:min-h-11">
+            {t('drive.notYet')}
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2 text-2xs font-semibold uppercase tracking-wider text-gold">
         <span>
           {t('drive.nextStop')} · {t('drive.stopOf', { n, total })}
@@ -1062,7 +1171,12 @@ function StopCard({
           variant={arrivedAt ? 'secondary' : 'primary'}
           asChild
         >
-          <a href={directionsUrl(stop.address)} target="_blank" rel="noreferrer">
+          <a
+            href={navigateTo(app, { point: stopPoint(stop), address: stop.address })}
+            target="_blank"
+            rel="noreferrer"
+            onClick={fromDirections.leaving}
+          >
             <Navigation className="h-3.5 w-3.5" />
             {t('drive.navigate')}
           </a>
@@ -1082,7 +1196,7 @@ function StopCard({
             // before arrival — afterwards it is replaced by the time — so
             // there is no "after" case to express here.
             variant="secondary"
-            onClick={() => void act(() => driverArrived(run.id, waiting.map((r) => r.id)))}
+            onClick={arrive}
             disabled={busy}
           >
             <MapPin className="h-3.5 w-3.5" />
@@ -1262,6 +1376,7 @@ function DropCard({
   busy: boolean;
 }) {
   const { t } = useI18n();
+  const { app } = useNavApp();
   const aboard = run.rides.filter((r) => r.status === 'BOARDED').length;
   return (
     <div className="mt-4 rounded-lg border border-success/40 bg-success/[0.06] p-4">
@@ -1283,7 +1398,7 @@ function DropCard({
               <span className="text-silver"> · {d.rides.filter((r) => r.status === 'BOARDED').map((r) => r.rider.name.split(' ')[0]).join(', ')}</span>
             </span>
             <Button size="xs" variant="secondary" asChild>
-              <a href={directionsUrl(d.address)} target="_blank" rel="noreferrer">
+              <a href={navigateTo(app, { point: stopPoint(d), address: d.address })} target="_blank" rel="noreferrer">
                 <Navigation className="h-3.5 w-3.5" />
                 {t('drive.navigate')}
               </a>
@@ -1310,6 +1425,25 @@ function DropCard({
 function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport: () => void }) {
   const { t } = useI18n();
   const { act, busy } = useAct();
+  const today = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, staleTime: 60_000 });
+  const [checking, setChecking] = useState(false);
+  // The run leaves only once the van has been walked around (when the
+  // fleet asks for it): Start opens the check, a pass starts the run. The
+  // server is the gate — should it answer "do the check first" (the
+  // setting not loaded yet), the check opens then.
+  const needsCheck = today.data?.preTripRequired === true && !run.preTrip?.passed;
+  const start = () =>
+    void act(async () => {
+      try {
+        await startDriverRun(run.id);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'pretrip_required') {
+          setChecking(true);
+          return;
+        }
+        throw err;
+      }
+    }, needsCheck ? undefined : t('drive.started'));
   const now = useTick(30_000);
   const tz = runTz(run);
   const { pickups } = stopsFor(run);
@@ -1341,14 +1475,29 @@ function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport
           ))}
         </ol>
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button onClick={() => void act(() => startDriverRun(run.id), t('drive.started'))} disabled={busy}>
-            {t('drive.start')}
+          <Button onClick={() => (needsCheck ? setChecking(true) : start())} disabled={busy}>
+            {needsCheck ? t('drive.preTrip') : t('drive.start')}
           </Button>
+          {run.preTrip?.passed && (
+            <Badge size="sm" variant="success">
+              {t('drive.preTripDone')}
+            </Badge>
+          )}
           <button type="button" onClick={onReport} className="inline-flex items-center text-sm text-silver hover:text-white coarse:min-h-11">
             {t('ride.report')}
           </button>
         </div>
       </div>
+      {checking && (
+        <PreTripDialog
+          run={run}
+          onClose={() => setChecking(false)}
+          onPassed={() => {
+            setChecking(false);
+            start();
+          }}
+        />
+      )}
     </section>
   );
 }

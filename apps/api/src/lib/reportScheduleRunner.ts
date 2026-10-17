@@ -9,7 +9,7 @@ import { env } from '../config/env.js';
 import { send } from './notifications.js';
 import { enqueueAudit } from './audit.js';
 import { scheduledReportTemplate } from './emailTemplates.js';
-import { ENTITY_COLUMNS, SpecSchema, runReport } from './reportRun.js';
+import { ENTITY_COLUMNS, SpecSchema, runReport, aggregateColumns } from './reportRun.js';
 import type { SessionUser } from '../types/express.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { tenantJob } from './tenantJobs.js';
@@ -216,7 +216,7 @@ export async function runDueReportSchedules(
       const truncated = fetched.length > cap;
       const rows = truncated ? fetched.slice(0, cap) : fetched;
 
-      const csv = buildReportCsv(report.entity, spec.columns, rows);
+      const csv = buildReportCsv(report.entity, spec.groupBy?.length ? aggregateColumns(spec) : spec.columns, rows);
       const runDate = now.toISOString().slice(0, 10);
       const tpl = scheduledReportTemplate({
         reportName: report.name,

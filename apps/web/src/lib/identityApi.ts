@@ -83,3 +83,19 @@ export interface SamlConnectionInput {
 export const createSamlConnection = (input: SamlConnectionInput) => apiFetch<{ id: string; spEntityId: string; acsUrl: string }>('/identity/saml-connections', { method: 'POST', body: input });
 
 export const updateSamlConnection = (id: string, input: Partial<SamlConnectionInput>) => apiFetch<{ ok: true }>(`/identity/saml-connections/${id}`, { method: 'PATCH', body: input });
+
+/* ---------------------------------------------- Access pack: security policy */
+
+export interface SecurityPolicy {
+  sessionIdleMinutes: number | null;
+  sessionAbsoluteHours: number | null;
+  allowedCidrsInternal: string[];
+  allowedCidrsClient: string[];
+  allowedCidrsAssociate: string[];
+  deviceTrustEnabled: boolean;
+  deviceTrustDays: number;
+  breakGlassEnabled: boolean;
+}
+
+export const getSecurityPolicy = () => apiFetch<SecurityPolicy>('/identity/security-policy');
+export const putSecurityPolicy = (policy: SecurityPolicy) => apiFetch<SecurityPolicy>('/identity/security-policy', { method: 'PUT', body: policy });

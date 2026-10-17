@@ -27,7 +27,7 @@ import type {
   TermKey,
 } from '@alto-people/shared';
 import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   hasCapability,
   type Capability,
@@ -53,6 +53,7 @@ import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
+import { RoleFocusRow } from '@/components/home/RoleFocusRow';
 import { MyPlanCard } from '@/components/MyPlanCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { ClockStrip } from '@/components/ClockStrip';
@@ -63,23 +64,18 @@ import { ClockStrip } from '@/components/ClockStrip';
  * sections vary based on what the user can actually act on (see
  * ActionRequiredSection / ActivityFeed gating below).
  */
-const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
-  HR_ADMINISTRATOR:
-    "Here's what's happening across your workforce today.",
-  OPERATIONS_MANAGER:
-    'Operations snapshot — schedule, time, and onboarding at a glance.',
-  EXECUTIVE_CHAIRMAN:
-    'Company-wide pulse. Read-only across every module.',
-  FINANCE_ACCOUNTANT:
-    'Financial pulse — payroll runs, disbursements, and pending tax filings.',
-  INTERNAL_RECRUITER:
-    'Recruiting pipeline and open onboarding applications.',
-  CLIENT_PORTAL: 'Your workforce snapshot.',
-  MANAGER: 'Your team — pending approvals and time-off requests.',
+const SUBTITLE_BY_ROLE: Partial<Record<Role, MessageKey>> = {
+  HR_ADMINISTRATOR: 'adminHome.subHr',
+  OPERATIONS_MANAGER: 'adminHome.subOps',
+  EXECUTIVE_CHAIRMAN: 'adminHome.subExec',
+  FINANCE_ACCOUNTANT: 'adminHome.subFinance',
+  INTERNAL_RECRUITER: 'adminHome.subRecruiter',
+  CLIENT_PORTAL: 'adminHome.subClient',
+  MANAGER: 'adminHome.subManager',
   // Harmless fallback — SHIFT_SUPERVISOR normally routes to the dedicated
   // SupervisorDashboard before this component ever renders.
-  SHIFT_SUPERVISOR: "Your site today — who's on, who's late, what's open.",
-  FLOOR_SUPERVISOR: "Your site right now — who's on the floor.",
+  SHIFT_SUPERVISOR: 'adminHome.subShift',
+  FLOOR_SUPERVISOR: 'adminHome.subFloor',
 };
 
 // Thousands-separated integer ("1,234"). Kept local because @/lib/format
@@ -149,6 +145,7 @@ export function AdminDashboard() {
     can('manage:documents') ||
     can('process:payroll');
 
+  const { t } = useI18n();
   const kpisQuery = useQuery({
     queryKey: ['dashboard', 'kpis'],
     queryFn: () => getDashboardKPIs(),
@@ -194,12 +191,11 @@ export function AdminDashboard() {
   const error = kpisQuery.error
     ? kpisQuery.error instanceof ApiError
       ? kpisQuery.error.message
-      : 'Failed to load dashboard data.'
+      : t('adminHome.loadFailed')
     : null;
 
   const greet = useGreeting();
   const greetingName = greetingNameOf(user, '');
-  const { t } = useI18n();
 
   return (
     <>
@@ -215,7 +211,7 @@ export function AdminDashboard() {
           </>
         }
         topbarTitle="Home"
-        subtitle={(role && SUBTITLE_BY_ROLE[role]) ?? "Here's what's happening across your workforce today."}
+        subtitle={t((role && SUBTITLE_BY_ROLE[role]) ?? 'adminHome.subHr')}
         meta={
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex items-center gap-1.5 text-xs text-ink-muted">
@@ -253,6 +249,8 @@ export function AdminDashboard() {
         }
         assistant={<HugoSeat />}
       >
+        {/* HR admin and Ops manager no longer share one first row (HR pack 2026-10). */}
+        <RoleFocusRow />
         <KpiSection kpis={kpis} role={role} />
         <MyPlanCard />
         {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
@@ -308,6 +306,7 @@ function NeedsYou({
   ssnRecollectionOutstanding: number;
   openIncidents: number;
 }) {
+  const { t } = useI18n();
   const term = useTerm();
 
   const items: ActionItem[] = useMemo(() => {
@@ -320,12 +319,12 @@ function NeedsYou({
     if (canManageOnboarding && toReview > 0) {
       xs.push({
         count: toReview,
-        label: toReview === 1 ? 'Application to review' : 'Applications to review',
-        hint: 'Submitted and waiting on you.',
+        label: toReview === 1 ? t('adminHome.appToReview') : t('adminHome.appsToReview'),
+        hint: t('adminHome.appsHint'),
         // Straight to the review slice — the URL param beats the user's
         // persisted status chip on the applications list.
         to: '/onboarding?status=SUBMITTED',
-        cta: 'Open onboarding',
+        cta: t('adminHome.openOnboarding'),
         icon: ClipboardList,
         severity: toReview > 10 ? 'urgent' : 'attention',
       });
@@ -333,13 +332,10 @@ function NeedsYou({
     if (canManageCompliance && openIncidents > 0) {
       xs.push({
         count: openIncidents,
-        label:
-          openIncidents === 1
-            ? 'Safety incident awaiting review'
-            : 'Safety incidents awaiting review',
-        hint: `Reported from the field. Resolving one notifies the ${term('manager').toLowerCase()} who filed it.`,
+        label: openIncidents === 1 ? t('adminHome.incidentToReview') : t('adminHome.incidentsToReview'),
+        hint: t('adminHome.incidentsHint', { managerLc: term('manager').toLowerCase() }),
         to: '/compliance/osha',
-        cta: 'Open the injury log',
+        cta: t('adminHome.openInjuryLog'),
         icon: AlertTriangle,
         severity: 'urgent',
       });
@@ -347,11 +343,11 @@ function NeedsYou({
     if (canManageCompliance && kpis.pendingI9Section2 > 0) {
       xs.push({
         count: kpis.pendingI9Section2,
-        label: 'I-9 Section 2 due',
-        hint: 'Federal deadline: 3 business days from hire.',
+        label: t('adminHome.i9Due'),
+        hint: t('adminHome.i9Hint'),
         // Land on the I-9 tab, not the Scorecard default.
         to: '/compliance?tab=i9',
-        cta: 'Complete Section 2',
+        cta: t('adminHome.completeSection2'),
         icon: ShieldCheck,
         severity: 'urgent',
       });
@@ -359,12 +355,9 @@ function NeedsYou({
     if (canManageDocuments && kpis.pendingDocumentReviews > 0) {
       xs.push({
         count: kpis.pendingDocumentReviews,
-        label:
-          kpis.pendingDocumentReviews === 1
-            ? 'Document waiting for verification'
-            : 'Documents waiting for verification',
+        label: kpis.pendingDocumentReviews === 1 ? t('adminHome.docToVerify') : t('adminHome.docsToVerify'),
         to: '/documents',
-        cta: 'Review documents',
+        cta: t('adminHome.reviewDocuments'),
         icon: FileSearch,
         severity: kpis.pendingDocumentReviews > 20 ? 'urgent' : 'attention',
       });
@@ -372,10 +365,10 @@ function NeedsYou({
     if (canProcessPayroll && kpis.netPendingDisbursement > 0) {
       xs.push({
         count: 1,
-        label: `${fmtMoney(kpis.netPendingDisbursement)} pending payroll`,
-        hint: 'Finalized runs awaiting disbursement.',
+        label: t('adminHome.pendingPayroll', { amount: fmtMoney(kpis.netPendingDisbursement) }),
+        hint: t('adminHome.pendingPayrollHint'),
         to: '/payroll',
-        cta: 'Open payroll',
+        cta: t('adminHome.openPayroll'),
         icon: Wallet,
         severity: 'attention',
       });
@@ -383,13 +376,10 @@ function NeedsYou({
     if (canProcessPayroll && ssnRecollectionOutstanding > 0) {
       xs.push({
         count: ssnRecollectionOutstanding,
-        label:
-          ssnRecollectionOutstanding === 1
-            ? 'SSN needs re-collection'
-            : 'SSNs need re-collection',
-        hint: 'W-4 SSNs that can no longer be read, or card photos still missing — blocks new-hire reporting and W-2s.',
+        label: ssnRecollectionOutstanding === 1 ? t('adminHome.ssnRecollect') : t('adminHome.ssnsRecollect'),
+        hint: t('adminHome.ssnHint'),
         to: '/payroll/w4-recollection',
-        cta: 'Open campaign',
+        cta: t('adminHome.openCampaign'),
         icon: ShieldCheck,
         severity: 'urgent',
       });
@@ -408,6 +398,7 @@ function NeedsYou({
     ssnRecollectionOutstanding,
     openIncidents,
     term,
+    t,
   ]);
 
   const loading = canAct && !kpis;
@@ -546,10 +537,11 @@ function KpiSection({
   kpis: DashboardKPIs | null;
   role: Role | null;
 }) {
+  const { t } = useI18n();
   const term = useTerm();
   return (
-    <section aria-label="Workforce metrics" className="space-y-3">
-      <SectionTitle icon={Activity} title="Workforce snapshot" />
+    <section aria-label={t('adminHome.workforceSnapshot')} className="space-y-3">
+      <SectionTitle icon={Activity} title={t('adminHome.workforceSnapshot')} />
       {/* Two across in the home's main column until xl: four tiles at lg
           clipped their sparkline captions (second design walk). */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -695,10 +687,11 @@ const PIPELINE_TONE: Record<(typeof PIPELINE_ORDER)[number], string> = {
 };
 
 function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
+  const { t } = useI18n();
   if (!kpis) {
     return (
-      <section aria-label="Onboarding funnel" className="space-y-3">
-        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" />
+      <section aria-label={t('adminHome.onboardingPipeline')} className="space-y-3">
+        <SectionTitle icon={ClipboardList} title={t('adminHome.onboardingPipeline')} />
         <Card>
           <CardContent className="py-6 grid grid-cols-2 md:grid-cols-5 gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -719,18 +712,18 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   );
   if (total === 0) {
     return (
-      <section aria-label="Onboarding funnel" className="space-y-3">
-        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" />
+      <section aria-label={t('adminHome.onboardingPipeline')} className="space-y-3">
+        <SectionTitle icon={ClipboardList} title={t('adminHome.onboardingPipeline')} />
         <EmptyState
           icon={ClipboardList}
-          title="No applications yet"
-          description="New hires will appear here as HR creates them."
+          title={t('adminHome.noApplications')}
+          description={t('adminHome.noApplicationsBody')}
           action={
             <Link
               to="/onboarding"
               className="inline-flex items-center gap-1 text-sm text-gold hover:text-gold-bright"
             >
-              Open onboarding
+              {t('adminHome.openOnboarding')}
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           }
@@ -739,9 +732,9 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
     );
   }
   return (
-    <section aria-label="Onboarding funnel" className="space-y-3">
+    <section aria-label={t('adminHome.onboardingPipeline')} className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" className="mb-0" />
+        <SectionTitle icon={ClipboardList} title={t('adminHome.onboardingPipeline')} className="mb-0" />
         <Link
           // "View all" means ALL — the explicit param beats the persisted
           // status chip, which could silently narrow the landing.
@@ -839,6 +832,7 @@ function ActivityFeed({
   error: boolean;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const collapsible =
     entries !== null && entries.length > ACTIVITY_FEED_PREVIEW;
@@ -850,14 +844,14 @@ function ActivityFeed({
         : entries.slice(0, ACTIVITY_FEED_PREVIEW);
 
   return (
-    <section aria-label="Recent activity" className="space-y-3">
+    <section aria-label={t('adminHome.recentActivity')} className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={FileText} title="Recent activity" className="mb-0" />
+        <SectionTitle icon={FileText} title={t('adminHome.recentActivity')} className="mb-0" />
         <Link
           to="/audit"
           className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
         >
-          Audit log
+          {t('adminHome.auditLog')}
           <ArrowRight className="h-3 w-3" />
         </Link>
       </div>

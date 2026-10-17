@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
+import { emit as emitWorkflow } from './workflow.js';
 import { tenantJob } from './tenantJobs.js';
 import { prisma } from '../db.js';
 import { notifyAllAdmins, notifyAssociate } from './notify.js';
@@ -35,6 +37,20 @@ export async function runExpirationDigest(now: Date = new Date()): Promise<{ not
     }));
   const soon = [...tile.buckets.red, ...expired];
   if (soon.length === 0) return { notified: 0 };
+
+  // The workflow engine sees each expiring item once a week, with what and whose.
+  for (const item of soon.slice(0, 200)) {
+    const who = item.subject.associateName ?? item.subject.clientName ?? '';
+    const key = createHash('sha1').update(`${who}|${item.label}`).digest('hex').slice(0, 32);
+    const entityId = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-8${key.slice(17, 20)}-${key.slice(20, 32)}`;
+    await emitWorkflow({
+      trigger: 'COMPLIANCE_EXPIRING',
+      entityType: 'ComplianceItem',
+      entityId,
+      context: { label: item.label, daysUntil: item.daysUntil, associateName: item.subject.associateName ?? null, clientName: item.subject.clientName ?? null },
+      dedupeDays: 7,
+    }).catch((err) => console.warn('[expirations] workflow emit failed:', err));
+  }
 
   const sorted = [...soon].sort((a, b) => a.daysUntil - b.daysUntil);
   const lines = sorted

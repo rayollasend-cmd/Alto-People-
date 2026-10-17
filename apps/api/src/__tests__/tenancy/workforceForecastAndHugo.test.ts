@@ -155,7 +155,7 @@ describe('Hugo in the app', () => {
     expect(me.status, JSON.stringify(me.body)).toBe(200);
     expect(me.body).toMatchObject({ name: 'Hugo', audience: 'admin' });
     expect(me.body.intro).toMatch(/the AI assistant in Alto People\. I'm not a person\./);
-    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(['DESK', 'COVERAGE']);
+    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(expect.arrayContaining(['DESK', 'COVERAGE']));
 
     const all = await admin.post('/hugo/ask').send({ text: 'Where are we short this week?' });
     expect(all.body.intent).toBe('COVERAGE');
@@ -183,7 +183,8 @@ describe('Hugo in the app', () => {
     await suspendCapability(prisma, w.workerId, COVERAGE_FORECAST, ALTO_TENANT_ID, w.hr.id, 'Checking the targets');
     const admin = await loginAs(agent(), w.hr.email);
     const me = await admin.get('/hugo');
-    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(['DESK']);
+    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(expect.arrayContaining(['DESK']));
+    expect(me.body.can.map((c: { key: string }) => c.key)).not.toContain('COVERAGE');
     expect(me.body.intro).not.toMatch(/coverage/i);
     const asked = await admin.post('/hugo/ask').send({ text: 'Where are we short this week?' });
     expect(asked.body.intent).toBe('HELP');
@@ -201,7 +202,7 @@ describe('Hugo in the app', () => {
     const ana = await loginAs(agent(), w.anaUser.email);
     const me = await ana.get('/hugo');
     expect(me.body.audience).toBe('associate');
-    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(['PAYDAY', 'RIDE', 'SCHEDULE']);
+    expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(expect.arrayContaining(['PAYDAY', 'RIDE', 'SCHEDULE']));
     const sched = await ana.post('/hugo/ask').send({ text: "What's my schedule?" });
     expect(sched.body.intent).toBe('SCHEDULE');
     expect(sched.body.reply).toContain('Housekeeper');

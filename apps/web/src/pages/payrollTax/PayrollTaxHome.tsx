@@ -7,6 +7,8 @@ import {
   build940,
   build941,
   bulkFileTaxForms,
+  taxFormMefUrl,
+  f1095cPdfUrl,
   bulkSendTaxFormCopies,
   createGarnishment,
   createTaxForm,
@@ -647,6 +649,8 @@ const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
   W2C: 'W-2c (Correction)',
   F1099_NEC: '1099-NEC (Annual contractor)',
   F1099_MISC: '1099-MISC (Annual miscellaneous)',
+  F1095C: '1095-C (Annual health coverage offer)',
+  F1094C: '1094-C (ACA transmittal)',
 };
 
 const FORM_STATUSES: TaxForm['status'][] = ['DRAFT', 'FILED', 'AMENDED', 'VOIDED'];
@@ -816,10 +820,22 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   };
 
   const onFile = async (id: string) => {
-    if (!(await confirm({ title: 'File this form?', description: 'Filed forms are immutable.' }))) return;
+    // Alto renders and packages; the IRS/SSA portal or the filing partner
+    // transmits. "Mark filed" records the receipt they gave back.
+    const confirmation = await prompt({
+      title: 'Mark this form filed?',
+      description:
+        'Transmit it first — through the IRS or SSA portal, or your filing partner — then record the acknowledgment number they returned. Filed forms are immutable.',
+      reasonLabel: 'Acknowledgment / confirmation number',
+      reasonPlaceholder: 'e.g. the IRS submission ID',
+      reasonMaxLength: 80,
+      required: false,
+      confirmLabel: 'Mark filed',
+    });
+    if (confirmation === null) return;
     try {
-      await fileTaxForm(id);
-      toast.success('Form filed.');
+      await fileTaxForm(id, confirmation.trim() || null);
+      toast.success('Form marked filed.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't file the form. Try again.");
@@ -889,6 +905,11 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
+      <p className="rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-xs text-silver">
+        Alto builds every form and file — the PDFs, the SSA EFW2 file, the 941/940 MeF returns and the ACA AIR file. Transmission happens through the
+        IRS or SSA portal, or your filing partner; &ldquo;Mark filed&rdquo; records the acknowledgment they return. The IRS FIRE file for 1099s has not
+        been through the IRS test system yet — run it through FIRE&rsquo;s test environment before a production transmission.
+      </p>
       {canManage && (
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
@@ -1042,7 +1063,19 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 { key: 'year', header: 'Year / Q', accessor: (f) => `${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''}`, sortable: true, cardMeta: true },
                 { key: 'recipient', header: 'Recipient', accessor: (f) => f.associateName ?? 'Aggregate', sortable: true, cardMeta: true },
                 { key: 'status', header: 'Status', accessor: (f) => f.status, sortable: true, cell: (f) => <StatusBadge status={f.status} overrides={FORM_TONES} /> },
-                { key: 'filed', header: 'Filed', accessor: (f) => f.filedAt, sortable: true, searchable: false, cell: (f) => fmtDate(f.filedAt) },
+                {
+                  key: 'filed',
+                  header: 'Filed',
+                  accessor: (f) => f.filedAt,
+                  sortable: true,
+                  searchable: false,
+                  cell: (f) => (
+                    <span>
+                      {fmtDate(f.filedAt)}
+                      {f.filingConfirmation && <span className="block text-2xs text-silver">Ack. {f.filingConfirmation}</span>}
+                    </span>
+                  ),
+                },
                 {
                   key: 'actions',
                   header: 'Actions',
@@ -1059,6 +1092,20 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           someone else's. Filing, voiding and sending each
                           recipient their own copy stay available to
                           everyone who runs payroll. */}
+                      {(f.kind === 'F941' || f.kind === 'F940') && f.status !== 'VOIDED' && (
+                        <Button size="sm" variant="ghost" asChild title="The IRS Modernized e-File return — hand it to your filing partner or Authorized e-file Provider to transmit">
+                          <a href={taxFormMefUrl(f.id)} download>
+                            <Download className="mr-1 h-3 w-3" /> MeF XML
+                          </a>
+                        </Button>
+                      )}
+                      {f.kind === 'F1095C' && f.status !== 'VOIDED' && canExportPii && (
+                        <Button size="sm" variant="ghost" asChild>
+                          <a href={f1095cPdfUrl(f.id)} download>
+                            <Download className="mr-1 h-3 w-3" /> 1095-C
+                          </a>
+                        </Button>
+                      )}
                       {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && canExportPii && (
                         <span className="inline-flex">
                           <Button size="sm" variant="ghost" asChild className="rounded-r-none">
@@ -1114,7 +1161,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                       )}
                       {canManage && f.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onFile(f.id)}>
-                          File
+                          Mark filed
                         </Button>
                       )}
                       {canManage && f.status !== 'VOIDED' && (f.kind === 'W2' || f.kind === 'W2C' || f.kind === 'F1099_NEC' || f.kind === 'F1099_MISC') && (
@@ -1851,6 +1898,9 @@ const KNOWN_AMOUNT_FIELDS: Record<TaxFormKind, { key: string; label: string }[]>
   // W-2c drafts are normally created via "Correct (W-2c)" on a filed W-2
   // (which computes previous/corrected pairs); manual ones are custom lines.
   W2C: [],
+  // ACA forms carry month-by-month codes, generated from Benefits → ACA.
+  F1095C: [],
+  F1094C: [],
   F1099_NEC: [
     { key: 'box1NonemployeeCompensation', label: 'Box 1 — Nonemployee compensation' },
     { key: 'box4FitWithheld', label: 'Box 4 — Federal income tax withheld' },

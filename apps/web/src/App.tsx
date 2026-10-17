@@ -92,6 +92,7 @@ const TimesheetsView = lazyNamed(
 const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'TimeOffHome');
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
 const LaborCostsHome = lazyNamed(() => import('@/pages/scheduling/LaborCostsHome'), 'LaborCostsHome');
+const SupervisorCorps = lazyNamed(() => import('@/pages/scheduling/SupervisorCorps'), 'SupervisorCorps');
 const OpsHome = lazyNamed(() => import('@/pages/ops/OpsHome'), 'OpsHome');
 const RideHome = lazyNamed(() => import('@/pages/transport/RideHome'), 'RideHome');
 const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'), 'TransportHome');
@@ -112,6 +113,9 @@ const PayrollReadiness = lazyNamed(
   'PayrollReadiness',
 );
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
+const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
+const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
+const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPage'), 'CashForecastPage');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
 const PayrollYearEndClose = lazyNamed(
   () => import('@/pages/payroll/PayrollYearEndClose'),
@@ -152,6 +156,11 @@ const PersonRecord = lazyNamed(() => import('@/pages/people/PersonRecord'), 'Per
 const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
 const OrgChart = lazyNamed(() => import('@/pages/org/OrgChart'), 'OrgChart');
 const HeadcountHome = lazyNamed(() => import('@/pages/headcount/HeadcountHome'), 'HeadcountHome');
+const HeadcountPlan = lazyNamed(() => import('@/pages/headcount/HeadcountPlan'), 'HeadcountPlan');
+const MassUpdate = lazyNamed(() => import('@/pages/people/MassUpdate'), 'MassUpdate');
+const PolicyCampaignsHome = lazyNamed(() => import('@/pages/compliance/PolicyCampaignsHome'), 'PolicyCampaignsHome');
+const PeopleAnalytics = lazyNamed(() => import('@/pages/reports/PeopleAnalytics'), 'PeopleAnalytics');
+const DocumentRetentionAdmin = lazyNamed(() => import('@/pages/admin/DocumentRetentionAdmin'), 'DocumentRetentionAdmin');
 const TeamHome = lazyNamed(() => import('@/pages/team/TeamHome'), 'TeamHome');
 const DirCommsHome = lazyNamed(() => import('@/pages/dirComms/DirCommsHome'), 'DirCommsHome');
 
@@ -175,6 +184,7 @@ const HotlineAdmin = lazyNamed(() => import('@/pages/hotline/HotlineAdmin'), 'Ho
 // Performance / recruiting / learning
 const PerformanceHome = lazyNamed(() => import('@/pages/performance/PerformanceHome'), 'PerformanceHome');
 const PerformanceExtras = lazyNamed(() => import('@/pages/performance/PerformanceExtras'), 'PerformanceExtras');
+const ReviewCalibration = lazyNamed(() => import('@/pages/performance/ReviewCalibration'), 'ReviewCalibration');
 const RecruitingHome = lazyNamed(() => import('@/pages/recruiting/RecruitingHome'), 'RecruitingHome');
 const RecruitingExtras = lazyNamed(() => import('@/pages/recruiting/RecruitingExtras'), 'RecruitingExtras');
 const RecruitingAnalytics = lazyNamed(() => import('@/pages/recruiting/RecruitingAnalytics'), 'RecruitingAnalytics');
@@ -207,6 +217,8 @@ const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'Bran
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
 const SettingsHome = lazyNamed(() => import('@/pages/admin/SettingsHome'), 'SettingsHome');
 const SignInSettings = lazyNamed(() => import('@/pages/admin/SignInSettings'), 'SignInSettings');
+const AccessCertifications = lazyNamed(() => import('@/pages/admin/AccessCertifications'), 'AccessCertifications');
+const AccessCertificationPage = lazyNamed(() => import('@/pages/admin/AccessCertifications'), 'AccessCertificationPage');
 const SupportPage = lazyNamed(() => import('@/pages/support/SupportPage'), 'SupportPage');
 const PlatformSupportInbox = lazyNamed(() => import('@/pages/support/PlatformSupportInbox'), 'PlatformSupportInbox');
 const EmployersAdmin = lazyNamed(() => import('@/pages/admin/EmployersAdmin'), 'EmployersAdmin');
@@ -218,6 +230,7 @@ const TaskPolicyPage = lazyNamed(() => import('@/pages/tasks/TaskPolicyPage'), '
 const ComplianceEvidenceHome = lazyNamed(() => import('@/pages/admin/ComplianceEvidenceHome'), 'ComplianceEvidenceHome');
 const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
+const ApprovalRecord = lazyNamed(() => import('@/pages/audit/ApprovalRecord'), 'ApprovalRecord');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
 const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
 const DesignSystemPage = lazyNamed(() => import('@/pages/platform/DesignSystemPage'), 'DesignSystemPage');
@@ -231,6 +244,8 @@ const RobotsHome = lazyNamed(() => import('@/pages/robots/RobotsHome'), 'RobotsH
 const RobotRecord = lazyNamed(() => import('@/pages/robots/RobotRecord'), 'RobotRecord');
 const SiteSafetyZones = lazyNamed(() => import('@/pages/robots/SiteSafetyZones'), 'SiteSafetyZones');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
+const MyWallet = lazyNamed(() => import('@/pages/me/MyWallet'), 'MyWallet');
+const WalletVerifyPage = lazyNamed(() => import('@/pages/public/WalletVerifyPage'), 'WalletVerifyPage');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
 const AssetsHome = lazyNamed(() => import('@/pages/assets/AssetsHome'), 'AssetsHome');
@@ -249,9 +264,17 @@ const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'Repo
 const KioskPage = lazyNamed(() => import('@/pages/kiosk/KioskPage'), 'KioskPage');
 const KioskAdmin = lazyNamed(() => import('@/pages/kiosk/KioskAdmin'), 'KioskAdmin');
 const HotlinePage = lazyNamed(() => import('@/pages/hotline/HotlinePage'), 'HotlinePage');
+const TrackPage = lazyNamed(() => import('@/pages/transport/TrackPage'), 'TrackPage');
 const CareersListPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareersListPage');
 const CareerPostingPage = lazyNamed(() => import('@/pages/careers/CareersPage'), 'CareerPostingPage');
 const OfferLetterPage = lazyNamed(() => import('@/pages/offer/OfferLetterPage'), 'OfferLetterPage');
+// The office pack (2026-10-17): the candidate's page and the client NPS answer
+// page are public signed links; marketing and the NPS results are signed-in.
+const CandidatePortalPage = lazyNamed(() => import('@/pages/candidate/CandidatePortalPage'), 'CandidatePortalPage');
+const NpsSurveyPage = lazyNamed(() => import('@/pages/nps/NpsSurveyPage'), 'NpsSurveyPage');
+const MarketingHome = lazyNamed(() => import('@/pages/marketing/MarketingHome'), 'MarketingHome');
+const ReferralBonusDesk = lazyNamed(() => import('@/pages/marketing/ReferralBonusDesk'), 'ReferralBonusDesk');
+const ClientNpsPage = lazyNamed(() => import('@/pages/clients/ClientNpsPage'), 'ClientNpsPage');
 
 // Hover-prefetch registry. The Sidebar (and any other navigator) looks
 // up the user's hovered link here and fires the chunk loader before the
@@ -440,6 +463,7 @@ const LAYOUT_ROUTES = [
   // Weekly-close roll-up — same audience as ClientDetail's StatementsSection:
   // payroll finalizes, executives read. Static segment outranks `clients/:id`.
   { path: 'clients/statements', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><ClientStatementsRollup /></RequireCapability> },
+  { path: 'clients/nps', element: <RequireCapability cap="view:executive" anyOf={['view:marketing']}><ClientNpsPage /></RequireCapability> },
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
   // The client portal home — CLIENT_PORTAL's landing view; admins with
   // view:executive/manage:org preview any client via ?clientId= (the
@@ -457,6 +481,8 @@ const LAYOUT_ROUTES = [
   { path: 'messages', element: <MessagesHome /> },
   { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
+  // The supervisor corps: field leadership places a supervisor at a store and shift.
+  { path: 'scheduling/supervisors', element: <RequireCapability cap="manage:org"><SupervisorCorps /></RequireCapability> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
   // Every decision waiting on the signed-in person; the API decides which
   // queues they may see, so any authenticated role can open it.
@@ -510,14 +536,20 @@ const LAYOUT_ROUTES = [
     { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
     { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
     { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },
+    // Access pack: certification campaigns — any signed-in reviewer may open theirs; running one needs manage:org (the page gates the button).
+    { path: 'admin/access-certifications', element: <AccessCertifications /> },
+    { path: 'admin/access-certifications/:id', element: <AccessCertificationPage /> },
     { path: 'platform/support', element: <RequireCapability cap="manage:org"><PlatformSupportInbox /></RequireCapability> },
     { path: 'admin/employers', element: <RequireCapability cap="view:org"><EmployersAdmin /></RequireCapability> },
+    { path: 'admin/document-retention', element: <RequireCapability cap="view:hr-admin"><DocumentRetentionAdmin /></RequireCapability> },
     { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
     { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
     { path: 'admin/task-policy', element: <RequireCapability cap="view:scheduling"><TaskPolicyPage /></RequireCapability> },
     { path: 'admin/compliance-evidence', element: <RequireCapability cap="view:org"><ComplianceEvidenceHome /></RequireCapability> },
     { path: 'admin/billing', element: <RequireCapability cap="manage:org" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
     { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
+    // The approval engine's record: every second-person request, under the audit desk.
+    { path: 'audit/approvals', element: <RequireCapability cap="view:audit" anyOf={['manage:org', 'process:payroll']}><ApprovalRecord /></RequireCapability> },
     { path: 'trust', element: <RequireCapability cap="view:audit" anyOf={['manage:org', 'view:executive']}><TrustCenterPage /></RequireCapability> },
     { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
     { path: 'developers', element: <RequireCapability cap="view:integrations"><DevelopersPage /></RequireCapability> },
@@ -536,6 +568,7 @@ const LAYOUT_ROUTES = [
   // view:payroll; the route matches it.
   { path: 'benefits', element: <RequireCapability cap="view:payroll"><BenefitsHome /></RequireCapability> },
   { path: 'people', element: <RequireCapability cap="view:org"><PeopleDirectory /></RequireCapability> },
+  { path: 'people/mass-update', element: <RequireCapability cap="manage:org"><MassUpdate /></RequireCapability> },
   { path: 'people/:associateId', element: <RequireCapability cap="view:org"><PersonRecord /></RequireCapability> },
   { path: 'org', element: <RequireCapability cap="view:org"><OrgHome /></RequireCapability> },
   { path: 'org/chart', element: <RequireCapability cap="view:org"><OrgChart /></RequireCapability> },
@@ -543,6 +576,10 @@ const LAYOUT_ROUTES = [
   { path: 'assets', element: <AssetsHome /> },
   { path: 'pulse', element: <PulseHome /> },
   { path: 'headcount', element: <HeadcountHome /> },
+  { path: 'headcount/plan', element: <RequireCapability cap="view:org"><HeadcountPlan /></RequireCapability> },
+  // Marketing: the funnel, the brand page, campaigns; the bonus desk is Finance's.
+  { path: 'marketing', element: <RequireCapability cap="view:marketing"><MarketingHome /></RequireCapability> },
+  { path: 'marketing/bonuses', element: <RequireCapability cap="process:payroll" anyOf={['view:marketing']}><ReferralBonusDesk /></RequireCapability> },
   { path: 'skills', element: <SkillsHome /> },
   { path: 'mentorship', element: <MentorshipHome /> },
   { path: 'expirations', element: <ExpirationsHome /> },
@@ -556,6 +593,7 @@ const LAYOUT_ROUTES = [
   { path: 'vaccinations', element: <VaccinationsHome /> },
   { path: 'agreements', element: <AgreementsHome /> },
   { path: 'hr-cases', element: <HrCasesHome /> },
+  { path: 'policy-campaigns', element: <RequireCapability cap="view:hr-admin"><PolicyCampaignsHome /></RequireCapability> },
   { path: 'relay', element: <RequireCapability cap="view:org"><RelayBoard /></RequireCapability> },
   { path: 'help-center', element: <KbHome /> },
   { path: 'ramp', element: <RampHome /> },
@@ -569,10 +607,13 @@ const LAYOUT_ROUTES = [
   { path: 'me', element: <MeHome /> },
   // The associate's own disciplinary record — the page the "please
   // acknowledge" notification links to. Both bare and :id forms resolve.
+  // What they've earned, carried with them — and the link that shows it.
+  { path: 'me/wallet', element: <MyWallet /> },
   { path: 'me/discipline', element: <MyDiscipline /> },
   { path: 'me/discipline/:actionId', element: <MyDiscipline /> },
   { path: 'compensation', element: <CompensationHome /> },
   { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
+  { path: 'performance/calibration', element: <RequireCapability cap="manage:performance"><ReviewCalibration /></RequireCapability> },
   { path: 'marketplace', element: <MarketplaceHome /> },
   { path: 'payrules', element: <RequireCapability cap="process:payroll"><PayRulesHome /></RequireCapability> },
   { path: 'directory', element: <RequireCapability cap="view:org"><DirCommsHome /></RequireCapability> },
@@ -586,6 +627,9 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
+  { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
+  { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
+  { path: 'finance/cash-forecast', element: <RequireCapability cap="process:payroll"><CashForecastPage /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
@@ -593,6 +637,7 @@ const LAYOUT_ROUTES = [
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
   { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
   { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
+  { path: 'reports/people', element: <RequireCapability cap="view:analytics"><PeopleAnalytics /></RequireCapability> },
   { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
   { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
   { path: 'time-attendance/timesheets', element: <RequireCapability cap="manage:time"><TimesheetsView /></RequireCapability> },
@@ -693,6 +738,17 @@ export const router = createBrowserRouter([
     ),
     errorElement: <RouterErrorPage />,
   },
+  // A driver's shared trip — public by its signed, expiring link. Shows the
+  // van and its next stop, never the riders (routes/transportOps /track).
+  {
+    path: '/track/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <TrackPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // The public careers site — the address every job posting shows. No
   // auth and no Layout: an applicant has no account.
   {
@@ -715,6 +771,37 @@ export const router = createBrowserRouter([
   },
   // A candidate's offer: read the letter, sign it. The link in the offer
   // email is the key — no login, retired once used.
+  // A shared credential wallet: the link is the key, there is no account.
+  {
+    path: '/w/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <WalletVerifyPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // A candidate's own page: their stage, interview and the documents we
+  // asked for. The link in the email or text is the key — no login.
+  {
+    path: '/candidate/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <CandidatePortalPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // A store manager's quarterly NPS answer — outside the portal, no login.
+  {
+    path: '/nps/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <NpsSurveyPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   {
     path: '/offer/:token',
     element: (

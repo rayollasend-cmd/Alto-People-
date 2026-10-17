@@ -10,6 +10,7 @@ import { notifyHrOfPaymentFailure } from '../lib/payrollFailureNotify.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
 import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
+import { rerouteReturnedItem } from '../lib/payoutReroute.js';
 
 export const branchWebhookRouter = Router();
 
@@ -156,6 +157,19 @@ branchWebhookRouter.post(
         });
 
         let runFlippedToDisbursed = false;
+        // A deposit the bank sent back after it was marked paid: the
+        // return is recorded here; the re-send happens after the
+        // transaction (lib/payoutReroute.ts), never inside it.
+        // (A RETURNED on a payment that never settled stays the ordinary
+        // failure below: HELD with the reason, HR told.)
+        const returned =
+          String(branchStatus).toUpperCase() === 'RETURNED' && item.status === 'DISBURSED' && !item.reroutedAt;
+        if (returned) {
+          await tx.payrollItem.update({
+            where: { id: item.id },
+            data: { status: 'HELD', returnedAt: new Date(), failureReason: describeBranchFailure(failureReason) },
+          });
+        }
         if (mapped === 'SUCCESS' && item.status !== 'DISBURSED') {
           await tx.payrollItem.update({
             where: { id: item.id },
@@ -212,6 +226,7 @@ branchWebhookRouter.post(
           mapped,
           failureReason,
           runFlippedToDisbursed,
+          returned,
         };
         },
         // Neon cold-start can take seconds; the default 5s interactive
@@ -235,7 +250,15 @@ branchWebhookRouter.post(
       //   - HR notifications (Notification rows can land in a separate
       //     write; if it fails we still want the item state correct).
       //   - Audit log (fire-and-forget by design in audit.ts).
-      if (result.mapped === 'FAILED') {
+      if (result.returned) {
+        // Re-pay to the last verified other account, else by check. Its
+        // own notifications replace the generic failure fan-out.
+        try {
+          await rerouteReturnedItem(prisma, { payrollItemId: result.item.id, reason: result.failureReason, returnedRef: paymentId, actorUserId: null, req });
+        } catch (err) {
+          console.warn('[branch-webhook] reroute after return failed:', err instanceof Error ? err.message : err);
+        }
+      } else if (result.mapped === 'FAILED') {
         try {
           await notifyHrOfPaymentFailure(prisma, {
             associateName: `${result.item.associate.firstName} ${result.item.associate.lastName}`,

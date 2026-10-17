@@ -63,7 +63,7 @@ async function seedAssociate(opts: { createdDaysAgo?: number; firstName?: string
     lastName: 'Lopez',
     email: `maria-${Math.random().toString(36).slice(2, 8)}@example.com`,
   });
-  await prisma.associate.update({ where: { id: associate.id }, data: { phone: '850-555-0142', employmentType: 'W2_EMPLOYEE' } });
+  await prisma.associate.update({ where: { id: associate.id }, data: { phone: '850-555-0142', employmentType: 'W2_EMPLOYEE', state: 'FL' } });
   const verifiedAt = new Date(NOW - 40 * 86_400_000);
   const method = await prisma.payoutMethod.create({
     data: {

@@ -49,6 +49,29 @@ export function updateAccounts(
   });
 }
 
+export interface QboCostCenterRow {
+  id: string;
+  code: string;
+  name: string;
+  orgWide: boolean;
+  people: number;
+  accountRef: string | null;
+  accountName: string | null;
+}
+
+export function getCostCenterMappings(clientId: string): Promise<{ connected: boolean; glByCostCenter: boolean; costCenters: QboCostCenterRow[] }> {
+  const sp = new URLSearchParams({ clientId });
+  return apiFetch(`/quickbooks/cost-centers?${sp.toString()}`);
+}
+
+export function saveCostCenterMappings(
+  clientId: string,
+  glByCostCenter: boolean,
+  mappings: Array<{ costCenterId: string; accountRef: string | null; accountName?: string | null }>,
+): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>('/quickbooks/cost-centers', { method: 'PUT', body: { clientId, glByCostCenter, mappings } });
+}
+
 export function syncRun(runId: string): Promise<QboSyncResponse> {
   return apiFetch<QboSyncResponse>(`/quickbooks/sync-run/${runId}`, {
     method: 'POST',

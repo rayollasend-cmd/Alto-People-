@@ -25,6 +25,8 @@ import {
   verifyIdToken,
 } from '../lib/oidc.js';
 import { connectionSettings, discoverByEmail, discoverBySlug, ensureEnvIdentity, matchSsoUser } from '../lib/identity.js';
+import { idpReachable, loadSecurityPolicy } from '../lib/securityPolicy.js';
+import { ALTO_TENANT_ID } from '../lib/tenant.js';
 import type { IdentityConnection } from '@prisma/client';
 import { z } from 'zod';
 
@@ -267,9 +269,28 @@ oidcAuthRouter.get('/config', async (_req, res) => {
   // Brief 2-3: the environment IdP is Alto HR's connection row; the probe reads that row.
   const conn = await ensureEnvIdentity(prisma);
   const on = !!conn?.enabled;
+  // Access pack: when staff passwords are refused, say whether the IdP can be
+  // reached right now and whether a break-glass path exists — so an outage
+  // reads as an outage on the sign-in page, with the way through.
+  const required = on && !!conn!.ssoRequiredForStaff;
+  const [reachable, breakGlass] = required
+    ? await Promise.all([
+        idpReachable({ kind: conn!.kind, issuerUrl: conn!.issuerUrl }),
+        (async () => {
+          const policy = await loadSecurityPolicy(conn!.tenantId);
+          if (!policy.breakGlassEnabled) return false;
+          return (await prisma.user.count({ where: { tenantId: conn!.tenantId ?? ALTO_TENANT_ID, breakGlass: true, status: 'ACTIVE', deletedAt: null } })) > 0;
+        })(),
+      ])
+    : [null, false];
+  const deviceTrust = (await loadSecurityPolicy(conn?.tenantId ?? ALTO_TENANT_ID)).deviceTrustEnabled;
   res.json({
     enabled: on,
     buttonLabel: on ? (conn!.buttonLabel ?? null) : null,
+    required,
+    reachable,
+    breakGlass,
+    deviceTrust,
   });
 });
 

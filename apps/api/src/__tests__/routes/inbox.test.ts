@@ -144,7 +144,95 @@ describe('GET /me/inbox', () => {
 
     const body = await inboxFor(user.email);
 
-    expect(body.sources).toEqual([]);
+    // Whatever an associate's own rows are (policies to sign, access to
+    // certify), none of the desks' queues are theirs, and nothing seeded
+    // above reaches them.
+    const keys = body.sources.map((s) => s.key);
+    for (const desk of ['approvals', 'kiosk-review', 'onboarding-review', 'hr-cases', 'reimbursements', 'i9-section2', 'everify', 'client-requests']) {
+      expect(keys).not.toContain(desk);
+    }
     expect(body.total).toBe(0);
+  });
+
+  it('reimbursements: the manager counts the claims to approve, Finance counts the ones to settle', async () => {
+    const worker = await createAssociate({ firstName: 'Exp', lastName: 'Ense' });
+    const { user: manager } = await createUser({ role: 'MANAGER' });
+    const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    await prisma.reimbursement.createMany({
+      data: [
+        { associateId: worker.id, title: 'Parking', status: 'SUBMITTED', submittedAt: new Date() },
+        { associateId: worker.id, title: 'Mileage', status: 'SUBMITTED', submittedAt: new Date() },
+        // The manager step is audited: the DB refuses MANAGER_APPROVED without it.
+        { associateId: worker.id, title: 'Boots', status: 'MANAGER_APPROVED', submittedAt: new Date(), managerApprovedAt: new Date(), managerApprovedById: manager.id },
+        { associateId: worker.id, title: 'Old', status: 'DRAFT' },
+      ],
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const m = await inboxFor(manager.email);
+    const f = await inboxFor(finance.email);
+    const h = await inboxFor(hr.email);
+    // The manager approves (the two submitted), Finance settles (the one
+    // approved), HR holds both steps and sees all three. The draft is nobody's.
+    expect(m.sources.find((s) => s.key === 'reimbursements')).toMatchObject({ count: 2, path: '/reimbursements' });
+    expect(f.sources.find((s) => s.key === 'reimbursements')).toMatchObject({ count: 1 });
+    expect(h.sources.find((s) => s.key === 'reimbursements')).toMatchObject({ count: 3 });
+  });
+
+  it('I-9 Section 2 and E-Verify: what HR still owes on each new hire, in two rows that point at their tabs', async () => {
+    const client = await createClient();
+    const signed = await createAssociate({ firstName: 'Sec', lastName: 'One' });
+    const examined = await createAssociate({ firstName: 'Sec', lastName: 'Two' });
+    const done = await createAssociate({ firstName: 'All', lastName: 'Done' });
+    for (const a of [signed, examined, done]) {
+      await prisma.application.create({
+        data: { associateId: a.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() },
+      });
+    }
+    await prisma.i9Verification.createMany({
+      data: [
+        { associateId: signed.id, section1CompletedAt: new Date(), documentsSubmittedAt: new Date() },
+        { associateId: examined.id, section1CompletedAt: new Date(), documentsSubmittedAt: new Date(), section2CompletedAt: new Date() },
+        {
+          associateId: done.id,
+          section1CompletedAt: new Date(),
+          documentsSubmittedAt: new Date(),
+          section2CompletedAt: new Date(),
+          eVerifyCaseNumber: 'X1',
+          eVerifyStatus: 'EMPLOYMENT_AUTHORIZED',
+        },
+      ],
+    });
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const body = await inboxFor(user.email);
+    expect(body.sources.find((s) => s.key === 'i9-section2')).toMatchObject({ count: 1, path: '/compliance?tab=i9' });
+    expect(body.sources.find((s) => s.key === 'everify')).toMatchObject({ count: 1, path: '/compliance?tab=everify' });
+
+    // The shift supervisor has no compliance desk.
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const keys = (await inboxFor(sup.email)).sources.map((s) => s.key);
+    expect(keys).not.toContain('i9-section2');
+    expect(keys).not.toContain('everify');
+  });
+
+  it('client requests: the internal owners count the open ones; a supervisor has no org view and no row', async () => {
+    const mine = await createClient('Store A');
+    const other = await createClient('Store B');
+    await prisma.clientRequest.createMany({
+      data: [
+        { clientId: mine.id, kind: 'STAFFING', subject: 'Six stockers', body: 'Fri–Sun', status: 'RECEIVED' },
+        { clientId: other.id, kind: 'ISSUE', subject: 'Late van', body: 'Twice', status: 'IN_PROGRESS' },
+        { clientId: other.id, kind: 'BILLING', subject: 'Resolved', body: 'ok', status: 'RESOLVED' },
+      ],
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: mine.id });
+
+    expect((await inboxFor(hr.email)).sources.find((s) => s.key === 'client-requests')).toMatchObject({
+      count: 2,
+      path: '/relay?tab=requests',
+    });
+    // GET /client-requests is view:org — the supervisor cannot open the queue, so no row.
+    expect((await inboxFor(sup.email)).sources.map((s) => s.key)).not.toContain('client-requests');
   });
 });

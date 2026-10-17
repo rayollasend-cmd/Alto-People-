@@ -27,6 +27,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
+import { SecurityPolicyCard } from '@/components/admin/SecurityPolicyCard';
 
 /**
  * Brief 2-3 step 2 — Sign-in: the organization's own identity provider
@@ -358,6 +359,9 @@ export function SignInSettings() {
               </CardContent>
             </Card>
           </section>
+
+          {/* Access pack: sessions, networks, devices and the break-glass switch. */}
+          <SecurityPolicyCard />
         </>
       )}
       {editing && (editing === 'new-saml' || (editing !== 'new' && editing.kind === 'SAML')) ? (

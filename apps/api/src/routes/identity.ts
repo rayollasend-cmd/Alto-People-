@@ -7,6 +7,7 @@ import { recordCriticalAudit } from '../lib/audit.js';
 import { encryptString } from '../lib/crypto.js';
 import { addDomain, ensureEnvIdentity, issueScimToken, revokeScimToken, txtRecordFor, unlinkIdentity, verifyDomain } from '../lib/identity.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { isValidCidr, loadSecurityPolicy, resetSecurityPolicyCache } from '../lib/securityPolicy.js';
 import { X509Certificate } from 'node:crypto';
 import { acsUrl, spEntityId } from '../lib/saml.js';
 
@@ -46,6 +47,53 @@ const ConnectionInput = z
   .strict();
 
 const ConnectionUpdate = ConnectionInput.partial().strict();
+
+/* ------------------------------------------- Access pack: security policy */
+
+const CidrList = z.array(z.string().trim().min(1).max(60).refine(isValidCidr, 'Not a valid IPv4/IPv6 address or CIDR.')).max(64);
+const SecurityPolicySchema = z.object({
+  sessionIdleMinutes: z.number().int().min(5).max(24 * 60).nullable(),
+  sessionAbsoluteHours: z.number().int().min(1).max(24 * 30).nullable(),
+  allowedCidrsInternal: CidrList,
+  allowedCidrsClient: CidrList,
+  allowedCidrsAssociate: CidrList,
+  deviceTrustEnabled: z.boolean(),
+  deviceTrustDays: z.number().int().min(1).max(365),
+  breakGlassEnabled: z.boolean(),
+});
+
+/** GET /identity/security-policy — where sessions may come from and how long they live. */
+identityRouter.get('/security-policy', MANAGE, async (_req, res) => {
+  res.json(await loadSecurityPolicy(tenantIdForWrite()));
+});
+
+/**
+ * PUT /identity/security-policy — the whole policy at once. The caller's own
+ * address must be inside the internal allowlist they are about to set, or
+ * they would lock themselves (and everyone) out with the save.
+ */
+identityRouter.put('/security-policy', MANAGE, async (req, res) => {
+  const tenantId = tenantIdForWrite();
+  const input = SecurityPolicySchema.parse(req.body);
+  if (input.allowedCidrsInternal.length > 0) {
+    const { ipAllowed } = await import('../lib/securityPolicy.js');
+    if (!ipAllowed(req.ip, input.allowedCidrsInternal)) {
+      throw new HttpError(400, 'allowlist_excludes_you', `Your current address (${req.ip ?? 'unknown'}) is not in the internal allowlist; saving would sign you out. Add it first.`);
+    }
+  }
+  const before = await loadSecurityPolicy(tenantId);
+  await prisma.tenantSecurityPolicy.upsert({
+    where: { tenantId },
+    create: { tenantId, ...input, updatedById: req.user!.id },
+    update: { ...input, updatedById: req.user!.id },
+  });
+  resetSecurityPolicyCache(tenantId);
+  await recordCriticalAudit(
+    { actorUserId: req.user!.id, clientId: null, tenantId, action: 'identity.security_policy_updated', entityType: 'TenantSecurityPolicy', entityId: tenantId, metadata: JSON.parse(JSON.stringify({ before, after: input })) },
+    'identity',
+  );
+  res.json(await loadSecurityPolicy(tenantId));
+});
 
 identityRouter.get('/', MANAGE, async (_req, res) => {
   const tenantId = tenantIdForWrite();

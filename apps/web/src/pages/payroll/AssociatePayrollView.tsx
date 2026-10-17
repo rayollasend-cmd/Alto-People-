@@ -47,6 +47,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
+import { EarnedWageCard } from '@/components/EarnedWageCard';
 import {
   CalendarCheck,
   ChevronDown,
@@ -69,6 +70,7 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   COMMISSION: 'pay.kind.COMMISSION',
   TIPS: 'pay.kind.TIPS',
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
+  RETRO: 'pay.kind.RETRO',
 };
 
 // Labels stay i18n keys (this page is translated); tones come from the
@@ -143,6 +145,8 @@ export function AssociatePayrollView() {
       >
 
       <NextPaydayCard />
+
+      <EarnedWageCard />
 
       <TaxAndPaySettings />
 

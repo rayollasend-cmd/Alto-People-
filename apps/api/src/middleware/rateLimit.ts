@@ -514,3 +514,35 @@ export const offerLetterIpLimiter = rateLimit({
     },
   },
 });
+
+// The candidate's own page and the client NPS answer page: signed links
+// with 32-byte tokens, so guessing is hopeless, but each renders from the
+// database and takes an upload. Tests bypass them.
+const SIGNED_LINK_IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 120;
+
+/** 120 requests / hour / IP for /candidate-portal/:token and /nps/:token. */
+export const signedLinkIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: SIGNED_LINK_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests for this link. Try again later.',
+    },
+  },
+});
+
+// The careers site's view beacon: one small write per page view. Cheap,
+// but public, so a bot can't inflate the funnel for free.
+const CAREERS_VIEW_IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 300;
+
+/** 300 views / hour / IP for POST /careers/view. */
+export const careersViewIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: CAREERS_VIEW_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: { code: 'rate_limited', message: 'Too many requests.' } },
+});

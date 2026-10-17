@@ -42,6 +42,8 @@ async function seedRunWithItems() {
   const a2 = await createAssociate({ firstName: 'Bob', lastName: 'Brown', email: `a2-${Math.random().toString(36).slice(2, 6)}@example.com` });
   const start = new Date('2026-04-01T13:00:00Z');
   for (const a of [a1, a2]) {
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: a.id }, data: { state: 'FL' } });
     await prisma.timeEntry.create({
       data: {
         associateId: a.id,

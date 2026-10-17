@@ -53,6 +53,7 @@ import {
 } from '../lib/irsFire.js';
 import { renderGarnishmentLetterPdf } from '../lib/garnishmentLetter.js';
 import { renderTaxFormSummaryPdf } from '../lib/taxFormSummaryPdf.js';
+import { build940Xml, build941Xml } from '../lib/irsMef.js';
 import { send } from '../lib/notifications.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
@@ -384,11 +385,46 @@ payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
       amounts: f.amounts,
       status: f.status,
       filedAt: f.filedAt?.toISOString() ?? null,
+      filingConfirmation: f.filingConfirmation ?? null,
       ein: f.ein,
       recipientCopySentAt: f.recipientCopySentAt?.toISOString() ?? null,
       createdAt: f.createdAt.toISOString(),
     })),
   });
+});
+
+/**
+ * GET /tax-forms/:id/mef.xml — the IRS MeF return for a 941 or 940, from
+ * the form's amounts and the submitter profile (lib/irsMef.ts). Alto
+ * builds the return; an Authorized e-file Provider or the payroll filing
+ * partner transmits it and returns the acknowledgment that "Mark filed"
+ * records.
+ */
+payrollTax91Router.get('/tax-forms/:id/mef.xml', VIEW, async (req, res) => {
+  const f = await prisma.taxForm.findUnique({ where: { id: z.string().uuid().parse(req.params.id) } });
+  if (!f) throw new HttpError(404, 'not_found', 'Form not found.');
+  if (f.kind !== 'F941' && f.kind !== 'F940') throw new HttpError(409, 'not_mef', 'Only Forms 941 and 940 have an MeF return.');
+  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+  const org = await prisma.orgSetting.findFirst({ select: { orgName: true } });
+  const filer = {
+    ein: f.ein ?? profile?.ein ?? '',
+    name: profile?.name ?? org?.orgName ?? 'Employer',
+    addressLine1: profile?.addressLine1 ?? null,
+    city: profile?.city ?? null,
+    state: profile?.state ?? null,
+    zip: profile ? `${profile.zip5}${profile.zip4 ? `-${profile.zip4}` : ''}` : null,
+    contactName: profile?.contactName ?? null,
+    contactPhone: profile?.contactPhone ?? null,
+  };
+  if (!filer.ein) throw new HttpError(409, 'no_ein', 'Set the submitter profile (EIN) before building the return.');
+  const amounts = (f.amounts ?? {}) as Record<string, unknown>;
+  const xml =
+    f.kind === 'F941'
+      ? build941Xml({ taxYear: f.taxYear, quarter: f.quarter ?? 1, filer, amounts, generatedAt: f.createdAt })
+      : build940Xml({ taxYear: f.taxYear, filer, amounts, generatedAt: f.createdAt });
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${f.kind === 'F941' ? `941-${f.taxYear}-Q${f.quarter}` : `940-${f.taxYear}`}-MeF.xml"`);
+  res.send(xml);
 });
 
 payrollTax91Router.post('/tax-forms', MANAGE, async (req, res) => {
@@ -442,6 +478,9 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
   if (f.status !== 'DRAFT' && f.status !== 'AMENDED') {
     throw new HttpError(409, 'invalid_state', `Cannot file ${f.status} form.`);
   }
+  // The agency's or the filing partner's acknowledgment — the receipt that
+  // says "filed" means transmitted and accepted, not just rendered.
+  const confirmationNumber = z.string().trim().max(80).optional().nullable().parse(req.body?.confirmationNumber) ?? null;
   try {
     await prisma.taxForm.update({
       where: { id: f.id },
@@ -449,6 +488,7 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
         status: 'FILED',
         filedAt: new Date(),
         filedById: req.user!.id,
+        filingConfirmation: confirmationNumber,
       },
     });
   } catch (err) {
@@ -473,6 +513,7 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
  */
 payrollTax91Router.post('/tax-forms/bulk-file', MANAGE, async (req, res) => {
   const ids = z.array(z.string().uuid()).min(1).max(1000).parse(req.body?.ids);
+  const confirmationNumber = z.string().trim().max(80).optional().nullable().parse(req.body?.confirmationNumber) ?? null;
   const now = new Date();
   let filed = 0;
   const skipped: { id: string; reason: string }[] = [];
@@ -489,7 +530,7 @@ payrollTax91Router.post('/tax-forms/bulk-file', MANAGE, async (req, res) => {
     try {
       await prisma.taxForm.update({
         where: { id: f.id },
-        data: { status: 'FILED', filedAt: now, filedById: req.user!.id },
+        data: { status: 'FILED', filedAt: now, filedById: req.user!.id, filingConfirmation: confirmationNumber },
       });
       filed += 1;
     } catch (err) {

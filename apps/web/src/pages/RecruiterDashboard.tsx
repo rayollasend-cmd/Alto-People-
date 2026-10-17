@@ -24,11 +24,13 @@ import {
 import type { RecruiterHome } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { getRecruiterHome } from '@/lib/recruitingApi';
 import { resendInvite } from '@/lib/onboardingApi';
+import { RecruiterCalendarFeed } from '@/pages/recruiting/RecruiterCalendarFeed';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -142,27 +144,28 @@ const INTERVIEW_STATE: Record<RecruiterHome['interviewsToday'][number]['state'],
 };
 
 function Today({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   const list = home.interviewsToday;
   return (
     <Card>
       <CardContent className="p-4 md:p-5">
         <SectionTitle
           count={list.length}
-          action={<MoreLink to="/recruiting?view=list&stage=INTERVIEW">Interviewing</MoreLink>}
+          action={<MoreLink to="/recruiting?view=list&stage=INTERVIEW">{t('recruiterHome.interviewing')}</MoreLink>}
         >
           <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-          Today&rsquo;s interviews
+          {t('recruiterHome.todaysInterviews')}
         </SectionTitle>
         {list.length === 0 ? (
           <EmptyState
             icon={CalendarClock}
-            title="No interviews today"
-            description="Schedule one from a candidate's page and it lands here."
-            action={<MoreLink to="/recruiting?view=list&stage=SCREENING">Candidates in screening</MoreLink>}
+            title={t('recruiterHome.noInterviews')}
+            description={t('recruiterHome.noInterviewsBody')}
+            action={<MoreLink to="/recruiting?view=list&stage=SCREENING">{t('recruiterHome.inScreening')}</MoreLink>}
             className="py-6"
           />
         ) : (
-          <ul className="divide-y divide-navy-secondary/60" aria-label="Today's interviews">
+          <ul className="divide-y divide-navy-secondary/60" aria-label={t('recruiterHome.todaysInterviews')}>
             {list.map((i) => (
               <li key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0">
                 <span className="w-16 shrink-0 text-sm tabular-nums text-white">{fmtTime(i.scheduledFor)}</span>
@@ -187,22 +190,23 @@ function Today({ home }: { home: RecruiterHome }) {
 }
 
 function NewApplicants({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   const a = home.newApplicants;
   return (
     <Card>
       <CardContent className="p-4 md:p-5">
-        <SectionTitle action={<MoreLink to="/recruiting?view=list&stage=ALL&sort=newest">Newest</MoreLink>}>
+        <SectionTitle action={<MoreLink to="/recruiting?view=list&stage=ALL&sort=newest">{t('recruiterHome.newest')}</MoreLink>}>
           <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-          New applicants
+          {t('recruiterHome.newApplicants')}
         </SectionTitle>
         <div className="flex items-baseline gap-2">
           <span className="font-display text-4xl text-gold tabular-nums">{a.last24h}</span>
           <span className="text-sm text-silver">
-            in the last day · {a.last7d} this week
+            {t('recruiterHome.lastDayThisWeek', { n: a.last7d })}
           </span>
         </div>
         {a.bySource.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5" aria-label="This week, by source">
+          <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t('recruiterHome.bySourceAria')}>
             {a.bySource.slice(0, 5).map((s) => (
               <Badge key={s.source ?? 'none'} variant="outline">
                 {sourceName(s.source)} {s.count}
@@ -243,19 +247,20 @@ function waitingOnYouTotal(home: RecruiterHome): number {
 
 /** `headless`: the home's template titles the section and carries the count. */
 function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headless?: boolean }) {
+  const { t } = useI18n();
   const w = home.waitingOnYou;
   const total = waitingOnYouTotal(home);
   return (
     <section aria-labelledby={headless ? 'home-decisions' : 'waiting-on-you'}>
       {!headless && (
         <SectionTitle count={total}>
-          <span id="waiting-on-you">Waiting on you</span>
+          <span id="waiting-on-you">{t('recruiterHome.waitingOnYou')}</span>
         </SectionTitle>
       )}
       {total === 0 ? (
         <Card>
           <CardContent className="p-4 text-sm text-silver">
-            Nothing waiting on you — every interview is scored, every yes has an offer, and nobody has gone quiet.
+            {t('recruiterHome.nothingWaitingOnYou')}
           </CardContent>
         </Card>
       ) : (
@@ -385,6 +390,7 @@ function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headles
 }
 
 function WaitingOnOthers({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   const w = home.waitingOnOthers;
   const queryClient = useQueryClient();
   const [resending, setResending] = useState<string | null>(null);
@@ -411,12 +417,12 @@ function WaitingOnOthers({ home }: { home: RecruiterHome }) {
   return (
     <section aria-labelledby="waiting-on-others">
       <SectionTitle count={total}>
-        <span id="waiting-on-others">Waiting on others</span>
+        <span id="waiting-on-others">{t('recruiterHome.waitingOnOthers')}</span>
       </SectionTitle>
       {total === 0 ? (
         <Card>
           <CardContent className="p-4 text-sm text-silver">
-            Nothing out with anyone — no client reviews, unsigned offers or unstarted onboarding.
+            {t('recruiterHome.nothingWithOthers')}
           </CardContent>
         </Card>
       ) : (
@@ -506,12 +512,13 @@ function WaitingOnOthers({ home }: { home: RecruiterHome }) {
 }
 
 function PipelineAndPostings({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   const stages = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER'] as const;
   return (
     <div className="grid gap-3 lg:grid-cols-3">
       <Card>
         <CardContent className="p-4 md:p-5">
-          <SectionTitle action={<MoreLink to="/recruiting">Board</MoreLink>}>Pipeline</SectionTitle>
+          <SectionTitle action={<MoreLink to="/recruiting">{t('recruiterHome.board')}</MoreLink>}>{t('recruiterHome.pipeline')}</SectionTitle>
           <ul className="grid grid-cols-2 gap-2">
             {stages.map((s) => (
               <li key={s}>
@@ -529,15 +536,15 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
       </Card>
       <Card className="lg:col-span-2">
         <CardContent className="p-4 md:p-5">
-          <SectionTitle count={home.postings.total} action={<MoreLink to="/recruiting/extras?tab=postings">Postings</MoreLink>}>
-            Open postings
+          <SectionTitle count={home.postings.total} action={<MoreLink to="/recruiting/extras?tab=postings">{t('recruiterHome.postings')}</MoreLink>}>
+            {t('recruiterHome.openPostings')}
           </SectionTitle>
           {home.postings.items.length === 0 ? (
             <EmptyState
               icon={Plus}
-              title="No open postings"
-              description="Open a posting and applicants start arriving here."
-              action={<MoreLink to="/recruiting/extras?tab=postings">Open a posting</MoreLink>}
+              title={t('recruiterHome.noPostings')}
+              description={t('recruiterHome.noPostingsBody')}
+              action={<MoreLink to="/recruiting/extras?tab=postings">{t('recruiterHome.openPosting')}</MoreLink>}
               className="py-6"
             />
           ) : (
@@ -583,29 +590,98 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
   );
 }
 
+const fmtBudget = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+/** How a requisition's status reads — PLANNED is one still waiting on its approver. */
+const REQ_STATUS: Record<string, { label: string; variant: 'pending' | 'success' | 'info' | 'outline' }> = {
+  PLANNED: { label: 'Awaiting approval', variant: 'pending' },
+  OPEN: { label: 'Approved — hiring', variant: 'success' },
+  FROZEN: { label: 'On hold', variant: 'info' },
+};
+
+/**
+ * The requisitions behind the pipeline: what the recruiter is hiring
+ * against and what is still waiting on an approver (named), beside the
+ * postings, with the budget each seat carries.
+ */
+function Requisitions({ reqs }: { reqs: NonNullable<RecruiterHome['requisitions']> }) {
+  const waiting = reqs.byStatus.PLANNED ?? 0;
+  return (
+    <section aria-labelledby="requisitions">
+      <SectionTitle count={reqs.total} action={<MoreLink to="/headcount">Headcount</MoreLink>}>
+        <span id="requisitions">Requisitions</span>
+      </SectionTitle>
+      {reqs.items.length === 0 ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-silver">Every position is filled or closed — the pipeline is hiring against nothing right now.</CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-4 md:p-5">
+            {waiting > 0 && (
+              <p className="mb-2 text-xs text-warning">
+                {waiting} requisition{waiting === 1 ? '' : 's'} still waiting on approval — hiring against {waiting === 1 ? 'it' : 'them'} starts when it lands.
+              </p>
+            )}
+            <ul className="divide-y divide-navy-secondary/60">
+              {reqs.items.map((r) => {
+                const s = REQ_STATUS[r.status] ?? { label: r.status, variant: 'outline' as const };
+                return (
+                  <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 first:pt-0 last:pb-0 text-sm">
+                    <span className="min-w-0 flex-1 truncate text-ink">
+                      {r.title}
+                      <span className="text-silver">
+                        {' '}
+                        · {r.code}
+                        {r.clientName ? ` · ${r.clientName}` : ''}
+                      </span>
+                    </span>
+                    <span className="text-xs tabular-nums text-silver">
+                      {r.fteAuthorized} FTE{r.targetStartDate ? ` · starts ${fmtDate(r.targetStartDate)}` : ''}
+                      {r.budgetAmount != null ? ` · ${fmtBudget(r.budgetAmount)}${r.budgetPeriod === 'MONTHLY' ? '/mo' : '/yr'}` : ''}
+                    </span>
+                    {r.waitingOn && (
+                      <span className="w-full text-xs text-silver md:w-auto">
+                        Waiting on {r.waitingOn}
+                        {r.requestedAt ? ` since ${fmtDate(r.requestedAt.slice(0, 10))}` : ''}
+                      </span>
+                    )}
+                    <Badge variant={s.variant}>{s.label}</Badge>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </section>
+  );
+}
+
 function Numbers({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   const n = home.numbers;
   return (
     <section aria-labelledby="numbers">
-      <SectionTitle action={<MoreLink to="/recruiting/analytics">Analytics</MoreLink>}>
-        <span id="numbers">The numbers</span>
+      <SectionTitle action={<MoreLink to="/recruiting/analytics">{t('recruiterHome.analytics')}</MoreLink>}>
+        <span id="numbers">{t('recruiterHome.numbers')}</span>
       </SectionTitle>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Hires this month" value={n.hiresThisMonth} hint={`${n.hiresLastMonth} last month`} />
+        <MetricCard label={t('recruiterHome.hiresThisMonth')} value={n.hiresThisMonth} hint={t('recruiterHome.nLastMonth', { n: n.hiresLastMonth })} />
         <MetricCard
-          label="Median time to hire"
+          label={t('recruiterHome.medianTimeToHire')}
           value={n.medianDaysToHire === null ? '—' : n.medianDaysToHire < 1 ? '< 1 day' : `${n.medianDaysToHire} days`}
-          hint="Last 90 days"
+          hint={t('recruiterHome.last90Days')}
         />
         <MetricCard
-          label="Offer acceptance"
+          label={t('recruiterHome.offerAcceptance')}
           value={n.offerAcceptancePct === null ? '—' : `${n.offerAcceptancePct}%`}
           hint={n.offersDecided ? `${plural(n.offersDecided, 'offer')} decided, last 90 days` : 'No offers decided in 90 days'}
         />
         <MetricCard
-          label="In the pipeline"
+          label={t('recruiterHome.inPipeline')}
           value={home.pipeline.APPLIED + home.pipeline.SCREENING + home.pipeline.INTERVIEW + home.pipeline.OFFER}
-          hint={`${home.pipeline.OFFER} at offer`}
+          hint={t('recruiterHome.nAtOffer', { n: home.pipeline.OFFER })}
         />
       </div>
     </section>
@@ -613,15 +689,16 @@ function Numbers({ home }: { home: RecruiterHome }) {
 }
 
 function Activity({ home }: { home: RecruiterHome }) {
+  const { t } = useI18n();
   return (
     <section aria-labelledby="activity">
       <SectionTitle>
-        <span id="activity">Recent recruiting activity</span>
+        <span id="activity">{t('recruiterHome.activity')}</span>
       </SectionTitle>
       <Card>
         <CardContent className="p-4 md:p-5">
           {home.activity.length === 0 ? (
-            <p className="text-sm text-silver/70">Nothing yet.</p>
+            <p className="text-sm text-silver/70">{t('recruiterHome.nothingYet')}</p>
           ) : (
             <ul className="space-y-3">
               {home.activity.map((e) => {
@@ -656,6 +733,7 @@ function Activity({ home }: { home: RecruiterHome }) {
 export function RecruiterDashboard() {
   const roleLabel = useRoleLabel();
   const { user, role, can } = useAuth();
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
   const q = useQuery({
@@ -688,7 +766,7 @@ export function RecruiterDashboard() {
           </>
         }
         topbarTitle="Home"
-        subtitle="Your pipeline today — what's new, and what's waiting."
+        subtitle={t('recruiterHome.subtitle')}
         meta={
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
@@ -703,18 +781,21 @@ export function RecruiterDashboard() {
           </div>
         }
         actions={
-          can('manage:recruiting') ? (
-            <Button asChild size="sm">
-              <Link to="/recruiting?new=1">
-                <Plus className="h-4 w-4" />
-                New candidate
-              </Link>
-            </Button>
-          ) : (
-            <Button asChild variant="outline" size="sm">
-              <Link to="/recruiting">Open pipeline</Link>
-            </Button>
-          )
+          <div className="flex flex-wrap gap-2">
+            <RecruiterCalendarFeed />
+            {can('manage:recruiting') ? (
+              <Button asChild size="sm">
+                <Link to="/recruiting?new=1">
+                  <Plus className="h-4 w-4" />
+                  {t('recruiterHome.newCandidate')}
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild variant="outline" size="sm">
+                <Link to="/recruiting">{t('recruiterHome.openPipeline')}</Link>
+              </Button>
+            )}
+          </div>
         }
         hero={
           home ? (
@@ -722,32 +803,32 @@ export function RecruiterDashboard() {
           ) : q.isError ? (
             <EmptyState
               icon={CalendarClock}
-              title="Today's interviews"
-              description={q.error instanceof ApiError ? q.error.message : 'Could not load your recruiting day.'}
+              title={t('recruiterHome.todaysInterviews')}
+              description={q.error instanceof ApiError ? q.error.message : t('recruiterHome.loadError')}
               action={retry}
             />
           ) : (
             <Skeleton className="h-56" />
           )
         }
-        decisions={home ? { title: 'Waiting on you', count: waitingOnYouTotal(home), content: <WaitingOnYou home={home} headless /> } : undefined}
+        decisions={home ? { title: t('recruiterHome.waitingOnYou'), count: waitingOnYouTotal(home), content: <WaitingOnYou home={home} headless /> } : undefined}
         assistant={<HugoSeat />}
         waysIn={
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link to="/recruiting">Open pipeline</Link>
+              <Link to="/recruiting">{t('recruiterHome.openPipeline')}</Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link to="/recruiting?view=list&stage=INTERVIEW">Interviewing</Link>
+              <Link to="/recruiting?view=list&stage=INTERVIEW">{t('recruiterHome.interviewing')}</Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link to="/onboarding">Onboarding</Link>
+              <Link to="/onboarding">{t('recruiterHome.onboarding')}</Link>
             </Button>
           </div>
         }
       >
         {!home && !q.isError && (
-          <div className="space-y-4" aria-label="Loading">
+          <div className="space-y-4" aria-label={t('recruiterHome.loadingAria')}>
             <Skeleton className="h-40" />
             <Skeleton className="h-40" />
           </div>
@@ -757,6 +838,7 @@ export function RecruiterDashboard() {
             <NewApplicants home={home} />
             <WaitingOnOthers home={home} />
             <PipelineAndPostings home={home} />
+            {home.requisitions && <Requisitions reqs={home.requisitions} />}
             <Numbers home={home} />
             <Activity home={home} />
           </>
@@ -764,7 +846,7 @@ export function RecruiterDashboard() {
         {/* Approvals from outside recruiting (time off and the like) — only
             when there are any; "nothing needs your decision" would contradict
             the waiting list above. */}
-        <RoleDecisionQueue title="Other approvals" hideWhenEmpty />
+        <RoleDecisionQueue title={t('recruiterHome.otherApprovals')} hideWhenEmpty />
         <MyPlanCard />
       </HomeTemplate>
     </>

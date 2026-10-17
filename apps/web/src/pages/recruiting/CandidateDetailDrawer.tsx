@@ -35,6 +35,7 @@ import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusLabel } from '@/lib/status';
+import { CandidatePortalPanel } from './CandidatePortalPanel';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
@@ -539,6 +540,11 @@ export function CandidateDetailDrawer({
               )}
             </div>
           )}
+        </Section>
+
+        {/* Their own page: the link, the documents we asked for, what came back. */}
+        <Section title="Their page">
+          <CandidatePortalPanel candidateId={candidate.id} canManage={canManage && !isTerminal} onChanged={changed} />
         </Section>
 
         {candidate.notes && (

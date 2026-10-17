@@ -28,6 +28,9 @@ import { publicBaseUrl } from '../lib/emailLayout.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { assertRoleOffered, tenantOf } from '../lib/tenantRoles.js';
+import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { isElevation } from '../lib/accessChanges.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -101,6 +104,10 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       deactivatedAt: true,
       deactivationReason: true,
       purgeAfter: true,
+      scopeSiteIds: true,
+      scopeRegionIds: true,
+      breakGlass: true,
+      mfaEnabledAt: true,
       associate: {
         select: { firstName: true, lastName: true },
       },
@@ -157,6 +164,10 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       locationName: u.location?.name ?? null,
       regionId: u.regionId,
       regionName: u.region?.name ?? null,
+      scopeSiteIds: u.scopeSiteIds,
+      scopeRegionIds: u.scopeRegionIds,
+      breakGlass: u.breakGlass,
+      mfaEnabled: u.mfaEnabledAt !== null,
       shiftWindows: u.supervisorShiftWindows.map((w) => ({
         locationId: w.locationId,
         locationName: w.location.name,
@@ -235,6 +246,13 @@ const PatchInputSchema = z
     // Brief 1A-4: putting an account on a region needs a named approver
     // who holds manage:org (recorded on the account and in the audit).
     approvedByUserId: z.string().uuid().optional(),
+    // Access pack: an INTERNAL role narrowed to sites and/or regions. Sent
+    // whole ([] clears). Needs the same named approver as a region binding.
+    scopeSiteIds: z.array(z.string().uuid()).max(200).optional(),
+    scopeRegionIds: z.array(z.string().uuid()).max(50).optional(),
+    // Access pack: a break-glass owner (password + two-step while SSO is
+    // required). Needs a named approver; the account must hold two-step.
+    breakGlass: z.boolean().optional(),
   })
   .refine(
     (v) =>
@@ -243,10 +261,13 @@ const PatchInputSchema = z
       v.status !== undefined ||
       v.clientId !== undefined ||
       v.locationId !== undefined ||
-      v.regionId !== undefined,
+      v.regionId !== undefined ||
+      v.scopeSiteIds !== undefined ||
+      v.scopeRegionIds !== undefined ||
+      v.breakGlass !== undefined,
     {
       message:
-        'At least one of role, additionalRoles, status, clientId, locationId, or regionId is required',
+        'At least one of role, additionalRoles, status, clientId, locationId, regionId, scopeSiteIds, scopeRegionIds, or breakGlass is required',
     },
   );
 
@@ -283,10 +304,48 @@ usersRouter.patch(
         locationId: true,
         regionId: true,
         deletedAt: true,
+        scopeSiteIds: true,
+        scopeRegionIds: true,
+        breakGlass: true,
+        mfaEnabledAt: true,
       },
     });
     if (!target || target.deletedAt) {
       throw new HttpError(404, 'not_found', 'User not found.');
+    }
+
+    // Access pack: a site/region binding on an internal role, and the
+    // break-glass flag. Both widen or narrow what the account can reach
+    // outside the role itself, so both carry a named approver.
+    const nextRoleForScope = input.role ?? target.role;
+    const scopeChanged =
+      (input.scopeSiteIds !== undefined && JSON.stringify([...input.scopeSiteIds].sort()) !== JSON.stringify([...target.scopeSiteIds].sort())) ||
+      (input.scopeRegionIds !== undefined && JSON.stringify([...input.scopeRegionIds].sort()) !== JSON.stringify([...target.scopeRegionIds].sort()));
+    let scopeApprover: Awaited<ReturnType<typeof requireRegionApprover>> | null = null;
+    if (scopeChanged) {
+      if (nextRoleForScope === 'ASSOCIATE' || nextRoleForScope === 'CLIENT_PORTAL' || nextRoleForScope === 'SHIFT_SUPERVISOR' || nextRoleForScope === 'FLOOR_SUPERVISOR') {
+        throw new HttpError(400, 'scope_not_for_role', 'Site and region scope narrows internal roles only; this role is bounded by its client or store.');
+      }
+      const siteIds = input.scopeSiteIds ?? target.scopeSiteIds;
+      const regionIds = input.scopeRegionIds ?? target.scopeRegionIds;
+      if (siteIds.length) {
+        const n = await prisma.site.count({ where: { id: { in: siteIds }, tenantId: tenantIdForWrite(), deletedAt: null } });
+        if (n !== new Set(siteIds).size) throw new HttpError(400, 'site_not_found', 'One of those sites does not exist.');
+      }
+      if (regionIds.length) {
+        const n = await prisma.region.count({ where: { id: { in: regionIds }, tenantId: tenantIdForWrite(), deletedAt: null } });
+        if (n !== new Set(regionIds).size) throw new HttpError(400, 'region_not_found', 'One of those regions does not exist.');
+      }
+      if (siteIds.length || regionIds.length) {
+        scopeApprover = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
+      }
+    }
+    let breakGlassApprover: Awaited<ReturnType<typeof requireRegionApprover>> | null = null;
+    const breakGlassChanged = input.breakGlass !== undefined && input.breakGlass !== target.breakGlass;
+    if (breakGlassChanged && input.breakGlass) {
+      if (nextRoleForScope === 'ASSOCIATE') throw new HttpError(400, 'break_glass_not_for_role', 'Associates keep their passwords; break-glass is for staff and client accounts.');
+      if (!target.mfaEnabledAt) throw new HttpError(400, 'break_glass_needs_mfa', 'A break-glass owner must have two-step sign-in turned on first.');
+      breakGlassApprover = await requireRegionApprover(prisma, input.approvedByUserId, req.user!.id);
     }
 
     if (input.role && !HUMAN_ROLES.includes(input.role)) {
@@ -437,8 +496,26 @@ usersRouter.patch(
       regionApprovedById?: string | null;
       regionApprovedAt?: Date | null;
       orgUnitId?: string | null;
+      scopeSiteIds?: string[];
+      scopeRegionIds?: string[];
+      scopeApprovedById?: string | null;
+      scopeApprovedAt?: Date | null;
+      breakGlass?: boolean;
+      breakGlassApprovedById?: string | null;
+      breakGlassApprovedAt?: Date | null;
       tokenVersion?: { increment: number };
     } = {};
+    if (scopeChanged) {
+      data.scopeSiteIds = [...new Set(input.scopeSiteIds ?? target.scopeSiteIds)];
+      data.scopeRegionIds = [...new Set(input.scopeRegionIds ?? target.scopeRegionIds)];
+      data.scopeApprovedById = scopeApprover?.id ?? null;
+      data.scopeApprovedAt = scopeApprover ? new Date() : null;
+    }
+    if (breakGlassChanged) {
+      data.breakGlass = input.breakGlass!;
+      data.breakGlassApprovedById = breakGlassApprover?.id ?? null;
+      data.breakGlassApprovedAt = breakGlassApprover ? new Date() : null;
+    }
     if (effectiveRegionId) {
       // A region account has no client and no store.
       if (target.clientId) data.clientId = null;
@@ -488,6 +565,8 @@ usersRouter.patch(
       data.locationId !== undefined ||
       data.regionId !== undefined ||
       data.status === 'DISABLED' ||
+      // A narrower or wider reach must bite immediately too.
+      data.scopeSiteIds !== undefined ||
       // Taking a hat away is a demotion and must bite immediately.
       // Granting one changes nothing about what they can do right now —
       // they still have to choose it — so it does not cost them a session.
@@ -496,8 +575,39 @@ usersRouter.patch(
       data.tokenVersion = { increment: 1 };
     }
 
+    // Approval engine (2026-10): granting MORE access than the account holds
+    // goes to a second manage:org holder where one exists. The role part of
+    // the change waits; anything else in the same request lands now.
+    let pendingElevation: Awaited<ReturnType<typeof createApprovalRequest>> | null = null;
+    if ((data.role || data.additionalRoles) && isElevation({ role: target.role, additionalRoles: target.additionalRoles }, { role: data.role, additionalRoles: data.additionalRoles })) {
+      const policy = await loadApprovalPolicy(prisma);
+      if (policy.roleChangeApproval && (await secondPersonExists(prisma, 'manage:org', req.user!.id))) {
+        const open = await prisma.approvalRequest.findFirst({ where: { kind: 'ROLE_CHANGE', subjectId: id, status: 'PENDING' }, select: { id: true } });
+        if (open) throw new HttpError(409, 'approval_pending', 'An access change for this account is already waiting on a decision.');
+        const targetRow = await prisma.user.findUnique({ where: { id }, select: { email: true, displayName: true } });
+        const label = (r: Role) => r.replace(/_/g, ' ').toLowerCase();
+        pendingElevation = await createApprovalRequest(prisma, {
+          kind: 'ROLE_CHANGE',
+          subjectType: 'User',
+          subjectId: id,
+          title: `${targetRow?.displayName ?? targetRow?.email ?? 'Account'}: ${data.role ? `${label(target.role)} → ${label(data.role)}` : `also ${(data.additionalRoles ?? []).map(label).join(', ')}`}`,
+          summary: 'Granting more access than the account holds today. Sessions are refreshed when it lands.',
+          proposed: { userId: id, ...(data.role ? { role: data.role } : {}), ...(data.additionalRoles ? { additionalRoles: data.additionalRoles } : {}) },
+          before: { role: target.role, additionalRoles: target.additionalRoles },
+          requesterUserId: req.user!.id,
+          approver: { capability: 'manage:org' },
+          clientId: target.clientId ?? null,
+        });
+        delete data.role;
+        delete data.tenantRoleId;
+        delete data.additionalRoles;
+        if (data.activeRole === null) delete data.activeRole;
+      }
+    }
+
     if (Object.keys(data).length === 0) {
-      res.status(204).end();
+      if (pendingElevation) res.status(202).json(pendingResponse(pendingElevation));
+      else res.status(204).end();
       return;
     }
 
@@ -555,7 +665,17 @@ usersRouter.patch(
           ...(regionApprover
             ? { regionApprover: { userId: regionApprover.id, email: regionApprover.email, role: regionApprover.role, selfApproved: regionApprover.selfApproved } }
             : {}),
+          ...(scopeApprover
+            ? { scopeApprover: { userId: scopeApprover.id, email: scopeApprover.email, role: scopeApprover.role, selfApproved: scopeApprover.selfApproved } }
+            : {}),
+          ...(breakGlassApprover
+            ? { breakGlassApprover: { userId: breakGlassApprover.id, email: breakGlassApprover.email, role: breakGlassApprover.role, selfApproved: breakGlassApprover.selfApproved } }
+            : {}),
           changes: {
+            ...(data.scopeSiteIds !== undefined
+              ? { scope: { from: { sites: target.scopeSiteIds, regions: target.scopeRegionIds }, to: { sites: data.scopeSiteIds, regions: data.scopeRegionIds } } }
+              : {}),
+            ...(data.breakGlass !== undefined ? { breakGlass: { from: target.breakGlass, to: data.breakGlass } } : {}),
             ...(data.role ? { role: { from: target.role, to: data.role } } : {}),
             ...(data.additionalRoles
               ? {
@@ -581,7 +701,8 @@ usersRouter.patch(
       'admin.user_updated',
     );
 
-    res.status(204).end();
+    if (pendingElevation) res.status(202).json(pendingResponse(pendingElevation));
+    else res.status(204).end();
   },
 );
 

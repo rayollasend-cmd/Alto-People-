@@ -50,6 +50,26 @@ export function verifyCalendarToken(
   return timingSafeEqual(expected, got);
 }
 
+/* ===== Staff feeds (the recruiter's interviews) ========================== */
+
+/**
+ * The same construction for a staff account's feed (UserCalendarFeed):
+ * a distinct preimage namespace, so an associate token can never verify
+ * as a user token or the reverse, and the row's version for revocation.
+ */
+export function mintUserCalendarToken(userId: string, version = 1): string {
+  return createHmac('sha256', feedSecret())
+    .update(`user:${userId}:v${version}`, 'utf8')
+    .digest('base64url');
+}
+
+export function verifyUserCalendarToken(userId: string, candidate: string, version = 1): boolean {
+  const expected = Buffer.from(mintUserCalendarToken(userId, version));
+  const got = Buffer.from(candidate);
+  if (expected.length !== got.length) return false;
+  return timingSafeEqual(expected, got);
+}
+
 /* ===== iCal serializer ================================================== */
 
 interface IcsEvent {

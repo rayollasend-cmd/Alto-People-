@@ -1,5 +1,5 @@
 import type { CandidateStage } from '@prisma/client';
-import { type RecruiterHome, can } from '@alto-people/shared';
+import { ROLE_LABELS, type RecruiterHome, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
@@ -81,6 +81,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     decided90,
     events,
     closing,
+    positions,
   ] = await Promise.all([
     prisma.interview.findMany({
       where: { ...LIVE, scheduledFor: { gte: startOfToday, lt: startOfTomorrow } },
@@ -206,7 +207,53 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
       include: { candidate: { select: { id: true, firstName: true, lastName: true } }, actor: PERSON },
     }),
     closingSoon(now, 500),
+    // The requisitions the pipeline hires against. The approval chain
+    // (routes/positions) decides when a PLANNED one becomes OPEN; here we
+    // read whatever status the Position carries, so a requisition waiting
+    // on its approver shows as such beside the postings, with who it waits
+    // on and the budget it was asked for.
+    prisma.position.findMany({
+      where: { deletedAt: null, status: { in: ['PLANNED', 'OPEN', 'FROZEN'] } },
+      orderBy: [{ status: 'asc' }, { targetStartDate: 'asc' }, { code: 'asc' }],
+      take: 200,
+      select: {
+        id: true,
+        code: true,
+        title: true,
+        status: true,
+        fteAuthorized: true,
+        targetStartDate: true,
+        budgetAmount: true,
+        budgetPeriod: true,
+        requisitionApprovalId: true,
+        client: { select: { name: true } },
+      },
+    }),
   ]);
+  // The approval each waiting requisition sits on, and who it names.
+  const approvalIds = positions.map((p) => p.requisitionApprovalId).filter((id): id is string => !!id);
+  const approvals = approvalIds.length
+    ? await prisma.approvalRequest.findMany({
+        where: { id: { in: approvalIds } },
+        select: { id: true, status: true, createdAt: true, approverUserId: true, approverRole: true, approverCapability: true },
+      })
+    : [];
+  const approverUsers = await prisma.user.findMany({
+    where: { id: { in: approvals.map((a) => a.approverUserId).filter((id): id is string => !!id) } },
+    select: { id: true, ...PERSON.select },
+  });
+  const approverName = new Map(approverUsers.map((u) => [u.id, personName(u)]));
+  const approvalById = new Map(approvals.map((a) => [a.id, a]));
+  const waitingOn = (id: string | null): { waitingOn: string | null; requestedAt: string | null } => {
+    const a = id ? approvalById.get(id) : undefined;
+    if (!a || a.status !== 'PENDING') return { waitingOn: null, requestedAt: null };
+    const who = a.approverUserId
+      ? (approverName.get(a.approverUserId) ?? null)
+      : a.approverRole
+        ? ROLE_LABELS[a.approverRole]
+        : 'Any approver for requisitions';
+    return { waitingOn: who, requestedAt: a.createdAt.toISOString() };
+  };
   // Nothing the clean-up closes closes before its grace period ends.
   const cleanupStarts = await closingStartsAt(now);
 
@@ -437,6 +484,25 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
       OFFER: stages.get('OFFER') ?? 0,
     },
     postings: { total: postingRows.length, items: postingRows.slice(0, 6) },
+    requisitions: {
+      total: positions.length,
+      byStatus: positions.reduce<Record<string, number>>((acc, p) => {
+        acc[p.status] = (acc[p.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+      items: positions.slice(0, 8).map((p) => ({
+        id: p.id,
+        code: p.code,
+        title: p.title,
+        clientName: p.client?.name ?? null,
+        status: p.status,
+        fteAuthorized: Number(p.fteAuthorized),
+        targetStartDate: p.targetStartDate ? p.targetStartDate.toISOString().slice(0, 10) : null,
+        budgetAmount: p.budgetAmount === null ? null : Number(p.budgetAmount),
+        budgetPeriod: p.budgetPeriod === 'MONTHLY' ? ('MONTHLY' as const) : p.budgetPeriod === 'ANNUAL' ? ('ANNUAL' as const) : null,
+        ...waitingOn(p.requisitionApprovalId),
+      })),
+    },
     numbers: {
       hiresThisMonth: hires90.filter((h) => h.hiredAt! >= startOfMonth).length,
       hiresLastMonth: hires90.filter((h) => h.hiredAt! >= startOfLastMonth && h.hiredAt! < startOfMonth).length,

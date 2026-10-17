@@ -45,6 +45,10 @@ import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggreg
 import { z } from 'zod';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
+import { persistRetroForItem, releaseRetroForRun } from '../lib/retroPay.js';
+import { recoverEarnedWageAdvances, releaseEarnedWageRecoveryForRun } from '../lib/earnedWage.js';
+import { rerouteReturnedItem } from '../lib/payoutReroute.js';
+import { expenseSplitsForItems } from '../lib/quickbooks.js';
 import { hashPdf, renderPaystubPdf } from '../lib/paystub.js';
 import {
   buildPaystubDataById,
@@ -75,6 +79,7 @@ import {
   resolvePayoutsForPayroll,
 } from '../lib/financialChanges.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { emit as emitWorkflow } from '../lib/workflow.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
@@ -809,6 +814,9 @@ export async function aggregateAndPersistRun(
   });
   // Ride charges too — re-applied fresh below (lib/transport).
   await releaseRideCharges(tx, run.id);
+  // Retro pairs and earned-wage recoveries this run stamped: same rule.
+  await releaseRetroForRun(tx, run.id);
+  await releaseEarnedWageRecoveryForRun(tx, run.id);
 
   // Same idempotency rule for garnishments: remove THIS run's ledger rows
   // and roll each garnishment's amountWithheld back BEFORE projecting.
@@ -964,18 +972,30 @@ export async function aggregateAndPersistRun(
           periodEnd: run.periodEnd.toISOString().slice(0, 10),
           clientId: run.clientId,
         });
+        // Earned-wage advances drawn against this period come back here,
+        // after clawbacks and rides, never below $0 net (lib/earnedWage).
+        const ewa = await recoverEarnedWageAdvances(tx, {
+          associateId: p.associateId,
+          availableNet: round2(netAfterClawbacks - rides.totalApplied),
+          payrollRunId: run.id,
+          payrollItemId: upserted.id,
+        });
         await tx.payrollItem.update({
           where: { id: upserted.id },
           data: {
             postTaxDeductions: round2(
-              Number(upserted.postTaxDeductions) + consumed.totalApplied + rides.totalApplied,
+              Number(upserted.postTaxDeductions) + consumed.totalApplied + rides.totalApplied + ewa.totalApplied,
             ),
-            netPay: round2(netAfterClawbacks - rides.totalApplied),
+            netPay: round2(netAfterClawbacks - rides.totalApplied - ewa.totalApplied),
             rideChargesCents: rides.totalCents,
             rideChargesDeferredCents: rides.deferredCents,
             rideChargeGuard: rides.guard as unknown as Prisma.InputJsonValue,
           },
         });
+        // The retro pairs this check settles (lib/retroPay).
+        if (p.retro.length > 0) {
+          await persistRetroForItem(tx, p.retro, { runId: run.id, itemId: upserted.id });
+        }
 
         // Replace earning lines on every (re-)aggregation.
         await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: upserted.id } });
@@ -1277,6 +1297,26 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
     if (run.status !== 'DRAFT') {
       throw new HttpError(409, 'not_draft', 'Only DRAFT runs can be finalized');
     }
+    // No run finalizes with a W-2 person whose state the engine cannot
+    // withhold for — nothing would be withheld, and that is a liability,
+    // not a rounding error. (lib/payrollExceptions.ts UNSUPPORTED_STATE)
+    const unsupported = (
+      await prisma.payrollItem.findMany({
+        where: { payrollRunId: run.id, associate: { employmentType: 'W2_EMPLOYEE' } },
+        select: { taxState: true, associate: { select: { firstName: true, lastName: true } } },
+      })
+    ).filter((i) => !isStateTaxSupported(i.taxState));
+    if (unsupported.length > 0) {
+      throw new HttpError(
+        409,
+        'unsupported_state',
+        `State income tax is not supported for ${unsupported
+          .slice(0, 3)
+          .map((i) => `${i.associate.firstName} ${i.associate.lastName} (${i.taxState ?? 'no state'})`)
+          .join(', ')}${unsupported.length > 3 ? ` and ${unsupported.length - 3} more` : ''}. Set a configured state rate or correct their work state, then re-run.`,
+        { count: unsupported.length },
+      );
+    }
     const updated = await prisma.payrollRun.update({
       where: { id: run.id },
       data: { status: 'FINALIZED', finalizedAt: new Date() },
@@ -1304,6 +1344,13 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
       },
       { clientId: updated.clientId },
     );
+    void emitWorkflow({
+      trigger: 'PAYROLL_FINALIZED',
+      entityType: 'PayrollRun',
+      entityId: updated.id,
+      clientId: updated.clientId,
+      context: { payrollRun: { id: updated.id, clientId: updated.clientId, periodStart: updated.periodStart.toISOString().slice(0, 10), periodEnd: updated.periodEnd.toISOString().slice(0, 10) }, actorUserId: req.user!.id },
+    }).catch((err) => console.warn('[payroll] workflow emit failed:', err));
     res.json(toDetail(updated));
   } catch (err) {
     next(err);
@@ -1373,8 +1420,11 @@ payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
         where: { appliedRunId: run.id },
         data: { appliedRunId: null, appliedItemId: null, appliedAt: null },
       });
-      // …and the van-ride charges it took.
+      // …and the van-ride charges it took, the retro pairs it settled and
+      // the earned-wage advances it recovered.
       await releaseRideCharges(tx, run.id);
+      await releaseRetroForRun(tx, run.id);
+      await releaseEarnedWageRecoveryForRun(tx, run.id);
 
       // Items + their earnings cascade on the run delete, but delete
       // explicitly for clarity, then the run.
@@ -1773,6 +1823,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         const allItems = await prisma.payrollItem.findMany({
           take: 10_000,
           where: { payrollRunId: updated.id },
+          include: { associate: { select: { costCenterId: true } } },
         });
         const totals = aggregateForQbo(allItems);
         try {
@@ -1782,6 +1833,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
               .toISOString()
               .slice(0, 10)}`,
             ...totals,
+            expenseSplits: await expenseSplitsForItems(prisma, conn, allItems),
           });
           await prisma.payrollRun.update({
             where: { id: updated.id },
@@ -1814,6 +1866,167 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
     }
 
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /payroll/runs/:id/close — the guided close: one run, six steps,
+ * each with what blocks it and where to go. Readiness → exceptions →
+ * approve → disburse → deposits → QuickBooks. The page is a stepper over
+ * this; the actions stay where they live.
+ */
+payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+      include: { client: { select: { name: true } }, approvedBy: { select: { email: true } } },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    const periodEndExclusive = new Date(run.periodEnd);
+    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+    const [items, exceptions, deposit, remittances, conn] = await Promise.all([
+      prisma.payrollItem.findMany({
+        where: { payrollRunId: run.id },
+        select: { id: true, status: true, netPay: true, failureReason: true, taxState: true, reroutedAt: true, associate: { select: { firstName: true, lastName: true, employmentType: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true, retiredAt: null }, select: { id: true, verifiedAt: true } } } } },
+      }),
+      run.status === 'DRAFT'
+        ? computePayrollExceptions(prisma, { periodStart: run.periodStart, periodEndExclusive, clientId: run.clientId })
+        : Promise.resolve(null),
+      prisma.taxDeposit.findUnique({ where: { payrollRunId: run.id }, select: { id: true, status: true, dueDate: true, amount: true, confirmationNumber: true } }),
+      prisma.garnishmentRemittance.findMany({ where: { payrollRunId: run.id }, select: { id: true, status: true, payeeName: true, amount: true } }),
+      run.clientId ? prisma.quickbooksConnection.findUnique({ where: { clientId: run.clientId }, select: { id: true, glByCostCenter: true } }) : Promise.resolve(null),
+    ]);
+    const byStatus = { pending: 0, disbursed: 0, held: 0, failed: 0, voided: 0 };
+    for (const i of items) {
+      if (i.status === 'PENDING') byStatus.pending += 1;
+      else if (i.status === 'DISBURSED') byStatus.disbursed += 1;
+      else if (i.status === 'HELD') byStatus.held += 1;
+      else if (i.status === 'FAILED') byStatus.failed += 1;
+      else byStatus.voided += 1;
+    }
+    const name = (i: (typeof items)[number]) => `${i.associate.firstName} ${i.associate.lastName}`;
+    const readiness = {
+      missingW4: items.filter((i) => i.associate.employmentType === 'W2_EMPLOYEE' && !i.associate.w4Submission).map(name),
+      missingPayout: items.filter((i) => i.associate.payoutMethods.length === 0).map(name),
+      unverifiedPayout: items.filter((i) => i.associate.payoutMethods.some((m) => !m.verifiedAt)).map(name),
+      unsupportedState: items.filter((i) => i.associate.employmentType === 'W2_EMPLOYEE' && !isStateTaxSupported(i.taxState)).map((i) => `${name(i)} (${i.taxState ?? 'no state'})`),
+    };
+    const blocking = exceptions?.counts.blocking ?? readiness.unsupportedState.length + readiness.missingW4.length;
+    const approvalRequired = env.PAYROLL_REQUIRE_SECOND_APPROVAL;
+    const steps = [
+      {
+        key: 'readiness',
+        label: 'Readiness',
+        state: run.status !== 'DRAFT' ? 'done' : readiness.missingW4.length + readiness.unsupportedState.length > 0 ? 'blocked' : readiness.missingPayout.length + readiness.unverifiedPayout.length > 0 ? 'warn' : 'done',
+        blockers: readiness.missingW4.length + readiness.unsupportedState.length,
+        warnings: readiness.missingPayout.length + readiness.unverifiedPayout.length,
+        to: '/payroll/readiness',
+      },
+      {
+        key: 'exceptions',
+        label: 'Exceptions',
+        state: run.status !== 'DRAFT' ? 'done' : blocking > 0 ? 'blocked' : (exceptions?.counts.warning ?? 0) > 0 ? 'warn' : 'done',
+        blockers: run.status !== 'DRAFT' ? 0 : blocking,
+        warnings: run.status !== 'DRAFT' ? 0 : (exceptions?.counts.warning ?? 0),
+        to: `/payroll?run=${run.id}`,
+      },
+      {
+        key: 'approve',
+        label: approvalRequired ? 'Finalize & second approval' : 'Finalize',
+        state: run.status === 'DRAFT' ? (blocking > 0 ? 'blocked' : 'current') : approvalRequired && !run.approvedAt && run.status === 'FINALIZED' ? 'current' : 'done',
+        blockers: 0,
+        warnings: 0,
+        to: `/payroll?run=${run.id}`,
+      },
+      {
+        key: 'disburse',
+        label: 'Disburse',
+        state: run.status === 'DISBURSED' ? 'done' : run.status === 'FINALIZED' ? (byStatus.held + byStatus.failed > 0 ? 'blocked' : 'current') : 'todo',
+        blockers: byStatus.held + byStatus.failed,
+        warnings: 0,
+        to: `/payroll?run=${run.id}`,
+      },
+      {
+        key: 'deposits',
+        label: 'Tax deposit',
+        state: run.status !== 'DISBURSED' ? 'todo' : !deposit ? 'warn' : deposit.status === 'PAID' ? 'done' : 'current',
+        blockers: 0,
+        warnings: run.status === 'DISBURSED' && deposit && deposit.status !== 'PAID' && deposit.dueDate < new Date() ? 1 : 0,
+        to: '/payroll/tax',
+      },
+      {
+        key: 'quickbooks',
+        label: 'QuickBooks',
+        state: !run.clientId || !conn ? 'skip' : run.qboJournalEntryId ? 'done' : run.status === 'DISBURSED' ? (run.qboSyncError ? 'blocked' : 'current') : 'todo',
+        blockers: run.qboSyncError ? 1 : 0,
+        warnings: 0,
+        to: run.clientId ? `/clients/${run.clientId}?tab=quickbooks` : '/clients',
+      },
+    ];
+    res.json({
+      run: {
+        id: run.id,
+        status: run.status,
+        kind: run.kind,
+        clientName: run.client?.name ?? null,
+        periodStart: ymd(run.periodStart),
+        periodEnd: ymd(run.periodEnd),
+        totalGross: Number(run.totalGross),
+        totalNet: Number(run.totalNet),
+        totalEmployerTax: Number(run.totalEmployerTax),
+        finalizedAt: run.finalizedAt?.toISOString() ?? null,
+        approvedAt: run.approvedAt?.toISOString() ?? null,
+        approvedByEmail: run.approvedBy?.email ?? null,
+        disbursedAt: run.disbursedAt?.toISOString() ?? null,
+        qboJournalEntryId: run.qboJournalEntryId,
+        qboSyncError: run.qboSyncError,
+      },
+      approvalRequired,
+      items: byStatus,
+      heldItems: items.filter((i) => i.status === 'HELD' || i.status === 'FAILED').map((i) => ({ id: i.id, name: name(i), netPay: Number(i.netPay), reason: i.failureReason })),
+      // Paid and not yet re-sent: what a bank could still send back.
+      paidItems: items.filter((i) => i.status === 'DISBURSED' && !i.reroutedAt).slice(0, 500).map((i) => ({ id: i.id, name: name(i), netPay: Number(i.netPay) })),
+      rerouted: items.filter((i) => i.reroutedAt).length,
+      readiness,
+      exceptions: exceptions ? { counts: exceptions.counts, rows: exceptions.exceptions.slice(0, 50) } : null,
+      deposit: deposit ? { id: deposit.id, status: deposit.status, dueDate: ymd(deposit.dueDate), amount: Number(deposit.amount), confirmationNumber: deposit.confirmationNumber } : null,
+      remittances: remittances.map((r) => ({ id: r.id, status: r.status, payeeName: r.payeeName, amount: Number(r.amount) })),
+      quickbooks: conn ? { connected: true, glByCostCenter: conn.glByCostCenter } : { connected: false, glByCostCenter: false },
+      steps,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/items/:id/returned { reason?, returnedRef? } — Finance
+ * records that a bank returned a deposit (a rail with no webhook: the
+ * stub, Wise, a bounced check). The item is re-paid to the person's last
+ * verified other account, else by check (lib/payoutReroute.ts).
+ */
+payrollRouter.post('/items/:id/returned', PROCESS, async (req, res, next) => {
+  try {
+    const body = z.object({ reason: z.string().trim().max(200).optional().nullable(), returnedRef: z.string().trim().max(120).optional().nullable() }).parse(req.body ?? {});
+    const item = await prisma.payrollItem.findFirst({
+      where: { id: z.string().uuid().parse(req.params.id), payrollRun: scopePayrollRuns(req.user!) },
+      select: { id: true, status: true, reroutedAt: true },
+    });
+    if (!item) throw new HttpError(404, 'item_not_found', 'Paycheck not found');
+    if (item.status !== 'DISBURSED' && item.status !== 'PENDING' && item.status !== 'HELD') {
+      throw new HttpError(409, 'not_paid', 'Only a paid (or pending) paycheck can be returned.');
+    }
+    if (item.reroutedAt) throw new HttpError(409, 'already_rerouted', 'This paycheck was already re-sent after a return.');
+    const outcome = await rerouteReturnedItem(prisma, {
+      payrollItemId: item.id,
+      reason: body.reason ?? null,
+      returnedRef: body.returnedRef ?? null,
+      actorUserId: req.user!.id,
+      req,
+    });
+    res.json(outcome);
   } catch (err) {
     next(err);
   }

@@ -3,10 +3,11 @@ import { useAuth } from '@/lib/auth';
 import { AssociateTimeOffView } from './AssociateTimeOffView';
 import { AdminTimeOffView } from './AdminTimeOffView';
 import { AdminTimeOffEntitlementsView } from './AdminTimeOffEntitlementsView';
+import { TimeOffPoliciesView } from './TimeOffPoliciesView';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
-type Tab = 'requests' | 'entitlements' | 'mine';
+type Tab = 'requests' | 'policies' | 'entitlements' | 'mine';
 
 export function TimeOffHome() {
   const { user, can } = useAuth();
@@ -26,16 +27,20 @@ export function TimeOffHome() {
     <ListTemplate
         className="mx-auto"
         title="Time off"
-        subtitle="Approve requests and manage entitlement balances by policy."
+        subtitle="Approve requests, set how leave is earned, and manage entitlement balances."
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="requests">Requests</TabsTrigger>
+          <TabsTrigger value="policies">Policies</TabsTrigger>
           <TabsTrigger value="entitlements">Entitlements</TabsTrigger>
           {hasOwnTimeOff && <TabsTrigger value="mine">My time off</TabsTrigger>}
         </TabsList>
         <TabsContent value="requests">
           <AdminTimeOffView canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="policies">
+          <TimeOffPoliciesView canManage={canManage} />
         </TabsContent>
         <TabsContent value="entitlements">
           <AdminTimeOffEntitlementsView canManage={canManage} />

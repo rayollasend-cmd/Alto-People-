@@ -25,6 +25,7 @@ import {
   listJobProfiles,
 } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
+import { isPending } from '@/lib/approvalRequestsApi';
 import { useConfirm } from '@/lib/confirm';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
@@ -262,6 +263,9 @@ function PositionDrawer({
   );
   const [minRate, setMinRate] = useState(initial?.minHourlyRate ?? '');
   const [maxRate, setMaxRate] = useState(initial?.maxHourlyRate ?? '');
+  // Headcount plan (HR pack 2026-10): the money set aside for this seat.
+  const [budget, setBudget] = useState(initial?.budgetAmount ?? '');
+  const [budgetPeriod, setBudgetPeriod] = useState<'ANNUAL' | 'MONTHLY'>(initial?.budgetPeriod ?? 'ANNUAL');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +316,8 @@ function PositionDrawer({
         targetStartDate: targetStartDate || null,
         minHourlyRate: minRate ? Number(minRate) : null,
         maxHourlyRate: maxRate ? Number(maxRate) : null,
+        budgetAmount: budget ? Number(budget) : null,
+        budgetPeriod: budget ? budgetPeriod : null,
         notes: notes.trim() || null,
       };
       if (isNew) {
@@ -333,8 +339,10 @@ function PositionDrawer({
     if (isNew) return;
     setSubmitting(true);
     try {
-      await setPositionStatus(initial!.id, status);
-      toast.success(successMessage);
+      const r = await setPositionStatus(initial!.id, status);
+      // Requisition → approval → posting: opening a seat may wait for a second person.
+      if (isPending(r)) toast.success('Sent for approval. The seat opens when a second person approves the requisition.');
+      else toast.success(successMessage);
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to update status.');
@@ -570,6 +578,30 @@ function PositionDrawer({
               {fmtPercent(rangeStats.spreadPct)}
             </p>
           )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Budget" hint="What this seat may cost. Compared with actual pay on the headcount plan.">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="100"
+                  min="0"
+                  value={budget ?? ''}
+                  onChange={(e) => setBudget(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Per">
+              {(p) => (
+                <Select value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value as 'ANNUAL' | 'MONTHLY')} disabled={!canManage || !budget} {...p}>
+                  <option value="ANNUAL">Year</option>
+                  <option value="MONTHLY">Month</option>
+                </Select>
+              )}
+            </Field>
+          </div>
 
           <Field label="Notes">
             {(p) => (

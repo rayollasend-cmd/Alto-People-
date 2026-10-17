@@ -17,7 +17,16 @@ export type WorkflowActionKind =
   | 'SET_FIELD'
   | 'ASSIGN_TASK'
   | 'CREATE_AUDIT_LOG'
-  | 'WEBHOOK';
+  | 'WEBHOOK'
+  /** The run pauses until the named role, person or capability holder decides. */
+  | 'REQUIRE_APPROVAL';
+
+/** The approval a WAITING run waits on (its REQUIRE_APPROVAL gate). */
+export interface WorkflowGate {
+  approvalId: string;
+  title: string;
+  status: string;
+}
 
 export interface WorkflowAction {
   kind: WorkflowActionKind;
@@ -45,7 +54,8 @@ export interface WorkflowRunSummary {
   trigger: WorkflowTrigger;
   entityType: string;
   entityId: string;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'WAITING';
+  waitingOn?: WorkflowGate | null;
   startedAt: string | null;
   completedAt: string | null;
   failureReason: string | null;
@@ -111,7 +121,7 @@ export interface WorkflowRunStep {
   ordinal: number;
   kind: WorkflowActionKind;
   params: Record<string, unknown>;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'SKIPPED' | 'WAITING';
   result: unknown;
   failureReason: string | null;
   startedAt: string | null;
@@ -126,6 +136,7 @@ export interface WorkflowRunDetail {
   entityId: string;
   context: Record<string, unknown>;
   status: WorkflowRunSummary['status'];
+  waitingOn?: WorkflowGate | null;
   startedAt: string | null;
   completedAt: string | null;
   failureReason: string | null;

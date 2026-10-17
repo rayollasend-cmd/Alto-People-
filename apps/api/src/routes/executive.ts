@@ -14,6 +14,7 @@ import { computeExecutiveSummary, executiveNarrative } from '../lib/executiveSum
 import { buildBoardPack } from '../lib/executiveBoardPack.js';
 import { notifyUser } from '../lib/notify.js';
 import { portalEngagementOverview } from '../lib/portalEngagement.js';
+import { computeAgentRoi } from '../lib/agentRoi.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { env } from '../config/env.js';
 
@@ -46,6 +47,12 @@ executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
 // cliff, and the people worth knowing this week.
 executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
   res.json(await computeExecutiveBriefing(prisma, new Date(), { tenantId: tenantIdForWrite() }));
+});
+
+// What the agents gave back over the last thirty days — hours of people's
+// time saved against what they cost — the number beside margin.
+executiveRouter.get('/agent-roi', EXEC, async (_req: Request, res: Response) => {
+  res.json(await computeAgentRoi(prisma, new Date()));
 });
 
 // Who on the client side is using their site: last seen, sign-ins this

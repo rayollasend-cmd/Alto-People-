@@ -5,6 +5,8 @@ import { env } from '../config/env.js';
 import { geocode, type GeoPoint } from './geocode.js';
 import { notifyAssociate, notifyUser, trackNotificationWork } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
+import { legDurations, routingAvailable } from './mapboxRouting.js';
+import { watchForTrouble } from './transportSafety.js';
 
 /**
  * The vans live — phase 2 of transportation.
@@ -110,6 +112,12 @@ export function planRun(opts: {
   now: Date;
   rides: PlanRide[];
   stores: Map<string, GeoPoint | null>;
+  /**
+   * Road-network seconds for each hop the van still has to drive — from
+   * the van to the first placed stop, then stop to stop — when the routing
+   * service answered (lib/mapboxRouting). Missing or short: the estimate.
+   */
+  legSeconds?: number[] | null;
 }): RunPlan {
   const waiting = opts.rides.filter((r) => r.status === 'SCHEDULED').sort(byOrder);
   const aboard = opts.rides.filter((r) => r.status === 'BOARDED');
@@ -143,9 +151,12 @@ export function planRun(opts: {
   // and the clock carries on from the last known point.
   let at: GeoPoint | null = opts.van;
   let t = opts.now.getTime();
+  let hop = 0;
   for (const w of waypoints) {
     if (!at || !w.point) continue;
-    t += driveSeconds(at, w.point) * 1000;
+    const road = opts.legSeconds?.[hop];
+    t += (typeof road === 'number' && Number.isFinite(road) ? road : driveSeconds(at, w.point)) * 1000;
+    hop += 1;
     w.etaAt = new Date(t);
     t += DWELL_S * 1000;
     at = w.point;
@@ -276,7 +287,7 @@ export async function computeRunLive(run: LiveRunRow, now = new Date()): Promise
     if (!stores.has(r.location.id)) stores.set(r.location.id, { point: await storePoint(r.location), location: r.location });
   }
   const vanPoint = run.status === 'ACTIVE' ? point(run.lastLat, run.lastLng) : null;
-  const plan = planRun({
+  const planInput = {
     direction: run.direction,
     van: vanPoint,
     now,
@@ -289,7 +300,17 @@ export async function computeRunLive(run: LiveRunRow, now = new Date()): Promise
       home: homes.get(r.id) ?? null,
     })),
     stores: new Map([...stores.entries()].map(([id, s]) => [id, s.point])),
-  });
+  };
+  // The road network's word on each hop, when the van is out and routing
+  // is on; the straight-line estimate otherwise. The first pass only
+  // decides which stops are placed and in what order.
+  let legSeconds: number[] | null = null;
+  if (vanPoint && routingAvailable()) {
+    const first = planRun(planInput);
+    const path = [vanPoint, ...first.waypoints.map((w) => w.point).filter((p): p is GeoPoint => !!p)];
+    legSeconds = (await legDurations(path))?.seconds ?? null;
+  }
+  const plan = planRun({ ...planInput, legSeconds });
   return {
     van:
       vanPoint && run.lastLocationAt
@@ -393,6 +414,10 @@ export async function afterPing(runId: string, now = new Date()): Promise<void> 
       }
     }
   }
+
+  // A van sitting still off the plan, or drifting off its way: ask the
+  // driver, then tell the desk (lib/transportSafety).
+  await watchForTrouble(run, live, now);
 
   for (const id of await watchers(run)) emitLiveEvent(id, 'transport');
 }

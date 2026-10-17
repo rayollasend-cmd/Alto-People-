@@ -434,11 +434,30 @@ export async function listEligibleOpenShifts(associateId: string, opts: { before
     include: {
       qualReqs: { include: { qualification: true } },
       client: { select: { id: true, name: true } },
+      locationRel: { select: { id: true, name: true } },
       claims: { where: { status: 'PENDING', associateId } },
     },
   });
   const byId = new Map(rows.map((s) => [s.id, s]));
   return ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+}
+
+/**
+ * The sites this person has actually worked or is assigned to — a shift
+ * anywhere else is "new for you" on the pickup feed (field roles, 2026-10).
+ */
+async function knownSiteIds(associateId: string): Promise<Set<string>> {
+  const since = new Date(Date.now() - 180 * 86_400_000);
+  const [entries, assignments] = await Promise.all([
+    prisma.timeEntry.findMany({
+      where: { associateId, clockInAt: { gte: since }, locationId: { not: null } },
+      select: { locationId: true },
+      distinct: ['locationId'],
+      take: 100,
+    }),
+    prisma.associateAssignment.findMany({ where: { associateId }, select: { locationId: true }, take: 100 }),
+  ]);
+  return new Set([...entries.map((e) => e.locationId!), ...assignments.map((a) => a.locationId)]);
 }
 
 /**
@@ -452,7 +471,7 @@ qualificationsRouter.get(
     if (!req.user?.associateId) {
       throw new HttpError(403, 'no_associate_link', 'Open-shift list is for associates only.');
     }
-    const eligible = await listEligibleOpenShifts(req.user.associateId);
+    const [eligible, known] = await Promise.all([listEligibleOpenShifts(req.user.associateId), knownSiteIds(req.user.associateId)]);
 
     res.json({
       shifts: eligible.map((s) => ({
@@ -463,6 +482,10 @@ qualificationsRouter.get(
         startsAt: s.startsAt.toISOString(),
         endsAt: s.endsAt.toISOString(),
         location: s.location,
+        locationId: s.locationRel?.id ?? null,
+        locationName: s.locationRel?.name ?? null,
+        // A site they have not worked at — the feed says so before they tap.
+        newForYou: !!s.locationRel && !known.has(s.locationRel.id),
         payRate: s.payRate?.toFixed(2) ?? null,
         requirements: s.qualReqs.map((r) => ({
           id: r.qualificationId,

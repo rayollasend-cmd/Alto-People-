@@ -316,6 +316,50 @@ export interface PayrollJournalSource {
    * under the matching Employee or Vendor. Used by per-employee JE mode.
    */
   entityRef?: { type: 'Employee' | 'Vendor'; value: string };
+  /**
+   * GL by cost center: the wage-expense debit split by account (one line
+   * per cost center's expense account). Any difference between the
+   * credits and these lines lands on the default salaries account, so
+   * the entry always balances. Empty/undefined = one debit line.
+   */
+  expenseSplits?: Array<{ accountRef: string; amount: number; memo: string }>;
+}
+
+/**
+ * The expense debit per cost center for a set of items: each person's
+ * gross plus employer taxes goes to their cost center's mapped account;
+ * people with no cost center or no mapping stay on the default salaries
+ * account. Returns nothing when the connection has the split off.
+ */
+export async function expenseSplitsForItems(
+  prisma: PrismaClient,
+  conn: Pick<QuickbooksConnection, 'id' | 'glByCostCenter'>,
+  items: Array<{
+    grossPay: Prisma.Decimal | number;
+    employerFica: Prisma.Decimal | number;
+    employerMedicare: Prisma.Decimal | number;
+    employerFuta: Prisma.Decimal | number;
+    employerSuta: Prisma.Decimal | number;
+    associate: { costCenterId: string | null };
+  }>,
+): Promise<PayrollJournalSource['expenseSplits']> {
+  if (!conn.glByCostCenter) return undefined;
+  const mappings = await prisma.quickbooksCostCenterMapping.findMany({
+    where: { connectionId: conn.id },
+    include: { costCenter: { select: { code: true, name: true } } },
+  });
+  if (mappings.length === 0) return undefined;
+  const byCostCenter = new Map(mappings.map((m) => [m.costCenterId, m]));
+  const totals = new Map<string, { accountRef: string; amount: number; memo: string }>();
+  for (const i of items) {
+    const m = i.associate.costCenterId ? byCostCenter.get(i.associate.costCenterId) : undefined;
+    if (!m) continue;
+    const cost = Number(i.grossPay) + Number(i.employerFica) + Number(i.employerMedicare) + Number(i.employerFuta) + Number(i.employerSuta);
+    const cur = totals.get(m.accountRef) ?? { accountRef: m.accountRef, amount: 0, memo: `Payroll expense — ${m.costCenter.code} ${m.costCenter.name}` };
+    cur.amount = round2(cur.amount + cost);
+    totals.set(m.accountRef, cur);
+  }
+  return [...totals.values()].filter((t) => t.amount > 0);
 }
 
 export interface JournalEntryResult {
@@ -361,6 +405,14 @@ export async function postPayrollJournalEntry(
   ].filter((c) => c.amount > 0);
 
   const debitTotal = credits.reduce((s, c) => s + c.amount, 0);
+  // GL by cost center: the mapped debits, and the remainder (unmapped
+  // people, employer-tax rounding) on the default salaries account.
+  const splits = (source.expenseSplits ?? []).filter((x) => x.amount > 0);
+  const splitTotal = round2(splits.reduce((s, x) => s + x.amount, 0));
+  const debits: Array<{ accountRef: string; amount: number; memo: string }> =
+    splits.length > 0
+      ? [...splits, ...(round2(debitTotal - splitTotal) > 0 ? [{ accountRef: accounts.salariesExpense, amount: round2(debitTotal - splitTotal), memo: 'Payroll expense — unmapped / rounding' }] : [])]
+      : [{ accountRef: accounts.salariesExpense, amount: round2(debitTotal), memo: 'Total payroll expense' }];
 
   // Wave 5.2 — when entityRef is set, attach it to every line so QBO files
   // the JE under the right Employee/Vendor. Optional fields outside that
@@ -378,17 +430,17 @@ export async function postPayrollJournalEntry(
     TxnDate: source.txnDate.toISOString().slice(0, 10),
     PrivateNote: source.memo,
     Line: [
-      // Single debit line for the salary expense, sized to balance.
-      {
+      // The debit side: one line, or one per cost-center account.
+      ...debits.map((d) => ({
         DetailType: 'JournalEntryLineDetail',
-        Amount: round2(debitTotal),
-        Description: 'Total payroll expense',
+        Amount: round2(d.amount),
+        Description: d.memo,
         JournalEntryLineDetail: {
           PostingType: 'Debit',
-          AccountRef: { value: accounts.salariesExpense },
+          AccountRef: { value: d.accountRef },
           ...detailExtras,
         },
-      },
+      })),
       ...credits.map((c) => ({
         DetailType: 'JournalEntryLineDetail',
         Amount: round2(c.amount),

@@ -48,6 +48,7 @@ import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { ListTemplate } from '@/components/templates';
 import { useTenant } from '@/lib/auth';
+import { LettersSection } from './LettersSection';
 
 const KIND_VALUES: DocumentKind[] = [
   'ID',
@@ -654,6 +655,10 @@ export function AssociateDocumentsView() {
         doc={previewDoc}
         onOpenChange={(o) => !o && setPreviewDoc(null)}
       />
+      {/* Proof of employment / income, asked for here, approved by HR. */}
+      <div className="mt-8">
+        <LettersSection />
+      </div>
       </ListTemplate>
     </>
   );

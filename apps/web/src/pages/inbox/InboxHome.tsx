@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Inbox } from 'lucide-react';
 import type { InboxSource } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
@@ -7,6 +7,8 @@ import { Badge, Card, EmptyState, SectionTitle, SkeletonRows, buttonVariants } f
 import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
 import { useInbox } from '@/lib/inboxApi';
+import { useI18n } from '@/lib/i18n';
+import { useListKeyboard } from '@/lib/shortcuts';
 
 /**
  * Inbox — every decision waiting on the signed-in person, in one place.
@@ -18,7 +20,9 @@ import { useInbox } from '@/lib/inboxApi';
  * fold under "All clear" so they still know what is being watched.
  */
 export function InboxHome() {
+  const { t } = useI18n();
   const inbox = useInbox();
+  const navigate = useNavigate();
 
   const { waiting, quiet } = useMemo(() => {
     const sources = inbox.data?.sources ?? [];
@@ -27,24 +31,26 @@ export function InboxHome() {
       quiet: sources.filter((s) => s.count === 0),
     };
   }, [inbox.data]);
+  // j/k move over the queues, Enter opens one (lib/shortcuts).
+  const kb = useListKeyboard({ items: waiting, idOf: (s) => s.key, onOpen: (s) => navigate(s.path) });
 
   return (
-    <ListTemplate title="Inbox" subtitle="Every decision waiting on you, in one place.">
+    <ListTemplate title={t('decisions.title')} subtitle={t('decisions.subtitle')}>
       {inbox.isPending && <SkeletonRows count={4} rowHeight="h-16" />}
-      {inbox.isError && <QueryError what="your inbox" query={inbox} />}
+      {inbox.isError && <QueryError what={t('decisions.loadWhat')} query={inbox} />}
       {inbox.data && (
         <div className="space-y-[var(--d-stack)]">
           {inbox.data.total === 0 ? (
             <EmptyState
               icon={Inbox}
-              title="Nothing is waiting on you."
-              description="When a decision needs you — an approval, a review, a ruling — it shows up here."
+              title={t('decisions.emptyTitle')}
+              description={t('decisions.emptyBody')}
             />
           ) : (
             <Card animate={false}>
-              <ul className="divide-y divide-navy-secondary" aria-label="Decisions waiting on you">
+              <ul className="divide-y divide-navy-secondary" aria-label={t('decisions.waitingAria')} {...kb.listProps}>
                 {waiting.map((s) => (
-                  <SourceRow key={s.key} source={s} />
+                  <SourceRow key={s.key} source={s} rowProps={kb.rowProps(s.key)} />
                 ))}
               </ul>
             </Card>
@@ -53,11 +59,11 @@ export function InboxHome() {
             <section aria-labelledby="inbox-quiet">
               <SectionTitle
                 as="h2"
-                title={<span id="inbox-quiet">All clear</span>}
-                description="Queues you can act on that are empty right now."
+                title={<span id="inbox-quiet">{t('decisions.allClear')}</span>}
+                description={t('decisions.allClearBody')}
                 className="mb-2"
               />
-              <ul className="flex flex-wrap gap-2" aria-label="Queues with nothing waiting">
+              <ul className="flex flex-wrap gap-2" aria-label={t('decisions.quietAria')}>
                 {quiet.map((s) => (
                   <li key={s.key}>
                     <Link
@@ -78,15 +84,16 @@ export function InboxHome() {
   );
 }
 
-function SourceRow({ source }: { source: InboxSource }) {
+function SourceRow({ source, rowProps }: { source: InboxSource; rowProps?: ReturnType<ReturnType<typeof useListKeyboard>['rowProps']> }) {
+  const { t } = useI18n();
   return (
-    <li className="flex items-center gap-4 p-[var(--d-card)]">
+    <li className="flex items-center gap-4 p-[var(--d-card)]" {...rowProps}>
       <Badge
         variant="pending"
         size="lg"
         withDot={false}
         className="min-w-[2.75rem] justify-center tabular-nums"
-        aria-label={`${source.count} waiting`}
+        aria-label={t('decisions.nWaiting', { n: source.count })}
       >
         {source.count >= 999 ? '999+' : source.count}
       </Badge>
@@ -97,9 +104,9 @@ function SourceRow({ source }: { source: InboxSource }) {
       <Link
         to={source.path}
         className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0')}
-        aria-label={`Open ${source.label}`}
+        aria-label={t('decisions.openX', { label: source.label })}
       >
-        Open
+        {t('decisions.open')}
         <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
       </Link>
     </li>

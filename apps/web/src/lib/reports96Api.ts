@@ -25,11 +25,23 @@ export interface ReportSort {
   direction: 'asc' | 'desc';
 }
 
+export type AggregateFn = 'count' | 'sum' | 'avg' | 'min' | 'max';
+
+/** One roll-up per group: `count` ignores the column; the alias is the output key. */
+export interface ReportAggregate {
+  fn: AggregateFn;
+  column?: string | null;
+  alias?: string | null;
+}
+
 export interface ReportSpec {
   columns: string[];
   filters: ReportFilter[];
   sort: ReportSort[];
   limit: number;
+  /** Set when the report summarizes: one row per distinct combination, with `aggregates` per row. */
+  groupBy?: string[];
+  aggregates?: ReportAggregate[];
 }
 
 export interface ReportSummary {

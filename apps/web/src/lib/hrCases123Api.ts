@@ -19,6 +19,22 @@ export type CaseStatus =
   | 'RESOLVED'
   | 'CLOSED';
 
+/** How a case stands against its SLA (lib/hrCaseSla on the API). */
+export type SlaState = 'MET' | 'ON_TRACK' | 'AT_RISK' | 'BREACHED' | 'PAUSED' | 'NONE';
+export interface SlaView {
+  dueAt: string | null;
+  state: SlaState;
+  /** Minutes until due (negative when overdue); null when paused, done or unset. */
+  minutesLeft: number | null;
+}
+
+export interface SlaTarget {
+  category: CaseCategory;
+  priority: CasePriority;
+  targetHours: number;
+  custom: boolean;
+}
+
 export interface MyCaseRow {
   id: string;
   category: CaseCategory;
@@ -30,6 +46,7 @@ export interface MyCaseRow {
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
+  sla: SlaView;
 }
 
 export interface QueueCaseRow {
@@ -45,6 +62,7 @@ export interface QueueCaseRow {
   commentCount: number;
   createdAt: string;
   updatedAt: string;
+  sla: SlaView;
 }
 
 export interface CaseDetail {
@@ -62,6 +80,7 @@ export interface CaseDetail {
   resolution: string | null;
   createdAt: string;
   updatedAt: string;
+  sla: SlaView;
   comments: CaseComment[];
 }
 
@@ -81,7 +100,12 @@ export interface CaseSummary {
   byStatus: Record<string, number>;
   byPriority: Record<string, number>;
   byCategory: Record<string, number>;
+  sla: { breached: number; atRisk: number };
 }
+
+export const getSlaTargets = () => apiFetch<{ targets: SlaTarget[] }>('/hr-cases-sla');
+export const updateSlaTargets = (targets: Array<{ category: CaseCategory; priority: CasePriority; targetHours: number | null }>) =>
+  apiFetch<{ targets: SlaTarget[] }>('/hr-cases-sla', { method: 'PUT', body: { targets } });
 
 export const CATEGORY_LABELS: Record<CaseCategory, string> = {
   BENEFITS: 'Benefits',
@@ -117,12 +141,15 @@ export const listCaseQueue = (params: {
   assignedToMe?: boolean;
   /** One person's cases (the person record's Cases tab). */
   associateId?: string;
+  /** Only open cases past their SLA. */
+  sla?: 'breached';
 }) => {
   const q = new URLSearchParams();
   if (params.status) q.set('status', params.status);
   if (params.category) q.set('category', params.category);
   if (params.assignedToMe) q.set('assignedToMe', 'true');
   if (params.associateId) q.set('associateId', params.associateId);
+  if (params.sla) q.set('sla', params.sla);
   const qs = q.toString();
   return apiFetch<{ cases: QueueCaseRow[] }>(
     `/hr-cases${qs ? `?${qs}` : ''}`,

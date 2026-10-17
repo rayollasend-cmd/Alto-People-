@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, ClipboardCheck, MapPin, Timer, Users } from 'lucide-react';
+import { ArrowRight, CalendarDays, ClipboardCheck, Flag, MapPin, ShieldAlert, Timer, Users } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
@@ -10,6 +10,7 @@ import { boundedClientOf } from '@/lib/roles';
 import { listClientLocations } from '@/lib/clientsApi';
 import { getMySop, type HelpingSop } from '@/lib/opsApi';
 import { useShiftClock } from '@/lib/useShiftClock';
+import { useInbox } from '@/lib/inboxApi';
 import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
 import {
   fmtDate,
@@ -22,6 +23,12 @@ import {
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { VanArrivalsCard } from '@/components/VanArrivals';
+import { IncidentReportDialog } from '@/components/floor/IncidentReportDialog';
+import { FloorFlagDialog } from '@/components/floor/FloorFlagDialog';
+import { FloorFlagsCard } from '@/components/floor/FloorFlagsCard';
+import { HandoverBanner } from '@/components/floor/HandoverBanner';
+import { CoverShiftCard } from '@/components/floor/CoverShiftCard';
+import { FloorWeekStrip } from '@/components/floor/FloorWeekStrip';
 import { ReadyToScheduleCard } from '@/components/ReadyToScheduleCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { enterStagger } from '@/lib/motion';
@@ -33,6 +40,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
@@ -117,16 +125,59 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/**
+ * The floor supervisor's Needs you: watch-only by design, so nothing here
+ * is theirs to decide — but what IS waiting on them (a task the engine
+ * queued for a person, a message) is counted and linked, the same row the
+ * other homes carry, instead of a hole where the section should be.
+ */
+function WatchNeedsYou() {
+  const { t } = useI18n();
+  const inbox = useInbox();
+  const waiting = (inbox.data?.sources ?? []).filter((s) => s.count > 0);
+  if (inbox.isPending) return <Skeleton className="h-14" />;
+  if (waiting.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-4 text-sm text-ink-muted">{t('floor.watchNothingWaiting')}</CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <ul className="divide-y divide-line" aria-label={t('home.needsYou')}>
+        {waiting.map((s) => (
+          <li key={s.key}>
+            <Link to={s.path} className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-surface-raised">
+              <Badge variant="pending" size="sm" withDot={false} className="min-w-[2rem] justify-center tabular-nums">
+                {s.count >= 999 ? '999+' : s.count}
+              </Badge>
+              <span className="min-w-0 flex-1 truncate text-ink">{s.label}</span>
+              <ArrowRight className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="px-4 pb-3 text-xs2 text-ink-muted">{t('floor.watchLeadDecides')}</p>
+    </Card>
+  );
+}
+
 export function SupervisorDashboard() {
   const { t } = useI18n();
   const term = useTerm();
   const greet = useGreeting();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
   const client = boundedClientOf(user);
   // The floor supervisor: the same floor, no scheduling or approval reads.
   const watchOnly = user?.role === 'FLOOR_SUPERVISOR';
+  // The floor from a phone (field roles, 2026-10): an incident filed the
+  // moment it happens; a flag from the watch-only lead to their supervisor.
+  const [incidentOpen, setIncidentOpen] = useState(false);
+  const [flagOpen, setFlagOpen] = useState(false);
+  const canReport = can('report:incident');
   const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
   const teamQuery = useFloorTeam();
   const todayKey = ymdLocal();
@@ -333,7 +384,25 @@ export function SupervisorDashboard() {
           <Link to="/approvals">Approvals</Link>
         </Button>
       )}
+      {canReport && (
+        <Button size="sm" variant="outline" onClick={() => setIncidentOpen(true)}>
+          <ShieldAlert className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Report an incident
+        </Button>
+      )}
+      {watchOnly && canReport && (
+        <Button size="sm" variant="outline" onClick={() => setFlagOpen(true)}>
+          <Flag className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Flag a no-show or hazard
+        </Button>
+      )}
     </div>
+  );
+  const floorDialogs = (
+    <>
+      {canReport && <IncidentReportDialog open={incidentOpen} onOpenChange={setIncidentOpen} />}
+      {watchOnly && canReport && <FloorFlagDialog open={flagOpen} onOpenChange={setFlagOpen} />}
+    </>
   );
 
   if (dayQuery.isError && !data) {
@@ -524,7 +593,13 @@ export function SupervisorDashboard() {
         subtitle={subtitle}
         meta={meta}
         actions={primary}
-        banners={shiftBanner}
+        banners={
+          <>
+            {/* The last shift's written handover — the lead coming on reads it first. */}
+            <HandoverBanner />
+            {shiftBanner}
+          </>
+        }
         hero={
           <div className="space-y-4">
             {myWindows.length > 0 && (
@@ -659,7 +734,7 @@ export function SupervisorDashboard() {
             </Card>
           </div>
         }
-        decisions={watchOnly ? undefined : { title: t('home.needsYou'), content: <RoleDecisionQueue title={null} /> }}
+        decisions={{ title: t('home.needsYou'), content: watchOnly ? <WatchNeedsYou /> : <RoleDecisionQueue title={null} /> }}
         assistant={<HugoSeat />}
         waysIn={waysIn}
       >
@@ -805,6 +880,12 @@ export function SupervisorDashboard() {
           </div>
         )}
 
+        {/* ---- From the floor: flags raised by a floor lead, open shifts to cover -- */}
+        {!watchOnly && <FloorFlagsCard />}
+        {!watchOnly && <CoverShiftCard />}
+        {/* ---- The week, for the watch-only lead who sees only today and tomorrow -- */}
+        {watchOnly && <FloorWeekStrip />}
+
         {/* ---- The floor team: who reports to them / who's in charge -------- */}
         {watchOnly ? <MyLeadStrip /> : <FloorTeamStrip />}
 
@@ -949,6 +1030,7 @@ export function SupervisorDashboard() {
           </div>
         </div>
       </HomeTemplate>
+      {floorDialogs}
     </>
   );
 }

@@ -25,6 +25,7 @@ import {
   roleLabel,
   syncStoreChannel,
   type Messenger,
+  placedClientsOf,
 } from '../lib/messaging.js';
 
 /**
@@ -77,6 +78,8 @@ const USER_SELECT = {
   role: true,
   clientId: true,
   locationId: true,
+  // An associate's own record: the supervisor↔associate rule checks their placements.
+  associateId: true,
   photoS3Key: true,
   photoUpdatedAt: true,
   associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
@@ -215,9 +218,10 @@ messagesRouter.get('/directory', requireAuth, async (req, res, next) => {
     const q = (req.query.q?.toString() ?? '').trim();
     const regionClients =
       user.role === 'CLIENT_PORTAL' && !user.clientId && user.regionId ? await regionClientIds(user.regionId) : [];
+    const placedClients = user.role === 'ASSOCIATE' && user.associateId ? await placedClientsOf(user.associateId) : [];
     const rows = await prisma.user.findMany({
       where: {
-        ...directoryWhere(user, regionClients),
+        ...directoryWhere(user, regionClients, placedClients),
         tenantId: tenantIdForWrite(),
         ...(q
           ? {

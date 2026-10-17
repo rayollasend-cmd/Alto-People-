@@ -89,6 +89,7 @@ import {
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { useStoreScope } from '@/lib/storeScope';
 import { boundedClientOf, hasCapability, isClientBoundedRole } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
@@ -535,6 +536,7 @@ function parseView(raw: string | null): ViewMode {
 }
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
+  const { t } = useI18n();
   const term = useTerm();
   const { moduleOn } = useTenant();
   // A tenant without clients: no client column, filter or client-only hint.
@@ -2533,12 +2535,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       <ListTemplate
         className="print-area"
         headerClassName="no-print"
-        title="Scheduling"
-        subtitle={
-          canManage
-            ? `Plan shifts, assign ${term('workers').toLowerCase()}, and track fill status.`
-            : 'Read-only view of scheduled shifts.'
-        }
+        title={t('schedHome.title')}
+        subtitle={canManage ? t('schedHome.subManage', { workersLc: term('workers').toLowerCase() }) : t('schedHome.subReadOnly')}
         secondaryActions={
           canManage ? (
             <>
@@ -2548,17 +2546,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" loading={exportingPdf}>
                     <Download className="h-4 w-4" />
-                    Export
+                    {t('schedHome.export')}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuItem onSelect={onPrint}>
                     <Printer className="mr-2 h-4 w-4" />
-                    Print this view
+                    {t('schedHome.printView')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={onExportCsv}>
                     <Download className="mr-2 h-4 w-4" />
-                    Download CSV
+                    {t('schedHome.downloadCsv')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void onExportPdf()}>
                     <FileText className="mr-2 h-4 w-4" />
@@ -2586,7 +2584,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
           {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
           <div className="print-only mb-3">
-            <div className="text-xl font-semibold">Schedule</div>
+            <div className="text-xl font-semibold">{t('schedHome.schedule')}</div>
             <div className="text-sm text-gray-700">
               {fmtPrintRange(exportRange.from, exportRange.to)}
               {boundedClient
@@ -3284,12 +3282,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {filteredShifts && view === 'list' && filteredShifts.length === 0 && (
         <EmptyState
           icon={Calendar}
-          title="No shifts match this filter"
-          description={
-            canManage
-              ? 'Try a different filter, or create a new shift to start staffing.'
-              : 'Try a different filter to see other shifts.'
-          }
+          title={t('schedHome.noMatch')}
+          description={canManage ? t('schedHome.noMatchManage') : t('schedHome.noMatchRead')}
           action={
             canManage ? (
               <Button onClick={() => setShowCreate(true)}>

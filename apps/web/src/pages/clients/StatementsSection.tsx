@@ -18,7 +18,14 @@ import {
   listClientStatements,
   markClientStatementPaid,
   upsertClientStatement,
+  getClientDunning,
+  pauseClientDunning,
+  resumeClientDunning,
+  updateClientBillingTerms,
+  updateClientStatementTerms,
 } from '@/lib/clientsApi';
+import { usePrompt } from '@/lib/confirm';
+import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
@@ -141,6 +148,8 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   // stay with payroll.
   const canFinalize = can('process:payroll');
   const canBill = canFinalize || can('view:executive');
+  const prompt = usePrompt();
+  const todayKey = new Date().toISOString().slice(0, 10);
 
   // Keyed by client, so switching clients is a different cache entry (the
   // old effect reset rows by hand) and Back to a client is instant.
@@ -203,6 +212,42 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   };
 
   const download = downloadStatementFile;
+
+  const editTerms = async (s: ClientStatement) => {
+    const po = await prompt({
+      title: 'Purchase order for this statement',
+      description: 'Prints on the statement and its reminders. Leave empty to use the client\u2019s standing PO.',
+      reasonLabel: 'PO number',
+      reasonMaxLength: 60,
+      required: false,
+      confirmLabel: 'Next',
+    });
+    if (po === null) return;
+    let dueAt: string | null | undefined;
+    if (s.status === 'FINAL') {
+      const d = await prompt({
+        title: 'Due date',
+        description: 'YYYY-MM-DD. Reminders restart from the new date.',
+        reasonLabel: 'Due date',
+        reasonPlaceholder: s.dueAt ?? '2026-11-30',
+        reasonMaxLength: 10,
+        required: false,
+        confirmLabel: 'Save',
+      });
+      if (d === null) return;
+      dueAt = d.trim() ? d.trim() : undefined;
+    }
+    setBusy(`terms-${s.id}`);
+    try {
+      await updateClientStatementTerms(clientId, s.id, { poNumber: po.trim() || null, ...(dueAt !== undefined ? { dueAt } : {}) });
+      toast.success('Statement terms saved.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the terms.');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const finalize = async (s: ClientStatement) => {
     if (
@@ -313,6 +358,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
         </p>
       </CardHeader>
       <CardContent>
+        <BillingTermsBar clientId={clientId} canEdit={canFinalize} />
         {error && (
           <ErrorBanner
             action={
@@ -362,9 +408,14 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         {s.status === 'FINAL' &&
                           (s.paidAt ? (
                             <Badge variant="success">Paid {fmtDate(s.paidAt)}</Badge>
+                          ) : s.dueAt && s.dueAt < todayKey ? (
+                            <Badge variant="destructive">Past due since {fmtDate(s.dueAt)}</Badge>
+                          ) : s.dueAt ? (
+                            <Badge variant="pending">Due {fmtDate(s.dueAt)}</Badge>
                           ) : (
                             <Badge variant="pending">Unpaid</Badge>
                           ))}
+                        {s.poNumber && <span className="text-2xs text-silver">PO {s.poNumber}</span>}
                       </div>
                       <div className="pl-6 text-xs tabular-nums text-silver">
                         {s.snapshot.totals.hours.toFixed(1)} h ·{' '}
@@ -424,6 +475,11 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                           Finalize
                         </Button>
                       )}
+                      {canFinalize && !s.paidAt && (
+                        <Button size="sm" variant="ghost" onClick={() => void editTerms(s)} disabled={busy !== null} title="The PO this statement bills against, and once final, its due date">
+                          Terms
+                        </Button>
+                      )}
                       {canFinalize && s.status === 'FINAL' && !s.paidAt && (
                         <Button
                           size="sm"
@@ -458,5 +514,124 @@ export function StatementsSection({ clientId }: { clientId: string }) {
         }}
       />
     </Card>
+  );
+}
+
+/**
+ * The client's invoicing terms and where the reminder cadence stands:
+ * standing PO, net days, and the pause Finance throws when a client is
+ * disputing a statement or the check is in the mail.
+ */
+function BillingTermsBar({ clientId, canEdit }: { clientId: string; canEdit: boolean }) {
+  const q = useQuery({ queryKey: ['clients', clientId, 'dunning'], queryFn: () => getClientDunning(clientId) });
+  const prompt = usePrompt();
+  const [editing, setEditing] = useState(false);
+  const [po, setPo] = useState('');
+  const [days, setDays] = useState('30');
+  const [busy, setBusy] = useState(false);
+  const d = q.data;
+  if (!d) return null;
+  const startEdit = () => {
+    setPo(d.poNumber ?? '');
+    setDays(String(d.paymentTermsDays));
+    setEditing(true);
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      await updateClientBillingTerms(clientId, { poNumber: po.trim() || null, paymentTermsDays: Number(days) });
+      toast.success('Billing terms saved.');
+      setEditing(false);
+      await q.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const togglePause = async () => {
+    setBusy(true);
+    try {
+      if (d.paused) {
+        await resumeClientDunning(clientId);
+        toast.success('Reminders resumed.');
+      } else {
+        const note = await prompt({
+          title: 'Pause payment reminders?',
+          description: 'No reminders go to this client until you resume. Say why, so whoever picks this up knows.',
+          reasonLabel: 'Why',
+          reasonPlaceholder: 'Disputing the overtime line on No. 0042',
+          reasonMaxLength: 500,
+          confirmLabel: 'Pause reminders',
+        });
+        if (!note) return;
+        await pauseClientDunning(clientId, note);
+        toast.success('Reminders paused.');
+      }
+      await q.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not change reminders.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const lastReminder = d.reminders[0];
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-xs text-silver">
+      {editing ? (
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <label>
+            Standing PO
+            <Input className="mt-1 h-8 w-36" value={po} maxLength={60} onChange={(e) => setPo(e.target.value)} />
+          </label>
+          <label>
+            Net days
+            <Input className="mt-1 h-8 w-20" type="number" min="0" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
+          </label>
+          <Button size="sm" type="submit" loading={busy}>
+            Save
+          </Button>
+          <Button size="sm" variant="ghost" type="button" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+        </form>
+      ) : (
+        <>
+          <span>
+            Terms <span className="font-medium text-ink">net {d.paymentTermsDays}</span>
+          </span>
+          <span>
+            PO <span className="font-medium text-ink">{d.poNumber ?? 'none on file'}</span>
+          </span>
+          <span>
+            Reminders{' '}
+            {d.paused ? (
+              <span className="font-medium text-warning" title={d.paused.note ?? undefined}>
+                paused {fmtDate(d.paused.at)}
+                {d.paused.note ? ` — ${d.paused.note}` : ''}
+              </span>
+            ) : (
+              <span className="font-medium text-ink">on{lastReminder ? ` · last sent ${fmtDate(lastReminder.sentAt)}` : ''}</span>
+            )}
+          </span>
+          {canEdit && (
+            <span className="ml-auto flex gap-2">
+              <Button size="xs" variant="ghost" onClick={startEdit}>
+                Edit terms
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => void togglePause()} loading={busy}>
+                {d.paused ? 'Resume reminders' : 'Pause reminders'}
+              </Button>
+            </span>
+          )}
+        </>
+      )}
+    </div>
   );
 }

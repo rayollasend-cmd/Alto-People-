@@ -28,8 +28,23 @@ const SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: ['⌘', 'K'], description: 'Open command palette (search & jump)' },
       { keys: ['⌘', 'J'], description: 'Open the assistant' },
+      { keys: ['g', 'h'], description: 'Go home' },
+      { keys: ['g', 'i'], description: 'Go to Inbox' },
+      { keys: ['g', 's'], description: 'Go to Schedule' },
+      { keys: ['g', 'p'], description: 'Go to People' },
+      { keys: ['g', 'a'], description: 'Go to Approvals' },
+      { keys: ['g', ','], description: 'Go to Settings' },
       { keys: ['Esc'], description: 'Close dialogs and overlays' },
       { keys: ['?'], description: 'Show this overlay' },
+    ],
+  },
+  {
+    label: 'Lists (Inbox, Approvals)',
+    items: [
+      { keys: ['j', 'k'], description: 'Move down / up a row' },
+      { keys: ['Enter'], description: 'Open the row' },
+      { keys: ['a'], description: 'Approve the row' },
+      { keys: ['d'], description: 'Decline the row' },
     ],
   },
   {

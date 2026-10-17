@@ -16,6 +16,7 @@ import {
   computeSocialSecurity,
   computeStateIncomeTax,
   isStateTaxSupported,
+  supportedStates,
   zeroTaxBreakdown,
 } from '../../lib/payrollTax.js';
 
@@ -212,15 +213,19 @@ describe('computeStateIncomeTax', () => {
     expect(close(t, 103.65, 0.2)).toBe(true);
   });
 
-  it('falls back to flat 4% for unknown states', () => {
-    // AR has no real table yet (not in NO_SIT, not flat-rate, not bracketed) → fallback fires.
+  it('withholds nothing for an unsupported state — the run is blocked upstream, never guessed at 4%', () => {
+    // AR has no table (not in NO_SIT, not flat-rate, not bracketed): no fallback.
     const t = computeStateIncomeTax({ grossPay: 1000, state: 'AR', payFrequency: 'BIWEEKLY' });
-    expect(close(t, 40)).toBe(true);
+    expect(t).toBe(0);
+    expect(isStateTaxSupported('AR')).toBe(false);
+    expect(supportedStates()).toContain('CA');
+    expect(supportedStates()).toContain('FL');
+    expect(supportedStates()).not.toContain('AR');
   });
 
-  it('handles null state via fallback flat rate', () => {
+  it('withholds nothing with no state on file', () => {
     const t = computeStateIncomeTax({ grossPay: 1000, state: null, payFrequency: 'BIWEEKLY' });
-    expect(close(t, 40)).toBe(true);
+    expect(t).toBe(0);
   });
 
   it('treats lowercase state codes correctly', () => {

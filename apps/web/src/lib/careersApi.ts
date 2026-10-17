@@ -31,6 +31,23 @@ export const listCareerPostings = () =>
 export const getCareerPosting = (slug: string) =>
   apiFetch<CareerPosting>(`/careers/${encodeURIComponent(slug)}`);
 
+/** What the careers site says about working here — edited by marketing. */
+export interface CareersBrand {
+  headline: string | null;
+  intro: string | null;
+  values: Array<{ title: string; body: string }>;
+  perks: string[];
+  ctaText: string | null;
+  photos: Array<{ id: string; alt: string; url: string }>;
+}
+
+export const getCareersBrand = () => apiFetch<CareersBrand>('/careers/brand');
+
+/** One more view of the list page or a posting — the top of marketing's funnel. Never throws. */
+export function recordCareersView(slug: string | null, source: string | null): void {
+  void apiFetch<void>('/careers/view', { method: 'POST', body: { slug, source } }).catch(() => undefined);
+}
+
 export const applyToPosting = (slug: string, body: CareersApplyInput) =>
   apiFetch<{ id: string; alreadyApplied: boolean }>(`/careers/${encodeURIComponent(slug)}/apply`, {
     method: 'POST',

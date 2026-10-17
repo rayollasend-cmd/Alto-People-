@@ -142,6 +142,13 @@ export const get1095c = (year: number) =>
     `/aca/1095c?year=${year}`,
   );
 
+/** One F1095C draft per employee with ACA months, plus the 1094-C transmittal. */
+export const generate1095cForms = (year: number) =>
+  apiFetch<{ year: number; created: number; skipped: number; employees: number }>('/aca/1095c/generate', { method: 'POST', body: { year } });
+
+/** The 1094-C/1095-C AIR transmission file for the year. */
+export const acaAirUrl = (year: number): string => `/api/aca/air.xml?year=${year}`;
+
 export const upsertAcaMonth = (input: {
   associateId: string;
   year: number;

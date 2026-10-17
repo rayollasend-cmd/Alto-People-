@@ -51,6 +51,7 @@ import { prisma } from '../db.js';
 import { activeDelegationsFrom } from './delegations.js';
 import { EmailSuppressedError, send, type SendAttachment } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
+import { holdIfDeferred } from './notificationDelivery.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { sendWhatsAppForUser } from './whatsapp.js';
 import type { WaLang, WaTemplateKey } from './whatsappContent.js';
@@ -204,6 +205,12 @@ export interface NotifyOpts {
    */
   quiet?: boolean;
   /**
+   * Access pack: goes out now whatever the person's quiet hours or digest
+   * choice says (lib/notificationDelivery). Mandatory buckets, safety and
+   * pay are urgent by category already; set this for the rest.
+   */
+  urgent?: boolean;
+  /**
    * WhatsApp (Brief 1C-4): the registered template this notice goes out
    * as, with its positional parameters rendered per language. Without it
    * the subject and body ride the generic template.
@@ -316,16 +323,26 @@ export function emailUserForCategory(
       const muted = await isEmailMutedForCategory(userId, opts.category);
       if (muted) return;
       // Email + push ride the same mute switch: "don't bother me about
-      // this category" means neither inbox nor lock screen.
+      // this category" means neither inbox nor lock screen. Each outside
+      // channel then answers to the person's quiet hours / digest choice.
       await Promise.all([
-        sendEmailNotification(userId, email, opts),
-        sendPushToUser(userId, {
-          title: opts.subject ?? 'Alto People',
-          body: opts.body,
-          url: opts.linkUrl,
-        }),
+        (async () => {
+          if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
+          await sendEmailNotification(userId, email, opts);
+        })(),
+        (async () => {
+          if (await holdIfDeferred(userId, 'PUSH', opts)) return;
+          await sendPushToUser(userId, {
+            title: opts.subject ?? 'Alto People',
+            body: opts.body,
+            url: opts.linkUrl,
+          });
+        })(),
         // WhatsApp, when they opted in — the same mute applies.
-        sendWhatsAppForUser(userId, opts).catch((err: unknown) => {
+        (async () => {
+          if (await holdIfDeferred(userId, 'WHATSAPP', opts)) return;
+          await sendWhatsAppForUser(userId, opts);
+        })().catch((err: unknown) => {
           console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
         }),
       ]);
@@ -379,16 +396,31 @@ export function notifyUser(
       if (u && u.email && u.status === 'ACTIVE') {
         const muted = await isEmailMutedForCategory(userId, opts.category);
         if (!muted) {
-          void sendEmailNotification(userId, u.email, opts);
+          // Access pack: each outside channel answers to the person's quiet
+          // hours and digest choice; what must not wait (security, safety,
+          // pay, mandatory notices) never does.
+          const email = u.email;
           void track(
-            sendPushToUser(userId, {
-              title: opts.subject ?? 'Alto People',
-              body: opts.body,
-              url: opts.linkUrl,
-            }),
+            (async () => {
+              if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
+              await sendEmailNotification(userId, email, opts);
+            })(),
           );
           void track(
-            sendWhatsAppForUser(userId, opts).catch((err: unknown) => {
+            (async () => {
+              if (await holdIfDeferred(userId, 'PUSH', opts)) return;
+              await sendPushToUser(userId, {
+                title: opts.subject ?? 'Alto People',
+                body: opts.body,
+                url: opts.linkUrl,
+              });
+            })(),
+          );
+          void track(
+            (async () => {
+              if (await holdIfDeferred(userId, 'WHATSAPP', opts)) return;
+              await sendWhatsAppForUser(userId, opts);
+            })().catch((err: unknown) => {
               console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
             }),
           );

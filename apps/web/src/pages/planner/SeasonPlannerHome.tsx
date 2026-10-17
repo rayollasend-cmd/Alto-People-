@@ -34,6 +34,7 @@ import {
   updateSeasonPlan,
 } from '@/lib/seasonPlansApi';
 import { Badge } from '@/components/ui/Badge';
+import { LiveWhatIfCard } from '@/components/planner/LiveWhatIfCard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -431,6 +432,9 @@ function PlanView({ id }: { id: string }) {
               accent={toRecruit > 0}
             />
           </div>
+
+          {/* ---- the live week: what-if against the calendar --------------- */}
+          <LiveWhatIfCard planId={plan.id} weeks={plan.weeks} />
 
           {/* ---- week by week --------------------------------------------- */}
           <Card>

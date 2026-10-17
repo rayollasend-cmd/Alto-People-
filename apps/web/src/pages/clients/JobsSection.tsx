@@ -6,6 +6,7 @@ import type { Job } from '@alto-people/shared';
 import { createJob, deleteJob, listJobs, updateJob } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import { fmtMoney } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
@@ -43,6 +44,7 @@ interface Props {
 export function JobsSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
+  const seesMoney = useLaborCostVisible();
 
   const [includeInactive, setIncludeInactive] = useState(false);
 
@@ -145,8 +147,14 @@ export function JobsSection({ clientId }: Props) {
             exportCsv={{ filename: 'jobs' }}
             columns={[
               { key: 'name', header: 'Name', accessor: (j) => j.name, sortable: true, primary: true, className: 'text-white' },
-              { key: 'bill', header: 'Bill rate', accessor: (j) => Number(j.billRate), csv: (j) => fmtMoney(j.billRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (j) => fmtMoney(j.billRate) },
-              { key: 'pay', header: 'Pay rate', accessor: (j) => Number(j.payRate), csv: (j) => fmtMoney(j.payRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (j) => fmtMoney(j.payRate) },
+              // Money on a job is org economics: a store-bound supervisor
+              // schedules against the name; the API withholds the rates too.
+              ...(seesMoney
+                ? [
+                    { key: 'bill', header: 'Bill rate', accessor: (j: Job) => Number(j.billRate), csv: (j: Job) => fmtMoney(j.billRate), sortable: true, searchable: false, align: 'right' as const, cardMeta: true, className: 'tabular-nums text-silver', cell: (j: Job) => fmtMoney(j.billRate) },
+                    { key: 'pay', header: 'Pay rate', accessor: (j: Job) => Number(j.payRate), csv: (j: Job) => fmtMoney(j.payRate), sortable: true, searchable: false, align: 'right' as const, cardMeta: true, className: 'tabular-nums text-silver', cell: (j: Job) => fmtMoney(j.payRate) },
+                  ]
+                : []),
               { key: 'status', header: 'Status', accessor: (j) => (j.isActive ? 'Active' : 'Archived'), sortable: true, cell: (j) => (j.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Archived</Badge>) },
               ...(canManage
                 ? [
@@ -239,6 +247,8 @@ interface JobDialogProps {
 }
 
 function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialogProps) {
+  // A store-bound supervisor names the job; Finance and HR set its rates.
+  const seesMoney = useLaborCostVisible();
   const [name, setName] = useState(existing?.name ?? '');
   const [billRate, setBillRate] = useState(existing?.billRate?.toString() ?? '');
   const [payRate, setPayRate] = useState(existing?.payRate?.toString() ?? '');
@@ -276,8 +286,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
       if (existing) {
         await updateJob(existing.id, {
           name: trimmed,
-          billRate: billN,
-          payRate: payN,
+          ...(seesMoney ? { billRate: billN, payRate: payN } : {}),
           isActive,
         });
         toast.success('Job updated.');
@@ -287,8 +296,8 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
           name: trimmed,
           // Create-input schema is `optional` (omit, not null); skip the
           // field entirely when the user left the input blank.
-          ...(billN !== null ? { billRate: billN } : {}),
-          ...(payN !== null ? { payRate: payN } : {}),
+          ...(seesMoney && billN !== null ? { billRate: billN } : {}),
+          ...(seesMoney && payN !== null ? { payRate: payN } : {}),
         });
         toast.success('Job created.');
       }
@@ -328,6 +337,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
               />
             )}
           </Field>
+          {seesMoney && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="Bill rate (USD/hr)" hint="What the client is invoiced.">
               {(p) => (
@@ -356,6 +366,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
               )}
             </Field>
           </div>
+          )}
           {existing && (
             <label className="text-sm text-silver inline-flex items-center gap-2 cursor-pointer">
               <input

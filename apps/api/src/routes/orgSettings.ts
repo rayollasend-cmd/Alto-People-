@@ -78,6 +78,13 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
       mfaRequirement: 'OFF',
       financeMailbox: null,
       unverifiedPayoutPolicy: 'PREVIOUS_VERIFIED',
+      payChangeApprovalPct: 10,
+      payChangeAlwaysApprove: false,
+      billRateApproval: true,
+      separationSecondPerson: true,
+      selfServiceApproval: false,
+      roleChangeApproval: true,
+      requisitionApproval: true,
       updatedAt: new Date(0).toISOString(),
     };
   }
@@ -97,6 +104,13 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
     mfaRequirement: row.mfaRequirement,
     financeMailbox: row.financeMailbox,
     unverifiedPayoutPolicy: row.unverifiedPayoutPolicy,
+    payChangeApprovalPct: row.payChangeApprovalPct,
+    payChangeAlwaysApprove: row.payChangeAlwaysApprove,
+    billRateApproval: row.billRateApproval,
+    separationSecondPerson: row.separationSecondPerson,
+    selfServiceApproval: row.selfServiceApproval,
+    roleChangeApproval: row.roleChangeApproval,
+    requisitionApproval: row.requisitionApproval,
     updatedAt: row.updatedAt.toISOString(),
   };
 }

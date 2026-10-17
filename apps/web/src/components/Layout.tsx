@@ -27,6 +27,8 @@ import { useChunkLoading } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
 import { AssistantProvider } from '@/lib/assistantContext';
 import { AssistantPane } from '@/components/assistant/AssistantPane';
+import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
+import { GlobalShortcuts } from '@/lib/shortcuts';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -267,6 +269,8 @@ export function Layout() {
             onOpenCommandPalette={() => setPaletteOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
           />
+          {/* Access pack: what was saved offline and waits to be sent. */}
+          <OfflineQueueBanner />
           <main
             id="main-content"
             ref={mainRef}
@@ -329,6 +333,8 @@ export function Layout() {
         </div>
         {/* The assistant's column, right of the page, when open (lib/assistantContext). */}
         <AssistantPane />
+        {/* Access pack: g-then-key chords (home, inbox, schedule, people…). */}
+        <GlobalShortcuts />
         <CommandPalette
           open={paletteOpen}
           onOpenChange={setPaletteOpen}

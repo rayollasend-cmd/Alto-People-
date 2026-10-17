@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import {
   PerformanceReviewCreateInputSchema,
   PerformanceReviewListResponseSchema,
@@ -9,7 +10,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { recordComplianceEvent } from '../lib/audit.js';
+import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
 
 export const performanceRouter = Router();
@@ -197,6 +198,151 @@ performanceRouter.post('/reviews/:id/submit', MANAGE, async (req, res, next) => 
       linkUrl: '/performance',
       emailFallback: true,
     });
+    res.json(toReview(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Calibration (manage:performance) ================================= */
+
+/**
+ * Before reviews go out, HR lays every reviewer's ratings side by side: the
+ * spread of 1–5 overall and per reviewer, and who rates well above or below
+ * everyone else. A draft's rating can then be moved — by someone other than
+ * the reviewer who wrote it — with a reason, and the reviewer's own rating
+ * stays on the record beside it.
+ */
+const CalibrationQuery = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+/** A reviewer whose average sits this far from everyone's is called out. */
+const LEAN_THRESHOLD = 0.75;
+
+performanceRouter.get('/calibration', MANAGE, async (req, res, next) => {
+  try {
+    const q = CalibrationQuery.parse(req.query);
+    const where: Prisma.PerformanceReviewWhereInput = {
+      ...(q.from ? { periodEnd: { gte: new Date(`${q.from}T00:00:00Z`) } } : {}),
+      ...(q.to ? { periodStart: { lte: new Date(`${q.to}T00:00:00Z`) } } : {}),
+    };
+    const rows = await prisma.performanceReview.findMany({
+      where,
+      orderBy: [{ periodEnd: 'desc' }],
+      take: 1000,
+      include: {
+        ...REVIEW_INCLUDE,
+        reviewer: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+        calibratedBy: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+      },
+    });
+    const nameOf = (u: { email: string; associate: { firstName: string; lastName: string } | null } | null) =>
+      u ? (u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email) : null;
+    const dist = (ratings: number[]) => [1, 2, 3, 4, 5].map((r) => ratings.filter((x) => x === r).length);
+    const mean = (ratings: number[]) =>
+      ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 100) / 100 : null;
+
+    const all = rows.map((r) => r.overallRating);
+    const orgMean = mean(all);
+    const byReviewer = new Map<string, { reviewerUserId: string | null; name: string; ratings: number[] }>();
+    for (const r of rows) {
+      const key = r.reviewerUserId ?? 'none';
+      const entry = byReviewer.get(key) ?? { reviewerUserId: r.reviewerUserId, name: nameOf(r.reviewer) ?? 'No reviewer', ratings: [] };
+      entry.ratings.push(r.overallRating);
+      byReviewer.set(key, entry);
+    }
+    const reviewers = [...byReviewer.values()]
+      .map((e) => {
+        const m = mean(e.ratings);
+        const delta = m !== null && orgMean !== null ? Math.round((m - orgMean) * 100) / 100 : 0;
+        return {
+          reviewerUserId: e.reviewerUserId,
+          name: e.name,
+          count: e.ratings.length,
+          mean: m,
+          distribution: dist(e.ratings),
+          // Only a reviewer with enough reviews to read a pattern into is called out.
+          lean: e.ratings.length >= 3 && Math.abs(delta) >= LEAN_THRESHOLD ? (delta > 0 ? ('generous' as const) : ('strict' as const)) : null,
+          delta,
+        };
+      })
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    res.json({
+      total: rows.length,
+      mean: orgMean,
+      distribution: dist(all),
+      reviewers,
+      reviews: rows.map((r) => ({
+        id: r.id,
+        associateId: r.associateId,
+        associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+        reviewerUserId: r.reviewerUserId,
+        reviewerName: nameOf(r.reviewer),
+        periodStart: ymd(r.periodStart),
+        periodEnd: ymd(r.periodEnd),
+        status: r.status,
+        overallRating: r.overallRating,
+        originalRating: r.originalRating,
+        calibrationNote: r.calibrationNote,
+        calibratedByName: nameOf(r.calibratedBy),
+        calibratedAt: r.calibratedAt ? r.calibratedAt.toISOString() : null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CalibrateBody = z.object({
+  rating: z.number().int().min(1).max(5),
+  note: z.string().trim().min(3).max(1000),
+});
+
+performanceRouter.post('/reviews/:id/calibrate', MANAGE, async (req, res, next) => {
+  try {
+    const body = CalibrateBody.safeParse(req.body);
+    if (!body.success) {
+      throw new HttpError(400, 'invalid_body', 'A rating from 1 to 5 and a reason are required.', body.error.flatten());
+    }
+    const existing = await prisma.performanceReview.findFirst({ where: { id: req.params.id } });
+    if (!existing) throw new HttpError(404, 'review_not_found', 'Review not found');
+    if (existing.status !== 'DRAFT') {
+      throw new HttpError(409, 'not_draft', 'Only a review that has not been shared can be calibrated.');
+    }
+    if (existing.reviewerUserId && existing.reviewerUserId === req.user!.id) {
+      throw new HttpError(403, 'own_review', 'Someone other than the reviewer calibrates a review.');
+    }
+    const updated = await prisma.performanceReview.update({
+      where: { id: existing.id },
+      data: {
+        overallRating: body.data.rating,
+        // The reviewer's own rating is kept the first time it moves.
+        originalRating: existing.originalRating ?? existing.overallRating,
+        calibrationNote: body.data.note,
+        calibratedById: req.user!.id,
+        calibratedAt: new Date(),
+      },
+      include: REVIEW_INCLUDE,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'performance.review.calibrated',
+        entityType: 'PerformanceReview',
+        entityId: existing.id,
+        metadata: {
+          associateId: existing.associateId,
+          from: existing.overallRating,
+          to: body.data.rating,
+          reviewerRating: existing.originalRating ?? existing.overallRating,
+          note: body.data.note,
+        },
+      },
+      'performance.calibrate',
+    );
     res.json(toReview(updated));
   } catch (err) {
     next(err);

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
+import { DeliveryCard } from '@/components/settings/DeliveryCard';
+import { DevicesCard } from '@/components/settings/DevicesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
@@ -114,12 +116,14 @@ export function Settings() {
           <LanguageCard />
           <OutOfOfficeCard />
           <NotificationsCard />
+          <DeliveryCard />
           {user?.associateId && <WhatsAppCard />}
         </div>
         <div className="space-y-6">
           <PasswordCard />
           <PasskeysCard />
           <MfaCard />
+          <DevicesCard />
         </div>
       </div>
 

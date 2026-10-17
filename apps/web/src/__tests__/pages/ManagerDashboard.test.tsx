@@ -9,6 +9,7 @@ import type { TeamTimeEntry, TeamTimeOffRequest } from '@/lib/teamApi';
 
 vi.mock('@/lib/teamApi', () => ({
   getTeamDashboard: vi.fn(),
+  getTeamHome: vi.fn(),
   listReports: vi.fn(),
   listTeamTimesheets: vi.fn(),
   listTeamTimeOff: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('@/components/RoleDecisionQueue', () => ({
 vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => <div>my plan</div> }));
 vi.mock('@/components/home/HugoSeat', () => ({ HugoSeat: () => null }));
 
-import { getTeamDashboard, listReports, listTeamTimeOff, listTeamTimesheets } from '@/lib/teamApi';
+import { getTeamDashboard, getTeamHome, listReports, listTeamTimeOff, listTeamTimesheets, type TeamHome } from '@/lib/teamApi';
 import { ManagerDashboard } from '@/pages/ManagerDashboard';
 
 const entry = (id: string, status: TeamTimeEntry['status']): TeamTimeEntry => ({
@@ -78,7 +79,14 @@ function renderPage(user: { firstName?: string; email: string } = { firstName: '
   );
 }
 
+const emptyHome: TeamHome = {
+  due: { reviews: [], oneOnOnes: [], probations: [], rampMilestones: [], documents: [], credentials: [], pips: [] },
+  today: { shifts: [], onClock: [], out: [], celebrations: [] },
+  suggestions: [],
+};
+
 beforeEach(() => {
+  vi.mocked(getTeamHome).mockResolvedValue(emptyHome);
   vi.mocked(getTeamDashboard).mockResolvedValue({
     directReports: 6,
     pendingTimesheets: 2,
@@ -114,14 +122,44 @@ describe('<ManagerDashboard>', () => {
     expect(screen.queryByText(/Needs your approval/)).not.toBeInTheDocument();
   });
 
-  it('the snapshot follows: on the clock first, direct reports last, time off without a hyphen', async () => {
+  it('the snapshot follows: on the clock first, then what the queues cannot say, direct reports last', async () => {
     renderPage();
     await screen.findByText('1 of 6');
     const snapshot = screen.getByRole('region', { name: 'Team snapshot' });
     const labels = within(snapshot)
-      .getAllByText(/On the clock now|Pending timesheets|Pending time off|Direct reports/)
+      .getAllByText(/On the clock now|Due on your team|Out today|Direct reports/)
       .map((el) => el.textContent);
-    expect(labels).toEqual(['On the clock now', 'Pending timesheets', 'Pending time off', 'Direct reports']);
+    expect(labels).toEqual(['On the clock now', 'Due on your team', 'Out today', 'Direct reports']);
+    // The queues are counted once, in Needs you — never again as tiles.
+    expect(within(snapshot).queryByText('Pending timesheets')).not.toBeInTheDocument();
+    expect(within(snapshot).queryByText('Pending time off')).not.toBeInTheDocument();
+  });
+
+  it('what is due on the team, today on the team, and the suggestions those add up to', async () => {
+    vi.mocked(getTeamHome).mockResolvedValue({
+      due: {
+        ...emptyHome.due,
+        reviews: [{ associateId: 'a-1', associateName: 'Ann Lee', lastPeriodEnd: '2025-06-30', overdueDays: 109 }],
+        probations: [{ id: 'p1', associateId: 'a-2', associateName: 'Bo Chen', endDate: '2026-10-28' }],
+      },
+      today: {
+        shifts: [{ id: 's1', associateId: 'a-1', associateName: 'Ann Lee', startsAt: '2026-10-17T13:00:00.000Z', endsAt: '2026-10-17T21:00:00.000Z', position: 'Cashier', location: 'Destin' }],
+        onClock: [],
+        out: [{ associateId: 'a-3', associateName: 'Cy Diaz', category: 'PTO', until: '2026-10-19' }],
+        celebrations: [{ associateId: 'a-2', associateName: 'Bo Chen', kind: 'ANNIVERSARY', years: 3 }],
+      },
+      suggestions: [{ key: 'reviews', text: '1 review is more than a year old — schedule them.', link: '/performance', count: 1 }],
+    });
+    renderPage();
+    expect(await screen.findByText('1 review is more than a year old — schedule them.')).toBeInTheDocument();
+    const due = screen.getByRole('region', { name: 'Due on your team' });
+    expect(within(due).getByText('Reviews due')).toBeInTheDocument();
+    expect(within(due).getByText('Probation decisions')).toBeInTheDocument();
+    const today = screen.getByRole('region', { name: 'Today on your team' });
+    expect(within(today).getByText('Cy Diaz')).toBeInTheDocument();
+    expect(within(today).getByText('3 years with us')).toBeInTheDocument();
+    // The tile's number counts up; its hint says whether anything is due.
+    expect(within(screen.getByRole('region', { name: 'Team snapshot' })).getByText('Reviews, 1:1s, probations and expiries.')).toBeInTheDocument();
   });
 
   it('with nothing waiting, the decision queue speaks for the section', async () => {

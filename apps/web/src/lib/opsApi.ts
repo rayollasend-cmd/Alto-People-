@@ -1,4 +1,5 @@
 import { apiFetch } from './api';
+import { withOfflineQueue, type QueuedResult } from './offlineQueue';
 
 /**
  * Store Operations client — the shift supervisor's floor tool plus the
@@ -343,8 +344,16 @@ export function patchOpsTask(
     doneAssociateId?: string | null;
     priority?: OpsPriority;
   },
-): Promise<{ task: OpsTaskRow; followUp?: OpsTaskRow | null }> {
-  return apiFetch(`/ops/tasks/${taskId}`, { method: 'PATCH', body });
+): Promise<{ task: OpsTaskRow; followUp?: OpsTaskRow | null } | QueuedResult> {
+  // Access pack: a tick with no signal is queued and replayed in order;
+  // a shift submitted meanwhile answers 409 on replay and the tick is dropped with a message.
+  return withOfflineQueue(() => apiFetch(`/ops/tasks/${taskId}`, { method: 'PATCH', body }), {
+    kind: 'sop-task',
+    label: body.status ? `mark a checklist task ${body.status.toLowerCase()}` : 'update a checklist task',
+    method: 'PATCH',
+    path: `/ops/tasks/${taskId}`,
+    body,
+  });
 }
 
 export async function uploadOpsTaskPhoto(

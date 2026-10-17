@@ -155,3 +155,42 @@ export const applyCycle = (cycleId: string) =>
     `/comp/cycles/${cycleId}/apply`,
     { method: 'POST', body: {} },
   );
+
+/** Compensation planning (HR pack 2026-10): the manager's worksheet and HR's calibration. */
+export interface WorksheetRow {
+  id: string;
+  associateId: string;
+  associateName: string;
+  jobTitle: string | null;
+  managerId: string | null;
+  managerName: string | null;
+  payType: PayType;
+  currentAmount: string;
+  proposedAmount: string;
+  increasePct: number | null;
+  status: MeritProposalStatus;
+  proposedNotes: string | null;
+  decisionNote: string | null;
+  band: { name: string; min: string; mid: string; max: string } | null;
+  bandPositionNow: number | null;
+  bandPositionProposed: number | null;
+  lastRating: number | null;
+  lastReviewEnd: string | null;
+}
+export interface Worksheet {
+  cycle: { id: string; name: string; status: MeritCycleStatus; effectiveDate: string; budget: string | null };
+  budget: { share: string | null; spent: number; remaining: number | null };
+  rows: WorksheetRow[];
+  editable: boolean;
+}
+export interface Calibration {
+  cycle: { id: string; name: string; status: MeritCycleStatus; budget: string | null; effectiveDate: string };
+  totals: { people: number; spent: number; remaining: number | null; meanPct: number | null; medianPct: number | null; p25: number; p75: number; pending: number };
+  distribution: Array<{ label: string; count: number }>;
+  managers: Array<{ managerId: string | null; managerName: string; people: number; avgPct: number; spent: number; pending: number }>;
+  outliers: Array<WorksheetRow & { reason: string }>;
+  rows: WorksheetRow[];
+}
+export const getWorksheet = (cycleId: string, managerId?: string) =>
+  apiFetch<Worksheet>(`/comp/cycles/${cycleId}/worksheet${managerId ? `?managerId=${managerId}` : ''}`);
+export const getCalibration = (cycleId: string) => apiFetch<Calibration>(`/comp/cycles/${cycleId}/calibration`);

@@ -8,10 +8,13 @@ vi.mock('@/lib/careersApi', () => ({
   listCareerPostings: vi.fn(),
   getCareerPosting: vi.fn(),
   applyToPosting: vi.fn(),
+  // The employer brand page and the view beacon (marketing): nothing set here.
+  getCareersBrand: vi.fn(async () => ({ headline: null, intro: null, values: [], perks: [], ctaText: null, photos: [] })),
+  recordCareersView: vi.fn(),
 }));
 
 import { ApiError } from '@/lib/api';
-import { applyToPosting, getCareerPosting, listCareerPostings } from '@/lib/careersApi';
+import { applyToPosting, getCareerPosting, getCareersBrand, listCareerPostings, recordCareersView } from '@/lib/careersApi';
 import { CareerPostingPage, CareersListPage } from '@/pages/careers/CareersPage';
 
 /**
@@ -50,6 +53,24 @@ beforeEach(() => {
 });
 
 describe('/careers', () => {
+  it('leads with what marketing wrote about working here, and counts the view by its source', async () => {
+    vi.mocked(listCareerPostings).mockResolvedValue({ postings: [STOCKER] });
+    vi.mocked(getCareersBrand).mockResolvedValueOnce({
+      headline: 'Paid weekly, home by dinner',
+      intro: 'Stores across the coast.',
+      values: [{ title: 'Reliable', body: 'We show up.' }],
+      perks: ['Rides to work'],
+      ctaText: null,
+      photos: [{ id: 'p1', alt: 'The Destin crew', url: '/api/careers/brand/photos/p1' }],
+    });
+    renderAt('/careers?source=indeed');
+    expect(await screen.findByRole('heading', { name: 'Paid weekly, home by dinner' })).toBeInTheDocument();
+    expect(screen.getByText('Reliable')).toBeInTheDocument();
+    expect(screen.getByText('Rides to work')).toBeInTheDocument();
+    expect(screen.getByAltText('The Destin crew')).toBeInTheDocument();
+    expect(recordCareersView).toHaveBeenCalledWith(null, 'indeed');
+  });
+
   it('lists the open jobs with where and what they pay', async () => {
     vi.mocked(listCareerPostings).mockResolvedValue({ postings: [STOCKER] });
     renderAt('/careers?source=indeed');

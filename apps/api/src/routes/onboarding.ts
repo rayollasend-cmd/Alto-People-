@@ -95,6 +95,7 @@ import {
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { withMandatoryTasks } from '../lib/checklistTasks.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { emit as emitWorkflow } from '../lib/workflow.js';
 import { CsvParseError, parseCsv } from '../lib/csv.js';
 import {
   CSV_IMPORT_MAX_ROWS,
@@ -1242,6 +1243,10 @@ async function approveOneApplication(
     { clientId: app.clientId },
   );
   emitWorkerStatusChanged({ associateId: app.associateId }, 'hired');
+  // The workflow engine: approval is both "onboarding done" and the hire.
+  const hireContext = { associateId: app.associateId, application: { id: app.id, clientId: app.clientId }, hireDate: hireDateValue ? hireDateValue.toISOString().slice(0, 10) : null, actorUserId: req.user!.id };
+  void emitWorkflow({ trigger: 'ONBOARDING_COMPLETED', entityType: 'Application', entityId: app.id, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
+  void emitWorkflow({ trigger: 'ASSOCIATE_HIRED', entityType: 'Associate', entityId: app.associateId, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
   void emitWebhookEvent(
     'associate.hired',
     {

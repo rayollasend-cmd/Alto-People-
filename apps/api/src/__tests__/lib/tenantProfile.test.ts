@@ -54,7 +54,7 @@ describe('the profile endpoints and the gates', () => {
     const got = await admin.get('/admin/tenant/profile');
     expect(got.status).toBe(200);
     expect(got.body.profile.modules.transportation).toBe(true);
-    expect(got.body.catalog.modules.length).toBe(14);
+    expect(got.body.catalog.modules.length).toBe(15);
 
     const kim = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
     const { user: kimUser } = await createUser({ role: 'ASSOCIATE', associateId: kim.id });

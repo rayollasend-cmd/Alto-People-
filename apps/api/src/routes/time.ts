@@ -62,6 +62,7 @@ import {
   accrueSickLeaveForEntry,
   reverseSickLeaveForEntry,
 } from '../lib/timeOffAccrual.js';
+import { accruePolicyLeaveForEntry } from '../lib/timeOffPolicy.js';
 import { renderTimeReportPdf } from '../lib/timeReport.js';
 import {
   buildPayrollSheet,
@@ -1376,6 +1377,7 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
     // Phase 26 — accrue state-driven sick leave on approval. Idempotent;
     // re-approving a never-clocks-out / 0-rate entry is a no-op.
     const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+    void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
 
     await recordTimeEvent({
       actorUserId: user.id,
@@ -1719,6 +1721,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     // their pay basis and must never be silent.
     if (approvedCorrection) {
       await accrueSickLeaveForEntry(prisma, updated.id);
+    void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
       const tz = DEFAULT_TIMEZONE;
       const day = formatDateInZone(updated.clockInAt, tz);
       const range = `${formatTimeInZone(updated.clockInAt, tz)}–${
@@ -1838,6 +1841,7 @@ async function finishBreakMutation(opts: {
   const { user, req, entry, action, metadata } = opts;
   if (entry.status === 'APPROVED') {
     await accrueSickLeaveForEntry(prisma, entry.id);
+    void accruePolicyLeaveForEntry(prisma, entry.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
     void notifyAssociate(entry.associateId, {
       subject: 'Approved hours adjusted',
       body: 'An admin adjusted the break time on one of your approved entries, which changes your paid hours. Talk to your manager if this looks wrong.',
@@ -2003,6 +2007,7 @@ async function approveOneEntry(
   });
 
   const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+    void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
 
   await recordTimeEvent({
     actorUserId: user.id,

@@ -34,6 +34,7 @@ import {
   renderClientServiceReportPdf,
 } from '../lib/clientServiceReport.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
+import { finalizationTerms } from '../lib/statementDunning.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 
 export const clientsRouter = Router();
@@ -299,6 +300,8 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
       data.fieldglassSiteName = parsed.data.fieldglassSiteName;
     if (parsed.data.fieldglassBillRate !== undefined)
       data.fieldglassBillRate = parsed.data.fieldglassBillRate;
+    if (parsed.data.poNumber !== undefined) data.poNumber = parsed.data.poNumber;
+    if (parsed.data.paymentTermsDays !== undefined) data.paymentTermsDays = parsed.data.paymentTermsDays;
     if (Object.keys(data).length === 0) {
       res.json(toSummary(existing));
       return;
@@ -656,6 +659,10 @@ function statementRow(r: {
   finalizedBy?: { email: string } | null;
   paidAt?: Date | null;
   paymentRef?: string | null;
+  poNumber?: string | null;
+  dueAt?: Date | null;
+  reminderStage?: number;
+  lastReminderAt?: Date | null;
 }) {
   return {
     id: r.id,
@@ -669,6 +676,10 @@ function statementRow(r: {
     finalizedByEmail: r.finalizedBy?.email ?? null,
     paidAt: r.paidAt?.toISOString() ?? null,
     paymentRef: r.paymentRef ?? null,
+    poNumber: r.poNumber ?? null,
+    dueAt: r.dueAt ? r.dueAt.toISOString().slice(0, 10) : null,
+    reminderStage: r.reminderStage ?? 0,
+    lastReminderAt: r.lastReminderAt?.toISOString() ?? null,
   };
 }
 
@@ -877,13 +888,19 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
     // without a durable record of who issued it.
     const updated = await prisma.$transaction(async (tx) => {
       const max = await tx.clientStatement.aggregate({ _max: { number: true } });
+      const finalizedAt = new Date();
+      // Invoicing: due on the client's terms; the standing PO unless the
+      // statement already carries its own (lib/statementDunning).
+      const terms = await finalizationTerms(tx, row.clientId, finalizedAt);
       return tx.clientStatement.update({
         where: { id: row.id },
         data: {
           status: 'FINAL',
           number: (max._max.number ?? 0) + 1,
           finalizedById: user.id,
-          finalizedAt: new Date(),
+          finalizedAt,
+          dueAt: terms.dueAt,
+          poNumber: row.poNumber ?? terms.poNumber,
         },
         include: { finalizedBy: { select: { email: true } } },
       });
@@ -914,8 +931,140 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
   }
 });
 
+// Invoicing fields on one statement: the PO it bills against and, for a
+// FINAL one, the due date Finance agreed (terms can be negotiated per
+// invoice). The reminder cadence follows the new date.
+clientsRouter.patch('/:id/statements/:sid', STATEMENTS, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        poNumber: z.string().trim().max(60).nullable().optional(),
+        dueAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      })
+      .parse(req.body ?? {});
+    const row = await prisma.clientStatement.findFirst({ where: { id: req.params.sid, clientId: req.params.id } });
+    if (!row) throw new HttpError(404, 'not_found', 'Statement not found.');
+    if (body.dueAt !== undefined && row.status !== 'FINAL') {
+      throw new HttpError(409, 'not_final', 'A due date applies to a finalized statement.');
+    }
+    const updated = await prisma.clientStatement.update({
+      where: { id: row.id },
+      data: {
+        ...(body.poNumber !== undefined ? { poNumber: body.poNumber } : {}),
+        ...(body.dueAt !== undefined ? { dueAt: body.dueAt ? new Date(`${body.dueAt}T00:00:00.000Z`) : null, reminderStage: 0 } : {}),
+      },
+      include: { finalizedBy: { select: { email: true } } },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: row.clientId,
+        action: 'clients.statement_terms_updated',
+        entityType: 'ClientStatement',
+        entityId: row.id,
+        metadata: { poNumber: body.poNumber, dueAt: body.dueAt },
+      },
+      'clients.statement_terms',
+    );
+    res.json(statementRow(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The dunning cadence, paused and resumed per client — "they're disputing
+// it", "the check is in the mail". Reminders stop until Finance resumes.
+clientsRouter.post('/:id/dunning/pause', STATEMENTS, async (req, res, next) => {
+  try {
+    const note = z.string().trim().min(3).max(500).parse(req.body?.note);
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { dunningPausedAt: new Date(), dunningPausedById: req.user!.id, dunningPauseNote: note },
+    });
+    await auditClient(req, 'client.dunning_paused', client.id, { note });
+    res.json({ ok: true, pausedAt: new Date().toISOString(), note });
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.delete('/:id/dunning/pause', STATEMENTS, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { dunningPausedAt: null, dunningPausedById: null, dunningPauseNote: null },
+    });
+    await auditClient(req, 'client.dunning_resumed', client.id, {});
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Invoicing terms are Finance's to set: the standing PO and net-days terms
+// every statement takes from here on (finalized ones keep their own).
+clientsRouter.patch('/:id/billing-terms', STATEMENTS, async (req, res, next) => {
+  try {
+    const body = z
+      .object({ poNumber: z.string().trim().max(60).nullable().optional(), paymentTermsDays: z.number().int().min(0).max(365).optional() })
+      .parse(req.body ?? {});
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const updated = await prisma.client.update({
+      where: { id: client.id },
+      data: {
+        ...(body.poNumber !== undefined ? { poNumber: body.poNumber || null } : {}),
+        ...(body.paymentTermsDays !== undefined ? { paymentTermsDays: body.paymentTermsDays } : {}),
+      },
+      select: { poNumber: true, paymentTermsDays: true },
+    });
+    await auditClient(req, 'client.billing_terms_updated', client.id, { ...body });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Where every client stands with reminders: terms, PO, paused or not.
+clientsRouter.get('/:id/dunning', STATEMENTS_READ, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
+      select: { id: true, poNumber: true, paymentTermsDays: true, dunningPausedAt: true, dunningPauseNote: true, dunningPausedById: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const reminders = await prisma.clientStatementReminder.findMany({
+      where: { statement: { clientId: client.id } },
+      orderBy: { sentAt: 'desc' },
+      take: 50,
+      select: { id: true, stage: true, sentAt: true, recipients: true, statement: { select: { id: true, number: true, periodStart: true, periodEnd: true } } },
+    });
+    res.json({
+      poNumber: client.poNumber,
+      paymentTermsDays: client.paymentTermsDays,
+      paused: client.dunningPausedAt ? { at: client.dunningPausedAt.toISOString(), note: client.dunningPauseNote, byUserId: client.dunningPausedById } : null,
+      reminders: reminders.map((r) => ({
+        id: r.id,
+        stage: r.stage,
+        sentAt: r.sentAt.toISOString(),
+        recipients: r.recipients,
+        statementId: r.statement.id,
+        number: r.statement.number,
+        periodStart: r.statement.periodStart.toISOString().slice(0, 10),
+        periodEnd: r.statement.periodEnd.toISOString().slice(0, 10),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Record the client's payment against a FINAL statement — the receivables
-// view ages every unpaid FINAL from finalizedAt until this lands.
+// view ages every unpaid FINAL from its due date until this lands.
 clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res, next) => {
   try {
     const paymentRef =

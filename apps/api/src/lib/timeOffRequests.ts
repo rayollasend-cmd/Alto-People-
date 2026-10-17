@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient, TimeOffCategory } from '@prisma/client';
 import { isEventBasedTimeOffCategory } from '@alto-people/shared';
 import { ensureEntitlementApplied } from './timeOffEntitlement.js';
 import { emitWebhookEvent } from './webhookDispatch.js';
+import { emit as emitWorkflow } from './workflow.js';
 
 /**
  * Phase 30 — request/approval workflow helpers for time-off.
@@ -209,7 +210,17 @@ export async function approveRequest(
 
   // Outbound webhooks — covers every approve path (admin single, admin
   // bulk, manager single/bulk) since they all funnel through here.
-  if (approvedEvent) void emitWebhookEvent('time_off.approved', approvedEvent);
+  // Assigned inside the transaction callback: widen it back for the narrowing below.
+  const ev = approvedEvent as Record<string, unknown> | null;
+  if (ev) {
+    void emitWebhookEvent('time_off.approved', ev);
+    void emitWorkflow({
+      trigger: 'TIME_OFF_APPROVED',
+      entityType: 'TimeOffRequest',
+      entityId: requestId,
+      context: { associateId: ev.associateId, request: ev, reviewerUserId },
+    }).catch((err) => console.warn('[time-off] workflow emit failed:', err));
+  }
   return result;
 }
 

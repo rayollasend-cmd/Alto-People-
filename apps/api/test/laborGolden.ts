@@ -392,7 +392,9 @@ export function goldenTx() {
               inRange(c.effectiveFrom, { lt: (where.effectiveFrom as { lt: Date }).lt }),
           )
           .sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime())
-          .map((c) => ({ associateId: c.associateId, amount: c.amount })),
+          // Recorded the day it took effect: nothing in the fixtures is backdated,
+          // so auto-retro (lib/retroPay) owes no one and today's pay stays frozen.
+          .map((c) => ({ id: `${c.associateId}:${c.effectiveFrom.toISOString()}`, associateId: c.associateId, amount: c.amount, effectiveFrom: c.effectiveFrom, effectiveTo: c.effectiveTo, createdAt: c.effectiveFrom })),
     },
     tipPoolAllocation: { findMany: async () => [] },
     associate: {

@@ -84,8 +84,9 @@ export const initiateSeparation = (input: {
 }) =>
   apiFetch<{ id: string }>('/separations', { method: 'POST', body: input });
 
+/** Completing may answer 202 — it went to a second person (approval engine). */
 export const advanceSeparation = (id: string) =>
-  apiFetch<{ ok: true; status: SeparationStatus }>(
+  apiFetch<{ ok: true; status: SeparationStatus } | { pending: true; approvalId: string; title: string }>(
     `/separations/${id}/advance`,
     { method: 'POST', body: {} },
   );
@@ -105,3 +106,36 @@ export const submitExitInterview = (
     method: 'POST',
     body: input,
   });
+
+/** Offboarding (GET /separations/:id/offboarding): the final-pay preview, assets out, access. */
+export interface Offboarding {
+  separationId: string;
+  associateName: string;
+  finalPay: {
+    computedAt: string;
+    state: string | null;
+    rate: number | null;
+    payType: 'HOURLY' | 'SALARY' | null;
+    paidThrough: string | null;
+    unpaidApprovedHours: number;
+    awaitingApprovalHours: number;
+    leavePayoutHours: number;
+    leaveBalances: Array<{ category: string; hours: number; paidOut: boolean }>;
+    estimatedGross: number | null;
+    deadline: { date: string | null; basis: string; note: string; minimumWageCents: number };
+    paySchedule: { name: string; frequency: string } | null;
+    finalPaycheckDate: string | null;
+    finalPaycheckLate: boolean;
+  };
+  assets: {
+    outstanding: Array<{ assignmentId: string; assetId: string; kind: string; label: string; serial: string | null; assignedAt: string }>;
+    waivedAt: string | null;
+    waiveReason: string | null;
+    clear: boolean;
+  };
+  access: { removed: boolean; activeLogins: number };
+}
+
+export const getOffboarding = (id: string) => apiFetch<Offboarding>(`/separations/${id}/offboarding`);
+export const waiveSeparationAssets = (id: string, reason: string) =>
+  apiFetch<{ ok: true }>(`/separations/${id}/assets/waive`, { method: 'POST', body: { reason } });

@@ -224,7 +224,7 @@ export function PeopleDirectory() {
   // The client column (and its CSV header) exist only where there are clients.
   const hasClients = useTenant().moduleOn('clientPortal');
   const queryClient = useQueryClient();
-  const { user: viewer } = useAuth();
+  const { user: viewer, can } = useAuth();
   const canManagePhotos = viewer ? hasCapability(viewer.role, 'manage:org') : false;
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
@@ -552,6 +552,12 @@ export function PeopleDirectory() {
           </Button>
         }
         secondaryActions={
+          <>
+          {can('manage:org') && (
+            <Button asChild variant="outline">
+              <Link to="/people/mass-update">Mass update</Link>
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={exportCsv}
@@ -561,6 +567,7 @@ export function PeopleDirectory() {
             <Download className="h-3.5 w-3.5" />
             {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
+          </>
         }
         summary={
               <>

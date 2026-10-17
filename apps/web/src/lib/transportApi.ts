@@ -36,6 +36,11 @@ export interface TransportSettings {
   shortNoticeMinutes: number;
   /** Shown when a ride can't be requested in time. */
   dispatchPhone: string | null;
+  /** Drivers' hours of service and the pre-trip switch. Older answers may omit them. */
+  driverMaxHoursPerDay?: number;
+  driverMinRestHours?: number;
+  preTripRequired?: boolean;
+  driverShiftLocationId?: string | null;
 }
 
 /** How a ride at a given time can be requested right now. */
@@ -140,6 +145,19 @@ export interface RideRun {
   driver: { userId: string; name: string };
   seats: { taken: number; capacity: number };
   rides: Ride[];
+  /** The walk around the van before this run leaves. Older answers omit it. */
+  preTrip?: { passed: boolean; at: string } | null;
+  /** The safety toolkit's stamps. Older answers omit it. */
+  safety?: RunSafety;
+}
+
+export interface RunSafety {
+  sosAt: string | null;
+  sosAckAt: string | null;
+  /** The driver was asked "everything OK?" and hasn't answered. */
+  promptedAt: string | null;
+  escalatedAt: string | null;
+  sosNote?: string | null;
 }
 
 /* ----- The associate's Ride tab ------------------------------------------ */
@@ -375,6 +393,8 @@ export interface RunMap {
   driver: { userId: string; name: string };
   position: VanPosition | null;
   stale: boolean;
+  /** The safety toolkit's stamps. Older answers omit it. */
+  safety?: RunSafety;
   /** Where the van has been — [lng, lat] pairs. */
   trail: Array<[number, number]>;
   waypoints: Array<{ kind: 'pickup' | 'store' | 'drop'; point: GeoPoint | null; etaAt: string | null; label: string; rideIds: string[] }>;
@@ -579,6 +599,10 @@ export interface Van {
   color: string | null;
   year: number | null;
   look: string;
+  /** Parked: not planned, not dispatched. Older answers omit it. */
+  outOfService?: { since: string; reason: string | null } | null;
+  /** Papers lapsing inside 30 days, or lapsed. */
+  papersDue?: Array<{ label: string; expiresAt: string; expired: boolean }>;
   /** The van's driver — they accept seat requests in it. */
   driver: { userId: string; name: string; associateId: string | null; photoUrl?: string | null; phone: string | null } | null;
 }
@@ -861,7 +885,418 @@ export interface VanArrival {
   status: RideStatus;
   van: string | null;
   hasShift: boolean;
+  /** The van finished and dropped them: in the building. */
+  droppedAt?: string | null;
 }
 
 export const getVanArrivals = (clientId?: string) =>
   apiFetch<{ arrivals: VanArrival[] }>(`/transport/arrivals${clientId ? `?clientId=${clientId}` : ''}`);
+
+/* ===== The driver and fleet pack (routes/transportOps) ====================== */
+
+/* ----- The driver as a worker ------------------------------------------- */
+
+export type NavApp = 'GOOGLE' | 'APPLE' | 'WAZE';
+
+export interface DriverProfile {
+  navApp: NavApp;
+  licenceNumber: string | null;
+  licenceState: string | null;
+  licenceClass: string | null;
+  licenceExpiresAt: string | null;
+  dotMedicalRequired: boolean;
+  dotMedicalExpiresAt: string | null;
+  mvrCheckedAt: string | null;
+  trainingCompletedAt?: string | null;
+  trainingExpiresAt?: string | null;
+  notes: string | null;
+}
+
+export type CredentialKey = 'licence' | 'dot' | 'training' | 'mvr';
+
+export interface CredentialStatus {
+  ok: boolean;
+  problems: Array<{ key: CredentialKey; label: string; expiresAt: string | null; expired: boolean }>;
+  dueSoon: Array<{ key: CredentialKey; label: string; expiresAt: string }>;
+}
+
+export const getDriverProfile = () =>
+  apiFetch<{ profile: DriverProfile; credentials: CredentialStatus; associateId: string | null }>('/transport/driver/profile');
+export const setDriverNavApp = (navApp: NavApp) =>
+  apiFetch<{ profile: DriverProfile; credentials: CredentialStatus }>('/transport/driver/profile', { method: 'PATCH', body: { navApp } });
+
+export interface DriverShift {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  status: string;
+  notes?: string | null;
+  today?: boolean;
+}
+
+export interface DriverToday {
+  date: string;
+  associateId: string | null;
+  runs: { total: number; done: number; active: number };
+  hours: { worked: number; driven: number; onClock: boolean };
+  shifts: DriverShift[];
+  earnings: {
+    hourlyRate: number;
+    earnedSoFar: number;
+    workedHours: number;
+    projectedWeek: number;
+    currentShiftEarned: number | null;
+    onClock: boolean;
+    weekStart: string;
+    weekEnd: string;
+  } | null;
+  /** Null until transportation keeps a record for this driver. */
+  credentials: CredentialStatus | null;
+  hoursOfService: { maxPerDay: number; minRest: number };
+  preTripRequired: boolean;
+}
+
+export const getDriverToday = () => apiFetch<DriverToday>('/transport/driver/today');
+export const driverClockIn = () => apiFetch<{ entry: { id: string; clockInAt: string } }>('/transport/driver/clock-in', { method: 'POST' });
+export const driverClockOut = () => apiFetch<{ entry: { id: string; clockInAt: string; clockOutAt: string } }>('/transport/driver/clock-out', { method: 'POST' });
+export interface DriverTimeEntry {
+  id: string;
+  clockInAt: string;
+  clockOutAt: string | null;
+  status: string;
+  hours: number | null;
+}
+export const getDriverTime = () => apiFetch<{ entries: DriverTimeEntry[] }>('/transport/driver/time');
+export const getDriverShifts = (from?: string, days = 14) =>
+  apiFetch<{ associateId: string | null; shifts: DriverShift[] }>(`/transport/driver/shifts?days=${days}${from ? `&from=${from}` : ''}`);
+
+/** Turn-by-turn, in the app the driver likes, to one stop. */
+export function navigationUrl(app: NavApp, to: { point?: GeoPoint | null; address: string }): string {
+  const q = to.point ? `${to.point.lat},${to.point.lng}` : to.address;
+  if (app === 'WAZE') return to.point ? `https://waze.com/ul?ll=${to.point.lat},${to.point.lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(to.address)}&navigate=yes`;
+  if (app === 'APPLE') return `https://maps.apple.com/?daddr=${encodeURIComponent(q)}&dirflg=d`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}&travelmode=driving`;
+}
+
+/* ----- The pre-trip check ------------------------------------------------- */
+
+export interface PreTripItemDef {
+  key: string;
+  label: string;
+  safety: boolean;
+}
+
+export interface PreTripAnswer {
+  key: string;
+  ok: boolean;
+  note?: string | null;
+}
+
+export interface PreTripCheck {
+  id: string;
+  passed: boolean;
+  items: Array<PreTripAnswer & { label: string; safety: boolean }>;
+  failed: string[];
+  odometerMiles: number | null;
+  photoUrl: string | null;
+  notes: string | null;
+  at: string;
+  driverUserId: string;
+  driver?: string;
+}
+
+export const getPreTrip = (runId: string) =>
+  apiFetch<{ required: boolean; items: PreTripItemDef[]; check: PreTripCheck | null }>(`/transport/driver/runs/${runId}/pre-trip`);
+export const submitPreTrip = (runId: string, body: { items: PreTripAnswer[]; odometerMiles?: number | null; notes?: string | null; photoKey?: string | null }) =>
+  apiFetch<{ check: PreTripCheck; passed: boolean; failedSafety: Array<{ key: string; label: string }> }>(`/transport/driver/runs/${runId}/pre-trip`, { method: 'POST', body });
+
+/** A photo for a check or an incident — multipart, so it skips apiFetch's JSON. */
+export async function uploadTransportPhoto(file: File): Promise<{ key: string; url: string }> {
+  const fd = new FormData();
+  fd.append('photo', file);
+  const res = await fetch('/api/transport/photos', { method: 'POST', credentials: 'include', body: fd });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `Upload failed (${res.status})`);
+  }
+  return (await res.json()) as { key: string; url: string };
+}
+
+/* ----- The safety toolkit -------------------------------------------------- */
+
+export const raiseSos = (runId: string, body: { note?: string | null; lat?: number | null; lng?: number | null } = {}) =>
+  apiFetch<{ ok: true }>(`/transport/driver/runs/${runId}/sos`, { method: 'POST', body });
+export const driverOk = (runId: string) => apiFetch<{ ok: true }>(`/transport/driver/runs/${runId}/ok`, { method: 'POST' });
+export const shareTrip = (runId: string) => apiFetch<{ url: string; token: string; expiresAt: string }>(`/transport/driver/runs/${runId}/share`);
+export const ackSos = (runId: string) => apiFetch<{ ok: true }>(`/transport/runs/${runId}/sos/ack`, { method: 'POST' });
+
+export interface PublicTrip {
+  status: RideRunStatus;
+  van: { name: string; plate: string | null };
+  driver: string | null;
+  position: VanPosition | null;
+  stale: boolean;
+  next: { kind: 'pickup' | 'store' | 'drop'; label: string; etaAt: string | null } | null;
+  stopsLeft: number;
+  endedAt: string | null;
+  generatedAt: string;
+}
+
+export const getPublicTrip = (token: string) => apiFetch<{ trip: PublicTrip }>(`/transport/track/${token}`);
+
+/* ----- Incidents ------------------------------------------------------------- */
+
+export type TransportIncidentKind = 'COLLISION' | 'INJURY' | 'BREAKDOWN' | 'NEAR_MISS' | 'PROPERTY_DAMAGE' | 'OTHER';
+export type TransportIncidentStatus = 'OPEN' | 'REVIEWED' | 'CLOSED';
+
+export interface IncidentParty {
+  name: string;
+  phone?: string | null;
+  plate?: string | null;
+  insurer?: string | null;
+  note?: string | null;
+}
+
+export interface TransportIncident {
+  id: string;
+  kind: TransportIncidentKind;
+  status: TransportIncidentStatus;
+  occurredAt: string;
+  point: GeoPoint | null;
+  description: string;
+  injuries: boolean;
+  injuredAssociateIds: string[];
+  parties: IncidentParty[];
+  policeReportNumber: string | null;
+  photos: string[];
+  oshaIncidentIds: string[];
+  vanParked: boolean;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  reportedBy: { userId: string; name: string };
+  van: { id: string; name: string; plate: string | null } | null;
+  run: { id: string; serviceDate: string; departAt: string; direction: RideDirection } | null;
+  createdAt: string;
+}
+
+export interface IncidentInput {
+  kind: TransportIncidentKind;
+  runId?: string | null;
+  vanId?: string | null;
+  occurredAt?: string;
+  lat?: number | null;
+  lng?: number | null;
+  description: string;
+  injuries?: boolean;
+  injuredAssociateIds?: string[];
+  parties?: IncidentParty[];
+  policeReportNumber?: string | null;
+  photoKeys?: string[];
+  parkVan?: boolean;
+}
+
+export const reportIncident = (body: IncidentInput) => apiFetch<{ incident: TransportIncident }>('/transport/incidents', { method: 'POST', body });
+export const listIncidents = (q: { status?: TransportIncidentStatus; vanId?: string } = {}) => {
+  const p = new URLSearchParams();
+  if (q.status) p.set('status', q.status);
+  if (q.vanId) p.set('vanId', q.vanId);
+  const qs = p.toString();
+  return apiFetch<{ incidents: TransportIncident[] }>(`/transport/incidents${qs ? `?${qs}` : ''}`);
+};
+export const reviewIncident = (id: string, body: { status?: TransportIncidentStatus; reviewNote?: string | null }) =>
+  apiFetch<{ incident: TransportIncident }>(`/transport/incidents/${id}`, { method: 'PATCH', body });
+
+/* ----- The rider's thumb ----------------------------------------------------- */
+
+export type FeedbackReason = 'GREAT' | 'LATE' | 'DRIVING' | 'VEHICLE' | 'CONDUCT' | 'ROUTE' | 'OTHER';
+
+export interface PendingFeedbackRide {
+  rideId: string;
+  direction: RideDirection;
+  completedAt: string | null;
+  store: string;
+  timezone: string;
+  van: string | null;
+  driver: string | null;
+}
+
+export const getPendingFeedback = () => apiFetch<{ rides: PendingFeedbackRide[]; reasons: FeedbackReason[] }>('/transport/me/feedback/pending');
+export const sendRideFeedback = (rideId: string, body: { thumbsUp: boolean; reason?: FeedbackReason | null; note?: string | null }) =>
+  apiFetch<{ feedback: { id: string; thumbsUp: boolean; reason: string | null; note: string | null } }>(`/transport/me/rides/${rideId}/feedback`, { method: 'POST', body });
+
+export interface FeedbackTally {
+  up: number;
+  down: number;
+  reasons: Record<string, number>;
+  score: number | null;
+}
+
+export interface FeedbackTrend {
+  from: string;
+  to: string;
+  total: FeedbackTally;
+  byDriver: Array<FeedbackTally & { userId: string; name: string }>;
+  byRoute: Array<FeedbackTally & { locationId: string; store: string; direction: RideDirection }>;
+  notes: Array<{ at: string; thumbsUp: boolean; reason: string | null; note: string | null; store: string; driver: string | null }>;
+}
+
+export const getFeedbackTrend = (from: string, to: string) => apiFetch<FeedbackTrend>(`/transport/feedback?from=${from}&to=${to}`);
+
+/* ----- Standing bookings ------------------------------------------------------ */
+
+export interface RideSeries {
+  id: string;
+  direction: RideDirection;
+  store: { id: string; name: string; timezone: string };
+  pickup: { kind: 'stop'; id: string; name: string } | { kind: 'address'; id: null; name: null; address: string };
+  windowLabel: string | null;
+  timeOfDay: string | null;
+  daysOfWeek: number[];
+  startsOn: string;
+  endsOn: string | null;
+  note: string | null;
+  active: boolean;
+  bookedThrough: string | null;
+  rides: number;
+}
+
+export interface SeriesInput {
+  direction: RideDirection;
+  locationId: string;
+  stopId?: string;
+  placeId?: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  windowLabel?: string;
+  timeOfDay?: string;
+  daysOfWeek: number[];
+  startsOn: string;
+  endsOn?: string | null;
+  note?: string | null;
+}
+
+export const listMySeries = () => apiFetch<{ series: RideSeries[] }>('/transport/me/series');
+export const createSeries = (body: SeriesInput) =>
+  apiFetch<{ series: RideSeries; booked: number; skipped: number }>('/transport/me/series', { method: 'POST', body });
+export const cancelSeries = (id: string) => apiFetch<void>(`/transport/me/series/${id}`, { method: 'DELETE' });
+
+/* ----- The fleet record --------------------------------------------------------- */
+
+export type VanServiceKind = 'FUEL' | 'OIL_CHANGE' | 'TIRES' | 'BRAKES' | 'INSPECTION' | 'REPAIR' | 'CLEANING' | 'OTHER';
+
+export interface VanDocument {
+  label: string;
+  expiresAt: string | null;
+  expired: boolean;
+  dueSoon: boolean;
+}
+
+export interface VanRecord {
+  id: string;
+  name: string;
+  plate: string | null;
+  vin: string | null;
+  odometerMiles: number | null;
+  registrationExpiresAt: string | null;
+  insuranceExpiresAt: string | null;
+  inspectionDueAt: string | null;
+  outOfService: { since: string; reason: string | null } | null;
+  documents: VanDocument[];
+}
+
+export interface VanServiceEntry {
+  id: string;
+  kind: VanServiceKind;
+  occurredAt: string | null;
+  odometerMiles: number | null;
+  costCents: number;
+  vendor: string | null;
+  notes: string | null;
+}
+
+export const getVanRecord = (vanId: string) =>
+  apiFetch<{ record: VanRecord; serviceLog: VanServiceEntry[]; checks: PreTripCheck[]; incidents: TransportIncident[] }>(`/transport/vans/${vanId}/record`);
+export const updateVanRecord = (
+  vanId: string,
+  body: Partial<Pick<VanRecord, 'vin' | 'registrationExpiresAt' | 'insuranceExpiresAt' | 'inspectionDueAt' | 'odometerMiles'>> & { outOfService?: { reason: string } | null },
+) => apiFetch<{ record: VanRecord }>(`/transport/vans/${vanId}/record`, { method: 'PATCH', body });
+export const addVanService = (vanId: string, body: { kind: VanServiceKind; occurredAt: string; odometerMiles?: number | null; costCents: number; vendor?: string | null; notes?: string | null }) =>
+  apiFetch<{ entry: VanServiceEntry }>(`/transport/vans/${vanId}/service`, { method: 'POST', body });
+export const removeVanService = (vanId: string, entryId: string) => apiFetch<void>(`/transport/vans/${vanId}/service/${entryId}`, { method: 'DELETE' });
+
+/* ----- The desk's drivers ------------------------------------------------------- */
+
+export interface DeskDriver {
+  userId: string;
+  name: string;
+  role: string;
+  drivesByTrade: boolean;
+  phone: string | null;
+  associateId: string | null;
+  photoUrl: string | null;
+  van: { id: string; name: string; plate: string | null; outOfService: boolean } | null;
+  profile: DriverProfile;
+  credentials: CredentialStatus;
+  today: Array<{ id: string; startsAt: string; endsAt: string }>;
+}
+
+export const listDrivers = () => apiFetch<{ drivers: DeskDriver[] }>('/transport/drivers');
+export const updateDriverProfile = (userId: string, body: Partial<DriverProfile>) =>
+  apiFetch<{ profile: DriverProfile; credentials: CredentialStatus }>(`/transport/drivers/${userId}/profile`, { method: 'PATCH', body });
+
+export interface DeskDriverShift {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  status: string;
+  notes: string | null;
+  driver: { userId: string; name: string; associateId: string | null } | null;
+}
+
+export const listDriverShifts = (from: string, to: string) => apiFetch<{ shifts: DeskDriverShift[] }>(`/transport/driver-shifts?from=${from}&to=${to}`);
+export const createDriverShift = (body: { driverUserId: string; startsAt: string; endsAt: string; notes?: string | null }) =>
+  apiFetch<{ shift: DeskDriverShift }>('/transport/driver-shifts', { method: 'POST', body });
+export const deleteDriverShift = (id: string) => apiFetch<void>(`/transport/driver-shifts/${id}`, { method: 'DELETE' });
+
+/* ----- The director's numbers ---------------------------------------------------- */
+
+export interface NeedsYouItem {
+  key: string;
+  label: string;
+  count: number;
+  path: string;
+  tone: 'alert' | 'warning' | 'info';
+}
+
+export const getTransportNeedsYou = () => apiFetch<{ total: number; items: NeedsYouItem[] }>('/transport/needs-you');
+
+export interface TransportExpiration {
+  kind: 'van' | 'driver';
+  id: string;
+  name: string;
+  document: string;
+  expiresAt: string;
+  daysUntilExpiry: number;
+}
+
+export const getTransportExpiring = (days = 60) => apiFetch<{ items: TransportExpiration[] }>(`/transport/expiring?days=${days}`);
+
+export interface CostRow {
+  clientId: string | null;
+  client: string;
+  runs: number;
+  seats: number;
+  noShows: number;
+  faresCents: number;
+  driverCents: number;
+  fuelCents: number;
+  maintenanceCents: number;
+  costCents: number;
+  netCents: number;
+  costPerSeatCents: number | null;
+  farePerSeatCents: number | null;
+}
+
+export const getTransportCosts = (from: string, to: string) =>
+  apiFetch<{ from: string; to: string; rows: CostRow[]; totals: CostRow; note: string }>(`/transport/costs?from=${from}&to=${to}`);

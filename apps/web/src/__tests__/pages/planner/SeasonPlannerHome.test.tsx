@@ -17,6 +17,9 @@ vi.mock('@/lib/seasonPlansApi', () => ({
   compareSeasonPlans: vi.fn(),
   seasonPlanCsvUrl: vi.fn(() => '/api/season-plans/p1/csv'),
   seasonPlanSitePdfUrl: vi.fn(() => '/api/season-plans/p1/sites/l1/pdf'),
+  getSeasonPlanLive: vi.fn().mockResolvedValue({ planId: 'p1', week: '2027-05-01', shiftHours: 8, rows: [], totals: { planned: 0, scheduled: 0, gap: 0, over: 0, drafted: 0, gapHours: 0, gapCost: null, unpriced: 0 } }),
+  applySeasonPlanLive: vi.fn(),
+  discardSeasonPlanLive: vi.fn(),
 }));
 vi.mock('@/lib/clientsApi', () => ({
   listClients: vi.fn().mockResolvedValue({ clients: [{ id: 'c1', name: 'Coastal Resort' }], nextCursor: null }),

@@ -11,6 +11,8 @@ import {
   startConnect,
   syncAssociatesToQbo,
   updateAccounts,
+  getCostCenterMappings,
+  saveCostCenterMappings,
 } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -275,6 +277,7 @@ export function QuickbooksSection({ clientId }: Props) {
               canManage={canManage}
               onSaved={refresh}
             />
+            <CostCenterGlSection clientId={clientId} canManage={canManage} />
             {canManage && <AssociateSyncSection clientId={clientId} />}
           </>
         )}
@@ -544,6 +547,97 @@ function AccountMappingForm({
         <Button onClick={submit} loading={saving}>
           <Save className="h-4 w-4" />
           Save mapping
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * GL by cost center: the wage-expense debit split by the associates' cost
+ * centers, each to its own QuickBooks expense account. People with no cost
+ * center, or one with no account mapped, stay on Salaries Expense — the
+ * entry always balances. Liabilities are untouched.
+ */
+function CostCenterGlSection({ clientId, canManage }: { clientId: string; canManage: boolean }) {
+  const q = useQuery({ queryKey: ['QuickbooksSection', 'costCenters', clientId], queryFn: () => getCostCenterMappings(clientId) });
+  const accountsQ = useQuery({
+    queryKey: ['AccountMappingForm', 'accounts', clientId, 'cc'],
+    queryFn: () => listQboAccounts(clientId),
+    enabled: !!q.data?.connected,
+    retry: false,
+  });
+  const [on, setOn] = useState<boolean | null>(null);
+  const [map, setMap] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!q.data) return;
+    setOn(q.data.glByCostCenter);
+    setMap(Object.fromEntries(q.data.costCenters.map((c) => [c.id, c.accountRef ?? ''])));
+  }, [q.data]);
+  if (!q.data || on === null) return <Skeleton className="h-16" />;
+  const expense = (accountsQ.data?.accounts ?? []).filter((a) => a.classification === 'Expense');
+  const save = async () => {
+    setSaving(true);
+    try {
+      await saveCostCenterMappings(
+        clientId,
+        on,
+        q.data!.costCenters.map((c) => ({
+          costCenterId: c.id,
+          accountRef: map[c.id] || null,
+          accountName: expense.find((a) => a.id === map[c.id])?.name ?? null,
+        })),
+      );
+      toast.success('Cost-center mapping saved.');
+      await q.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="space-y-3 border-t border-navy-secondary pt-4">
+      <div>
+        <h3 className="text-sm font-medium text-ink">Wages by cost center</h3>
+        <FormHint>
+          Split the payroll expense line by cost center so each department&rsquo;s wages land in its own account. Unmapped people stay on Salaries Expense.
+        </FormHint>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input type="checkbox" checked={on} disabled={!canManage} onChange={(e) => setOn(e.target.checked)} />
+        Split the wage expense by cost center
+      </label>
+      {q.data.costCenters.length === 0 ? (
+        <p className="text-xs text-silver">No cost centers yet. Add them under Organization → Organizational tree.</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {q.data.costCenters.map((c) => (
+            <Field key={c.id} label={`${c.code} · ${c.name}`} hint={`${c.people} ${c.people === 1 ? 'person' : 'people'}${c.orgWide ? ' · organization-wide' : ''}`}>
+              {(p) =>
+                accountsQ.isLoading ? (
+                  <Skeleton className="h-9" />
+                ) : (
+                  <Select value={map[c.id] ?? ''} disabled={!canManage || !on} onChange={(e) => setMap((m) => ({ ...m, [c.id]: e.target.value }))} {...p}>
+                    <option value="">Salaries Expense (default)</option>
+                    {expense.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                    {map[c.id] && !expense.some((a) => a.id === map[c.id]) && <option value={map[c.id]}>{c.accountName ?? `Account ${map[c.id]}`}</option>}
+                  </Select>
+                )
+              }
+            </Field>
+          ))}
+        </div>
+      )}
+      {canManage && (
+        <Button size="sm" onClick={() => void save()} loading={saving}>
+          <Save className="h-4 w-4" />
+          Save cost-center mapping
         </Button>
       )}
     </div>

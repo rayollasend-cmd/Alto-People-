@@ -129,6 +129,19 @@ describe('the sidebar stays a dozen rows, not a hundred', () => {
     expect(keys).not.toContain('settings');
   });
 
+  it('a marketing manager opens on its own door \u2014 the funnel \u2014 then the pipeline it feeds', () => {
+    const keys = shapeFor('MARKETING_MANAGER').doors.map((d) => d.key);
+    expect(keys.slice(0, 3)).toEqual(['me', 'marketing', 'hire']);
+    const visible = shapeFor('MARKETING_MANAGER').doors.flatMap((d) => d.children.map((c) => c.key));
+    expect(visible).toEqual(expect.arrayContaining(['marketing', 'recruiting', 'people']));
+    for (const gone of ['payroll', 'scheduling', 'onboarding', 'compliance', 'users']) expect(visible, gone).not.toContain(gone);
+  });
+
+  it('the chairman reaches client NPS, the Trust center and the season planner from the nav', () => {
+    const visible = shapeFor('EXECUTIVE_CHAIRMAN').doors.flatMap((d) => [d.target.key, ...d.children.map((c) => c.key)]);
+    expect(visible).toEqual(expect.arrayContaining(['client-nps', 'trust-center', 'season-planner']));
+  });
+
   it('the associate\u2019s doors speak in the first person, and leave nothing out', () => {
     const shape = shapeFor('ASSOCIATE');
     const keys = shape.doors.map((d) => d.key);

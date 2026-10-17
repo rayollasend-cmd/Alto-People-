@@ -3,9 +3,13 @@ import {
   ArrowRight,
   ArchiveRestore,
   Building2,
+  CalendarCheck,
   CalendarClock,
   CheckCircle2,
+  FileCheck,
   FileSignature,
+  FileText,
+  Link2,
   MessageSquare,
   Pencil,
   RotateCcw,
@@ -13,6 +17,7 @@ import {
   Trash2,
   Undo2,
   Star,
+  Upload,
   UserPlus,
   XCircle,
 } from 'lucide-react';
@@ -51,6 +56,12 @@ export const EVENT_ICON: Record<CandidateEvent['kind'], LucideIcon> = {
   HIRE_UNDONE: Undo2,
   REMOVED: Trash2,
   RESTORED: ArchiveRestore,
+  // The candidate's own page.
+  PORTAL_LINK_SENT: Link2,
+  INTERVIEW_CONFIRMED: CalendarCheck,
+  DOCUMENT_REQUESTED: FileText,
+  DOCUMENT_UPLOADED: Upload,
+  DOCUMENT_REVIEWED: FileCheck,
 };
 
 /**
@@ -109,6 +120,16 @@ export function eventText(e: EventLike): string {
       return 'Removed from the pipeline';
     case 'RESTORED':
       return e.body ?? 'Restored to the pipeline';
+    case 'PORTAL_LINK_SENT':
+      return e.body ? `Their page link sent · ${e.body}` : 'Their page link sent';
+    case 'INTERVIEW_CONFIRMED':
+      return `Confirmed their interview${e.body ? ` for ${at(e.body)}` : ''}`;
+    case 'DOCUMENT_REQUESTED':
+      return `Document requested: ${e.body ?? ''}`;
+    case 'DOCUMENT_UPLOADED':
+      return `Uploaded ${e.body ?? 'a document'}`;
+    case 'DOCUMENT_REVIEWED':
+      return e.body ?? 'Document reviewed';
   }
 }
 

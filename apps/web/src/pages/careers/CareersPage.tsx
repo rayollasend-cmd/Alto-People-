@@ -6,9 +6,12 @@ import { ApiError } from '@/lib/api';
 import {
   applyToPosting,
   getCareerPosting,
+  getCareersBrand,
   listCareerPostings,
+  recordCareersView,
   type CareerPosting,
   type CareerPostingSummary,
+  type CareersBrand,
 } from '@/lib/careersApi';
 import { fmtMoney } from '@/lib/format';
 import { Logo } from '@/components/Logo';
@@ -89,26 +92,75 @@ function Meta({ p }: { p: CareerPostingSummary }) {
   );
 }
 
+/**
+ * What marketing wrote about working here (the employer brand page):
+ * photos, the values, the perks — above the jobs. Nothing of it set means
+ * the page reads as it always did.
+ */
+function BrandBlock({ brand }: { brand: CareersBrand | null }) {
+  if (!brand) return null;
+  const hasAny = brand.photos.length > 0 || brand.values.length > 0 || brand.perks.length > 0;
+  if (!hasAny) return null;
+  return (
+    <div className="mt-8 space-y-6">
+      {brand.photos.length > 0 && (
+        <ul className={`grid gap-2 ${brand.photos.length === 1 ? 'grid-cols-1' : 'grid-cols-2 md:grid-cols-3'}`} aria-label="Photos of working here">
+          {brand.photos.slice(0, 6).map((p) => (
+            <li key={p.id} className="overflow-hidden rounded-lg border border-navy-secondary">
+              <img src={p.url} alt={p.alt} loading="lazy" className="aspect-[4/3] w-full object-cover" />
+            </li>
+          ))}
+        </ul>
+      )}
+      {brand.values.length > 0 && (
+        <ul className="grid gap-3 sm:grid-cols-2">
+          {brand.values.map((v) => (
+            <li key={v.title} className="rounded-lg border border-navy-secondary bg-navy/40 p-4">
+              <div className="font-medium">{v.title}</div>
+              {v.body && <div className="mt-1 text-sm text-silver">{v.body}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {brand.perks.length > 0 && (
+        <ul className="flex flex-wrap gap-2" aria-label="Perks">
+          {brand.perks.map((perk) => (
+            <li key={perk} className="rounded-md border border-gold/40 bg-gold/10 px-2.5 py-1 text-sm text-gold">
+              {perk}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ===== /careers =========================================================== */
 
 export function CareersListPage() {
   const [search] = useSearchParams();
   const source = search.get('source');
   const q = useQuery({ queryKey: ['careers', 'postings'], queryFn: listCareerPostings });
+  const brandQuery = useQuery({ queryKey: ['careers', 'brand'], queryFn: getCareersBrand, retry: false });
+  const brand = brandQuery.data ?? null;
   const postings = q.data?.postings ?? null;
   const error = q.error ? (q.error instanceof ApiError ? q.error.message : 'Could not load open jobs.') : null;
 
   useEffect(() => {
     document.title = 'Open jobs';
   }, []);
+  // One view, by the source the link carried — marketing's top of funnel.
+  useEffect(() => {
+    recordCareersView(null, source);
+  }, [source]);
 
   return (
     <Shell>
-      <h1 className="font-display text-3xl md:text-4xl text-white">Work with us</h1>
+      <h1 className="font-display text-3xl md:text-4xl text-white">{brand?.headline || 'Work with us'}</h1>
       <p className="mt-2 text-silver">
-        Open jobs at stores across the Florida Panhandle. Apply in a couple of minutes — a recruiter will
-        get back to you.
+        {brand?.intro || 'Open jobs at stores across the Florida Panhandle. Apply in a couple of minutes — a recruiter will get back to you.'}
       </p>
+      <BrandBlock brand={brand} />
 
       <div className="mt-8 space-y-3">
         {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -160,6 +212,10 @@ export function CareerPostingPage() {
   useEffect(() => {
     if (posting) document.title = `${posting.title} — Jobs at ${posting.orgName}`;
   }, [posting]);
+  const source = search.get('source');
+  useEffect(() => {
+    if (slug) recordCareersView(slug, source);
+  }, [slug, source]);
 
   return (
     <Shell>
@@ -190,7 +246,7 @@ export function CareerPostingPage() {
             <Meta p={posting} />
           </div>
           <div className="mt-6 whitespace-pre-wrap leading-relaxed text-silver">{posting.description}</div>
-          <ApplyForm slug={posting.slug} title={posting.title} source={search.get('source')} />
+          <ApplyForm slug={posting.slug} title={posting.title} source={source} />
           <JobPostingStructuredData posting={posting} />
         </>
       )}

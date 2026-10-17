@@ -23,7 +23,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
-import { BillingWeekCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
+import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
 import { useAuth, useTenant } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtHours, fmtMoney } from '@/lib/format';
@@ -232,6 +232,9 @@ export function FinanceDashboard() {
         <BillingWeekCard billing={data.billing} />
         <MarginTrendCard margin={data.margin} />
       </div>
+
+      {/* ---- Cash: the next four weeks in and out ----------------------- */}
+      {data.cash && <CashForecastCard cash={data.cash} />}
 
       {/* ---- Fieldglass setup queue ----------------------------------- */}
       <Card

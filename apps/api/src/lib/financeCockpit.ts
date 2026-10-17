@@ -316,15 +316,21 @@ export interface ReceivablesAging {
   byClient: Array<{ clientId: string | null; clientName: string; amount: number; oldestDays: number }>;
 }
 
-/** Unpaid statements by age since they were finalized; the five clients owing most. */
+/** Unpaid statements by age past DUE (their terms), else since finalized; the five clients owing most. */
 export function receivablesAging(
-  unpaid: Array<{ clientId: string | null; clientName: string | null; finalizedAt: Date | null; amount: number }>,
+  unpaid: Array<{ clientId: string | null; clientName: string | null; finalizedAt: Date | null; dueAt?: Date | null; amount: number }>,
   now: Date = new Date(),
 ): ReceivablesAging {
   const aging = { current: 0, d31: 0, d61: 0, d91: 0 };
   const byClient = new Map<string, { clientId: string | null; clientName: string; amount: number; oldestDays: number }>();
   for (const s of unpaid) {
-    const days = s.finalizedAt ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS) : 0;
+    // With terms, "current" is anything not yet due; the buckets count
+    // days past the due date. Without, the old rule: days since finalized.
+    const days = s.dueAt
+      ? Math.max(0, Math.floor((now.getTime() - s.dueAt.getTime()) / DAY_MS))
+      : s.finalizedAt
+        ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS)
+        : 0;
     if (days > 90) aging.d91 += s.amount;
     else if (days > 60) aging.d61 += s.amount;
     else if (days > 30) aging.d31 += s.amount;

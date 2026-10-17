@@ -45,6 +45,7 @@ import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd } from '@/lib/format';
 import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
+import { useListKeyboard } from '@/lib/shortcuts';
 import { DeskTemplate } from '@/components/templates';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AsOf } from '@/components/ui/AsOf';
@@ -67,9 +68,12 @@ import { Textarea } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { AdminUnconfirmedPanel } from '@/pages/scheduling/AdminApprovalPanels';
-import { useTerm } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { ProposalList } from '@/components/agents/ProposalDecision';
 import { listMyProposals, MY_PROPOSALS_KEY } from '@/lib/agentProposalsApi';
+import { listApprovalRequests, MY_REQUESTS_KEY } from '@/lib/approvalRequestsApi';
+import { ApprovalRequestList } from '@/components/approvals/ApprovalRequestCard';
+import { DelegationDialog } from '@/components/approvals/DelegationDialog';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this
@@ -136,6 +140,15 @@ const proposalsQuery = {
   refetchInterval: 60_000,
 };
 
+/* The approval engine's requests: changes that need a second person — pay
+ * and bill rates, separations, promotions, requisitions, access — already
+ * filtered to what this person may decide (never their own). */
+const requestsQuery = {
+  queryKey: MY_REQUESTS_KEY,
+  queryFn: async () => (await listApprovalRequests('decide')).requests,
+  refetchInterval: 60_000,
+};
+
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 /** "Today · 9:00 PM", "Tomorrow · 6:00 AM", "Sat, Sep 19 · 6:00 AM". */
@@ -143,10 +156,13 @@ const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
 
 
 /** The queues on the desk, in the order they are worked. */
-type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'unconfirmed';
+type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'requests' | 'unconfirmed';
 
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
+  const { can } = useAuth();
+  // The tenant's full approval record (Settings & trust → Audit) is for the audit desk, admins and Finance.
+  const canReadRecord = can('view:audit') || can('manage:org') || can('process:payroll');
   // Pull down from the top = refetch everything on the page — the gesture
   // approvers reach for by habit on a phone.
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
@@ -162,16 +178,22 @@ export function ApprovalsHome() {
         ? 'walk-ins'
         : searchParams.get('tab') === 'proposals' || searchParams.get('proposal')
           ? 'proposals'
-          : null,
+          : searchParams.get('tab') === 'requests' || searchParams.get('approval')
+            ? 'requests'
+            : null,
   );
+  // ?approval=<id> (a request's notification, the Inbox, a pay-change row) lands on that card.
+  const [focusRequest, setFocusRequest] = useState<string | null>(() => searchParams.get('approval'));
+  const [coverOpen, setCoverOpen] = useState(false);
   // ?proposal=<id> (an agent's notification, the decision queue, the control
   // room) lands on that proposal's card; consumed once seen so Back and
   // refetches do not re-open it.
   const [focusProposal, setFocusProposal] = useState<string | null>(() => searchParams.get('proposal'));
   useEffect(() => {
-    if (!searchParams.get('proposal') && !searchParams.get('tab')) return;
+    if (!searchParams.get('proposal') && !searchParams.get('tab') && !searchParams.get('approval')) return;
     const next = new URLSearchParams(searchParams);
     next.delete('proposal');
+    next.delete('approval');
     next.delete('tab');
     setSearchParams(next, { replace: true });
     // Consumed once; the params' identity changes on the consume itself.
@@ -188,6 +210,7 @@ export function ApprovalsHome() {
   const swaps = useQuery(swapsQuery);
   const pickups = useQuery(pickupsQuery);
   const proposals = useQuery(proposalsQuery);
+  const requests = useQuery(requestsQuery);
 
   const timesheetCount = timesheetQuery.data?.count ?? null;
   const timesheetFailed = timesheetQuery.isError;
@@ -206,16 +229,18 @@ export function ApprovalsHome() {
     swaps: swaps.data?.requests.length,
     pickups: pickups.data?.claims.length,
     proposals: proposals.isError ? 0 : proposals.data?.length,
+    requests: requests.isError ? 0 : requests.data?.length,
   };
   const loaded =
     counts.walkIns !== undefined &&
     counts.timeOff !== undefined &&
     counts.swaps !== undefined &&
     counts.pickups !== undefined &&
-    counts.proposals !== undefined;
+    counts.proposals !== undefined &&
+    counts.requests !== undefined;
   const decisions =
-    (counts.walkIns ?? 0) + (counts.timeOff ?? 0) + (counts.swaps ?? 0) + (counts.pickups ?? 0) + (counts.proposals ?? 0);
-  const anyError = !!timeOffError || clockIns.isError || swaps.isError || pickups.isError || proposals.isError;
+    (counts.walkIns ?? 0) + (counts.timeOff ?? 0) + (counts.swaps ?? 0) + (counts.pickups ?? 0) + (counts.proposals ?? 0) + (counts.requests ?? 0);
+  const anyError = !!timeOffError || clockIns.isError || swaps.isError || pickups.isError || proposals.isError || requests.isError;
   const oldestWalkIn = (clockIns.data ?? [])
     .map((r) => r.requestedAt)
     .sort()[0];
@@ -255,6 +280,7 @@ export function ApprovalsHome() {
     { key: 'swaps', label: 'Swaps', value: swaps.isError ? null : counts.swaps, sub: counts.swaps ? 'Peer already said yes' : 'Nothing pending' },
     { key: 'pickups', label: 'Pickups', value: pickups.isError ? null : counts.pickups, sub: counts.pickups ? 'Approve to fill the shift' : 'Nothing pending' },
     { key: 'proposals', label: 'Agent proposals', value: proposals.isError ? null : counts.proposals, sub: counts.proposals ? 'An agent proposes; you decide' : 'Nothing pending' },
+    { key: 'requests', label: 'Second person', value: requests.isError ? null : counts.requests, sub: counts.requests ? 'Pay, access and offboarding changes' : 'Nothing pending' },
   ];
   const firstWithWork = queues.find((q) => typeof q.value === 'number' && q.value > 0)?.key ?? null;
   const openQueue: QueueKey | null = picked ?? (loaded ? firstWithWork : null);
@@ -325,6 +351,22 @@ export function ApprovalsHome() {
       <SwapsPanel />
     ) : key === 'pickups' ? (
       <PickupsPanel />
+    ) : key === 'requests' ? (
+      <div className="space-y-3">
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={() => setCoverOpen(true)}>
+            Cover my approvals
+          </Button>
+        </div>
+        <ApprovalRequestList
+          requests={requests.data}
+          loading={requests.isLoading}
+          error={requests.error}
+          onRetry={() => void requests.refetch()}
+          focusId={focusRequest}
+          onDecided={() => setFocusRequest(null)}
+        />
+      </div>
     ) : key === 'proposals' ? (
       <ProposalList
         approvals={proposals.data}
@@ -364,7 +406,7 @@ export function ApprovalsHome() {
           <div>
             <div className="font-medium text-white">Nothing waiting on you</div>
             <div className="text-sm text-silver">
-              No one at the kiosk, and no time off, swaps, pickups or agent proposals to decide.
+              No one at the kiosk, and no time off, swaps, pickups, agent proposals or second-person requests to decide.
             </div>
           </div>
         </CardContent>
@@ -391,6 +433,7 @@ export function ApprovalsHome() {
   return (
     <>
       <PullToRefreshIndicator state={pullState} />
+      <DelegationDialog open={coverOpen} onOpenChange={setCoverOpen} />
       <DeskTemplate
         title="Approvals"
         subtitle={subtitle}
@@ -400,15 +443,21 @@ export function ApprovalsHome() {
             {/* Four queues polling every minute owe the reader the minute. */}
             <AsOf
               at={timeOffQ.dataUpdatedAt}
-              refreshing={clockIns.isFetching || timeOffQ.isFetching || swaps.isFetching || pickups.isFetching || proposals.isFetching}
+              refreshing={clockIns.isFetching || timeOffQ.isFetching || swaps.isFetching || pickups.isFetching || proposals.isFetching || requests.isFetching}
               onRefresh={() => {
                 void clockIns.refetch();
                 void timeOffQ.refetch();
                 void swaps.refetch();
                 void pickups.refetch();
                 void proposals.refetch();
+                void requests.refetch();
               }}
             />
+            {canReadRecord && (
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/audit/approvals">All requests</Link>
+              </Button>
+            )}
             <Button size="sm" variant="outline" asChild>
               <Link to="/time-attendance?tab=queue">
                 <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -1071,6 +1120,14 @@ function PendingTimeOffPanel({
     setPendingId(r.id);
     approveMutation.mutate(r, { onSettled: () => setPendingId(null) });
   };
+  // j/k over the requests, a approves, d opens the deny reason (lib/shortcuts).
+  const kb = useListKeyboard({
+    items: items ?? [],
+    idOf: (r) => r.id,
+    onApprove: (r) => onApprove(r),
+    onDecline: (r) => setDenyTarget(r),
+    enabled: !denyTarget,
+  });
 
   // Bulk approvals go through the server's bulk endpoint — one round-trip,
   // per-id failure reporting. Partial failure keeps ONLY the failed rows
@@ -1147,7 +1204,7 @@ function PendingTimeOffPanel({
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60">
+          <ul className="divide-y divide-navy-secondary/60" aria-label="Pending time-off requests" {...kb.listProps}>
             {items.map((r) => (
               <li
                 key={r.id}
@@ -1155,6 +1212,7 @@ function PendingTimeOffPanel({
                 className={`flex flex-wrap items-center justify-between gap-3 py-3${
                   flashId === r.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''
                 }`}
+                {...kb.rowProps(r.id)}
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <input

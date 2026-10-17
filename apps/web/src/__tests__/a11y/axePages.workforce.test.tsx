@@ -55,6 +55,8 @@ vi.mock('@/lib/hrCases123Api', () => ({
   fileCase: vi.fn(),
   getCase: vi.fn(),
   getCaseSummary: vi.fn().mockResolvedValue({ openTotal: 0 }),
+  getSlaTargets: vi.fn().mockResolvedValue({ targets: [] }),
+  updateSlaTargets: vi.fn(),
   listCaseQueue: vi.fn().mockResolvedValue({ cases: [] }),
   listMyCases: vi.fn().mockResolvedValue({ cases: [] }),
   triageCase: vi.fn(),

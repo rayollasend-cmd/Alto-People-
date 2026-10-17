@@ -95,7 +95,7 @@ export const garnishmentLetterUrl = (id: string) => `/api/garnishments/${id}/let
 
 // ----- Tax forms ---------------------------------------------------------
 
-export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC' | 'F1099_MISC';
+export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC' | 'F1099_MISC' | 'F1095C' | 'F1094C';
 
 export type TaxFormStatus = 'DRAFT' | 'FILED' | 'AMENDED' | 'VOIDED';
 
@@ -109,6 +109,8 @@ export interface TaxForm {
   amounts: Record<string, unknown>;
   status: TaxFormStatus;
   filedAt: string | null;
+  /** The agency's or filing partner's acknowledgment keyed in at "Mark filed". */
+  filingConfirmation?: string | null;
   ein: string | null;
   recipientCopySentAt: string | null;
   createdAt: string;
@@ -136,8 +138,13 @@ export const createTaxForm = (input: {
   ein?: string | null;
 }) => apiFetch<{ id: string }>('/tax-forms', { method: 'POST', body: input });
 
-export const fileTaxForm = (id: string) =>
-  apiFetch<{ ok: true }>(`/tax-forms/${id}/file`, { method: 'POST', body: {} });
+export const fileTaxForm = (id: string, confirmationNumber?: string | null) =>
+  apiFetch<{ ok: true }>(`/tax-forms/${id}/file`, { method: 'POST', body: confirmationNumber ? { confirmationNumber } : {} });
+
+/** The IRS MeF return (941 / 940) — built here, transmitted by the filing partner. */
+export const taxFormMefUrl = (id: string): string => `/api/tax-forms/${id}/mef.xml`;
+/** The employee's 1095-C. */
+export const f1095cPdfUrl = (id: string): string => `/api/aca/1095c/${id}/pdf`;
 
 export const voidTaxForm = (id: string) =>
   apiFetch<{ ok: true }>(`/tax-forms/${id}/void`, { method: 'POST', body: {} });

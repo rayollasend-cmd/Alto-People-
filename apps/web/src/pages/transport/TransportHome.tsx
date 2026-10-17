@@ -91,6 +91,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ListTemplate } from '@/components/templates';
+import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, SosBanner, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
 import {
   Dialog,
   DialogContent,
@@ -109,14 +110,16 @@ import {
  *             edit or call off a run that hasn't left, cancel a ride
  *   Rides     every booking, searchable — cancel, waive a charge
  *   Issues    what riders and drivers reported — work it, resolve it
- *   Vans / Stops   the fleet and the housing complexes / pickup stops
+ *   Vans / Stops   the fleet (each van's record: papers, service log,
+ *             pre-trip checks) and the housing complexes / pickup stops
+ *   Drivers   licences, DOT cards, MVRs, and the day's driver shifts
  *   Charges   who owes what for a date range, what payroll already took
  *   Settings  the fare, the no-show fee, the booking cutoff
  *
  * view:transport reads everything here; manage:transport acts.
  */
 
-const TABS = ['today', 'live', 'rides', 'issues', 'vans', 'stops', 'charges', 'settings'] as const;
+const TABS = ['today', 'live', 'rides', 'issues', 'vans', 'drivers', 'stops', 'charges', 'settings'] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   today: 'Today',
@@ -124,6 +127,7 @@ const TAB_LABEL: Record<Tab, string> = {
   rides: 'Rides',
   issues: 'Issues',
   vans: 'Fleet',
+  drivers: 'Drivers',
   stops: 'Stops',
   charges: 'Charges',
   settings: 'Fares',
@@ -275,7 +279,10 @@ export function TransportHome() {
           ) : board.isError ? (
             <QueryError what="today's board" query={board} />
           ) : board.data ? (
-            <TodayBoard board={board.data} manage={manage} />
+            <div className="space-y-5">
+              <TransportNeedsYou />
+              <TodayBoard board={board.data} manage={manage} />
+            </div>
           ) : null}
         </TabsContent>
         <TabsContent value="live">
@@ -285,16 +292,26 @@ export function TransportHome() {
           <RidesTab manage={manage} />
         </TabsContent>
         <TabsContent value="issues">
-          <IssuesTab manage={manage} />
+          <div className="space-y-8">
+            <IncidentsSection manage={manage} />
+            <IssuesTab manage={manage} />
+            <FeedbackSection />
+          </div>
         </TabsContent>
         <TabsContent value="vans">
           <FleetTab manage={manage} drivers={board.data?.drivers ?? []} />
+        </TabsContent>
+        <TabsContent value="drivers">
+          <DriversTab manage={manage} />
         </TabsContent>
         <TabsContent value="stops">
           <StopsTab manage={manage} />
         </TabsContent>
         <TabsContent value="charges">
-          <ChargesTab />
+          <div className="space-y-8">
+            <ChargesTab />
+            <CostsSection />
+          </div>
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab manage={manage} />
@@ -1465,6 +1482,7 @@ function ago(iso: string, now: number): string {
 
 function LiveTab() {
   const queryClient = useQueryClient();
+  const { can } = useAuth();
   const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 10_000 });
   useEffect(
     () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport', 'live'] })),
@@ -1506,6 +1524,8 @@ function LiveTab() {
   if (live.isError) return <QueryError what="the live board" query={live} />;
 
   return (
+    <>
+    <SosBanner runs={onRoad} manage={can('manage:transport')} />
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="lg:col-span-2">
         {markers.length > 0 ? (
@@ -1544,6 +1564,7 @@ function LiveTab() {
         )}
       </section>
     </div>
+    </>
   );
 }
 
@@ -1566,7 +1587,11 @@ function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; 
         <span className="font-semibold text-white">{run.van.name}</span>
         <span className="truncate text-sm text-silver">· {run.driver.name}</span>
         <span className="ml-auto">
-          {active ? (
+          {run.safety?.sosAt && !run.safety.sosAckAt ? (
+            <Badge variant="destructive">SOS</Badge>
+          ) : run.safety?.escalatedAt ? (
+            <Badge variant="pending">No answer</Badge>
+          ) : active ? (
             late >= 5 ? (
               <Badge variant="pending">~{fmtMinutes(late)} late</Badge>
             ) : (
@@ -1949,6 +1974,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
   const { from, to } = periodDates(days);
   const fleet = useQuery({ queryKey: ['transport', 'fleet', from, to], queryFn: () => getFleet(from, to), refetchInterval: 60_000 });
   const [editing, setEditing] = useState<Van | 'new' | null>(null);
+  const [record, setRecord] = useState<string | null>(null);
   const [, setParams] = useSearchParams();
   const queryClient = useQueryClient();
   const vans = fleet.data?.vans ?? [];
@@ -2025,7 +2051,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {vans.map((v) => {
             const st = v.stats;
-            const status = !v.isActive ? 'Out of service' : v.now ? 'On the road' : 'Parked';
+            const status = !v.isActive ? 'Retired' : v.outOfService ? 'Out of service' : v.now ? 'On the road' : 'Parked';
             return (
               <Card key={v.id} className={cn(!v.isActive && 'opacity-70', v.now && 'border-success/40')}>
                 <CardContent className="pt-4">
@@ -2039,9 +2065,14 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                         {v.plate && (
                           <span className="rounded border border-silver/40 bg-white px-1.5 font-mono text-2xs font-bold tracking-wider text-[#0B1832]">{v.plate}</span>
                         )}
-                        <Badge size="sm" variant={v.now ? 'success' : v.isActive ? 'default' : 'destructive'}>
+                        <Badge size="sm" variant={v.now ? 'success' : v.isActive && !v.outOfService ? 'default' : 'destructive'}>
                           {status}
                         </Badge>
+                        {(v.papersDue ?? []).map((d) => (
+                          <Badge key={d.label} size="sm" variant={d.expired ? 'destructive' : 'pending'}>
+                            {d.label} {d.expired ? 'lapsed' : 'due'}
+                          </Badge>
+                        ))}
                       </div>
                       <div className="truncate text-xs text-silver">
                         {v.look || 'Add make, model and color'} · {v.capacity} seats
@@ -2052,11 +2083,16 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                         </div>
                       )}
                     </div>
-                    {manage && (
-                      <Button size="xs" variant="ghost" onClick={() => setEditing(v)}>
-                        Edit
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <Button size="xs" variant="ghost" onClick={() => setRecord(v.id)}>
+                        Record
                       </Button>
-                    )}
+                      {manage && (
+                        <Button size="xs" variant="ghost" onClick={() => setEditing(v)}>
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mt-3 flex items-center gap-2">
@@ -2127,7 +2163,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                         </Button>
                       )}
                       <Button size="xs" variant="ghost" onClick={() => void toggle(v)}>
-                        {v.isActive ? 'Take out of service' : 'Back in service'}
+                        {v.isActive ? 'Retire van' : 'Bring back'}
                       </Button>
                     </div>
                   )}
@@ -2142,6 +2178,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
         trail. Drivers are people with the Driver role — invite them from Users.
       </p>
       {editing && <VanDialog van={editing === 'new' ? null : editing} drivers={drivers} onClose={() => setEditing(null)} />}
+      {record && <VanRecordDrawer vanId={record} manage={manage} onClose={() => setRecord(null)} />}
     </div>
   );
 }
@@ -2760,6 +2797,10 @@ function SettingsForm({
   const [cutoff, setCutoff] = useState(String(initial.cutoffHours));
   const [shortNotice, setShortNotice] = useState(String(initial.shortNoticeMinutes));
   const [dispatchPhone, setDispatchPhone] = useState(initial.dispatchPhone ?? '');
+  // Drivers' hours of service and the pre-trip check.
+  const [maxHours, setMaxHours] = useState(String(initial.driverMaxHoursPerDay ?? 10));
+  const [minRest, setMinRest] = useState(String(initial.driverMinRestHours ?? 8));
+  const [preTrip, setPreTrip] = useState(initial.preTripRequired ?? true);
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
@@ -2770,6 +2811,9 @@ function SettingsForm({
         cutoffHours: Number(cutoff),
         shortNoticeMinutes: Math.max(0, Math.round(Number(shortNotice) || 0)),
         dispatchPhone: dispatchPhone.trim() || null,
+        driverMaxHoursPerDay: Math.min(24, Math.max(1, Math.round(Number(maxHours) || 10))),
+        driverMinRestHours: Math.min(24, Math.max(0, Math.round(Number(minRest) || 0))),
+        preTripRequired: preTrip,
         ...(rateChanged ? { effectiveFrom } : {}),
       });
       toast.success(rateChanged ? `Saved — the new rate starts ${effectiveFrom}; riders sign again before their next booking` : 'Saved — new bookings use these');
@@ -2819,6 +2863,24 @@ function SettingsForm({
             <Input {...p} type="tel" value={dispatchPhone} onChange={(e) => setDispatchPhone(e.target.value)} placeholder="(850) 555-0100" maxLength={40} disabled={!manage} />
           )}
         </Field>
+        <div className="space-y-3 border-t border-navy-secondary pt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Drivers</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Most hours a day" hint="Driver shifts and runs past this are refused.">
+              {(p) => <Input {...p} type="number" min={1} max={24} value={maxHours} onChange={(e) => setMaxHours(e.target.value)} disabled={!manage} />}
+            </Field>
+            <Field label="Rest between shifts (hours)" hint="A shift this close to another is refused.">
+              {(p) => <Input {...p} type="number" min={0} max={24} value={minRest} onChange={(e) => setMinRest(e.target.value)} disabled={!manage} />}
+            </Field>
+          </div>
+          <label className="flex items-start gap-2 text-sm text-ink coarse:min-h-11">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 coarse:h-6 coarse:w-6" checked={preTrip} onChange={(e) => setPreTrip(e.target.checked)} disabled={!manage} />
+            <span>
+              Pre-trip check before every run
+              <span className="block text-xs text-silver">A failed safety item keeps the van on the lot and opens a vehicle issue. Off only for a fleet that checks on paper.</span>
+            </span>
+          </label>
+        </div>
         {lookup && (
           <p className="text-xs text-silver">
             <span className="font-medium text-white">Address search:</span> {lookup}

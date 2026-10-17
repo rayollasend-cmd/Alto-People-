@@ -25,6 +25,7 @@ const EARNING_LABEL: Record<string, string> = {
   COMMISSION: 'Commission',
   TIPS: 'Tips',
   REIMBURSEMENT: 'Reimbursement',
+  RETRO: 'Retroactive pay',
 };
 
 const ITEM_INCLUDE = {
@@ -137,6 +138,18 @@ function earningLines(item: PaystubItem): PaystubEarningLine[] {
 }
 
 function payDistribution(item: PaystubItem): PaystubData['payDistribution'] {
+  // A deposit the bank returned and the re-send that followed: the stub
+  // says so, in the person's own words of where the money went.
+  const reroute = (item as { rerouteDetail?: unknown }).rerouteDetail as
+    | { returnedAt: string; returnedReason: string; reroutedAt: string; to: string }
+    | null
+    | undefined;
+  if (reroute?.to) {
+    return {
+      label: `Re-sent to ${reroute.to}`,
+      detail: `The original deposit was returned on ${reroute.returnedAt.slice(0, 10)} (${reroute.returnedReason}) and re-sent on ${reroute.reroutedAt.slice(0, 10)}.`,
+    };
+  }
   const pm = item.associate.payoutMethods[0];
   if (!pm) return undefined;
   if (pm.branchCardId) return { label: 'Branch card', detail: 'Loaded to your Branch card' };
@@ -195,8 +208,24 @@ export async function buildPaystubDataFromItem(
         : '';
     postTaxDeductions.push({ label: `Van rides${guardNote}`, current: rideCurrent, ytd: ytd.rides });
   }
-  if (otherPostTax > 0) {
-    postTaxDeductions.push({ label: 'Post-tax deductions', current: otherPostTax, ytd: round2(ytd.postTax - ytd.rides) });
+  // Earned-wage advances this check recovered get their own line; the
+  // rest of the post-tax bucket keeps its generic one.
+  const ewaRows = await defaultPrisma.earnedWageAdvance.findMany({
+    where: { associateId: item.associateId, recoveryLog: { array_contains: [{ runId: item.payrollRunId }] } },
+    select: { recoveryLog: true },
+  });
+  const ewaCurrent = round2(
+    ewaRows.reduce((s, r) => {
+      const log = Array.isArray(r.recoveryLog) ? (r.recoveryLog as Array<{ runId: string; cents: number }>) : [];
+      return s + log.filter((l) => l.runId === item.payrollRunId).reduce((x, l) => x + l.cents, 0) / 100;
+    }, 0),
+  );
+  if (ewaCurrent > 0) {
+    postTaxDeductions.push({ label: 'Earned-wage advance repaid', current: ewaCurrent, ytd: ewaCurrent });
+  }
+  const remainingPostTax = round2(otherPostTax - ewaCurrent);
+  if (remainingPostTax > 0) {
+    postTaxDeductions.push({ label: 'Post-tax deductions', current: remainingPostTax, ytd: round2(ytd.postTax - ytd.rides - ewaCurrent) });
   }
 
   // Brief 2-1b: the company block is the employer of record. A client that

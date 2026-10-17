@@ -11,7 +11,8 @@ import {
   type ExpirationsResponse,
 } from '@/lib/expirations113Api';
 import { grantAssociateQual } from '@/lib/qualApi';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
+import { TransportExpiringSection } from '@/pages/transport/TransportDesk';
 import { hasCapability } from '@/lib/roles';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useSelection, type Selection } from '@/lib/useSelection';
@@ -57,6 +58,8 @@ export function ExpirationsHome() {
   const canRenew = user
     ? hasCapability(user.role, 'manage:scheduling')
     : false;
+  const tenant = useTenant();
+  const showTransport = !!user && hasCapability(user.role, 'view:transport') && tenant.modules.transportation !== false;
   const [loadError, setLoadError] = useState<string | null>(null);
   const [days, setDays] = usePersistentState<30 | 60 | 90>(
     'alto:list.expirations.days.v1',
@@ -304,6 +307,8 @@ export function ExpirationsHome() {
             onRenew={setRenewTarget}
             selection={canRenew ? sel : null}
           />
+          {/* The fleet's papers and drivers' licences, kept in Transportation. */}
+          {showTransport && <TransportExpiringSection days={days} />}
         </div>
       )}
 

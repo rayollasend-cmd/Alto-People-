@@ -25,6 +25,12 @@ const TABLES = [
   // no FK to anything, so counters accumulate across tests and the unique
   // key collides the moment a second test seeds the same route.
   'RouteUsageDaily',
+  // Marketing (2026-10-17): the careers view counter and the employer brand
+  // page have no FK to anything either (photos cascade from the brand).
+  'CareersPageView',
+  // Floor leads' flags: tied to a client but not by a cascading key.
+  'FloorFlag',
+  'EmployerBrand',
   'WebVitalDaily',
   // Reliability rollups: no FK reaches either, same as the two above.
   'ApiBoot',
@@ -78,6 +84,12 @@ const TABLES = [
   'AgentTenantControl',
   'ReleaseNote',
   'TeamDelegation',
+  // Approval engine (2026-10): no FK to a truncated table, so named here.
+  'ApprovalRequest',
+  'ApprovalDelegation',
+  'AccessGrant',
+  'Promotion',
+  'WorkflowTask',
   'ReadyToWorkHandoff',
   // BranchWebhookEvent FK to PayrollItem is ON DELETE SET NULL, so rows
   // would persist across tests with payrollItemId=null and trip the
@@ -85,6 +97,15 @@ const TABLES = [
   // Region is a parent of Location and User, so nothing cascades into it.
   'Region',
   'BranchWebhookEvent',
+  // Finance pack: policies and their assignments have no FK into the graph;
+  // the mapping cascades from its connection, the rest from Associate —
+  // listed so a test never inherits another test's policy or advance.
+  'TimeOffPolicyAssignment',
+  'TimeOffPolicy',
+  'QuickbooksCostCenterMapping',
+  'ClientStatementReminder',
+  'RetroPayAdjustment',
+  'EarnedWageAdvance',
   // ResendWebhookEvent has no FKs but its svixId unique would trip the
   // next test that reuses an id; EmailSuppression's unique email likewise.
   'ResendWebhookEvent',
@@ -171,6 +192,13 @@ const TABLES = [
   // Brief 2-5 step 3: the keyring canary (platform-level, no keys to anything).
   'EncryptionCanary',
   'SecurityAlert',
+  // Access pack: the tenant's sign-in posture, remembered devices,
+  // certification campaigns and held notifications.
+  'TenantSecurityPolicy',
+  'TrustedDevice',
+  'AccessCertificationItem',
+  'AccessCertification',
+  'DeferredNotification',
   'TenantRole',
   'ScimGroup',
   'ScimGroupRoleMap',
@@ -181,6 +209,10 @@ const TABLES = [
   'SamlCache',
   // Brief 2-6 step 2: a customer's gate policies name tenants and agents by id, never by key.
   'AgentGatePolicy',
+  // HR pack (2026-10): per-tenant policies and batches that reference nothing by key.
+  'HrCaseSlaPolicy',
+  'DocumentRetentionPolicy',
+  'MassUpdateBatch',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

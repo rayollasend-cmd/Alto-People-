@@ -40,10 +40,20 @@ vi.mock('@/lib/agentProposalsApi', async (orig) => ({
   decideProposal: vi.fn(),
 }));
 
+// Second-person requests (the approval engine): their own queue on this page.
+vi.mock('@/lib/approvalRequestsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/approvalRequestsApi')>()),
+  listApprovalRequests: vi.fn(async () => ({ requests: [] })),
+  decideApprovalRequest: vi.fn(),
+  cancelApprovalRequest: vi.fn(),
+  listMyDelegations: vi.fn(async () => ({ given: [], covering: [] })),
+}));
+
 import {
   approveAdminRequest,
   listAdminRequests,
 } from '@/lib/timeOffApi';
+import { decideApprovalRequest, listApprovalRequests } from '@/lib/approvalRequestsApi';
 import { listAdminSwaps, listOpenShiftClaims } from '@/lib/schedulingApi';
 import { countAdminTimeEntries } from '@/lib/timeApi';
 import { listMyProposals } from '@/lib/agentProposalsApi';
@@ -134,6 +144,7 @@ beforeEach(() => {
   } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
   vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 3 });
   vi.mocked(listMyProposals).mockResolvedValue({ approvals: [] });
+  vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [] });
 });
 
 const proposalFixture = {
@@ -163,6 +174,58 @@ const proposalFixture = {
   },
   mayDecide: true,
 };
+
+const requestFixtureA = {
+  id: '44444444-4444-4444-8444-444444444444',
+  kind: 'PAY_RATE_CHANGE' as const,
+  status: 'PENDING' as const,
+  subjectType: 'Associate',
+  subjectId: '55555555-5555-4555-8555-555555555555',
+  title: 'Ana Lopez: $20.00 → $25.00 per hour',
+  summary: 'merit, effective 2026-11-01',
+  proposed: { associateId: '55555555-5555-4555-8555-555555555555', payType: 'HOURLY', amount: 25, reason: 'MERIT', effectiveFrom: '2026-11-01T00:00:00.000Z' },
+  before: { payType: 'HOURLY', amount: 20 },
+  requester: { id: '66666666-6666-4666-8666-666666666666', name: 'Hana Ruiz' },
+  approverRule: { capability: 'manage:comp', userId: null, role: null },
+  clientId: null,
+  associateId: '55555555-5555-4555-8555-555555555555',
+  decidedBy: null,
+  decidedAt: null,
+  reason: null,
+  appliedAt: null,
+  applyError: null,
+  createdAt: new Date().toISOString(),
+  mayDecide: true,
+};
+
+describe('<ApprovalsHome> second-person requests', () => {
+  it('a pay change waiting on a second person is its own queue, shows before → after, and approving applies it', async () => {
+    vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [requestFixtureA] });
+    vi.mocked(decideApprovalRequest).mockResolvedValue({ ...requestFixtureA, status: 'APPROVED', mayDecide: false, decidedBy: { id: 'u', name: 'You' }, decidedAt: new Date().toISOString(), appliedAt: new Date().toISOString() });
+    renderPage('HR_ADMINISTRATOR', `/approvals?tab=requests&approval=${requestFixtureA.id}`);
+    expect(await screen.findByText('Second person')).toBeInTheDocument();
+    const card = await screen.findByTestId('approval-request-card');
+    expect(card).toHaveTextContent('Ana Lopez: $20.00 → $25.00 per hour');
+    expect(card).toHaveTextContent('$20.00 per hour');
+    expect(card).toHaveTextContent('$25.00 per hour');
+    expect(card).toHaveTextContent('Hana Ruiz');
+    await userEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+    await waitFor(() => expect(decideApprovalRequest).toHaveBeenCalledWith(requestFixtureA.id, { decision: 'APPROVE' }));
+    expect(await screen.findByText('Approved and applied')).toBeInTheDocument();
+  });
+
+  it('rejecting asks why before it is sent', async () => {
+    vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [requestFixtureA] });
+    vi.mocked(decideApprovalRequest).mockResolvedValue({ ...requestFixtureA, status: 'REJECTED', mayDecide: false, reason: 'Out of band' });
+    renderPage('HR_ADMINISTRATOR', '/approvals?tab=requests');
+    await screen.findByTestId('approval-request-card');
+    await userEvent.click(screen.getByRole('button', { name: /^reject$/i }));
+    expect(screen.getByRole('button', { name: /confirm rejection/i })).toBeDisabled();
+    await userEvent.type(screen.getByTestId('approval-reject-reason'), 'Out of band');
+    await userEvent.click(screen.getByRole('button', { name: /confirm rejection/i }));
+    await waitFor(() => expect(decideApprovalRequest).toHaveBeenCalledWith(requestFixtureA.id, { decision: 'REJECT', reason: 'Out of band' }));
+  });
+});
 
 describe('<ApprovalsHome> agent proposals', () => {
   it('a proposal waiting on the supervisor is its own queue, counted, and opens with its evidence from ?tab=proposals&proposal=', async () => {

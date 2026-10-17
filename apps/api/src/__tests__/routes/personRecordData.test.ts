@@ -73,16 +73,19 @@ describe('GET /time-off/admin/requests?associateId=', () => {
 });
 
 describe('the directory entry names who can be messaged', () => {
-  it("a staff login's id; nothing for a plain associate", async () => {
+  it("the login's id — a supervisor's, and an associate's now that the messenger reaches them; nothing without a login", async () => {
     const client = await createClient('Walmart 1234');
     const lead = await createAssociate({ firstName: 'Lee', lastName: 'Lead' });
     const { user: leadUser } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: lead.id });
     const plain = await createAssociate({ firstName: 'Pat', lastName: 'Plain' });
-    await createUser({ role: 'ASSOCIATE', associateId: plain.id });
+    const { user: plainUser } = await createUser({ role: 'ASSOCIATE', associateId: plain.id });
+    const noLogin = await createAssociate({ firstName: 'Nora', lastName: 'Nologin' });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const agent = await loginAs(hr.email);
 
     expect((await agent.get(`/people/directory/${lead.id}`)).body.messageUserId).toBe(leadUser.id);
-    expect((await agent.get(`/people/directory/${plain.id}`)).body.messageUserId).toBeNull();
+    // Field roles (2026-10): the record's Message lands in the associate's app.
+    expect((await agent.get(`/people/directory/${plain.id}`)).body.messageUserId).toBe(plainUser.id);
+    expect((await agent.get(`/people/directory/${noLogin.id}`)).body.messageUserId).toBeNull();
   });
 });

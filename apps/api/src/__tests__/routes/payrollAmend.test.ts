@@ -49,6 +49,8 @@ interface SeedDisbursedRun {
 async function seedDisbursedRun(): Promise<SeedDisbursedRun> {
   const client = await createClient();
   const associate = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+  // A work state the engine withholds for — finalize refuses one it can't.
+  await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
   const start = new Date('2026-04-01T13:00:00Z');
   await prisma.timeEntry.create({
     data: {
@@ -390,6 +392,8 @@ describe('POST /payroll/runs/:id/amend — Gap 3', () => {
   it('refuses to amend if a correction targets an associate not on the original run', async () => {
     const { hrAgent, runId } = await seedDisbursedRun();
     const stranger = await createAssociate({ firstName: 'Stranger', lastName: 'Danger' });
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: stranger.id }, data: { state: 'FL' } });
     const res = await hrAgent.post(`/payroll/runs/${runId}/amend`).send({
       reason: 'attempted with off-run associate',
       corrections: [

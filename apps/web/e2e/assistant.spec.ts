@@ -39,6 +39,8 @@ test.beforeEach(async ({ page }) => {
 
 test('the spark opens the pane; it knows the page; the thread survives moving pages; ⌘J closes it', async ({ page }) => {
   await page.goto('/people');
+  // The page names itself once its header mounts; ask after that.
+  await expect(page.getByRole('heading', { name: 'People', level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /^ask hugo/i }).click();
   const pane = page.getByTestId('assistant-pane');
   await expect(pane).toBeVisible();

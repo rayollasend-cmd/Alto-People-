@@ -200,7 +200,7 @@ describe('computePayrollExceptions', () => {
     expect(r.exceptions.find((e) => e.kind === 'OT_SPIKE')?.severity).toBe('INFO');
   });
 
-  it('flags unsupported state as INFO for W2 only', async () => {
+  it('flags unsupported state as BLOCKING for W2 only — nothing would be withheld', async () => {
     const c = await seedClient();
     const a = await seedAssociate({
       state: 'AR', // not bracketed, not flat-rate, not NO_SIT → fallback
@@ -214,7 +214,9 @@ describe('computePayrollExceptions', () => {
       clientId: null,
     });
     const ust = r.exceptions.find((e) => e.kind === 'UNSUPPORTED_STATE');
-    expect(ust?.severity).toBe('INFO');
+    expect(ust?.severity).toBe('BLOCKING');
+    expect(ust?.message).toContain('not supported for AR');
+    expect(r.counts.blocking).toBeGreaterThanOrEqual(1);
   });
 
   it('does NOT flag unsupported state for fully-supported states', async () => {
@@ -266,7 +268,7 @@ describe('computePayrollExceptions', () => {
   it('counts severities correctly', async () => {
     const c = await seedClient();
     // Three issues on one associate: missing W4 (block), missing payout (warn),
-    // unsupported state (info).
+    // unsupported state (block — nothing would be withheld).
     const a = await seedAssociate({
       state: 'AR',
       withW4: false,
@@ -278,9 +280,9 @@ describe('computePayrollExceptions', () => {
       periodEndExclusive,
       clientId: null,
     });
-    expect(r.counts.blocking).toBe(1);
+    expect(r.counts.blocking).toBe(2);
     expect(r.counts.warning).toBe(1);
-    expect(r.counts.info).toBe(1);
+    expect(r.counts.info).toBe(0);
   });
 
   it('flags a missing comp record as WARNING', async () => {

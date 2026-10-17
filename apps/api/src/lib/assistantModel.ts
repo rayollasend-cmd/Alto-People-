@@ -24,7 +24,9 @@ export interface AssistantTool {
   key: string;
   name: string;
   description: string;
-  run: () => Promise<{ reply: string; linkUrl: string | null }>;
+  /** JSON-schema properties the model fills in; none = the tool takes no input. */
+  input?: { properties: Record<string, unknown>; required?: string[] };
+  run: (args?: Record<string, unknown>) => Promise<{ reply: string; linkUrl: string | null }>;
 }
 
 export interface AssistantPage {
@@ -118,18 +120,19 @@ export async function answerWithModel(input: {
   // One array for every tool; the escalation tool's input differs, so the
   // array is typed by the runner's own parameter rather than the first tool.
   type RunnerTools = NonNullable<Parameters<Anthropic['beta']['messages']['toolRunner']>[0]['tools']>;
-  const tools: RunnerTools = input.tools.map((t) =>
-    betaTool({
-      name: t.name,
-      description: t.description,
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: async () => {
-        const r = await t.run();
-        used.push(t.key);
-        if (r.linkUrl) linkUrl = r.linkUrl;
-        return r.reply;
-      },
-    }),
+  const tools: RunnerTools = input.tools.map(
+    (t) =>
+      betaTool({
+        name: t.name,
+        description: t.description,
+        inputSchema: { type: 'object', properties: (t.input?.properties ?? {}) as never, ...(t.input?.required ? { required: t.input.required } : {}), additionalProperties: false },
+        run: async (args) => {
+          const r = await t.run((args ?? {}) as Record<string, unknown>);
+          used.push(t.key);
+          if (r.linkUrl) linkUrl = r.linkUrl;
+          return r.reply;
+        },
+      }) as unknown as RunnerTools[number],
   );
   if (input.identity.escalation) {
     const who = input.identity.escalation.who;

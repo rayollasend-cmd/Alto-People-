@@ -24,6 +24,7 @@ import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
@@ -37,6 +38,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { AgentRoiTile } from '@/pages/executive/AgentRoiTile';
+import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
+import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
 
 /**
  * The Executive/Chairman command center — the numbers, their direction,
@@ -352,6 +356,7 @@ function DecisionQueueCard({
   /** The home's template titles the section ("Needs you"); the card keeps only its count. */
   headless?: boolean;
 }) {
+  const { t } = useI18n();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [roomKey, setRoomKey] = useState<string | null>(null);
   const open = decisions.filter((d) => d.status === 'open');
@@ -385,7 +390,7 @@ function DecisionQueueCard({
       {(!headless || open.length > 0) && (
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            {!headless && <CardTitle className="text-base">Needs your decision</CardTitle>}
+            {!headless && <CardTitle className="text-base">{t('execHome.needsYourDecision')}</CardTitle>}
             {open.length > 0 && (
               <span className="ml-auto text-2xs tabular-nums text-silver/70">
                 {open.length} open{delegated.length > 0 ? ` · ${delegated.length} with your team` : ''}
@@ -602,6 +607,7 @@ function RateCalculator({
   rates: ExecSummary['rates'];
   trend: ExecSummary['trend'];
 }) {
+  const { t } = useI18n();
   const [bill, setBill] = useState(rates.billRate);
   const [pay, setPay] = useState(rates.payRate);
   const recent = trend.slice(-4);
@@ -626,7 +632,7 @@ function RateCalculator({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Rate negotiation model</CardTitle>
+        <CardTitle className="text-base">{t('execHome.rateModel')}</CardTitle>
         <p className="text-xs text-silver">
           What-if on your real volume — {weeklyHours.toFixed(0)}h/week average over the
           last four weeks ({weeklyOt.toFixed(1)}h OT), burden {rates.burdenPct}%.
@@ -731,6 +737,7 @@ interface PortalEngagement {
 
 
 export function ExecutiveDashboard() {
+  const { t } = useI18n();
   // Brief 2-1b: a direct employer bills no one. The margin story, the
   // client league, receivables, the portal and the J-1 cliff are the
   // staffing company's cards; a hotel's chairman leads with labor cost.
@@ -988,7 +995,7 @@ export function ExecutiveDashboard() {
         </>
       }
       topbarTitle="Home"
-      subtitle="Company posture at a glance, board-ready."
+      subtitle={t('execHome.subtitle')}
       meta={
         <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
           <LiveNow render={(now) => <>{LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)}</>} />
@@ -997,7 +1004,7 @@ export function ExecutiveDashboard() {
       actions={
         <Button onClick={() => void downloadBoardPack()} loading={packBusy} disabled={packBusy}>
           <Download className="mr-2 h-4 w-4" />
-          Download board pack
+          {t('execHome.boardPack')}
         </Button>
       }
       banners={
@@ -1021,7 +1028,7 @@ export function ExecutiveDashboard() {
             id="exec-needs-you"
             title={
               <>
-                Needs you
+                {t('home.needsYou')}
                 {openDecisions > 0 && (
                   <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
                     {openDecisions}
@@ -1033,7 +1040,7 @@ export function ExecutiveDashboard() {
           {brief ? (
             <DecisionQueueCard decisions={brief.decisions} onChanged={load} headless />
           ) : briefQuery.isError ? (
-            <EmptyState title="Nothing to decide loaded" description="The chairman's queue did not load. Retry above." className="py-6" />
+            <EmptyState title={t('execHome.queueNotLoaded')} description={t('execHome.queueNotLoadedBody')} className="py-6" />
           ) : (
             <Skeleton className="h-24" />
           )}
@@ -1053,8 +1060,8 @@ export function ExecutiveDashboard() {
         (error ? (
           <EmptyState
             icon={TrendingUp}
-            title={billRates ? 'Estimated margin' : 'Labor cost'}
-            description="The summary did not load. Retry above."
+            title={billRates ? t('execHome.estimatedMargin') : t('execHome.laborCost')}
+            description={t('execHome.summaryNotLoaded')}
             className="py-6"
           />
         ) : (
@@ -1076,8 +1083,8 @@ export function ExecutiveDashboard() {
         <Card>
           <CardContent className="p-4">
             <SectionTitle
-              title="Batons in flight"
-              trailing={<span className="text-2xs text-ink-muted">work in motion between departments</span>}
+              title={t('execHome.batons')}
+              trailing={<span className="text-2xs text-ink-muted">{t('execHome.batonsHint')}</span>}
             />
             <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-7">
               {(
@@ -1151,7 +1158,7 @@ export function ExecutiveDashboard() {
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <CardTitle className="text-base">Today</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.today')}</CardTitle>
                   <p className="text-2xs text-silver/70">
                     {LONG_DAY_FMT.format(new Date())}
                   </p>
@@ -1161,7 +1168,7 @@ export function ExecutiveDashboard() {
                     <div className="text-xl font-semibold tabular-nums text-white">
                       {fmtMoney(brief.today.estBilledToday)}
                     </div>
-                    <div className="text-2xs text-silver/70">est. billed today</div>
+                    <div className="text-2xs text-silver/70">{t('execHome.estBilledToday')}</div>
                   </div>
                 )}
               </div>
@@ -1170,11 +1177,11 @@ export function ExecutiveDashboard() {
               {/* Coverage gauge. */}
               {brief.today.shiftsTotal === 0 ? (
                 <EmptyState
-                  title="No shifts published today"
-                  description="Publish the schedule and coverage shows here."
+                  title={t('execHome.noShiftsToday')}
+                  description={t('execHome.noShiftsTodayBody')}
                   action={
                     <Link to="/scheduling" className="text-xs text-gold hover:text-gold-bright">
-                      Open scheduling
+                      {t('execHome.openScheduling')}
                     </Link>
                   }
                   className="py-6"
@@ -1344,18 +1351,18 @@ export function ExecutiveDashboard() {
               to="/people"
             />
             <Tile
-              label="Hires / separations (30d)"
+              label={t('execHome.hiresSeparations')}
               value={`${summary.workforce.hires30d} / ${summary.workforce.separations30d}`}
               to="/headcount"
             />
             <Tile
-              label="On the floor now"
+              label={t('execHome.onFloorNow')}
               value={onFloor === null ? '—' : String(onFloor)}
               sub={expected ? `expected ${expected}` : undefined}
               to="/labor-costs"
             />
             <Tile
-              label="OT risk this week"
+              label={t('execHome.otRisk')}
               value={otRisk === null ? '—' : String(otRisk.length)}
               sub={
                 otRisk && otRisk.length > 0
@@ -1365,7 +1372,7 @@ export function ExecutiveDashboard() {
               to="/labor-costs"
             />
             <Tile
-              label="Hours last week"
+              label={t('execHome.hoursLastWeek')}
               value={`${summary.lastWeek.workedHours.toFixed(1)}h`}
               sub={`${summary.lastWeek.otHours.toFixed(1)}h OT`}
               to="/analytics"
@@ -1377,7 +1384,7 @@ export function ExecutiveDashboard() {
             />
             {billRates && (
               <Tile
-                label="Est. billed last week"
+                label={t('execHome.estBilledLastWeek')}
                 value={fmtMoney(summary.lastWeek.estBilled)}
                 sub="at standard SOW rates"
                 to="/clients"
@@ -1389,7 +1396,7 @@ export function ExecutiveDashboard() {
               />
             )}
             <Tile
-              label="Labor cost last week"
+              label={t('execHome.laborCostLastWeek')}
               value={fmtMoney(summary.lastWeek.estLaborCost)}
               sub="fully loaded"
               to="/labor-costs"
@@ -1400,14 +1407,14 @@ export function ExecutiveDashboard() {
               }
             />
             <Tile
-              label="This week so far"
+              label={t('execHome.thisWeekSoFar')}
               value={`${summary.thisWeek.workedHours.toFixed(1)}h`}
               sub={billRates ? `est. billed ${fmtMoney(summary.thisWeek.estBilled)}` : `${fmtMoney(summary.thisWeek.estLaborCost)} labor so far`}
               to="/labor-costs"
             />
             {billRates && clientPortal && (
               <Tile
-                label="Receivables outstanding"
+                label={t('execHome.receivablesOutstanding')}
                 value={recv ? fmtMoney(recv.totals.outstandingAmount) : '—'}
                 sub={
                   recv
@@ -1418,11 +1425,13 @@ export function ExecutiveDashboard() {
               />
             )}
             <Tile
-              label="Turnover cost (90d)"
+              label={t('execHome.turnoverCost')}
               value={fmtMoney(summary.turnover.estCost90d)}
               sub={`${summary.turnover.separations90d} separations × ${fmtMoney(summary.turnover.costPerSeparation)}`}
               to="/analytics"
             />
+            {/* What the agents gave back, beside the money (2026-10-17). */}
+            <AgentRoiTile />
           </div>
 
           {/* Targets vs actuals + receivables aging. */}
@@ -1505,7 +1514,7 @@ export function ExecutiveDashboard() {
             {billRates && clientPortal && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Receivables aging</CardTitle>
+                <CardTitle className="text-base">{t('execHome.receivablesAging')}</CardTitle>
               </CardHeader>
               <CardContent>
                 {!recv ? (
@@ -1615,7 +1624,7 @@ export function ExecutiveDashboard() {
             {clientPortal && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Concentration & pipeline</CardTitle>
+                <CardTitle className="text-base">{t('execHome.concentration')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -1689,12 +1698,15 @@ export function ExecutiveDashboard() {
           </div>
           )}
 
+          {/* Client NPS: the quarter's one question, lowest clients first (2026-10-17). */}
+          {clientPortal && <ClientNpsCard />}
+
           {/* Portal engagement: are the client's site managers using it. */}
           {clientPortal && engagement && engagement.accounts.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <CardTitle className="text-base">Portal engagement</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.portalEngagement')}</CardTitle>
                   <span className="text-xs tabular-nums text-silver">
                     {engagement.totals.active7d} of {engagement.totals.accounts} in this week · {engagement.totals.downloads7d} report
                     {engagement.totals.downloads7d === 1 ? '' : 's'} pulled
@@ -1746,7 +1758,7 @@ export function ExecutiveDashboard() {
               {clientPortal && (
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Client health</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.clientHealth')}</CardTitle>
                   <p className="text-xs text-silver">
                     Fill trend, reliability, and payment behavior over the last 4 weeks —
                     the renewal-risk radar.
@@ -1819,7 +1831,7 @@ export function ExecutiveDashboard() {
               {programs && (
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Capacity & the J-1 cliff</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.capacityJ1')}</CardTitle>
                   <p className="text-xs text-silver">
                     Can you say yes to growth — and when does the seasonal workforce
                     roll off?
@@ -1897,7 +1909,7 @@ export function ExecutiveDashboard() {
               brief.people.anniversaries.length > 0) && (
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">People to know this week</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.peopleToKnow')}</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
@@ -1964,12 +1976,14 @@ export function ExecutiveDashboard() {
 
           {/* What-if rate model on real hours — only where there is a bill rate. */}
           {billRates && <RateCalculator rates={summary.rates} trend={summary.trend} />}
+          {/* And the portfolio question: lose this client, win that one (2026-10-17). */}
+          {billRates && clientPortal && <WhatIfClientCard league={summary.league} clients={summary.clients} rates={summary.rates} />}
 
           {/* Infographics row: hours composition + workforce donut. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Hours & overtime — eight weeks</CardTitle>
+                <CardTitle className="text-base">{t('execHome.hoursOvertime')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-52">
@@ -2014,7 +2028,7 @@ export function ExecutiveDashboard() {
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Workforce composition</CardTitle>
+                <CardTitle className="text-base">{t('execHome.workforceComposition')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-44">
@@ -2060,7 +2074,7 @@ export function ExecutiveDashboard() {
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Live floor</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.liveFloor')}</CardTitle>
                   <span className="text-2xs text-silver/70">
                     refreshes every 2 min ·{' '}
                     <Link to="/labor-costs" className="text-gold hover:text-gold-bright">
@@ -2151,7 +2165,7 @@ export function ExecutiveDashboard() {
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Client placements</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.clientPlacements')}</CardTitle>
                   <Link to="/clients" className="text-xs text-gold hover:text-gold-bright">
                     All clients
                   </Link>
@@ -2203,7 +2217,7 @@ export function ExecutiveDashboard() {
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Attendance — last 30 days</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.attendance30')}</CardTitle>
                   <Link to="/compliance" className="text-xs text-gold hover:text-gold-bright">
                     Compliance
                   </Link>
@@ -2233,7 +2247,7 @@ export function ExecutiveDashboard() {
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Overtime outlook — this week</CardTitle>
+                  <CardTitle className="text-base">{t('execHome.otOutlook')}</CardTitle>
                   <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
                     Full radar
                   </Link>

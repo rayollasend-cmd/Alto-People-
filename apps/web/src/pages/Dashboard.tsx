@@ -33,6 +33,7 @@ const RecruiterDashboard = lazy(() =>
 const WorkforceDashboard = lazy(() =>
   import('./WorkforceDashboard').then((m) => ({ default: m.WorkforceDashboard })),
 );
+const MarketingHome = lazy(() => import('./marketing/MarketingHome').then((m) => ({ default: m.MarketingHome })));
 const DriverHome = lazy(() => import('./transport/DriverHome').then((m) => ({ default: m.DriverHome })));
 const TransportHome = lazy(() => import('./transport/TransportHome').then((m) => ({ default: m.TransportHome })));
 
@@ -84,6 +85,8 @@ export function Dashboard() {
                   ? WorkforceDashboard
                   : user?.role === 'INTERNAL_RECRUITER'
                     ? RecruiterDashboard
+                  : user?.role === 'MARKETING_MANAGER'
+                    ? MarketingHome
                   : user?.role === 'DRIVER'
                     ? DriverHome
                     : user?.role === 'TRANSPORTATION_DIRECTOR'

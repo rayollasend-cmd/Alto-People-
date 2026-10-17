@@ -15,6 +15,7 @@ import {
   DollarSign,
   Inbox,
   Menu,
+  Rocket,
   MessageSquare,
   ShieldCheck,
   Store,
@@ -109,6 +110,16 @@ const SCHEDULER_TABS: TabDef[] = [
   { path: '/time-attendance', labelKey: 'tabs.time', icon: Timer, requires: 'view:time' },
 ];
 
+/** The line manager (HR pack 2026-10): their team's approvals are the
+ *  team inbox — timesheets, time off, reimbursements, goals at risk — not
+ *  the scheduling desk, which is a supervisor's queue. */
+const MANAGER_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/team', labelKey: 'tabs.approvals', icon: Inbox, requires: 'view:my-team' },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+  { path: '/time-off', labelKey: 'tabs.timeOff', icon: CalendarOff, requires: 'view:time' },
+];
+
 /** The recruiter: their day on Home, the pipeline, messages, and the new
  *  hires they hand to onboarding. They hold scheduling rights, so they
  *  used to get the scheduler's tabs — Schedule, Approvals, Time — and
@@ -127,6 +138,14 @@ const SUPERVISOR_TABS: TabDef[] = [
   { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
+];
+
+/** Marketing: their funnel (home), the pipeline it feeds, messages. */
+const MARKETING_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/marketing', label: 'Marketing', icon: Rocket, requires: 'view:marketing' },
+  { path: '/recruiting', labelKey: 'tabs.recruiting', icon: UserPlus, requires: 'view:recruiting' },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
 ];
 
 /** Executive loop: numbers, clients, compliance — never a punch clock. */
@@ -197,8 +216,12 @@ export function tabSetFor(
                   : PORTAL_TABS
                 : user?.role === 'INTERNAL_RECRUITER'
                   ? RECRUITER_TABS
+                  : user?.role === 'MARKETING_MANAGER'
+                    ? MARKETING_TABS
                   : user?.role === 'FINANCE_ACCOUNTANT'
                     ? FINANCE_TABS
+                  : user?.role === 'MANAGER'
+                    ? MANAGER_TABS
                   : can('manage:scheduling')
                     ? SCHEDULER_TABS
                     : DEFAULT_TABS;

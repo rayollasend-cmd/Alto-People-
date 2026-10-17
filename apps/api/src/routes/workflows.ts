@@ -4,8 +4,11 @@ import { z } from 'zod';
 import { Prisma, type WorkflowTrigger } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
-import { emit } from '../lib/workflow.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { emit, runWorkflowQueue } from '../lib/workflow.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { HUMAN_ROLES } from '@alto-people/shared';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const workflowsRouter = Router();
 
@@ -32,9 +35,27 @@ const ActionSchema = z.object({
     'ASSIGN_TASK',
     'CREATE_AUDIT_LOG',
     'WEBHOOK',
+    'REQUIRE_APPROVAL',
   ]),
   params: z.record(z.unknown()).default({}),
 });
+
+/** The capabilities an approval gate may name: the ones that decide something. */
+export const GATE_CAPABILITIES = ['manage:org', 'manage:comp', 'manage:onboarding', 'process:payroll', 'manage:scheduling', 'manage:compliance'] as const;
+
+/** A REQUIRE_APPROVAL step must name exactly who decides, in the engine's terms. */
+function gateProblems(actions: Array<{ kind: string; params: Record<string, unknown> }>): string | null {
+  for (const [i, a] of actions.entries()) {
+    if (a.kind !== 'REQUIRE_APPROVAL') continue;
+    const p = a.params ?? {};
+    const named = ['capability', 'userId', 'role'].filter((k) => typeof p[k] === 'string' && (p[k] as string).trim() !== '');
+    if (named.length !== 1) return `Step ${i + 1}: an approval gate names exactly one decider — a role, a person, or a capability.`;
+    if (typeof p.capability === 'string' && p.capability && !(GATE_CAPABILITIES as readonly string[]).includes(p.capability)) return `Step ${i + 1}: "${p.capability}" is not a capability that decides.`;
+    if (typeof p.role === 'string' && p.role && !(HUMAN_ROLES as readonly string[]).includes(p.role)) return `Step ${i + 1}: "${p.role}" is not a role.`;
+    if (typeof p.userId === 'string' && p.userId && !/^[0-9a-f-]{36}$/i.test(p.userId) && !p.userId.includes('{{')) return `Step ${i + 1}: the person must be an account id.`;
+  }
+  return null;
+}
 
 const DefinitionInputSchema = z.object({
   clientId: z.string().uuid().nullable().optional(),
@@ -83,6 +104,8 @@ workflowsRouter.get('/', VIEW, async (req: Request, res: Response) => {
 
 workflowsRouter.post('/', MANAGE, async (req: Request, res: Response) => {
   const input = DefinitionInputSchema.parse(req.body);
+  const gate = gateProblems(input.actions);
+  if (gate) throw new HttpError(400, 'invalid_gate', gate);
   const created = await prisma.workflowDefinition.create({
     data: {
       clientId: input.clientId ?? null,
@@ -106,6 +129,8 @@ workflowsRouter.post('/', MANAGE, async (req: Request, res: Response) => {
 workflowsRouter.put('/:id', MANAGE, async (req: Request, res: Response) => {
   const id = req.params.id;
   const input = DefinitionInputSchema.partial().parse(req.body);
+  const gate = input.actions ? gateProblems(input.actions) : null;
+  if (gate) throw new HttpError(400, 'invalid_gate', gate);
   const existing = await prisma.workflowDefinition.findUnique({ where: { id } });
   if (!existing || existing.deletedAt) {
     throw new HttpError(404, 'not_found', 'Workflow not found.');
@@ -151,13 +176,72 @@ workflowsRouter.delete(
   },
 );
 
+/* ----- Tasks a workflow handed a person or a role ------------------------- */
+
+function shapeTask(t: { id: string; title: string; details: string | null; assigneeUserId: string | null; assigneeRole: string | null; entityType: string | null; entityId: string | null; linkUrl: string | null; dueAt: Date | null; status: 'OPEN' | 'DONE'; doneAt: Date | null; createdAt: Date }) {
+  return {
+    id: t.id,
+    title: t.title,
+    details: t.details,
+    assigneeUserId: t.assigneeUserId,
+    assigneeRole: t.assigneeRole,
+    entityType: t.entityType,
+    entityId: t.entityId,
+    linkUrl: t.linkUrl,
+    dueAt: t.dueAt?.toISOString() ?? null,
+    status: t.status,
+    doneAt: t.doneAt?.toISOString() ?? null,
+    createdAt: t.createdAt.toISOString(),
+  };
+}
+
+/** GET /workflows/tasks — open tasks for me (named, or my role), oldest due first. */
+workflowsRouter.get('/tasks', requireAuth, async (req: Request, res: Response) => {
+  const status = req.query.status === 'DONE' ? 'DONE' : 'OPEN';
+  const rows = await prisma.workflowTask.findMany({
+    where: { tenantId: tenantIdForWrite(), status, OR: [{ assigneeUserId: req.user!.id }, { assigneeRole: req.user!.role }] },
+    orderBy: [{ dueAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
+    take: 200,
+  });
+  res.json({ tasks: rows.map(shapeTask) });
+});
+
+workflowsRouter.post('/tasks/:id/done', requireAuth, async (req: Request, res: Response) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const task = await prisma.workflowTask.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
+  if (!task) throw new HttpError(404, 'not_found', 'Task not found.');
+  if (task.assigneeUserId && task.assigneeUserId !== req.user!.id) throw new HttpError(403, 'forbidden', 'This task is for someone else.');
+  if (!task.assigneeUserId && task.assigneeRole && task.assigneeRole !== req.user!.role) throw new HttpError(403, 'forbidden', 'This task is for another role.');
+  const updated = await prisma.workflowTask.update({ where: { id }, data: { status: 'DONE', doneAt: new Date(), doneById: req.user!.id } });
+  enqueueAudit({ actorUserId: req.user!.id, action: 'workflow.task_done', entityType: 'WorkflowTask', entityId: id, metadata: { runId: task.runId } }, 'workflows.taskDone');
+  res.json(shapeTask(updated));
+});
+
+/** POST /workflows/queue/run — drain the queue now (HR, while authoring; the worker does this on its own). */
+workflowsRouter.post('/queue/run', MANAGE, async (_req: Request, res: Response) => {
+  res.json(await runWorkflowQueue());
+});
+
+/** The open approval each run waits on (its REQUIRE_APPROVAL gate). */
+async function gatesFor(runIds: string[]): Promise<Map<string, { approvalId: string; title: string; status: string }>> {
+  if (runIds.length === 0) return new Map();
+  const rows = await prisma.approvalRequest.findMany({
+    where: { workflowRunId: { in: runIds } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, title: true, status: true, workflowRunId: true },
+  });
+  const out = new Map<string, { approvalId: string; title: string; status: string }>();
+  for (const r of rows) if (r.workflowRunId && !out.has(r.workflowRunId)) out.set(r.workflowRunId, { approvalId: r.id, title: r.title, status: r.status });
+  return out;
+}
+
 workflowsRouter.get('/runs', VIEW, async (req: Request, res: Response) => {
   const definitionId =
     typeof req.query.definitionId === 'string' ? req.query.definitionId : undefined;
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
   const where: Prisma.WorkflowRunWhereInput = {
     ...(definitionId ? { definitionId } : {}),
-    ...(status ? { status: status as 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' } : {}),
+    ...(status ? { status: status as 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'WAITING' } : {}),
   };
   const rows = await prisma.workflowRun.findMany({
     where,
@@ -168,8 +252,11 @@ workflowsRouter.get('/runs', VIEW, async (req: Request, res: Response) => {
       steps: { orderBy: { ordinal: 'asc' } },
     },
   });
+  // A WAITING run names the approval it waits on, so the page can link it.
+  const gates = await gatesFor(rows.filter((r) => r.status === 'WAITING').map((r) => r.id));
   res.json({
     runs: rows.map((r) => ({
+      waitingOn: gates.get(r.id) ?? null,
       id: r.id,
       definitionId: r.definitionId,
       definitionName: r.definition.name,
@@ -200,8 +287,10 @@ workflowsRouter.get(
       },
     });
     if (!run) throw new HttpError(404, 'not_found', 'Run not found.');
+    const gate = (await gatesFor([run.id])).get(run.id) ?? null;
     res.json({
       run: {
+        waitingOn: gate,
         id: run.id,
         definition: {
           id: run.definition.id,

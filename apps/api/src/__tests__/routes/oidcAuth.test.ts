@@ -143,7 +143,8 @@ describe('OIDC SSO when not configured', () => {
   it('GET /auth/oidc/config reports disabled', async () => {
     const res = await agent().get('/auth/oidc/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ enabled: false, buttonLabel: null });
+    // Access pack: the probe also says whether SSO is required, the IdP reachable, and a break-glass path open.
+    expect(res.body).toEqual({ enabled: false, buttonLabel: null, required: false, reachable: null, breakGlass: false, deviceTrust: false });
   });
 
   it('GET /auth/oidc/start 404s', async () => {
@@ -172,7 +173,7 @@ describe('OIDC SSO when configured', () => {
   it('config reports enabled with the button label', async () => {
     const res = await agent().get('/auth/oidc/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ enabled: true, buttonLabel: 'Sign in with Contoso' });
+    expect(res.body).toEqual({ enabled: true, buttonLabel: 'Sign in with Contoso', required: false, reachable: null, breakGlass: false, deviceTrust: false });
   });
 
   it('signs an ACTIVE user in end-to-end (session cookie + audit method=oidc)', async () => {

@@ -31,6 +31,12 @@ export interface AdminUser {
   /** Non-null iff the account is currently brute-force locked (the server
    *  only surfaces locks that are still in the future). */
   lockedUntil: string | null;
+  /** Access pack: an internal role narrowed to these sites/regions (empty = whole tenant). */
+  scopeSiteIds?: string[];
+  scopeRegionIds?: string[];
+  /** Access pack: may sign in with password + two-step while SSO is required. */
+  breakGlass?: boolean;
+  mfaEnabled?: boolean;
   /** SHIFT_SUPERVISOR: the store shift windows they lead ("their shift"). */
   shiftWindows?: Array<{ locationId: string; locationName: string; label: string }>;
   /** A floor supervisor's shift supervisor (null when unassigned or the
@@ -94,9 +100,15 @@ export function patchAdminUser(
     /** Brief 1A-4: required when regionId names a new region — an active
      *  account that holds manage:org, recorded in the audit log. */
     approvedByUserId?: string;
+    /** Access pack: sent whole; [] clears. Needs approvedByUserId when non-empty. */
+    scopeSiteIds?: string[];
+    scopeRegionIds?: string[];
+    /** Access pack: needs approvedByUserId when turning on; the account must hold two-step. */
+    breakGlass?: boolean;
   },
-): Promise<void> {
-  return apiFetch<void>(`/admin/users/${id}`, { method: 'PATCH', body });
+): Promise<void | { pending: true; approvalId: string; title: string }> {
+  // 204 when it landed; 202 with the approval when more access waits for a second administrator.
+  return apiFetch<void | { pending: true; approvalId: string; title: string }>(`/admin/users/${id}`, { method: 'PATCH', body });
 }
 
 export function forcePasswordReset(id: string): Promise<void> {

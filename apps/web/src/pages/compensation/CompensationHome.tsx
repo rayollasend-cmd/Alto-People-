@@ -58,9 +58,12 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
+import { CompPlanningTab } from './CompPlanningTab';
+import { useSearchParams } from 'react-router-dom';
+import { PayChangesTab, PromotionsTab } from './PayChangesTab';
 import { toast } from 'sonner';
 
-type Tab = 'bands' | 'cycles';
+type Tab = 'bands' | 'cycles' | 'planning' | 'changes' | 'promotions';
 
 /** Date-only "YYYY-MM-DD" → "May 13, 2026" without the UTC-midnight shift. */
 const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
@@ -113,7 +116,17 @@ export function CompensationHome() {
     refetch: refetchClients,
   } = useClients();
   const [clientId, setClientId] = useState<string>('');
-  const [tab, setTab] = useState<Tab>('bands');
+  // ?tab=changes&associateId= — Finance's audit of pay, deep-linked from the cockpit and a person's record.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab = tabParam === 'cycles' || tabParam === 'changes' || tabParam === 'promotions' ? tabParam : 'bands';
+  const setTab = (next: Tab) => {
+    const sp = new URLSearchParams(searchParams);
+    if (next === 'bands') sp.delete('tab');
+    else sp.set('tab', next);
+    setSearchParams(sp, { replace: true });
+  };
+  const associateFilter = searchParams.get('associateId') ?? undefined;
 
   useEffect(() => {
     if (clients.length > 0) {
@@ -174,7 +187,18 @@ export function CompensationHome() {
         <TabsList>
           <TabsTrigger value="bands">Pay bands</TabsTrigger>
           <TabsTrigger value="cycles">Merit cycles</TabsTrigger>
+          <TabsTrigger value="planning">Planning</TabsTrigger>
+          <TabsTrigger value="changes">Pay changes</TabsTrigger>
+          <TabsTrigger value="promotions">Promotions</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="changes">
+          <PayChangesTab clientId={clientId || undefined} associateId={associateFilter} />
+        </TabsContent>
+
+        <TabsContent value="promotions">
+          <PromotionsTab associateId={associateFilter} />
+        </TabsContent>
 
         <TabsContent value="bands">
           {clientId ? (
@@ -183,6 +207,19 @@ export function CompensationHome() {
             <Card>
               <CardContent className="p-6 text-sm text-silver">
                 Choose a client to view its pay bands.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* The manager's worksheet and HR's calibration (HR pack 2026-10). */}
+        <TabsContent value="planning">
+          {clientId ? (
+            <CompPlanningTab clientId={clientId} />
+          ) : (
+            <Card>
+              <CardContent className="p-6 text-sm text-silver">
+                Choose a client to plan its merit cycle.
               </CardContent>
             </Card>
           )}

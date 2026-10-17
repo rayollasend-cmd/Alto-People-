@@ -28,6 +28,9 @@ beforeEach(async () => {
   // booking. These tests are about booking rules, not about the geocoder,
   // so stand one up that answers. The refusal has its own test below.
   setGeocoderForTests(async () => ({ lat: 30.39, lng: -86.49 }));
+  // The pre-trip check has its own suite (transportDriverPack); these are
+  // about the ride, so the fleet runs with it switched off.
+  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterAll(async () => {
   setGeocoderForTests(null);
@@ -272,6 +275,10 @@ describe('the Ride tab — booking a seat', () => {
       cutoffHours: 10,
       shortNoticeMinutes: 0,
       dispatchPhone: null,
+      driverMaxHoursPerDay: 10,
+      driverMinRestHours: 8,
+      preTripRequired: false,
+      driverShiftLocationId: null,
     });
     expect(me.body.rides).toHaveLength(1);
     expect(me.body.stores.map((s: { id: string }) => s.id)).toContain(store.id);

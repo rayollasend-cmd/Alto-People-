@@ -9,6 +9,7 @@ export type ModuleKey =
   | 'settings'
   | 'tenant-profile'
   | 'sign-in'
+  | 'access-certifications'
   | 'employers'
   | 'org-units'
   | 'sites'
@@ -21,6 +22,8 @@ export type ModuleKey =
   | 'emergency'
   | 'programs'
   | 'season-planner'
+  | 'supervisor-corps'
+  | 'wallet'
   | 'forecast'
   | 'workers'
   | 'agents'
@@ -55,6 +58,8 @@ export type ModuleKey =
   | 'payroll'
   | 'payroll-tax'
   | 'payroll-compliance'
+  | 'cash-forecast'
+  | 'earned-wage'
   | 'documents'
   | 'doc-templates'
   | 'communications'
@@ -72,6 +77,8 @@ export type ModuleKey =
   | 'assets'
   | 'pulse'
   | 'headcount'
+  | 'policy-campaigns'
+  | 'document-retention'
   | 'skills'
   | 'mentorship'
   | 'expirations'
@@ -105,7 +112,10 @@ export type ModuleKey =
   | 'users'
   | 'branding'
   | 'billing'
-  | 'reports';
+  | 'reports'
+  // The office pack (2026-10-17): marketing's hub and the client NPS results.
+  | 'marketing'
+  | 'client-nps';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -182,6 +192,10 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'audit',
   'analytics',
   'reports',
+  // The board numbers that were missing from the exec nav (2026-10-17).
+  'client-nps',
+  'trust-center',
+  'season-planner',
 ]);
 
 /** The floor supervisor's sidebar: their floor, the faces on it, the live
@@ -189,6 +203,7 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  supervisor's grammar without the decisions. */
 const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'inbox', // what's happening on their floor, as counts — the watch, not decisions
   'messages',
   'floor-today',
   'time-attendance',
@@ -206,6 +221,9 @@ const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
  */
 export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'messages', // their supervisors and the desks reach them here, and they reply (field roles, 2026-10)
+  'wallet', // what they've earned, carried with them
+  'benefits', // their own elections — open enrollment, life events
   'scheduling',
   'marketplace', // open shifts to pick up
   'time-attendance', // my timesheet + kiosk explainer
@@ -246,6 +264,8 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'payroll',
   'payroll-tax',
   'payroll-compliance',
+  'cash-forecast',
+  'earned-wage',
   'payrules',
   'benefits',
   'compensation',
@@ -296,6 +316,16 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'kiosk',
   'time-off',
   'holidays',
+  // Field roles (2026-10): the role held these capabilities all along; the
+  // nav hid them. Coverage planning, the storm switch, the engine room,
+  // the supervisor corps — and labor dollars, the charter's one change.
+  'forecast',
+  'season-planner',
+  'emergency',
+  'control-room',
+  'tasks',
+  'labor-costs',
+  'supervisor-corps',
   'ops',
   'transport',
   'performance',
@@ -336,6 +366,11 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'documents',
   'compliance',
   'hr-cases',
+  // Headcount (the requisitions they hire against), the report builder and
+  // the internal job board were reachable only by URL (2026-10-17).
+  'headcount',
+  'reports',
+  'internal-jobs',
 ]);
 
 /**
@@ -413,6 +448,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   agreements: 'compliance',
   audit: 'compliance',
   'payroll-compliance': 'compliance',
+  'earned-wage': 'earnedWage',
   fieldglass: 'payrollSync',
   'fieldglass-setup': 'payrollSync',
   integrations: 'payrollSync',
@@ -424,6 +460,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   forecast: 'scheduling',
   statements: 'billRates',
   portal: 'clientPortal',
+  'client-nps': 'clientPortal',
   'portal-today': 'clientPortal',
   'portal-ops': 'clientPortal',
   'portal-schedule': 'clientPortal',
@@ -552,7 +589,7 @@ export function visibleModules(
       // own client (/client-portal/day opts the role in). Nobody else has
       // a client to open it on without a preview id.
       (m.key !== 'floor-today' || role === 'SHIFT_SUPERVISOR' || role === 'FLOOR_SUPERVISOR') &&
-      (m.key !== 'messages' || (role !== 'ASSOCIATE' && role !== 'LIVE_ASN')),
+      (m.key !== 'messages' || role !== 'LIVE_ASN'),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
     // already has Time & attendance; two entries would double-list it.
@@ -722,6 +759,15 @@ export const MODULES: ModuleNav[] = [
     group: 'core',
   },
   {
+    key: 'wallet',
+    path: '/me/wallet',
+    label: 'My credentials',
+    description:
+      'Every qualification, training and verified credential you hold, with its expiry — and a link to show them to another employer for a while.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
     key: 'onboarding',
     path: '/onboarding',
     label: 'Onboarding',
@@ -810,6 +856,15 @@ export const MODULES: ModuleNav[] = [
     group: 'workforce-management',
   },
   {
+    key: 'marketing',
+    path: '/marketing',
+    label: 'Marketing',
+    description:
+      'The careers site’s funnel by source, the employer brand page, referral campaigns, and source of hire.',
+    requires: 'view:marketing',
+    group: 'workforce-management',
+  },
+  {
     key: 'celebrations',
     path: '/celebrations',
     label: 'Celebrations',
@@ -841,9 +896,18 @@ export const MODULES: ModuleNav[] = [
     path: '/headcount',
     label: 'Headcount',
     description:
-      'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover.',
+      'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover — and the headcount plan: every seat’s budget against what it costs.',
     requires: 'view:org',
     group: 'payroll-finance',
+  },
+  {
+    key: 'policy-campaigns',
+    path: '/policy-campaigns',
+    label: 'Policy campaigns',
+    description:
+      'Send one policy to everyone it applies to, remind on a cadence until it is signed, and see who has not.',
+    requires: 'view:hr-admin',
+    group: 'compliance',
   },
   {
     key: 'skills',
@@ -1069,6 +1133,15 @@ export const MODULES: ModuleNav[] = [
     group: 'client-services',
   },
   {
+    key: 'client-nps',
+    path: '/clients/nps',
+    label: 'Client NPS',
+    description: 'How likely each store is to recommend you — one question a quarter, per client and over time.',
+    requires: 'view:executive',
+    requiresAny: ['view:executive', 'view:marketing'],
+    group: 'client-services',
+  },
+  {
     key: 'performance',
     path: '/performance',
     label: 'Performance',
@@ -1129,6 +1202,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Demand by store, shift and week becomes associates, beds, van seats and recruiting targets by channel — scenarios saved and compared side by side.',
     requires: 'view:org',
+    group: 'workforce-management',
+  },
+  {
+    key: 'supervisor-corps',
+    path: '/scheduling/supervisors',
+    label: 'Supervisor corps',
+    description:
+      'Who leads which store and shift: place a shift or floor supervisor at a store and shift without opening Users & access.',
+    requires: 'manage:org',
     group: 'workforce-management',
   },
   {
@@ -1209,6 +1291,24 @@ export const MODULES: ModuleNav[] = [
     description:
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'cash-forecast',
+    path: '/finance/cash-forecast',
+    label: 'Cash forecast',
+    description:
+      'The next weeks of cash: payroll and deposits going out, statements coming in on their terms, week by week with every line behind it.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'earned-wage',
+    path: '/payroll/earned-wage',
+    label: 'Earned-wage access',
+    description:
+      'Pay before payday: every advance drawn, the exposure until the next check, and the cap, fee and limit the organization offers.',
+    requires: 'process:payroll',
     group: 'payroll-finance',
   },
   {
@@ -1397,10 +1497,26 @@ export const MODULES: ModuleNav[] = [
     group: 'platform',
   },
   {
+    key: 'access-certifications',
+    path: '/admin/access-certifications',
+    label: 'Access certifications',
+    description: 'Every account reviewed by its manager on a campaign with a due date — keep, revoke or change, on the record.',
+    requires: 'manage:org',
+    group: 'platform',
+  },
+  {
     key: 'tenant-profile',
     path: '/admin/organization',
     label: 'Organization profile',
     description: 'Business model, the modules this organization runs, and what it calls things.',
+    requires: 'view:hr-admin',
+    group: 'platform',
+  },
+  {
+    key: 'document-retention',
+    path: '/admin/document-retention',
+    label: 'Document retention',
+    description: 'How many years after a person leaves each kind of document is kept, and what the next sweep would purge.',
     requires: 'view:hr-admin',
     group: 'platform',
   },
@@ -1619,6 +1735,7 @@ export type DoorKey =
   | 'clients'
   | 'comms'
   | 'insights'
+  | 'marketing'
   | 'settings'
   | 'my-schedule'
   | 'my-pay'
@@ -1637,43 +1754,46 @@ export interface NavDoor {
 export const RAIL_ROWS: readonly ModuleKey[] = ['inbox', 'messages', 'relay', 'floor-today'];
 
 export const DOORS: Record<DoorKey, NavDoor> = {
-  me: { key: 'me', label: 'Me', children: ['me', 'learning', 'help-center', 'career', 'internal-jobs', 'volunteer', 'rides'] },
+  me: { key: 'me', label: 'Me', children: ['me', 'wallet', 'learning', 'help-center', 'career', 'internal-jobs', 'volunteer', 'rides'] },
   team: { key: 'team', label: 'My team', children: ['team'] },
   people: {
     key: 'people',
     label: (term) => term('nav.people'),
     children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
   },
-  hire: { key: 'hire', label: 'Hiring', children: ['recruiting', 'onboarding'] },
+  // Marketing sits under Hiring for the admins (the top of the same funnel);
+  // the marketing manager's own rail opens its Marketing door first.
+  hire: { key: 'hire', label: 'Hiring', children: ['recruiting', 'onboarding', 'marketing'] },
   time: {
     key: 'time',
     label: 'Time & scheduling',
-    children: ['scheduling', 'approvals', 'marketplace', 'time-attendance', 'timesheets', 'kiosk', 'time-off', 'holidays', 'fieldglass', 'labor-costs', 'forecast', 'season-planner', 'emergency'],
+    children: ['scheduling', 'approvals', 'marketplace', 'time-attendance', 'timesheets', 'kiosk', 'time-off', 'holidays', 'fieldglass', 'labor-costs', 'forecast', 'season-planner', 'supervisor-corps', 'emergency'],
   },
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'payroll-tax', 'payrules', 'compensation', 'benefits', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    children: ['payroll', 'cash-forecast', 'payroll-tax', 'earned-wage', 'payrules', 'compensation', 'benefits', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   compliance: {
     key: 'compliance',
     label: (term) => term('nav.compliance'),
-    children: ['compliance', 'documents', 'doc-templates', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
+    children: ['compliance', 'documents', 'doc-templates', 'policy-campaigns', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
   },
   operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
   transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
-  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'regions'] },
+  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'regions', 'client-nps'] },
   comms: { key: 'comms', label: 'Communications', children: ['communications', 'dircomms', 'pulse'] },
+  marketing: { key: 'marketing', label: 'Marketing', children: ['marketing'] },
   insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports'] },
   settings: {
     key: 'settings',
     label: 'Settings & trust',
     hub: 'settings',
-    children: ['tenant-profile', 'employers', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
+    children: ['tenant-profile', 'employers', 'document-retention', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'access-certifications', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
   },
   // The associate's doors — the same modules, in the first person.
   'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
-  'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'reimbursements'] },
+  'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'benefits', 'reimbursements'] },
   'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'communications'] },
   more: { key: 'more', label: 'More', children: [] },
 };
@@ -1691,7 +1811,9 @@ const DEFAULT_RAIL: readonly DoorKey[] = ['me', 'team', 'people', 'hire', 'time'
  */
 const ROLE_RAIL: Partial<Record<Role, readonly DoorKey[]>> = {
   ASSOCIATE: ['me', 'my-schedule', 'my-pay', 'my-records'],
-  MARKETING_MANAGER: ['me', 'team', 'people', 'hire', 'comms', 'insights'],
+  // Marketing's own job first (2026-10-17): the funnel, then the pipeline it
+  // feeds and the people it reaches.
+  MARKETING_MANAGER: ['me', 'marketing', 'hire', 'people', 'comms', 'insights'],
 };
 
 export interface NavDoorView {

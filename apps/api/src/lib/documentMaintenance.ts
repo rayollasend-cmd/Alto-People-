@@ -3,6 +3,7 @@ import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
+import { purgeByRetention } from './documentRetention.js';
 
 /**
  * Daily document maintenance sweep.
@@ -172,6 +173,10 @@ export function startDocumentMaintenanceCron(): void {
     });
     void tenantJob('documentMaintenance', expireLapsedDocs)().catch((err) => {
       console.error('[alto-people/api] document expiry sweep failed:', err);
+    });
+    // Retention by kind (HR pack 2026-10): files past their policy leave, rows stay.
+    void tenantJob('documentRetention', () => purgeByRetention())().catch((err) => {
+      console.error('[alto-people/api] document retention purge failed:', err);
     });
   };
   tick();

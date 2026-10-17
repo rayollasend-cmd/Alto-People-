@@ -27,6 +27,8 @@ import { clientsAccessGate, clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
 import { timeOffRouter } from './routes/timeOff.js';
+import { timeOffPoliciesRouter } from './routes/timeOffPolicies.js';
+import { earnedWageRouter } from './routes/earnedWage.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
@@ -95,11 +97,19 @@ import { qualificationsRouter } from './routes/qualifications.js';
 import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { approvalsRouter } from './routes/approvals.js';
+import { approvalRequestsRouter } from './routes/approvalRequests.js';
+import { promotionsRouter } from './routes/promotions.js';
+import { accessGrantsRouter } from './routes/accessGrants.js';
 import { savedViewsRouter } from './routes/savedViews.js';
 import { eventsRouter } from './routes/events.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
 import { docTemplatesRouter } from './routes/docTemplates.js';
 import { recruiting90Router } from './routes/recruiting90.js';
+// The office pack (2026-10-17): the candidate's page + the recruiter's
+// calendar feed, marketing, and client NPS. Each self-gates per handler.
+import { candidatePortalRouter } from './routes/candidatePortal.js';
+import { marketingRouter } from './routes/marketing.js';
+import { clientNpsRouter } from './routes/clientNps.js';
 import { payrollTax91Router } from './routes/payrollTax91.js';
 import { benefitsLifecycle92Router } from './routes/benefitsLifecycle92.js';
 import { apiKeysWebhooks93Router } from './routes/apiKeysWebhooks93.js';
@@ -135,6 +145,11 @@ import { vaccination121Router } from './routes/vaccination121.js';
 import { agreements122Router } from './routes/agreements122.js';
 import { hrCases123Router } from './routes/hrCases123.js';
 import { kb124Router } from './routes/kb124.js';
+import { policyCampaignsRouter } from './routes/policyCampaigns.js';
+import { verificationLettersRouter } from './routes/verificationLetters.js';
+import { documentRetentionRouter } from './routes/documentRetention.js';
+import { massUpdateRouter } from './routes/massUpdate.js';
+import { peopleAnalyticsRouter } from './routes/peopleAnalytics.js';
 import { ramp125Router } from './routes/ramp125.js';
 import { career126Router } from './routes/career126.js';
 import { tuition127Router } from './routes/tuition127.js';
@@ -146,9 +161,13 @@ import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
 import { orgUnitsRouter } from './routes/orgUnits.js';
 import { complianceEvidenceRouter } from './routes/complianceEvidence.js';
+import { accessCertificationsRouter } from './routes/accessCertifications.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
+import { floorRouter } from './routes/floor.js';
+import { walletRouter } from './routes/wallet.js';
 import { transportRouter } from './routes/transport.js';
+import { transportOpsRouter } from './routes/transportOps.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { tenancyRouter } from './routes/tenancy.js';
 import { requireModule } from './lib/tenantProfile.js';
@@ -448,7 +467,12 @@ export function createApp() {
     onboardingRouter
   );
   app.use('/time', requireCapability('view:time'), timeRouter);
+  // Policies before the catch-all: /time-off/policies/* is its own router.
+  app.use('/time-off/policies', requireCapability('view:time'), timeOffPoliciesRouter);
   app.use('/time-off', requireCapability('view:time'), timeOffRouter);
+  // Earned-wage access: the associate's /me routes and Finance's desk,
+  // behind the tenant switch.
+  app.use('/', requireModule('earnedWage'), earnedWageRouter);
   app.use(
     '/scheduling',
     requireCapability('view:scheduling'),
@@ -551,6 +575,10 @@ export function createApp() {
   app.use('/jobs', requireCapability('view:scheduling'), jobsRouter);
   // Approvals inbox badge — counts only; the queues render via their own routers.
   app.use('/approvals', approvalsRouter);
+  // The approval engine: maker-checker requests, pay changes, delegation.
+  app.use('/approvals', approvalRequestsRouter);
+  app.use('/promotions', promotionsRouter);
+  app.use('/admin/access-grants', accessGrantsRouter);
   // Named filter sets on lists (the candidate pipeline, first).
   app.use('/saved-views', savedViewsRouter);
   // Live "something changed" SSE nudges (bell + badge instant refresh).
@@ -606,7 +634,16 @@ export function createApp() {
   // Phase 90 — interview kits, offers, referrals, careers page. Routes
   // self-gate per-handler with view:recruiting / manage:recruiting; the
   // /careers/* paths are public (no capability check).
+  // Marketing: the careers funnel, employer brand, referral campaigns and
+  // bonuses; /careers/brand and /careers/view are public. Mounted BEFORE
+  // recruiting90, whose public /careers/:slug would otherwise take "brand".
+  app.use('/', marketingRouter);
   app.use('/', recruiting90Router);
+  // The candidate's own page (/candidate-portal/* is public, signed link),
+  // document requests and the recruiter's iCal feed URL.
+  app.use('/', candidatePortalRouter);
+  // Client NPS: /executive/nps for the readers, /nps/:token for the answer.
+  app.use('/', clientNpsRouter);
   // Phase 91 — garnishments + tax forms (941, 940, W-2, 1099-NEC).
   // Self-gates per-handler with view:payroll / process:payroll.
   app.use('/', payrollTax91Router);
@@ -686,6 +723,12 @@ export function createApp() {
   app.use('/', agreements122Router);
   app.use('/', hrCases123Router);
   app.use('/', kb124Router);
+  // HR pack (2026-10): policy campaigns, verification letters, retention, mass update.
+  app.use('/', policyCampaignsRouter);
+  app.use('/', verificationLettersRouter);
+  app.use('/', documentRetentionRouter);
+  app.use('/', massUpdateRouter);
+  app.use('/', peopleAnalyticsRouter);
   app.use('/', ramp125Router);
   app.use('/', career126Router);
   app.use('/', tuition127Router);
@@ -701,13 +744,23 @@ export function createApp() {
   app.use('/', employersRouter);
   app.use('/', orgUnitsRouter);
   app.use('/', complianceEvidenceRouter);
+  // Access pack: access certification campaigns for every tenant.
+  app.use('/', accessCertificationsRouter);
   app.use('/', shiftWindowsRouter);
   // Floor supervisors' shift supervisor, and shift hand-overs (covers).
   app.use('/', floorTeamRouter);
+  // The floor from a phone: incidents with a photo, flags, the week, a text
+  // to the crew, the handover, and "Cover this shift" (routes/floor.ts).
+  app.use('/', floorRouter);
+  // The credential wallet: mine, and the link I share (public by its token).
+  app.use('/', walletRouter);
   // Transportation — the Alto vans: rides, dispatch, drivers, the
   // director's command center. Gated per route (routes/transport.ts).
   // Brief 2-1b: an off module answers 404 on its whole mount.
   app.use('/transport', requireModule('transportation'), transportRouter);
+  // The driver and fleet pack: pre-trip checks, the safety toolkit, incidents,
+  // standing bookings, the fleet record, driver shifts (routes/transportOps.ts).
+  app.use('/transport', requireModule('transportation'), transportOpsRouter);
   // Org-wide branding (singleton OrgSetting). Admin paths gate on
   // view:hr-admin; the logo GET is open so any signed-in chrome can
   // render it (and so HTML emails — which are public — can fetch it).

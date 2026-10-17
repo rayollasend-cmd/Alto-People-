@@ -196,6 +196,13 @@ const EnvSchema = z.object({
   // Daily push of the scorecard's 0–30-day expirations (work auth, drug
   // tests, J-1 program ends, training certs). Set 0 to disable.
   EXPIRATION_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Workflow worker (lib/workflow): executes queued runs and retries due
+  // webhooks, per tenant. 0 disables the timer (runs still queue).
+  WORKFLOW_WORKER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(20),
+  // The HMAC secret workflow WEBHOOK steps sign with when a definition names none.
+  WEBHOOK_SIGNING_SECRET: z.string().optional(),
+  // Access grants (lib/accessChanges): temporary elevated roles revert when they expire.
+  ACCESS_GRANT_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   // Notification retention sweep (read bell rows >90d, delivery-audit
   // rows >365d). 0 disables. Daily is plenty — the windows are month-scale.
   NOTIFICATION_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
@@ -206,6 +213,9 @@ const EnvSchema = z.object({
   // when a token is present, else nominatim — off under NODE_ENV=test.
   GEOCODER: z.enum(['nominatim', 'mapbox', 'off']).optional(),
   MAPBOX_TOKEN: z.string().optional(),
+  // Standing ride bookings (lib/rideSeries) are booked forward this often;
+  // 0 turns the sweep off (a series is still booked when it is created).
+  RIDE_SERIES_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // The assistant's model. Unset: the assistant answers from its intent
   // registry alone (lib/hugo) — no model call, nothing leaves the server.
   // Set: Claude answers with the same intents as tools, knowing the page

@@ -62,6 +62,7 @@ import { Label } from '@/components/ui/Label';
 import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
+import { SlaChip, SlaTargetsDialog } from './SlaTargetsDialog';
 
 // Deliberate departures from the shared vocabulary: an OPEN case is unclaimed
 // work awaiting triage (amber, not the vocabulary's actionable gold — gold is
@@ -134,12 +135,23 @@ export function HrCasesHome() {
   );
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [search, setSearch] = useState('');
+  // ?sla=breached (the Inbox's deep link): only open cases past their target.
+  const [breachedOnly, setBreachedOnly] = useState(false);
+  const [showSla, setShowSla] = useState(false);
 
   // Notification deep-link: ?case=<id> opens that case's drawer directly
   // (the drawer fetches by id, so no list lookup is needed and the server
   // enforces visibility). Consumed once — same pattern as ?associateId=
   // on People — so back/refresh don't re-open a drawer the user closed.
   const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('sla') !== 'breached' || !canManage) return;
+    setBreachedOnly(true);
+    setTab('queue');
+    const next = new URLSearchParams(searchParams);
+    next.delete('sla');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, canManage]);
   useEffect(() => {
     const caseParam = searchParams.get('case');
     if (!caseParam) return;
@@ -159,12 +171,13 @@ export function HrCasesHome() {
     enabled: tab === 'mine',
   });
   const queueQuery = useQuery({
-    queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe }],
+    queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe, breachedOnly }],
     queryFn: () =>
       listCaseQueue({
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        status: breachedOnly || statusFilter === 'ALL' ? undefined : statusFilter,
         category: categoryFilter === 'ALL' ? undefined : categoryFilter,
         assignedToMe: assignedToMe || undefined,
+        sla: breachedOnly ? 'breached' : undefined,
       }),
     enabled: tab !== 'mine',
   });
@@ -324,6 +337,17 @@ export function HrCasesHome() {
                 onClick={() => setAssignedToMe((v) => !v)}
               >
                 Assigned to me
+              </Button>
+              <Button
+                size="sm"
+                variant={breachedOnly ? 'primary' : 'secondary'}
+                aria-pressed={breachedOnly}
+                onClick={() => setBreachedOnly((v) => !v)}
+              >
+                Past SLA{summary && summary.sla?.breached ? ` · ${summary.sla.breached}` : ''}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowSla(true)}>
+                SLA targets
               </Button>
               <Button
                 size="sm"
@@ -493,6 +517,16 @@ export function HrCasesHome() {
                     sortable: true,
                     cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{caseStatusLabel(t, c.status)}</Badge>,
                   },
+                  {
+                    key: 'sla',
+                    header: 'SLA',
+                    // Overdue first when sorted ascending: minutes left, paused/done last.
+                    accessor: (c) => c.sla?.minutesLeft ?? Number.MAX_SAFE_INTEGER,
+                    csv: (c) => c.sla?.dueAt ?? '',
+                    sortable: true,
+                    searchable: false,
+                    cell: (c) => (c.sla ? <SlaChip sla={c.sla} /> : null),
+                  },
                   { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
                 ]}
               />
@@ -501,6 +535,7 @@ export function HrCasesHome() {
         </Card>
       )}
 
+      {canManage && <SlaTargetsDialog open={showSla} canManage={user ? hasCapability(user.role, 'manage:org') : false} onClose={() => setShowSla(false)} />}
       {showNew && (
         <NewCaseDrawer
           onClose={() => setShowNew(false)}
@@ -748,6 +783,10 @@ function CaseDetailDrawer({
               <Badge variant={PRIORITY_VARIANT[data.priority]}>
                 {casePriorityLabel(t, data.priority)}
               </Badge>
+              {canManage && data.sla && <SlaChip sla={data.sla} />}
+              {canManage && data.sla?.dueAt && (
+                <span className="text-xs text-ink-muted">Due {fmtDateTime(data.sla.dueAt)}</span>
+              )}
               <Badge variant="outline">{caseCategoryLabel(t, data.category)}</Badge>
               {data.assignedToEmail && (
                 <span className="text-xs text-silver">

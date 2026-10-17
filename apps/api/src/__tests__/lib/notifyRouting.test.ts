@@ -27,6 +27,8 @@ async function seedAdmins() {
     'INTERNAL_RECRUITER',
     'MANAGER',
     'WORKFORCE_MANAGER',
+    // Marketing is seeded too: it holds no manage:onboarding since its own
+    // charter (2026-10-17), so the fan-out never reaches it at all.
     'MARKETING_MANAGER',
   ] as const;
   const out = new Map<string, string>();
@@ -57,8 +59,11 @@ describe('the admin fan-out reaches the desk that owns the event', () => {
     });
     await flushPendingNotifications();
     // Fail open: narrowing happens only where a decision was made, so a
-    // category added elsewhere can never silently reach nobody.
-    expect((await rolesNotified(admins)).size).toBe(6);
+    // category added elsewhere can never silently reach nobody. Five, not
+    // six: marketing is outside the manage:onboarding pool now.
+    const told = await rolesNotified(admins);
+    expect(told.size).toBe(5);
+    expect(told.has('MARKETING_MANAGER')).toBe(false);
   });
 
   it('leaves the marketing desk out of a floor alert', async () => {

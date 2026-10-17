@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { ClipboardCheck, ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ASSISTANT_NAME_PROMPT,
@@ -70,6 +70,9 @@ export function BrandingHome() {
   const [financeMailbox, setFinanceMailbox] = useState('');
   const [unverifiedPayoutPolicy, setUnverifiedPayoutPolicy] = useState<UnverifiedPayoutPolicy>('PREVIOUS_VERIFIED');
   const [financeSaving, setFinanceSaving] = useState(false);
+  // Approval engine (2026-10): the maker-checker switches.
+  const [approvals, setApprovals] = useState({ payChangeApprovalPct: 10, payChangeAlwaysApprove: false, billRateApproval: true, separationSecondPerson: true, selfServiceApproval: false, roleChangeApproval: true, requisitionApproval: true });
+  const [approvalsSaving, setApprovalsSaving] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -95,6 +98,15 @@ export function BrandingHome() {
     setMfaRequirement(b.mfaRequirement);
     setFinanceMailbox(b.financeMailbox ?? '');
     setUnverifiedPayoutPolicy(b.unverifiedPayoutPolicy);
+    setApprovals({
+      payChangeApprovalPct: b.payChangeApprovalPct,
+      payChangeAlwaysApprove: b.payChangeAlwaysApprove,
+      billRateApproval: b.billRateApproval,
+      separationSecondPerson: b.separationSecondPerson,
+      selfServiceApproval: b.selfServiceApproval,
+      roleChangeApproval: b.roleChangeApproval,
+      requisitionApproval: b.requisitionApproval,
+    });
     setLogoBust((n) => n + 1);
   }, [loadQuery.data]);
   const load = async () => {
@@ -128,6 +140,28 @@ export function BrandingHome() {
       toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
       setFinanceSaving(false);
+    }
+  };
+
+  const approvalsDirty =
+    !!branding &&
+    (branding.payChangeApprovalPct !== approvals.payChangeApprovalPct ||
+      branding.payChangeAlwaysApprove !== approvals.payChangeAlwaysApprove ||
+      branding.billRateApproval !== approvals.billRateApproval ||
+      branding.separationSecondPerson !== approvals.separationSecondPerson ||
+      branding.selfServiceApproval !== approvals.selfServiceApproval ||
+      branding.roleChangeApproval !== approvals.roleChangeApproval ||
+      branding.requisitionApproval !== approvals.requisitionApproval);
+  const onSaveApprovals = async () => {
+    setApprovalsSaving(true);
+    try {
+      const updated = await patchOrgBranding(approvals);
+      setBranding(updated);
+      toast.success('Approval rules saved.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setApprovalsSaving(false);
     }
   };
 
@@ -525,6 +559,66 @@ export function BrandingHome() {
               <div>
                 <Button onClick={() => void onSaveFinance()} loading={financeSaving} disabled={!financeDirty}>
                   Save Finance settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ClipboardCheck className="h-4 w-4 text-gold" />
+                Second person
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-silver">
+                Which changes take a second person before they land. The person who asks never decides; where no second person exists, the change lands and the audit says so.
+              </p>
+              <Field label="Pay-rate changes" hint="A change this far from the current rate, in percent, goes to a second person. 0 sends every change.">
+                {(p) => (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                      {...p}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={100}
+                      className="w-24"
+                      value={approvals.payChangeApprovalPct}
+                      onChange={(e) => setApprovals((a) => ({ ...a, payChangeApprovalPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                      disabled={approvals.payChangeAlwaysApprove}
+                    />
+                    <span className="text-sm text-silver">%</span>
+                    <label className="flex items-center gap-2 text-sm text-silver">
+                      <input type="checkbox" checked={approvals.payChangeAlwaysApprove} onChange={(e) => setApprovals((a) => ({ ...a, payChangeAlwaysApprove: e.target.checked }))} />
+                      Every change
+                    </label>
+                  </div>
+                )}
+              </Field>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ['billRateApproval', 'Bill-rate changes', 'A dated rate card, approved by Finance.'],
+                    ['separationSecondPerson', 'Completing a separation', 'Access ends only when a second person says so.'],
+                    ['roleChangeApproval', 'Granting more access', 'A role elevation waits for a second administrator.'],
+                    ['requisitionApproval', 'Opening a seat', 'A requisition carries its budget to a second person.'],
+                    ['selfServiceApproval', 'Self-service address and dependents', 'Off by default — a person changes their own record at once.'],
+                  ] as const
+                ).map(([key, label, hint]) => (
+                  <label key={key} className="flex items-start gap-2 rounded-md border border-navy-secondary px-3 py-2 text-sm">
+                    <input type="checkbox" className="mt-1" checked={approvals[key]} onChange={(e) => setApprovals((a) => ({ ...a, [key]: e.target.checked }))} aria-label={label} />
+                    <span>
+                      <span className="block text-ink">{label}</span>
+                      <span className="block text-xs2 text-silver">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div>
+                <Button onClick={() => void onSaveApprovals()} loading={approvalsSaving} disabled={!approvalsDirty}>
+                  Save approval rules
                 </Button>
               </div>
             </CardContent>

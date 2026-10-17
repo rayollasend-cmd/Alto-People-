@@ -39,6 +39,11 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
         'documents',
         'compliance',
         'hr-cases',
+        // 2026-10-17: the requisitions they hire against, the report builder
+        // and the internal job board were reachable only by URL.
+        'headcount',
+        'reports',
+        'internal-jobs',
       ]),
     );
   });
@@ -55,7 +60,6 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
       'time-attendance',
       'compensation',
       'org',
-      'reports',
       'billing',
       'users',
     ] as ModuleKey[]) {
@@ -160,10 +164,27 @@ describe('visibleModules — FLOOR_SUPERVISOR curation', () => {
   // The shift supervisor's floor without the decisions: today's faces, the
   // live board, their shift's SOP, messages and their profile — nothing to
   // approve, schedule, or spend.
-  it('shows exactly the floor, the SOP, and the personal baseline', () => {
+  it('shows exactly the floor, the SOP, the watch Inbox, and the personal baseline', () => {
     expect(new Set(keysFor('FLOOR_SUPERVISOR'))).toEqual(
-      new Set<ModuleKey>(['me', 'messages', 'floor-today', 'time-attendance', 'ops', 'rides']),
+      new Set<ModuleKey>(['me', 'inbox', 'messages', 'floor-today', 'time-attendance', 'ops', 'rides']),
     );
+  });
+});
+
+describe('visibleModules — the field roles (2026-10)', () => {
+  it('the associate gets Messages, their credentials and Benefits', () => {
+    expect(keysFor('ASSOCIATE')).toEqual(expect.arrayContaining(['messages', 'wallet', 'benefits']));
+  });
+
+  it('the workforce manager sees the planning, storm, engine-room and corps surfaces the role always held', () => {
+    expect(keysFor('WORKFORCE_MANAGER')).toEqual(
+      expect.arrayContaining(['forecast', 'season-planner', 'emergency', 'control-room', 'tasks', 'labor-costs', 'supervisor-corps']),
+    );
+  });
+
+  it('the store-bound supervisor never gets the corps or labor dollars', () => {
+    expect(keysFor('SHIFT_SUPERVISOR')).not.toContain('supervisor-corps');
+    expect(keysFor('SHIFT_SUPERVISOR')).not.toContain('labor-costs');
   });
 });
 

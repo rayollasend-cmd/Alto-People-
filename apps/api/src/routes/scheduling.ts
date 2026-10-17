@@ -71,7 +71,10 @@ import {
   type ShiftTemplate as ShiftTemplateDTO,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { cardOn, currentRateCards, endRateCard, loadRateCards, setRateCard } from '../lib/rateCards.js';
+import { cardOn, currentRateCards, endRateCard, loadRateCards } from '../lib/rateCards.js';
+import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { applyBillRateChange } from '../lib/payChanges.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
@@ -2145,8 +2148,33 @@ schedulingRouter.put('/rate-defaults', MANAGE, async (req, res, next) => {
     // stays whatever the office set (never cleared by an edit they can't see).
     const hideBill = billRateHidden(req.user!.role);
     // Brief 1A-2: a new effective-dated card; the one before it closes the day before. A bounded role keeps the bill rate it cannot see.
-    const previous = hideBill ? cardOn(await loadRateCards(prisma, [input.clientId]), input.clientId, position, new Date()) : null;
-    const saved = await setRateCard(prisma, { clientId: input.clientId, position, payRate: input.payRate, billRate: hideBill ? (previous?.billRate ?? null) : (input.billRate ?? null), effectiveFrom: input.effectiveFrom }, req.user!.id);
+    const previous = cardOn(await loadRateCards(prisma, [input.clientId]), input.clientId, position, new Date());
+    const billRate = hideBill ? (previous?.billRate ?? null) : (input.billRate ?? null);
+    // Approval engine (2026-10): a bill-rate change is a dated, approved record — a second
+    // process:payroll holder decides it where the tenant's switch says so.
+    const billChanged = (previous?.billRate ?? null) !== (billRate ?? null);
+    const policy = await loadApprovalPolicy(prisma);
+    const before = previous ? { payRate: previous.payRate, billRate: previous.billRate } : null;
+    if (billChanged && policy.billRateApproval && (await secondPersonExists(prisma, 'process:payroll', req.user!.id))) {
+      const open = await prisma.approvalRequest.findFirst({ where: { kind: 'BILL_RATE_CHANGE', clientId: input.clientId, status: 'PENDING', proposed: { path: ['position'], equals: position } }, select: { id: true } });
+      if (open) throw new HttpError(409, 'approval_pending', 'A rate change for this role is already waiting on a decision.');
+      const fmt = (n: number | null) => (n == null ? '—' : `$${n.toFixed(2)}`);
+      const request = await createApprovalRequest(prisma, {
+        kind: 'BILL_RATE_CHANGE',
+        subjectType: 'ShiftRateDefault',
+        subjectId: previous?.id ?? client.id,
+        title: `${position}: bill ${fmt(previous?.billRate ?? null)} → ${fmt(billRate)}`,
+        summary: `Pay ${fmt(input.payRate)}/h, bill ${fmt(billRate)}/h, effective ${input.effectiveFrom ?? 'today'}. A dated rate card replaces the one in force.`,
+        proposed: { clientId: input.clientId, position, payRate: input.payRate, billRate, effectiveFrom: input.effectiveFrom },
+        before,
+        requesterUserId: req.user!.id,
+        approver: { capability: 'process:payroll' },
+        clientId: input.clientId,
+      });
+      res.status(202).json(pendingResponse(request));
+      return;
+    }
+    const saved = await applyBillRateChange(prisma, { clientId: input.clientId, position, payRate: input.payRate, billRate, effectiveFrom: input.effectiveFrom, actorUserId: req.user!.id, note: billChanged && policy.billRateApproval ? 'No second approver was available.' : null }, before);
     res.json({ ...saved, billRate: saved.billRate != null && !hideBill ? saved.billRate : null });
   } catch (err) {
     next(err);

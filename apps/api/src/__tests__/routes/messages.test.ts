@@ -168,11 +168,15 @@ describe('messages', () => {
     expect(
       (await manager.post('/messages/conversations').send({ participantIds: [s.otherManager.id] })).status,
     ).toBe(403);
-    // An associate is unreachable, and can't use the messenger at all.
+    // A store manager never reaches an associate directly — that bypasses
+    // Alto's supervision. The associate (field roles, 2026-10) uses the
+    // messenger, but only toward the desks and their own supervisors.
     expect((await manager.post('/messages/conversations').send({ participantIds: [s.associate.id] })).status).toBe(403);
     const assoc = await loginAs(s.associate.email);
-    expect((await assoc.get('/messages/conversations')).status).toBe(403);
-    expect((await assoc.get('/messages/directory')).status).toBe(403);
+    expect((await assoc.get('/messages/conversations')).status).toBe(200);
+    const reachable = ((await assoc.get('/messages/directory')).body.people as Array<{ id: string }>).map((p) => p.id);
+    expect(reachable).toContain(s.wfm.id);
+    for (const no of [s.manager.id, s.otherManager.id, s.supervisor.id, s.otherSupervisor.id]) expect(reachable).not.toContain(no);
 
     // A thread from another tenant is simply not found — read, post, transcript.
     const other = await loginAs(s.otherManager.email);

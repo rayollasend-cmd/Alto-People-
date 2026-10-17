@@ -49,20 +49,37 @@ describe('hasCapability', () => {
     for (const c of ALL_CAPS) expect(hasCapability('HR_ADMINISTRATOR', c)).toBe(true);
   });
 
-  // Per product policy, OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER and
-  // MARKETING_MANAGER all share the HR_ADMINISTRATOR capability surface.
-  // The role label still differs so audit logs reflect functional capacity.
-  // WORKFORCE_MANAGER was in this list until `3cf2e12d` gave it its own
-  // charter — see the dedicated test below.
+  // Per product policy, OPERATIONS_MANAGER, MANAGER and INTERNAL_RECRUITER
+  // share the HR_ADMINISTRATOR capability surface. The role label still
+  // differs so audit logs reflect functional capacity. WORKFORCE_MANAGER
+  // left this list with `3cf2e12d`, MARKETING_MANAGER on 2026-10-17 — each
+  // has its own charter, tested below.
   it.each([
     'OPERATIONS_MANAGER',
     'MANAGER',
     'INTERNAL_RECRUITER',
-    'MARKETING_MANAGER',
   ] as const)('%s mirrors HR_ADMINISTRATOR capability set', (role) => {
     for (const c of ALL_CAPS) expect(hasCapability(role, c)).toBe(true);
     expect(hasCapability(role, 'view:hr-admin')).toBe(true);
     expect(hasCapability(role, 'view:audit')).toBe(true);
+  });
+
+  it('MARKETING_MANAGER holds the employer-brand charter, not an admin clone', () => {
+    // The top of the funnel: the careers site, source of hire, referral
+    // campaigns — reading the pipeline it feeds and the people it reaches.
+    for (const c of ['view:marketing', 'manage:marketing', 'view:recruiting', 'view:org', 'view:analytics', 'view:communications'] as const) {
+      expect(hasCapability('MARKETING_MANAGER', c), c).toBe(true);
+    }
+    // And none of the money, HR, scheduling or settings surface it used to
+    // carry by accident of being an admin with a label.
+    for (const c of ['manage:recruiting', 'manage:onboarding', 'view:payroll', 'process:payroll', 'manage:scheduling', 'view:hr-admin', 'view:audit', 'manage:org', 'manage:comp'] as const) {
+      expect(hasCapability('MARKETING_MANAGER', c), c).toBe(false);
+    }
+    // Every admin can still staff the role.
+    expect(hasCapability('HR_ADMINISTRATOR', 'manage:marketing')).toBe(true);
+    // The chairman reads the board numbers it produces.
+    expect(hasCapability('EXECUTIVE_CHAIRMAN', 'view:marketing')).toBe(true);
+    expect(hasCapability('EXECUTIVE_CHAIRMAN', 'manage:marketing')).toBe(false);
   });
 
   it('WORKFORCE_MANAGER holds the field-leadership charter, not an admin clone', () => {
@@ -235,7 +252,7 @@ describe('hasCapability', () => {
     // It is deliberately NOT process:payroll: running the pay cycle is a
     // job six roles do, and "may run payroll" is not "may pull up this
     // named person's paystub".
-    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER'] as const) {
+    for (const role of ['INTERNAL_RECRUITER', 'MANAGER'] as const) {
       expect(hasCapability(role, 'process:payroll'), role).toBe(true);
       expect(hasCapability(role, 'view:payroll-documents'), role).toBe(false);
     }

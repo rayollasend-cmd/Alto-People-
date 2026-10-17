@@ -9,8 +9,9 @@ import {
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
-import { verifyMfaEnroll, verifySession } from '../lib/jwt.js';
+import { signSession, verifyMfaEnroll, verifySession, type SessionPayload } from '../lib/jwt.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { allowedCidrsFor, ipAllowed, loadSecurityPolicy, sessionExpiry } from '../lib/securityPolicy.js';
 
 export const SESSION_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.session'
@@ -113,9 +114,58 @@ if (typeof pruneTimer.unref === 'function') pruneTimer.unref();
  * sets `req.sessionStale = true` so `/auth/me` can return 401-clear.
  * Routes other than `/auth/me` should call `requireAuth` to enforce.
  */
+/**
+ * Access pack — the tenant's security policy, applied to a live session on
+ * EVERY request: a CIDR allowlist for the role's class (a session carried
+ * out of the office stops at once), and the idle / absolute session life
+ * read from the token's own claims. An idle policy makes the token slide:
+ * once a minute the cookie is re-issued with a fresh `lat`, keeping `sat`.
+ *
+ *   returns true when the request may proceed as this user; false when
+ *   the session was ended here (req.sessionStale set, or a 403 sent).
+ */
+async function applySecurityPolicy(
+  req: Request,
+  res: Response,
+  user: SessionUser,
+  payload: SessionPayload,
+): Promise<boolean> {
+  const policy = await loadSecurityPolicy(user.tenantId);
+  const ended = sessionExpiry(policy, { iat: payload.sat ?? payload.iat, lat: payload.lat ?? payload.iat });
+  if (ended) {
+    req.sessionStale = true;
+    req.sessionEndedReason = ended;
+    return false;
+  }
+  if (!ipAllowed(req.ip, allowedCidrsFor(policy, user.role))) {
+    res.status(403).json({
+      error: {
+        code: 'ip_not_allowed',
+        message: 'Your organization allows sign-in only from approved networks. Connect from an approved network, or ask an administrator.',
+      },
+    });
+    return false;
+  }
+  if (policy.sessionIdleMinutes) {
+    const now = Math.floor(Date.now() / 1000);
+    const last = payload.lat ?? payload.iat;
+    if (now - last >= 60) {
+      const token = signSession({ sub: payload.sub, role: payload.role, ver: payload.ver, amr: payload.amr, sat: payload.sat ?? payload.iat });
+      res.cookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: env.JWT_TTL_SECONDS * 1000,
+      });
+    }
+  }
+  return true;
+}
+
 export async function attachUser(
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ) {
   try {
@@ -137,6 +187,7 @@ export async function attachUser(
       cached.expiresAt > Date.now() &&
       cached.user.tokenVersion === payload.ver
     ) {
+      if (!(await applySecurityPolicy(req, res, cached.user, payload))) return res.headersSent ? undefined : next();
       req.user = cached.user;
       return next();
     }
@@ -163,6 +214,8 @@ export async function attachUser(
         mfaEnabledAt: true,
         photoS3Key: true,
         photoUpdatedAt: true,
+        scopeSiteIds: true,
+        scopeRegionIds: true,
         tenantRole: { select: { id: true, name: true, archetype: true, capabilities: true, deletedAt: true } },
         associate: {
           select: {
@@ -249,11 +302,14 @@ export async function attachUser(
       capabilities: custom?.capabilities ?? null,
       tenantRoleId: custom?.id ?? null,
       tenantRoleName: custom?.name ?? null,
+      scopeSiteIds: user.scopeSiteIds,
+      scopeRegionIds: user.scopeRegionIds,
     };
     userCache.set(payload.sub, {
       user: sessionUser,
       expiresAt: Date.now() + USER_CACHE_TTL_MS,
     });
+    if (!(await applySecurityPolicy(req, res, sessionUser, payload))) return res.headersSent ? undefined : next();
     req.user = sessionUser;
     next();
   } catch (err) {

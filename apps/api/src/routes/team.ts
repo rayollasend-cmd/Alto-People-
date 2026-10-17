@@ -13,9 +13,11 @@ import {
 } from '../lib/timeOffRequests.js';
 import { recordTimeEvent } from '../lib/audit.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
+import { accruePolicyLeaveForEntry } from '../lib/timeOffPolicy.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { emit as emitWorkflow } from '../lib/workflow.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -165,6 +167,120 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
     pendingReimbursements,
     atRiskGoals,
     onboardingInProgress,
+  });
+});
+
+// ----- The Manager's home (HR pack 2026-10) --------------------------------
+//
+// One call for everything the home shows beyond the approval queues: what is
+// due on the team (reviews, 1:1s, probation decisions, ramp checkpoints,
+// documents and credentials expiring), today on the team (shifts, who is on
+// the clock, who is out, birthdays and anniversaries), and the suggested
+// actions those add up to. Direct-report scoped like every /team route.
+
+const DAY = 86_400_000;
+
+teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
+  const user = req.user!;
+  const now = new Date();
+  const empty = {
+    due: { reviews: [], oneOnOnes: [], probations: [], rampMilestones: [], documents: [], credentials: [], pips: [] },
+    today: { shifts: [], onClock: [], out: [], celebrations: [] },
+    suggestions: [],
+  };
+  if (!user.associateId) {
+    res.json(empty);
+    return;
+  }
+  const reports = await prisma.associate.findMany({
+    take: 1000,
+    where: { AND: [await managerScope(user), EMPLOYED_WHERE] },
+    select: { id: true, firstName: true, lastName: true, dob: true, hireDate: true },
+  });
+  if (reports.length === 0) {
+    res.json(empty);
+    return;
+  }
+  const ids = reports.map((r) => r.id);
+  const nameOf = new Map(reports.map((r) => [r.id, `${r.firstName} ${r.lastName}`.trim()]));
+  const in30 = new Date(now.getTime() + 30 * DAY);
+  const in14 = new Date(now.getTime() + 14 * DAY);
+  const dayStart = new Date(now);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart.getTime() + DAY);
+  const todayKey = now.toISOString().slice(0, 10);
+
+  const [lastReviews, oneOnOnes, probations, rampPlans, documents, credentials, pips, shifts, onClock, out] = await Promise.all([
+    // The most recent review per report; a report without one in 12 months is due.
+    prisma.performanceReview.findMany({ where: { associateId: { in: ids } }, orderBy: { periodEnd: 'desc' }, select: { associateId: true, periodEnd: true, status: true }, take: 2000 }),
+    prisma.oneOnOne.findMany({ where: { associateId: { in: ids }, status: 'SCHEDULED', scheduledFor: { lt: in14 } }, orderBy: { scheduledFor: 'asc' }, select: { id: true, associateId: true, scheduledFor: true }, take: 50 }),
+    prisma.probationPeriod.findMany({ where: { associateId: { in: ids }, status: { in: ['ACTIVE', 'EXTENDED'] }, endDate: { lt: in30 } }, orderBy: { endDate: 'asc' }, select: { id: true, associateId: true, endDate: true }, take: 50 }),
+    prisma.rampPlan.findMany({
+      where: { associateId: { in: ids }, archivedAt: null },
+      select: { id: true, associateId: true, startDate: true, milestones: { where: { status: { in: ['PENDING', 'ON_TRACK'] } }, select: { id: true, title: true, dayCheckpoint: true, status: true } } },
+      take: 200,
+    }),
+    prisma.documentRecord.findMany({ where: { associateId: { in: ids }, deletedAt: null, status: { in: ['UPLOADED', 'VERIFIED', 'EXPIRED'] }, expiresAt: { not: null, lt: in30 } }, select: { id: true, associateId: true, kind: true, expiresAt: true, status: true }, orderBy: { expiresAt: 'asc' }, take: 100 }),
+    prisma.associateQualification.findMany({ where: { associateId: { in: ids }, deletedAt: null, expiresAt: { not: null, lt: in30 } }, select: { id: true, associateId: true, expiresAt: true, qualification: { select: { name: true } } }, orderBy: { expiresAt: 'asc' }, take: 100 }),
+    prisma.pip.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE', endDate: { lt: in14 } }, select: { id: true, associateId: true, endDate: true }, orderBy: { endDate: 'asc' }, take: 50 }),
+    prisma.shift.findMany({ where: { assignedAssociateId: { in: ids }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: dayStart, lt: dayEnd } }, select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true, position: true, location: true }, orderBy: { startsAt: 'asc' }, take: 200 }),
+    prisma.timeEntry.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE' }, select: { associateId: true, clockInAt: true }, take: 200 }),
+    prisma.timeOffRequest.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', startDate: { lte: now }, endDate: { gte: dayStart } }, select: { associateId: true, category: true, endDate: true }, take: 200 }),
+  ]);
+
+  const latestReview = new Map<string, { periodEnd: Date; status: string }>();
+  for (const r of lastReviews) if (!latestReview.has(r.associateId)) latestReview.set(r.associateId, r);
+  const yearAgo = new Date(now.getTime() - 365 * DAY);
+  const reviewsDue = reports
+    .map((r) => {
+      const last = latestReview.get(r.id);
+      const since = last?.periodEnd ?? r.hireDate ?? null;
+      if (!since || since.getTime() > yearAgo.getTime()) return null;
+      return { associateId: r.id, associateName: nameOf.get(r.id)!, lastPeriodEnd: last?.periodEnd.toISOString().slice(0, 10) ?? null, overdueDays: Math.floor((now.getTime() - since.getTime() - 365 * DAY) / DAY) };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+    .sort((a, b) => b.overdueDays - a.overdueDays);
+
+  const rampDue = rampPlans.flatMap((p) =>
+    p.milestones
+      .map((m) => ({ id: m.id, planId: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, title: m.title, dueOn: new Date(p.startDate.getTime() + m.dayCheckpoint * DAY).toISOString().slice(0, 10), status: m.status }))
+      .filter((m) => m.dueOn <= in14.toISOString().slice(0, 10)),
+  );
+
+  const celebrations = reports
+    .flatMap((r) => {
+      const out: { associateId: string; associateName: string; kind: 'BIRTHDAY' | 'ANNIVERSARY'; years: number | null }[] = [];
+      const md = (d: Date) => d.toISOString().slice(5, 10);
+      if (r.dob && md(r.dob) === todayKey.slice(5)) out.push({ associateId: r.id, associateName: nameOf.get(r.id)!, kind: 'BIRTHDAY', years: null });
+      if (r.hireDate && md(r.hireDate) === todayKey.slice(5) && r.hireDate.getUTCFullYear() < now.getUTCFullYear()) out.push({ associateId: r.id, associateName: nameOf.get(r.id)!, kind: 'ANNIVERSARY', years: now.getUTCFullYear() - r.hireDate.getUTCFullYear() });
+      return out;
+    });
+
+  const suggestions: { key: string; text: string; link: string; count: number }[] = [];
+  if (reviewsDue.length) suggestions.push({ key: 'reviews', text: `${reviewsDue.length} ${reviewsDue.length === 1 ? 'review is' : 'reviews are'} more than a year old — schedule them.`, link: '/performance', count: reviewsDue.length });
+  if (probations.length) suggestions.push({ key: 'probations', text: `${probations.length} probation ${probations.length === 1 ? 'decision is' : 'decisions are'} due this month.`, link: '/probation', count: probations.length });
+  if (pips.length) suggestions.push({ key: 'pips', text: `${pips.length} improvement ${pips.length === 1 ? 'plan ends' : 'plans end'} within two weeks — decide the outcome.`, link: '/performance?tab=pips', count: pips.length });
+  if (documents.length + credentials.length) suggestions.push({ key: 'expiring', text: `${documents.length + credentials.length} ${documents.length + credentials.length === 1 ? 'document or credential expires' : 'documents and credentials expire'} within 30 days — remind the person.`, link: '/expirations', count: documents.length + credentials.length });
+  if (oneOnOnes.length) suggestions.push({ key: 'one-on-ones', text: `${oneOnOnes.length} 1:1${oneOnOnes.length === 1 ? '' : 's'} scheduled in the next two weeks.`, link: '/performance?tab=one-on-ones', count: oneOnOnes.length });
+  if (rampDue.length) suggestions.push({ key: 'ramp', text: `${rampDue.length} ramp ${rampDue.length === 1 ? 'checkpoint is' : 'checkpoints are'} due — check in with the new starter.`, link: '/ramp', count: rampDue.length });
+
+  res.json({
+    due: {
+      reviews: reviewsDue,
+      oneOnOnes: oneOnOnes.map((o) => ({ id: o.id, associateId: o.associateId, associateName: nameOf.get(o.associateId)!, scheduledFor: o.scheduledFor.toISOString() })),
+      probations: probations.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: p.endDate.toISOString().slice(0, 10) })),
+      rampMilestones: rampDue,
+      documents: documents.map((d) => ({ id: d.id, associateId: d.associateId, associateName: nameOf.get(d.associateId)!, kind: d.kind, expiresAt: d.expiresAt!.toISOString().slice(0, 10), expired: d.expiresAt!.getTime() < now.getTime() })),
+      credentials: credentials.map((c) => ({ id: c.id, associateId: c.associateId, associateName: nameOf.get(c.associateId)!, name: c.qualification.name, expiresAt: c.expiresAt!.toISOString().slice(0, 10), expired: c.expiresAt!.getTime() < now.getTime() })),
+      pips: pips.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: p.endDate.toISOString().slice(0, 10) })),
+    },
+    today: {
+      shifts: shifts.map((sh) => ({ id: sh.id, associateId: sh.assignedAssociateId!, associateName: nameOf.get(sh.assignedAssociateId!)!, startsAt: sh.startsAt.toISOString(), endsAt: sh.endsAt.toISOString(), position: sh.position, location: sh.location })),
+      onClock: onClock.map((e) => ({ associateId: e.associateId, associateName: nameOf.get(e.associateId)!, since: e.clockInAt.toISOString() })),
+      out: out.map((o) => ({ associateId: o.associateId, associateName: nameOf.get(o.associateId)!, category: o.category, until: o.endDate.toISOString().slice(0, 10) })),
+      celebrations,
+    },
+    suggestions,
   });
 });
 
@@ -446,6 +562,7 @@ teamRouter.post(
       },
     });
     const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+    void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
     await recordTimeEvent({
       actorUserId: user.id,
       action: 'time.approved.by_manager',
@@ -581,6 +698,7 @@ teamRouter.post(
           },
         });
         const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+    void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
         await recordTimeEvent({
           actorUserId: user.id,
           action: 'time.approved.by_manager',
@@ -793,6 +911,12 @@ teamRouter.post(
         decidedAt: new Date(),
       },
     });
+    void emitWorkflow({
+      trigger: 'TIME_OFF_DENIED',
+      entityType: 'TimeOffRequest',
+      entityId: id,
+      context: { associateId: reqRow.associateId, request: { id, category: reqRow.category }, reviewerUserId: user.id },
+    }).catch((err) => console.warn('[team] workflow emit failed:', err));
     void emitWebhookEvent('time_off.denied', {
       requestId: id,
       associateId: reqRow.associateId,

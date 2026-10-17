@@ -110,6 +110,38 @@ export function markClientStatementPaid(
   });
 }
 
+/** Invoicing: the PO one statement bills against and, once final, its due date. */
+export function updateClientStatementTerms(
+  clientId: string,
+  statementId: string,
+  body: { poNumber?: string | null; dueAt?: string | null },
+): Promise<ClientStatement> {
+  return apiFetch(`/clients/${clientId}/statements/${statementId}`, { method: 'PATCH', body });
+}
+
+export interface ClientDunning {
+  poNumber: string | null;
+  paymentTermsDays: number;
+  paused: { at: string; note: string | null; byUserId: string | null } | null;
+  reminders: Array<{ id: string; stage: number; sentAt: string; recipients: number; statementId: string; number: number | null; periodStart: string; periodEnd: string }>;
+}
+
+export function updateClientBillingTerms(clientId: string, body: { poNumber?: string | null; paymentTermsDays?: number }): Promise<{ poNumber: string | null; paymentTermsDays: number }> {
+  return apiFetch(`/clients/${clientId}/billing-terms`, { method: 'PATCH', body });
+}
+
+export function getClientDunning(clientId: string): Promise<ClientDunning> {
+  return apiFetch(`/clients/${clientId}/dunning`);
+}
+
+export function pauseClientDunning(clientId: string, note: string): Promise<{ ok: true }> {
+  return apiFetch(`/clients/${clientId}/dunning/pause`, { method: 'POST', body: { note } });
+}
+
+export function resumeClientDunning(clientId: string): Promise<{ ok: true }> {
+  return apiFetch(`/clients/${clientId}/dunning/pause`, { method: 'DELETE' });
+}
+
 /** Weekly client-facing service report. week = any date in the desired
  *  org week (YYYY-MM-DD); omitted = last completed week. */
 export function clientServiceReportUrl(clientId: string, week?: string): string {

@@ -12,6 +12,10 @@ export interface SessionPayload {
   amr?: AuthMethod;
   iat: number;
   exp: number;
+  /** Access pack: when the session began (survives a sliding re-issue); absent = iat. */
+  sat?: number;
+  /** Access pack: the last request that re-issued the token (idle timeout); absent = iat. */
+  lat?: number;
 }
 
 export function signSession(input: {
@@ -19,9 +23,12 @@ export function signSession(input: {
   role: Role;
   ver: number;
   amr?: AuthMethod;
+  /** Keep the original start when sliding an existing session. */
+  sat?: number;
 }): string {
+  const now = Math.floor(Date.now() / 1000);
   return jwt.sign(
-    { sub: input.sub, role: input.role, ver: input.ver, amr: input.amr ?? 'password' },
+    { sub: input.sub, role: input.role, ver: input.ver, amr: input.amr ?? 'password', sat: input.sat ?? now, lat: now },
     env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: env.JWT_TTL_SECONDS }
   );
@@ -34,7 +41,7 @@ export function verifySession(raw: string): SessionPayload | null {
     });
     if (typeof decoded === 'string') return null;
 
-    const { sub, role, ver, iat, exp, amr } = decoded as Record<string, unknown>;
+    const { sub, role, ver, iat, exp, amr, sat, lat } = decoded as Record<string, unknown>;
     if (
       typeof sub !== 'string' ||
       typeof role !== 'string' ||
@@ -46,7 +53,16 @@ export function verifySession(raw: string): SessionPayload | null {
     }
     const method: AuthMethod | undefined =
       amr === 'password' || amr === 'mfa' || amr === 'passkey' || amr === 'sso' ? amr : undefined;
-    return { sub, role: role as Role, ver, iat, exp, amr: method };
+    return {
+      sub,
+      role: role as Role,
+      ver,
+      iat,
+      exp,
+      amr: method,
+      ...(typeof sat === 'number' ? { sat } : {}),
+      ...(typeof lat === 'number' ? { lat } : {}),
+    };
   } catch {
     return null;
   }
@@ -70,11 +86,13 @@ export interface MfaPendingPayload {
   typ: 'mfa_pending';
   iat: number;
   exp: number;
+  /** Access pack: this password step used the break-glass path (SSO required). */
+  bg?: boolean;
 }
 
-export function signMfaPending(input: { sub: string; ver: number }): string {
+export function signMfaPending(input: { sub: string; ver: number; bg?: boolean }): string {
   return jwt.sign(
-    { sub: input.sub, ver: input.ver, typ: 'mfa_pending' },
+    { sub: input.sub, ver: input.ver, typ: 'mfa_pending', ...(input.bg ? { bg: true } : {}) },
     env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: MFA_PENDING_TTL_SECONDS }
   );
@@ -86,7 +104,7 @@ export function verifyMfaPending(raw: string): MfaPendingPayload | null {
       algorithms: ['HS256'],
     });
     if (typeof decoded === 'string') return null;
-    const { sub, ver, typ, iat, exp } = decoded as Record<string, unknown>;
+    const { sub, ver, typ, iat, exp, bg } = decoded as Record<string, unknown>;
     if (
       typeof sub !== 'string' ||
       typeof ver !== 'number' ||
@@ -96,7 +114,7 @@ export function verifyMfaPending(raw: string): MfaPendingPayload | null {
     ) {
       return null;
     }
-    return { sub, ver, typ: 'mfa_pending', iat, exp };
+    return { sub, ver, typ: 'mfa_pending', iat, exp, ...(bg === true ? { bg: true } : {}) };
   } catch {
     return null;
   }

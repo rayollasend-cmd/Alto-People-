@@ -372,7 +372,7 @@ export async function financeRecipients(db: Db = prisma): Promise<{ users: Array
  * notify* fan-outs do. send() only writes a row on failure, and an alert
  * about money must be traceable either way.
  */
-async function sendRecorded(input: {
+export async function sendRecorded(input: {
   userId: string | null;
   email: string;
   subject: string;

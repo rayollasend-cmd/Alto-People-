@@ -38,8 +38,10 @@ import {
   parseDateUTC,
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
+import { syncPolicyEntitlements } from '../lib/timeOffPolicy.js';
 import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { emit as emitWorkflow } from '../lib/workflow.js';
 import { promptShiftHandover } from '../lib/floorLeads.js';
 import { repairAfterTimeOff } from '../lib/scheduleRepair.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
@@ -177,6 +179,9 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
       throw new HttpError(403, 'not_an_associate', 'Only associates have time-off balances');
     }
 
+    // Policies first: an ANNUAL_GRANT policy keeps the person's
+    // entitlement row in step before the yearly grant below reads it.
+    await syncPolicyEntitlements(prisma, user.associateId);
     // Phase 43 — fire annual lump-sum grants if the entitlement clock
     // has rolled over since the last read. Idempotent.
     const entitlements = await prisma.timeOffEntitlement.findMany({
@@ -270,6 +275,12 @@ timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
       endDate: input.endDate,
       requestedMinutes,
     });
+    void emitWorkflow({
+      trigger: 'TIME_OFF_REQUESTED',
+      entityType: 'TimeOffRequest',
+      entityId: created.id,
+      context: { associateId: created.associateId, request: { id: created.id, category: created.category, startDate: input.startDate, endDate: input.endDate, requestedMinutes } },
+    }).catch((err) => console.warn('[time-off] workflow emit failed:', err));
 
     // Manager-first routing: time-off is the manager's call. If the associate
     // has a direct manager assigned, only the manager is notified — admins
@@ -574,6 +585,12 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
             startDate: formatDateUTC(row.startDate),
             endDate: formatDateUTC(row.endDate),
           });
+          void emitWorkflow({
+            trigger: 'TIME_OFF_DENIED',
+            entityType: 'TimeOffRequest',
+            entityId: id,
+            context: { associateId: row.associateId, request: { id, category: row.category, startDate: formatDateUTC(row.startDate), endDate: formatDateUTC(row.endDate) }, reviewerUserId: user.id },
+          }).catch((err) => console.warn('[time-off] workflow emit failed:', err));
         }
         const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
         void notifyAssociate(row.associateId, {
@@ -717,6 +734,12 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
       startDate: formatDateUTC(updated.startDate),
       endDate: formatDateUTC(updated.endDate),
     });
+    void emitWorkflow({
+      trigger: 'TIME_OFF_DENIED',
+      entityType: 'TimeOffRequest',
+      entityId: updated.id,
+      context: { associateId: updated.associateId, request: { id: updated.id, category: updated.category, startDate: formatDateUTC(updated.startDate), endDate: formatDateUTC(updated.endDate) }, reviewerUserId: user.id },
+    }).catch((err) => console.warn('[time-off] workflow emit failed:', err));
     void notifyAssociate(updated.associateId, {
       subject: `Time off request denied: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,
       body:

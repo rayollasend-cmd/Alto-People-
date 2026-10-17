@@ -347,7 +347,15 @@ function AvailableTab() {
                           {fmtShiftRangeTz(s.startsAt, s.endsAt, null)}
                         </div>
                         <div className="mt-0.5 text-sm text-white">{s.position}</div>
-                        <div className="mt-0.5 text-sm text-silver">{s.clientName}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-silver">
+                          <span>{s.locationName ? `${s.clientName} · ${s.locationName}` : s.clientName}</span>
+                          {/* The feed says it before they tap: a site they have not worked at. */}
+                          {s.newForYou && (
+                            <Badge variant="accent" size="sm">
+                              {t('mk.newForYou')}
+                            </Badge>
+                          )}
+                        </div>
                         {s.location && (
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-silver">
                             <span>{s.location}</span>

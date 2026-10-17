@@ -51,6 +51,7 @@ const MODULE_NOTE: Record<TenantModule, string> = {
   agentBuilder: 'Registering new agents from the Agents page.',
   talent: 'Skills, career ladders, mentorship, succession, probation, 30/60/90 plans, learning paths, internal jobs and pulse — off, they leave the menu and answer not found.',
   perks: 'Tuition reimbursement, equity grants and volunteer match.',
+  earnedWage: 'Pay before payday: associates draw part of what they have earned, recovered on the next check. Finance sets the cap, fee and limit.',
 };
 
 const TERM_GROUPS: Array<{ title: string; keys: TermKey[] }> = [

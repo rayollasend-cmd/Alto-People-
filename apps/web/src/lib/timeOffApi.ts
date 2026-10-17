@@ -1,4 +1,5 @@
 import type {
+  TimeOffCategory,
   TimeOffEntitlement,
   TimeOffEntitlementListResponse,
   TimeOffEntitlementUpsertInput,
@@ -10,6 +11,7 @@ import type {
   TimeOffRequestStatus,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+import { withOfflineQueue } from './offlineQueue';
 
 export function getMyBalance() {
   return apiFetch<TimeOffMyBalanceResponse>('/time-off/me/balance');
@@ -41,13 +43,19 @@ export function listAdminRequests(status?: TimeOffRequestStatus, opts: { associa
   return apiFetch<TimeOffRequestListResponse>(`/time-off/admin/requests${qs ? `?${qs}` : ''}`);
 }
 
+/**
+ * Access pack: a decision made with no signal is queued and sent when the
+ * API answers again (lib/offlineQueue); the server's 409 on a request
+ * someone else decided meanwhile drops it with a message.
+ */
 export function approveAdminRequest(id: string, note?: string, overrideReason?: string) {
-  return apiFetch<TimeOffRequestResponse>(
-    `/time-off/admin/requests/${id}/approve`,
-    {
-      method: 'POST',
-      body: { note, overrideReason },
-    }
+  return withOfflineQueue(
+    () =>
+      apiFetch<TimeOffRequestResponse>(`/time-off/admin/requests/${id}/approve`, {
+        method: 'POST',
+        body: { note, overrideReason },
+      }),
+    { kind: 'time-off', label: 'approve a time-off request', method: 'POST', path: `/time-off/admin/requests/${id}/approve`, body: { note, overrideReason } },
   );
 }
 
@@ -75,12 +83,13 @@ export function bulkUpsertEntitlements(body: {
 }
 
 export function denyAdminRequest(id: string, input: TimeOffRequestDenyInput) {
-  return apiFetch<TimeOffRequestResponse>(
-    `/time-off/admin/requests/${id}/deny`,
-    {
-      method: 'POST',
-      body: input,
-    }
+  return withOfflineQueue(
+    () =>
+      apiFetch<TimeOffRequestResponse>(`/time-off/admin/requests/${id}/deny`, {
+        method: 'POST',
+        body: input,
+      }),
+    { kind: 'time-off', label: 'deny a time-off request', method: 'POST', path: `/time-off/admin/requests/${id}/deny`, body: input },
   );
 }
 
@@ -113,4 +122,76 @@ export function upsertAdminEntitlement(input: TimeOffEntitlementUpsertInput) {
     method: 'PUT',
     body: input,
   });
+}
+
+/* ----- Policies (how leave is earned, for whom) --------------------------- */
+
+export type TimeOffAccrualMode = 'PER_HOUR_WORKED' | 'PER_PERIOD' | 'ANNUAL_GRANT';
+export type TimeOffPolicyScope = 'ALL' | 'CLIENT' | 'SITE' | 'DEPARTMENT' | 'JOB_PROFILE';
+
+export interface TimeOffTenureTier {
+  afterMonths: number;
+  accrualPerHour?: number | null;
+  minutesPerPeriod?: number | null;
+  annualMinutes?: number | null;
+}
+
+export interface TimeOffPolicyRow {
+  id: string;
+  name: string;
+  category: TimeOffCategory;
+  accrualMode: TimeOffAccrualMode;
+  accrualPerHour: number | null;
+  minutesPerPeriod: number | null;
+  annualMinutes: number | null;
+  policyAnchorDate: string;
+  capMinutes: number | null;
+  carryoverMaxMinutes: number;
+  waitingPeriodDays: number;
+  tenureTiers: TimeOffTenureTier[];
+  isActive: boolean;
+  notes: string | null;
+  updatedAt: string;
+  assignments: Array<{ id: string; scopeKind: TimeOffPolicyScope; scopeId: string | null }>;
+  people: number;
+}
+
+export interface TimeOffPolicyInput {
+  name: string;
+  category: TimeOffCategory;
+  accrualMode: TimeOffAccrualMode;
+  accrualPerHour?: number | null;
+  minutesPerPeriod?: number | null;
+  annualMinutes?: number | null;
+  policyAnchorDate?: string;
+  capMinutes?: number | null;
+  carryoverMaxMinutes?: number;
+  waitingPeriodDays?: number;
+  tenureTiers?: TimeOffTenureTier[];
+  isActive?: boolean;
+  notes?: string | null;
+}
+
+export function listTimeOffPolicies() {
+  return apiFetch<{ policies: TimeOffPolicyRow[]; scopeNames: Record<string, string> }>('/time-off/policies');
+}
+
+export function listTimeOffPolicyScopes() {
+  return apiFetch<Record<Exclude<TimeOffPolicyScope, 'ALL'>, Array<{ id: string; name: string }>>>('/time-off/policies/scopes');
+}
+
+export function createTimeOffPolicy(input: TimeOffPolicyInput) {
+  return apiFetch<TimeOffPolicyRow>('/time-off/policies', { method: 'POST', body: input });
+}
+
+export function updateTimeOffPolicy(id: string, input: Partial<TimeOffPolicyInput>) {
+  return apiFetch<TimeOffPolicyRow>(`/time-off/policies/${id}`, { method: 'PATCH', body: input });
+}
+
+export function retireTimeOffPolicy(id: string) {
+  return apiFetch<{ ok: true }>(`/time-off/policies/${id}`, { method: 'DELETE' });
+}
+
+export function assignTimeOffPolicy(id: string, assignments: Array<{ scopeKind: TimeOffPolicyScope; scopeId?: string | null }>) {
+  return apiFetch<TimeOffPolicyRow>(`/time-off/policies/${id}/assignments`, { method: 'PUT', body: { assignments } });
 }

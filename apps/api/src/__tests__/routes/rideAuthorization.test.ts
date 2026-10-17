@@ -21,6 +21,9 @@ const app = () => createApp();
 beforeEach(async () => {
   await truncateAll();
   setGeocoderForTests(async () => ({ lat: 30.39, lng: -86.49 }));
+  // The pre-trip check has its own suite (transportDriverPack); these are
+  // about the charge, so the fleet runs with it switched off.
+  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterAll(async () => {
   setGeocoderForTests(null);

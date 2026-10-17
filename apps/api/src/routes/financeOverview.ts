@@ -15,6 +15,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
 import { buildFieldglassQueue, buildFieldglassRoster } from '../lib/fieldglassQueue.js';
 import { billingWeek, marginTrend, payCycle, receivablesAging } from '../lib/financeCockpit.js';
+import { cashForecast } from '../lib/cashForecast.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 
@@ -94,7 +95,7 @@ financeOverviewRouter.get(
           }),
           prisma.clientStatement.findMany({
             where: { status: 'FINAL', paidAt: null, tenantId: T },
-            select: { finalizedAt: true, snapshot: true, clientId: true, client: { select: { name: true } } },
+            select: { finalizedAt: true, dueAt: true, snapshot: true, clientId: true, client: { select: { name: true } } },
           }),
           prisma.clientStatement.findMany({
             where: {
@@ -219,10 +220,18 @@ financeOverviewRouter.get(
           clientId: s.clientId,
           clientName: s.client?.name ?? null,
           finalizedAt: s.finalizedAt,
+          dueAt: s.dueAt,
           amount: stAmount(s.snapshot),
         })),
         now,
       );
+      // Finance's hold queue — changes to pay accounts and W-4s waiting on
+      // a verification call — and the four-week cash picture.
+      const [fcPending, fcHeld, cash] = await Promise.all([
+        prisma.financialChange.count({ where: { status: 'PENDING' } }),
+        prisma.financialChange.count({ where: { status: 'HELD' } }),
+        cashForecast(now, { tenantId: T }).catch(() => null),
+      ]);
       const fieldglassQueue = fullFieldglassQueue.slice(0, 12);
 
       const billed = weekBilled.reduce((sum, s) => sum + stAmount(s.snapshot), 0);
@@ -293,6 +302,8 @@ financeOverviewRouter.get(
         fieldglassQueue,
         fieldglassQueueTotal: fullFieldglassQueue.length,
         payrollCases: { open: casesOpen, assignedToMe: casesMine },
+        financialChanges: { pending: fcPending, held: fcHeld, open: fcPending + fcHeld },
+        cash: cash ? { weeks: cash.weeks, totals: cash.totals, from: cash.from, to: cash.to } : null,
         billedVsPaid:
           billed > 0 || paidGross > 0
             ? {
@@ -303,6 +314,23 @@ financeOverviewRouter.get(
               }
             : null,
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /finance/cash-forecast — the four-week cash picture with every line
+ * behind it (lib/cashForecast.ts). ?weeks=1..13.
+ */
+financeOverviewRouter.get(
+  '/finance/cash-forecast',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const weeks = z.coerce.number().int().min(1).max(13).catch(4).parse(req.query.weeks);
+      res.json(await cashForecast(new Date(), { tenantId: tenantIdForWrite(), weeks }));
     } catch (err) {
       next(err);
     }

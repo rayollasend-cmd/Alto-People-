@@ -9,7 +9,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeAssociateIds } from '../lib/activeDefinition.js';
-import { atClient } from '../lib/scope.js';
+import { atClient, scopeAssociates } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
@@ -296,6 +296,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       where: {
         deletedAt: null,
         tenantId: tenantIdForWrite(),
+        // Access pack: an internal role narrowed to sites/regions lists its people only.
+        ...scopeAssociates(req.user!),
         ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
         ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
         ...(filters.locationId

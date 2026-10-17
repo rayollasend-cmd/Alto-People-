@@ -23,6 +23,9 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { ssoRequiredFor } from '../lib/identity.js';
+import { breakGlassVerdict, recordBreakGlassUse } from '../lib/breakGlass.js';
+import { loadSecurityPolicy } from '../lib/securityPolicy.js';
+import { listDevices, rememberDevice, revokeDevice, trustedDeviceFor } from '../lib/trustedDevices.js';
 import { env } from '../config/env.js';
 import {
   MFA_ENROLL_TTL_SECONDS,
@@ -457,9 +460,17 @@ authRouter.post(
       // Brief 2-3 (decision 4): a tenant that requires its SSO for staff refuses their password
       // (after the password proved itself, so nothing leaks to a guesser); passkeys still work,
       // and associates keep passwords.
-      if (await ssoRequiredFor(prisma, user)) {
+      // Access pack: a break-glass owner may still come through with password
+      // + two-step while SSO is required (an IdP outage); never a password alone.
+      const breakGlass = await breakGlassVerdict(user, await ssoRequiredFor(prisma, user));
+      if (breakGlass === 'closed') {
         await recordLoginFailure({ email, req, reason: 'sso_required' });
         res.status(403).json({ error: { code: 'sso_required', message: 'Your organization signs in with its company sign-in. Use the sign-in button for your organization.' } });
+        return;
+      }
+      if (breakGlass === 'needs_mfa') {
+        await recordLoginFailure({ email, req, reason: 'break_glass_needs_mfa' });
+        res.status(403).json({ error: { code: 'break_glass_needs_mfa', message: 'Break-glass sign-in needs two-step sign-in on this account. Sign in with your company sign-in and turn it on first.' } });
         return;
       }
 
@@ -472,9 +483,22 @@ authRouter.post(
       // on success, so login-history reflects "I was actually signed in"
       // rather than "I typed my password right".
       if (user.mfaEnabledAt) {
+        // Access pack: a remembered device skips the code — but never the
+        // break-glass path, which always proves the second factor.
+        const policy = await loadSecurityPolicy(user.tenantId);
+        if (breakGlass !== 'allowed' && policy.deviceTrustEnabled && (await trustedDeviceFor(req, user.id))) {
+          const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion, amr: 'mfa' });
+          res.cookie(SESSION_COOKIE, token, cookieOptions());
+          await recordLoginSuccess({ email, req, userId: user.id, clientId: user.clientId, timezone: parsed.data.timezone ?? null });
+          void trackNotificationWork(notePortalSignIn(user.id));
+          const profile = await loadProfileFor(user);
+          res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) }, trustedDevice: true });
+          return;
+        }
         const pending = signMfaPending({
           sub: user.id,
           ver: user.tokenVersion,
+          bg: breakGlass === 'allowed',
         });
         res.cookie(MFA_PENDING_COOKIE, pending, mfaPendingCookieOptions());
         // Defensive: if the user is mid-flow on another tab and re-logs
@@ -658,6 +682,17 @@ authRouter.post(
       // A portal account's first sign-in is a milestone the account team hears once.
       void trackNotificationWork(notePortalSignIn(user.id));
 
+      // Access pack: the second factor just proved this device; remember it
+      // when the tenant allows, and record a break-glass sign-in loudly.
+      {
+        const pendingPayload = (req as typeof req & { mfaPendingPayload?: { bg?: boolean } }).mfaPendingPayload;
+        const policy = await loadSecurityPolicy(user.tenantId);
+        if (policy.deviceTrustEnabled && (req.body as { rememberDevice?: unknown } | undefined)?.rememberDevice === true) {
+          await rememberDevice(req, res, user.id, policy.deviceTrustDays);
+        }
+        if (pendingPayload?.bg) await recordBreakGlassUse(req, user);
+      }
+
       if (usedRecovery) {
         // Distinct audit row so HR / the user can see "I had to fall back
         // to a recovery code" — high signal that the user lost their phone
@@ -718,8 +753,12 @@ authRouter.post('/logout', async (req, res, next) => {
 authRouter.get('/me', async (req, res) => {
   if (req.sessionStale && !req.user) {
     res.clearCookie(SESSION_COOKIE, cookieOptions());
+    const reason = req.sessionEndedReason;
     res.status(401).json({
-      error: { code: 'session_stale', message: 'Session no longer valid' },
+      error: {
+        code: reason ? 'session_expired' : 'session_stale',
+        message: reason === 'idle' ? 'You were signed out after a period of inactivity.' : reason === 'absolute' ? 'Your session reached its maximum length. Sign in again.' : 'Session no longer valid',
+      },
     });
     return;
   }
@@ -1948,6 +1987,79 @@ authRouter.post('/me/active-role', requireAuth, async (req, res, next) => {
 
     const next_ = { ...me, role: wanted };
     res.json({ user: { ...toAuthUser(next_), ...(await scopeNamesFor(next_)) } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Access pack: remembered devices ================================= */
+
+/** GET /auth/me/devices — the devices this account completed two-step on and still trusts. */
+authRouter.get('/me/devices', requireAuth, async (req, res, next) => {
+  try {
+    const policy = await loadSecurityPolicy(req.user!.tenantId);
+    res.json({ enabled: policy.deviceTrustEnabled, days: policy.deviceTrustDays, devices: await listDevices(req.user!.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** DELETE /auth/me/devices/:id — forget one; its next sign-in asks for the code again. */
+authRouter.delete('/me/devices/:id', requireAuth, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id);
+    if (!(await revokeDevice(req.user!.id, id))) throw new HttpError(404, 'device_not_found', 'That device is not remembered.');
+    enqueueAudit({ actorUserId: req.user!.id, clientId: req.user!.clientId, action: 'auth.device_forgotten', entityType: 'TrustedDevice', entityId: id, metadata: {} }, 'auth.device_forgotten');
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Access pack: quiet hours and digest delivery ==================== */
+
+const DeliveryModeSchema = z.enum(['REALTIME', 'DIGEST']);
+const PatchDeliverySchema = z
+  .object({
+    quietHoursStart: z.number().int().min(0).max(1439).nullable().optional(),
+    quietHoursEnd: z.number().int().min(0).max(1439).nullable().optional(),
+    deliveryEmail: DeliveryModeSchema.optional(),
+    deliveryPush: DeliveryModeSchema.optional(),
+    deliverySms: DeliveryModeSchema.optional(),
+  })
+  .refine((v) => (v.quietHoursStart === undefined) === (v.quietHoursEnd === undefined), { message: 'Quiet hours need both a start and an end.' })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to change.' });
+
+/** GET /auth/me/notification-delivery — quiet hours and per-channel digest vs real time. */
+authRouter.get('/me/notification-delivery', requireAuth, async (req, res, next) => {
+  try {
+    const u = await prisma.user.findUniqueOrThrow({
+      where: { id: req.user!.id },
+      select: { quietHoursStart: true, quietHoursEnd: true, deliveryEmail: true, deliveryPush: true, deliverySms: true, timezone: true },
+    });
+    res.json(u);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PATCH /auth/me/notification-delivery — critical safety and pay items still arrive at once. */
+authRouter.patch('/me/notification-delivery', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = PatchDeliverySchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(400, 'invalid_body', parsed.error.issues[0]?.message ?? 'Invalid request body', parsed.error.flatten());
+    const d = parsed.data;
+    const u = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        ...(d.quietHoursStart !== undefined ? { quietHoursStart: d.quietHoursStart, quietHoursEnd: d.quietHoursEnd ?? null } : {}),
+        ...(d.deliveryEmail ? { deliveryEmail: d.deliveryEmail } : {}),
+        ...(d.deliveryPush ? { deliveryPush: d.deliveryPush } : {}),
+        ...(d.deliverySms ? { deliverySms: d.deliverySms } : {}),
+      },
+      select: { quietHoursStart: true, quietHoursEnd: true, deliveryEmail: true, deliveryPush: true, deliverySms: true, timezone: true },
+    });
+    res.json(u);
   } catch (err) {
     next(err);
   }

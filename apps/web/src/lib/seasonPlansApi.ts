@@ -68,3 +68,38 @@ export function seasonPlanCsvUrl(id: string): string {
 export function seasonPlanSitePdfUrl(id: string, locationId: string): string {
   return `/api/season-plans/${id}/sites/${locationId}/pdf`;
 }
+
+/** What-if on the live week (field roles, 2026-10): the plan against the calendar. */
+export interface LiveWhatIfRow {
+  locationId: string;
+  siteName: string;
+  clientId: string;
+  clientName: string;
+  date: string;
+  part: 'day' | 'evening' | 'overnight';
+  planned: number;
+  scheduled: number;
+  gap: number;
+  over: number;
+  drafted: number;
+}
+
+export interface LiveWhatIf {
+  planId: string;
+  week: string;
+  shiftHours: number;
+  rows: LiveWhatIfRow[];
+  totals: { planned: number; scheduled: number; gap: number; over: number; drafted: number; gapHours: number; gapCost: number | null; unpriced: number };
+}
+
+export function getSeasonPlanLive(id: string, week?: string): Promise<LiveWhatIf> {
+  return apiFetch(`/season-plans/${id}/live${week ? `?week=${encodeURIComponent(week)}` : ''}`);
+}
+
+export function applySeasonPlanLive(id: string, week?: string): Promise<{ week: string; created: number }> {
+  return apiFetch(`/season-plans/${id}/live/apply`, { method: 'POST', body: week ? { week } : {} });
+}
+
+export function discardSeasonPlanLive(id: string, week?: string): Promise<{ week: string; removed: number }> {
+  return apiFetch(`/season-plans/${id}/live/discard`, { method: 'POST', body: week ? { week } : {} });
+}

@@ -708,9 +708,10 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
   MISSING_BANK_ACCOUNT: { label: 'No payout method' },
   TERMINATED_IN_RUN: { label: 'Terminated in period' },
   OT_SPIKE: { label: 'OT spike' },
-  UNSUPPORTED_STATE: { label: 'Unsupported SIT state' },
+  UNSUPPORTED_STATE: { label: 'State tax not supported' },
   UNAPPROVED_TIME: { label: 'Unapproved time' },
   MISSING_COMP_RECORD: { label: 'No comp record' },
+  RETRO_PAY: { label: 'Retroactive pay' },
 };
 
 /**

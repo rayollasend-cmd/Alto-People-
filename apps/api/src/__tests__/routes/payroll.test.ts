@@ -39,6 +39,8 @@ async function seedApprovedPeriod(opts: { rate?: number } = {}) {
   const rate = opts.rate ?? 20;
   const client = await createClient();
   const associate = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+  // A work state the engine withholds for — finalize refuses one it can't.
+  await prisma.associate.update({ where: { id: associate.id }, data: { state: 'KY' } });
   const periodStart = new Date('2026-04-13T00:00:00.000Z');
 
   // The associate's individual hourly rate lives on an open HOURLY
@@ -124,6 +126,7 @@ describe('POST /payroll/runs', () => {
     expect(item.federalWithholding).toBe(0);
     expect(item.fica).toBeCloseTo(6.2, 2);
     expect(item.medicare).toBeCloseTo(1.45, 2);
+    // KY's flat 4% (no guessed fallback any more).
     expect(item.stateWithholding).toBeCloseTo(4, 2);
     const totalTaxItem = item.federalWithholding + item.fica + item.medicare + item.stateWithholding;
     expect(item.netPay).toBeCloseTo(100 - totalTaxItem, 2);
@@ -143,6 +146,8 @@ describe('POST /payroll/runs', () => {
   it('uses default rate when no shifts have one', async () => {
     const client = await createClient();
     const associate = await createAssociate();
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,
@@ -306,6 +311,8 @@ describe('GET /payroll/runs', () => {
   it('ASSOCIATE cannot create runs (process:payroll required)', async () => {
     await seedApprovedPeriod();
     const associate = await createAssociate({ firstName: 'Pat', lastName: 'X' });
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
     const { user: assocUser } = await createUser({
       role: 'ASSOCIATE',
       email: associate.email,
@@ -332,6 +339,8 @@ describe('GET /payroll/me/items', () => {
 
     // Another associate with their own approved entry
     const other = await createAssociate();
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: other.id }, data: { state: 'FL' } });
     await prisma.timeEntry.create({
       data: {
         associateId: other.id,

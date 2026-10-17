@@ -27,6 +27,7 @@ import { getLadder, KIND_LABELS, type DisciplineKind } from '@/lib/discipline118
 import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseRow } from '@/lib/hrCases123Api';
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
 import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab } from './PeopleDirectory';
+import { PromoteDialog } from './PromoteDialog';
 
 /**
  * One person's record (UX upgrade, 2026-10-16 — Rippling's one-record
@@ -51,6 +52,7 @@ export function PersonRecord() {
   const term = useTerm();
   const { can, user } = useAuth();
   const [textOpen, setTextOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const { moduleOn } = useTenant();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -249,6 +251,20 @@ export function PersonRecord() {
           <Button asChild variant="outline" size="sm">
             <Link to={`/org?tab=people&associateId=${a.id}`}>Edit org assignment</Link>
           </Button>
+          {can('manage:comp') && (
+            <Button variant="outline" size="sm" onClick={() => setPromoteOpen(true)}>
+              Promote
+            </Button>
+          )}
+          {promoteOpen && (
+            <PromoteDialog
+              associate={{ id: a.id, firstName: a.firstName, lastName: a.lastName }}
+              currentAmount={a.payAmount ? Number(a.payAmount) : null}
+              currentPayType={a.payType === 'SALARY' ? 'SALARY' : a.payType === 'HOURLY' ? 'HOURLY' : null}
+              open={promoteOpen}
+              onOpenChange={setPromoteOpen}
+            />
+          )}
         </>
       }
       summary={

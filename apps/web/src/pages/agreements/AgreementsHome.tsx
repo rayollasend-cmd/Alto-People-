@@ -46,6 +46,8 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
+import { useSearchParams } from 'react-router-dom';
+import { MyPolicies } from './MyPolicies';
 
 // Domain-only codes the shared vocabulary doesn't carry: PENDING_SIGNATURE
 // awaits the associate's signature (amber), SIGNED is terminal-good, and a
@@ -123,7 +125,9 @@ export function AgreementsHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
-  const [tab, setTab] = useState<'all' | 'mine'>('mine');
+  // ?tab=policies — the Inbox's "Policies to sign" lands here.
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<'all' | 'mine' | 'policies'>(params.get('tab') === 'policies' ? 'policies' : 'mine');
 
   const [statusFilter, setStatusFilter] = useState<AgreementStatus | 'ALL'>(
     'PENDING_SIGNATURE',
@@ -177,6 +181,7 @@ export function AgreementsHome() {
           onChange={(v) => setTab(v)}
           options={[
             { value: 'mine' as const, label: t('agr.tab.mine') },
+            ...(user?.associateId ? [{ value: 'policies' as const, label: t('agr.tab.policies') }] : []),
             ...(canManage ? [{ value: 'all' as const, label: 'All' }] : []),
           ]}
         />
@@ -203,7 +208,9 @@ export function AgreementsHome() {
         )}
       </div>
 
-      {tab === 'mine' ? (
+      {tab === 'policies' ? (
+        <MyPolicies />
+      ) : tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
             {loadError ? (

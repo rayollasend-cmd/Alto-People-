@@ -186,7 +186,12 @@ export async function unlinkIdentity(db: Db, tenantId: string, userId: string, c
 
 /* ---------------------------------------------------- SSO required (d4) */
 
-/** Password sign-in refused: the person is staff (not an associate) in a tenant that requires its SSO. */
+/**
+ * Password sign-in refused: the person is staff (not an associate) in a tenant
+ * that requires its SSO. Access pack: a break-glass owner is not exempt here —
+ * the login route lets them through only with a second factor
+ * (lib/breakGlass.breakGlassVerdict).
+ */
 export async function ssoRequiredFor(db: Db, user: { role: string; tenantId: string | null }): Promise<boolean> {
   if (user.role === 'ASSOCIATE') return false;
   const n = await db.identityConnection.count({ where: { tenantId: user.tenantId ?? ALTO_TENANT_ID, enabled: true, ssoRequiredForStaff: true } });

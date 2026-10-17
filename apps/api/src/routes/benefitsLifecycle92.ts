@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { decryptString } from '../lib/crypto.js';
+import { employerFor } from '../lib/employment.js';
+import { hash1095cPdf, render1095cPdf, type F1095cMonth } from '../lib/f1095cPdf.js';
+import { buildAcaAirXml, type AirEmployee } from '../lib/acaAir.js';
 
 /**
  * Phase 92 — Benefits lifecycle: open enrollment, QLE, COBRA, ACA.
@@ -411,4 +416,160 @@ benefitsLifecycle92Router.get('/aca/1095c', VIEW, async (req, res) => {
     };
   }
   res.json({ year, employees: Array.from(byAssociate.values()) });
+});
+
+/* ===== ACA — Form 1095-C / 1094-C ======================================= */
+
+const YearQuery = z.preprocess((v) => Number(v), z.number().int().min(2014).max(2100));
+
+/** The SSN behind a W-4, or null when there is none or the key rotated. */
+function readSsn(blob: Uint8Array | null): string | null {
+  if (!blob) return null;
+  try {
+    return decryptString(blob);
+  } catch {
+    return null;
+  }
+}
+
+async function acaMonthsByAssociate(year: number) {
+  const rows = await prisma.acaMonth.findMany({
+    take: 5000,
+    where: { year },
+    orderBy: [{ associateId: 'asc' }, { month: 'asc' }],
+  });
+  const by = new Map<string, Array<F1095cMonth | null>>();
+  for (const r of rows) {
+    const arr = by.get(r.associateId) ?? Array<F1095cMonth | null>(12).fill(null);
+    arr[r.month - 1] = { month: r.month, offerOfCoverage: r.offerOfCoverage, lowestPremiumCents: r.lowestPremiumCents, safeHarbor: r.safeHarbor, isFullTime: r.isFullTime };
+    by.set(r.associateId, arr);
+  }
+  return by;
+}
+
+/**
+ * POST /aca/1095c/generate { year } — one F1095C TaxForm per employee with
+ * ACA months on file (skips anyone already on file for the year), and the
+ * F1094C transmittal with the counts. Drafts; filing marks them with the
+ * IRS acknowledgment.
+ */
+benefitsLifecycle92Router.post('/aca/1095c/generate', MANAGE, async (req, res) => {
+  const year = YearQuery.parse(req.body?.year);
+  const months = await acaMonthsByAssociate(year);
+  const existing = await prisma.taxForm.findMany({
+    where: { kind: 'F1095C', taxYear: year, status: { not: 'VOIDED' } },
+    select: { associateId: true },
+  });
+  const have = new Set(existing.map((e) => e.associateId));
+  let created = 0;
+  let skipped = 0;
+  for (const [associateId, m] of months) {
+    if (have.has(associateId)) {
+      skipped += 1;
+      continue;
+    }
+    const employer = await employerFor(prisma, associateId, new Date(Date.UTC(year, 11, 31)));
+    await prisma.taxForm.create({
+      data: {
+        kind: 'F1095C',
+        taxYear: year,
+        associateId,
+        ein: employer.ein,
+        amounts: { months: m } as unknown as Prisma.InputJsonValue,
+        status: 'DRAFT',
+      },
+    });
+    created += 1;
+  }
+  const fullTimeByMonth = Array(12).fill(0) as number[];
+  const totalByMonth = Array(12).fill(0) as number[];
+  for (const m of months.values()) {
+    m.forEach((x, i) => {
+      if (x) totalByMonth[i] += 1;
+      if (x?.isFullTime) fullTimeByMonth[i] += 1;
+    });
+  }
+  const transmittal = await prisma.taxForm.findFirst({ where: { kind: 'F1094C', taxYear: year, status: { not: 'VOIDED' } } });
+  if (!transmittal) {
+    await prisma.taxForm.create({
+      data: { kind: 'F1094C', taxYear: year, amounts: { forms: months.size, fullTimeByMonth, totalByMonth } as unknown as Prisma.InputJsonValue, status: 'DRAFT' },
+    });
+  } else {
+    await prisma.taxForm.update({
+      where: { id: transmittal.id },
+      data: { amounts: { forms: months.size, fullTimeByMonth, totalByMonth } as unknown as Prisma.InputJsonValue },
+    });
+  }
+  res.json({ year, created, skipped, employees: months.size });
+});
+
+/** GET /aca/1095c/:formId/pdf — the employee's copy. */
+benefitsLifecycle92Router.get('/aca/1095c/:formId/pdf', VIEW, async (req, res) => {
+  const form = await prisma.taxForm.findUnique({
+    where: { id: z.string().uuid().parse(req.params.formId) },
+    include: { associate: { select: { id: true, firstName: true, lastName: true, addressLine1: true, city: true, state: true, zip: true, w4Submission: { select: { ssnEncrypted: true } } } } },
+  });
+  if (!form || form.kind !== 'F1095C' || !form.associate) throw new HttpError(404, 'not_found', 'Form not found.');
+  const employer = await employerFor(prisma, form.associate.id, new Date(Date.UTC(form.taxYear, 11, 31)));
+  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { contactPhone: true } });
+  const ssn = readSsn(form.associate.w4Submission?.ssnEncrypted ?? null);
+  const months = ((form.amounts as { months?: Array<F1095cMonth | null> }).months ?? Array(12).fill(null)) as Array<F1095cMonth | null>;
+  const pdf = await render1095cPdf({
+    taxYear: form.taxYear,
+    corrected: form.status === 'AMENDED',
+    employee: { firstName: form.associate.firstName, lastName: form.associate.lastName, ssn, addressLine1: form.associate.addressLine1, city: form.associate.city, state: form.associate.state, zip: form.associate.zip },
+    employer: { name: employer.legalName, ein: employer.ein, addressLine1: employer.addressLine1, city: employer.city, state: employer.state, zip: employer.zip, contactPhone: profile?.contactPhone ?? null },
+    months,
+    meta: { formId: form.id, generatedAt: form.createdAt.toISOString() },
+  });
+  const hash = hash1095cPdf(pdf);
+  if (!form.pdfHash) await prisma.taxForm.update({ where: { id: form.id }, data: { pdfHash: hash } });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="1095-C-${form.taxYear}-${form.associate.lastName}.pdf"`);
+  res.send(pdf);
+});
+
+/**
+ * GET /aca/air.xml?year= — the 1094-C/1095-C AIR transmission for the
+ * year, built from the generated forms. Transmission is the filing
+ * partner's (or the employer's TCC) through the IRS AIR channel.
+ */
+benefitsLifecycle92Router.get('/aca/air.xml', MANAGE, async (req, res) => {
+  const year = YearQuery.parse(req.query.year);
+  const forms = await prisma.taxForm.findMany({
+    where: { kind: 'F1095C', taxYear: year, status: { not: 'VOIDED' } },
+    include: { associate: { select: { id: true, firstName: true, lastName: true, dob: true, addressLine1: true, city: true, state: true, zip: true, w4Submission: { select: { ssnEncrypted: true } } } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (forms.length === 0) throw new HttpError(409, 'no_forms', `Generate the ${year} 1095-C forms first.`);
+  const transmittal = await prisma.taxForm.findFirst({ where: { kind: 'F1094C', taxYear: year, status: { not: 'VOIDED' } } });
+  const counts = (transmittal?.amounts ?? {}) as { fullTimeByMonth?: number[]; totalByMonth?: number[] };
+  const employer = await employerFor(prisma, forms[0].associate!.id, new Date(Date.UTC(year, 11, 31)));
+  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { contactName: true, contactPhone: true } });
+  const employees: AirEmployee[] = forms.map((f, i) => {
+    const ssn = readSsn(f.associate!.w4Submission?.ssnEncrypted ?? null);
+    return {
+      recordId: i + 1,
+      firstName: f.associate!.firstName,
+      lastName: f.associate!.lastName,
+      ssn,
+      dob: f.associate!.dob ? f.associate!.dob.toISOString().slice(0, 10) : null,
+      addressLine1: f.associate!.addressLine1,
+      city: f.associate!.city,
+      state: f.associate!.state,
+      zip: f.associate!.zip,
+      months: ((f.amounts as { months?: Array<F1095cMonth | null> }).months ?? Array(12).fill(null)) as Array<F1095cMonth | null>,
+    };
+  });
+  const xml = buildAcaAirXml({
+    taxYear: year,
+    employer: { name: employer.legalName, ein: employer.ein, addressLine1: employer.addressLine1, city: employer.city, state: employer.state, zip: employer.zip, contactName: profile?.contactName ?? null, contactPhone: profile?.contactPhone ?? null },
+    employees,
+    fullTimeByMonth: counts.fullTimeByMonth ?? Array(12).fill(0),
+    totalByMonth: counts.totalByMonth ?? Array(12).fill(forms.length),
+    generatedAt: new Date(),
+  });
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="1094C-1095C-${year}-AIR.xml"`);
+  res.send(xml);
 });

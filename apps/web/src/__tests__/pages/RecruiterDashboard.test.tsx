@@ -10,6 +10,7 @@ vi.mock('@/lib/onboardingApi', () => ({ resendInvite: vi.fn(async () => ({ invit
 // Supplements with their own data; not this page's subject.
 vi.mock('@/components/RoleDecisionQueue', () => ({ RoleDecisionQueue: () => null }));
 vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => null }));
+vi.mock('@/pages/recruiting/RecruiterCalendarFeed', () => ({ RecruiterCalendarFeed: () => null }));
 vi.mock('@/lib/auth', async (orig) => ({
   ...(await orig<typeof import('@/lib/auth')>()),
   useAuth: () => ({
@@ -155,6 +156,24 @@ describe('<RecruiterDashboard>', () => {
     expect(screen.getByText(/— Screening → Interview/)).toBeInTheDocument();
     expect(screen.queryByText(/net paid/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/all systems nominal/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the requisitions behind the pipeline, and which still wait on approval', async () => {
+    vi.mocked(getRecruiterHome).mockResolvedValue({
+      ...FULL,
+      requisitions: {
+        total: 2,
+        byStatus: { PLANNED: 1, OPEN: 1 },
+        items: [
+          { id: id(51), code: 'REQ-1', title: 'Cashier', clientName: 'Walmart', status: 'PLANNED', fteAuthorized: 2, targetStartDate: '2026-11-02' },
+          { id: id(52), code: 'REQ-2', title: 'Stocker', clientName: null, status: 'OPEN', fteAuthorized: 1, targetStartDate: null },
+        ],
+      },
+    });
+    renderPage();
+    expect(await screen.findByText('Awaiting approval')).toBeInTheDocument();
+    expect(screen.getByText('Approved — hiring')).toBeInTheDocument();
+    expect(screen.getByText(/1 requisition still waiting on approval/)).toBeInTheDocument();
   });
 
   it('says plainly when nothing is waiting', async () => {

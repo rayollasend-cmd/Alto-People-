@@ -774,9 +774,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           // Mail-merge letter templates generate the documents that land in
           // this vault; the /templates route is gated on view:hr-admin.
           can('view:hr-admin') ? (
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/templates">Document templates</Link>
-            </Button>
+            <>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/documents?tab=letters">Verification letters</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/templates">Document templates</Link>
+              </Button>
+            </>
           ) : undefined
         }
     >

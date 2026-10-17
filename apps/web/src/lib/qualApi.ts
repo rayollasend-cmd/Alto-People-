@@ -28,6 +28,10 @@ export interface OpenShiftListItem {
   startsAt: string;
   endsAt: string;
   location: string | null;
+  locationId?: string | null;
+  locationName?: string | null;
+  /** A site they have not worked at — the feed says so before they tap. */
+  newForYou?: boolean;
   payRate: string | null;
   requirements: { id: string; code: string; name: string }[];
   myPendingClaim: string | null;

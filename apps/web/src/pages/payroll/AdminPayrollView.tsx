@@ -104,6 +104,7 @@ import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { performWithUndo } from '@/lib/undoToast';
 import { pickOne } from '@/lib/validationCopy';
 import { FilterChip } from '@/components/ui/FilterBar';
@@ -112,12 +113,12 @@ import { FilterChip } from '@/components/ui/FilterBar';
 const fmtPeriod = (startYmd: string, endYmd: string) =>
   `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
-const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: string }> = [
-  { value: 'DRAFT', label: 'Draft' },
-  { value: 'FINALIZED', label: 'Finalized' },
-  { value: 'DISBURSED', label: 'Disbursed' },
-  { value: 'CANCELLED', label: 'Cancelled' },
-  { value: 'ALL', label: 'All' },
+const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: MessageKey }> = [
+  { value: 'DRAFT', label: 'payrollHome.statusDraft' },
+  { value: 'FINALIZED', label: 'payrollHome.statusFinalized' },
+  { value: 'DISBURSED', label: 'payrollHome.statusDisbursed' },
+  { value: 'CANCELLED', label: 'payrollHome.statusCancelled' },
+  { value: 'ALL', label: 'payrollHome.statusAll' },
 ];
 
 // FINALIZED is domain-only (not in the shared vocabulary): the run is
@@ -188,6 +189,7 @@ function expectedVoidConfirmation(periodStartYmd: string, periodEndYmd: string):
 }
 
 export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps) {
+  const { t } = useI18n();
   const term = useTerm();
   // The Finance queue's open count rides on the header link.
   const financialChanges = useQuery({
@@ -639,12 +641,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     // The pay-cycle hero is the summary; the tabs are the page's lists.
     <ListTemplate
-        title="Payroll"
-        subtitle={
-          canProcess
-            ? 'Aggregate approved time, review paystubs, and disburse.'
-            : 'Read-only view of payroll runs.'
-        }
+        title={t('payrollHome.title')}
+        subtitle={canProcess ? t('payrollHome.subProcess') : t('payrollHome.subReadOnly')}
         primaryAction={
           canProcess ? (
             // One primary, one desk item while it carries work, and the
@@ -655,16 +653,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 <Button asChild variant="outline" size="sm">
                   <Link to="/payroll/financial-changes">
                     <Landmark className="mr-1 h-4 w-4" />
-                    Financial changes
+                    {t('payrollHome.financialChanges')}
                     <span className="ml-1.5 rounded-full bg-alert/20 px-1.5 text-xs font-semibold text-alert">{openChanges}</span>
                   </Link>
                 </Button>
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" aria-label="More payroll pages">
+                  <Button variant="ghost" size="sm" aria-label={t('payrollHome.morePages')}>
                     <MoreHorizontal className="mr-1 h-4 w-4" />
-                    More
+                    {t('payrollHome.more')}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -672,44 +670,44 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <DropdownMenuItem asChild>
                       <Link to="/payroll/financial-changes">
                         <Landmark className="mr-2 h-4 w-4" />
-                        Financial changes
+                        {t('payrollHome.financialChanges')}
                       </Link>
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/readiness">
                       <Users className="mr-2 h-4 w-4" />
-                      Readiness
+                      {t('payrollHome.readiness')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/ytd">
                       <FileText className="mr-2 h-4 w-4" />
-                      Year-to-date report
+                      {t('payrollHome.ytd')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/tax">
                       <FileText className="mr-2 h-4 w-4" />
-                      Tax forms
+                      {t('payrollHome.taxForms')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/compliance">
                       <AlertTriangle className="mr-2 h-4 w-4" />
-                      Compliance
+                      {t('payrollHome.compliance')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/labor-rules">
                       <Scale className="mr-2 h-4 w-4" />
-                      Labor rules
+                      {t('payrollHome.laborRules')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/payroll/year-end-close">
                       <CheckCircle2 className="mr-2 h-4 w-4" />
-                      Year-end close
+                      {t('payrollHome.yearEndClose')}
                     </Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -721,7 +719,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 }}
               >
                 <Plus className="h-4 w-4" />
-                New run
+                {t('payrollHome.newRun')}
               </Button>
             </div>
           ) : undefined
@@ -1033,6 +1031,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 </DrawerBody>
                 {canProcess && (
                   <DrawerFooter className="flex-wrap justify-start">
+                    {selected.status !== 'CANCELLED' && (
+                      <Button asChild variant="secondary">
+                        <Link to={`/payroll/runs/${selected.id}/close`}>Guided close</Link>
+                      </Button>
+                    )}
                     {selected.status === 'DRAFT' && (
                       <Button onClick={() => setConfirmFinalize(true)} disabled={busy}>
                         <CheckCircle2 className="h-4 w-4" />
@@ -1149,9 +1152,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       >
       <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'schedules' | 'garnishments')} className="mb-5">
         <TabsList>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
-          <TabsTrigger value="schedules">Pay schedules</TabsTrigger>
-          <TabsTrigger value="garnishments">Garnishments</TabsTrigger>
+          <TabsTrigger value="runs">{t('payrollHome.tabRuns')}</TabsTrigger>
+          <TabsTrigger value="schedules">{t('payrollHome.tabSchedules')}</TabsTrigger>
+          <TabsTrigger value="garnishments">{t('payrollHome.tabGarnishments')}</TabsTrigger>
         </TabsList>
         <TabsContent value="schedules" className="mt-5">
           <PaySchedulesView canProcess={canProcess} />
@@ -1172,7 +1175,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             onClick={() => setFilter(f.value)}
             className="shrink-0 snap-start sm:px-3 sm:text-sm"
           >
-            {f.label}
+            {t(f.label)}
           </FilterChip>
         ))}
       </div>
@@ -1227,7 +1230,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           opens the detail drawer; columns mirror QBO's Run history list. */}
       <Card>
         <CardHeader>
-          <CardTitle>Runs</CardTitle>
+          <CardTitle>{t('payrollHome.tabRuns')}</CardTitle>
         </CardHeader>
         <CardContent>
           {!runs && (
@@ -1243,24 +1246,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               icon={FileText}
               title={
                 filter === 'ALL'
-                  ? 'No payroll runs yet'
-                  : `No ${filter.toLowerCase()} runs`
+                  ? t('payrollHome.noRuns')
+                  : t('payrollHome.noRunsFiltered', { status: t(STATUS_FILTERS.find((f) => f.value === filter)!.label).toLowerCase() })
               }
-              description={
-                filter === 'ALL'
-                  ? 'Run payroll to create your first paystub batch. New here? Check readiness first to see who still needs a W-4, taxState, or pay schedule.'
-                  : 'Switch to a different status, or create a new run.'
-              }
+              description={filter === 'ALL' ? t('payrollHome.noRunsBody') : t('payrollHome.noRunsFilteredBody')}
               action={
                 canProcess ? (
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <Button onClick={() => setShowCreate(true)}>
                       <Plus className="h-4 w-4" />
-                      Run payroll
+                      {t('payrollHome.runPayroll')}
                     </Button>
                     {filter === 'ALL' && (
                       <Button variant="outline" asChild>
-                        <Link to="/payroll/readiness">Check readiness</Link>
+                        <Link to="/payroll/readiness">{t('payrollHome.checkReadiness')}</Link>
                       </Button>
                     )}
                   </div>
@@ -1440,7 +1439,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       <Dialog open={confirmFinalize} onOpenChange={(v) => !busy && setConfirmFinalize(v)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Finalize this run?</DialogTitle>
+            <DialogTitle>{t('payrollHome.finalizeRun')}</DialogTitle>
           </DialogHeader>
           {selected && (
             <div className="space-y-3 text-sm text-silver">

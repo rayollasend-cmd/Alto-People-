@@ -92,7 +92,7 @@ describe('job profiles belong to a client', () => {
     const w = await seed();
     const res = await w.sup
       .post('/jobs')
-      .send({ clientId: w.theirs.id, name: 'Planted', payRate: 99 });
+      .send({ clientId: w.theirs.id, name: 'Planted' });
     expect(res.status).toBe(404);
     expect(await prisma.job.count({ where: { clientId: w.theirs.id, name: 'Planted' } })).toBe(0);
   });
@@ -101,9 +101,11 @@ describe('job profiles belong to a client', () => {
     const w = await seed();
     const created = await w.sup
       .post('/jobs')
-      .send({ clientId: w.mine.id, name: 'Day stocker', payRate: 18 });
+      .send({ clientId: w.mine.id, name: 'Day stocker' });
     expect(created.status).toBe(201);
-    expect((await w.sup.patch(`/jobs/${created.body.id}`).send({ payRate: 18.5 })).status).toBe(200);
+    expect((await w.sup.patch(`/jobs/${created.body.id}`).send({ name: 'Day stocker (dock)' })).status).toBe(200);
+    // Money on a job is Finance's and HR's: a rate from the floor is refused.
+    expect((await w.sup.patch(`/jobs/${created.body.id}`).send({ payRate: 18.5 })).status).toBe(403);
     expect((await w.sup.delete(`/jobs/${created.body.id}`)).status).toBe(204);
   });
 

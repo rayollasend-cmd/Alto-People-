@@ -14,6 +14,8 @@ src/pages/transport/TripMap.tsx
 src/pages/documents/AssociateDocumentsView.tsx
 src/pages/me/MeHome.tsx
 src/pages/me/MyDiscipline.tsx
+src/pages/me/MyWallet.tsx
+src/components/home/AssociateNeedsYou.tsx
 src/pages/learning/LearningHome.tsx
 src/pages/kb/KbHome.tsx
 src/pages/communications/AssociateInboxView.tsx
@@ -59,3 +61,6 @@ src/components/MobileNav.tsx
 src/components/ClockStrip.tsx
 src/components/CelebrationRibbon.tsx
 src/components/BottomTabBar.tsx
+src/pages/agreements/MyPolicies.tsx
+src/pages/documents/LettersSection.tsx
+src/components/EarnedWageCard.tsx

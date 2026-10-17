@@ -51,6 +51,61 @@ function isBounded(user: SessionUser): boolean {
   return user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR';
 }
 
+/* ------------------------------------------------ internal roles, narrowed */
+
+/**
+ * Access pack — an INTERNAL role (HR admin, Ops manager, Workforce manager,
+ * Finance…) narrowed to named sites and/or regions: a regional Ops lead
+ * sees their region's stores, not the whole organization. The binding is
+ * on the account (User.scopeSiteIds / scopeRegionIds, with a named
+ * approver); every list helper below clamps through it, and a write route
+ * that loads its row through the same helper fails to a 404 outside it.
+ *
+ * Empty binding = the whole tenant, exactly as before; bounded roles and
+ * associates are never widened by it (their own clamp runs first).
+ */
+export function internalSites(user: SessionUser): Prisma.SiteWhereInput | null {
+  if (user.role === 'ASSOCIATE' || isBounded(user)) return null;
+  const sites = user.scopeSiteIds ?? [];
+  const regions = user.scopeRegionIds ?? [];
+  if (sites.length === 0 && regions.length === 0) return null;
+  const or: Prisma.SiteWhereInput[] = [];
+  if (sites.length) or.push({ id: { in: sites } });
+  if (regions.length) or.push({ regionId: { in: regions } });
+  return { deletedAt: null, OR: or };
+}
+
+/** True when the caller's reach is narrowed to sites/regions. */
+export function isInternallyScoped(user: SessionUser): boolean {
+  return internalSites(user) !== null;
+}
+
+/** People placed at the caller's sites (open assignment there). */
+function atInternalSites(sites: Prisma.SiteWhereInput): Prisma.AssociateWhereInput {
+  return { assignments: { some: { endedAt: null, location: { is: sites } } } };
+}
+
+/**
+ * Is this site inside the caller's reach? Always true for an unscoped
+ * caller; a scoped one must name a site under their binding. Use on writes
+ * that create a record at a site (a shift, a time entry) — the list
+ * helpers cover reads and the writes that load through them.
+ */
+export async function siteInScope(tx: Tx, user: SessionUser, locationId: string | null | undefined): Promise<boolean> {
+  const sites = internalSites(user);
+  if (!sites) return true;
+  if (!locationId) return false;
+  const hit = await tx.site.findFirst({ where: { id: locationId, ...sites }, select: { id: true } });
+  return !!hit;
+}
+
+/** 404 (not 403) when the site is outside the caller's reach, so nothing is revealed. */
+export async function assertSiteInScope(tx: Tx, user: SessionUser, locationId: string | null | undefined): Promise<void> {
+  if (!(await siteInScope(tx, user, locationId))) {
+    throw new HttpError(404, 'site_not_found', 'That site is not within your scope.');
+  }
+}
+
 /**
  * Centralized multi-tenant + role scoping for Prisma queries.
  *
@@ -69,6 +124,8 @@ export function scopeClients(user: SessionUser): Prisma.ClientWhereInput {
     // A site-only account has no client to list.
     return b?.clientId ? { ...base, tenantId: b.tenantId, id: b.clientId } : { ...base, id: NO_CLIENT };
   }
+  const sites = internalSites(user);
+  if (sites) return { ...base, locations: { some: sites } };
   return base;
 }
 
@@ -84,6 +141,11 @@ export function scopeApplications(
     if (!b) return { ...base, clientId: NO_CLIENT };
     if (b.clientId) return { ...base, tenantId: b.tenantId, clientId: b.clientId };
     return { ...base, tenantId: b.tenantId, location: { is: siteFilter(b) } };
+  }
+  const sites = internalSites(user);
+  if (sites) {
+    // The application's own site, else its client has a site in reach.
+    return { ...base, OR: [{ location: { is: sites } }, { client: { is: { locations: { some: sites } } } }] };
   }
   return base;
 }
@@ -126,6 +188,8 @@ export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInp
     // A site-only account sees the documents of the people at its site.
     return { ...base, tenantId: b.tenantId, associate: { is: atSites(b) } };
   }
+  const sites = internalSites(user);
+  if (sites) return { ...base, associate: { is: atInternalSites(sites) } };
   return base;
 }
 
@@ -161,6 +225,8 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
     }
     return { tenantId: b.tenantId, locationRel: { is: siteFilter(b) } };
   }
+  const sites = internalSites(user);
+  if (sites) return { locationRel: { is: sites } };
   return {};
 }
 
@@ -273,6 +339,8 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
     if (user.role === 'CLIENT_PORTAL' && b.locationId) return { tenantId: b.tenantId, ...atStore(b.locationId) };
     return { tenantId: b.tenantId, ...associatesOfClient(b.clientId) };
   }
+  const sites = internalSites(user);
+  if (sites) return atInternalSites(sites);
   return {};
 }
 
@@ -323,6 +391,8 @@ export function scopeTimeOffRequests(
     if (!b.clientId) return { associate: { is: { tenantId: b.tenantId, ...atSites(b) } } };
     return { associate: { is: { tenantId: b.tenantId, ...associatesOfClient(b.clientId) } } };
   }
+  const sites = internalSites(user);
+  if (sites) return { associate: { is: atInternalSites(sites) } };
   return {};
 }
 
@@ -343,6 +413,8 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
     }
     return { tenantId: b.tenantId, ...atSite(siteFilter(b)) };
   }
+  const sites = internalSites(user);
+  if (sites) return { OR: [{ location: { is: sites } }, { shift: { is: { locationRel: { is: sites } } } }] };
   return {};
 }
 

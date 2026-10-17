@@ -264,6 +264,72 @@ function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
   );
 }
 
+/**
+ * Access pack: what changed between two built-in roles — the capabilities
+ * one holds and the other does not, side by side, so "Recruiter and
+ * Workforce Manager are the same" is answered by the matrix, not folklore.
+ */
+function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
+  const roleLabel = useRoleLabel();
+  const systems = roles.filter((r) => r.system);
+  const [a, setA] = useState<string>(systems.find((r) => r.archetype === 'INTERNAL_RECRUITER')?.id ?? systems[0]?.id ?? '');
+  const [b, setB] = useState<string>(systems.find((r) => r.archetype === 'WORKFORCE_MANAGER')?.id ?? systems[1]?.id ?? '');
+  const ra = systems.find((r) => r.id === a);
+  const rb = systems.find((r) => r.id === b);
+  if (!ra || !rb) return null;
+  const sa = new Set(ra.capabilities);
+  const sb = new Set(rb.capabilities);
+  const onlyA = ra.capabilities.filter((c) => !sb.has(c)).sort();
+  const onlyB = rb.capabilities.filter((c) => !sa.has(c)).sort();
+  const shared = ra.capabilities.filter((c) => sb.has(c)).length;
+  const pick = (v: string, set: (x: string) => void) => (
+    <Select value={v} onChange={(e) => set(e.target.value)} className="w-56">
+      {systems.map((r) => (
+        <option key={r.id} value={r.id}>{roleLabel(r.archetype)}</option>
+      ))}
+    </Select>
+  );
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-ink">What changed between built-ins</h3>
+            <p className="text-xs text-ink-muted">Two roles side by side: what each holds that the other does not. {shared} in common.</p>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {pick(a, setA)}
+            <span className="text-xs text-ink-muted">vs</span>
+            {pick(b, setB)}
+          </div>
+        </div>
+        {onlyA.length === 0 && onlyB.length === 0 ? (
+          <p className="text-sm text-ink-muted">These two roles hold exactly the same capabilities.</p>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {[{ r: ra, list: onlyA }, { r: rb, list: onlyB }].map(({ r, list }) => (
+              <div key={r.id}>
+                <div className="text-xs uppercase tracking-wide text-ink-muted">Only {roleLabel(r.archetype)} ({list.length})</div>
+                {list.length === 0 ? (
+                  <p className="mt-1 text-sm text-ink-muted">Holds no capability the other lacks.</p>
+                ) : (
+                  <ul className="mt-1 flex flex-wrap gap-1">
+                    {list.map((c) => (
+                      <li key={c}>
+                        <Badge variant="info" size="sm"><code>{c}</code></Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RolesMatrix() {
   const { can } = useAuth();
   const canManage = can('manage:org');
@@ -378,6 +444,8 @@ export function RolesMatrix() {
           )}
         </CardContent>
       </Card>
+
+      <CompareBuiltIns roles={roles} />
 
       {canManage && <ScimGroups roles={roles} />}
 

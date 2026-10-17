@@ -20,12 +20,14 @@ import {
   isStubMode,
   listQboAccounts,
   postPayrollJournalEntry,
+  expenseSplitsForItems,
   saveConnection,
   syncAssociateToQbo,
   verifyState,
   connectionNeedsReconnect,
 } from '../lib/quickbooks.js';
 import { recordPayrollEvent } from '../lib/audit.js';
+import { z } from 'zod';
 
 export const quickbooksRouter = Router();
 
@@ -67,6 +69,7 @@ quickbooksRouter.get('/status', VIEW, async (req, res, next) => {
       accountBenefitsPayable: conn?.accountBenefitsPayable ?? null,
       accountNetPayPayable: conn?.accountNetPayPayable ?? null,
       jeMode: conn?.jeMode ?? 'AGGREGATE',
+      glByCostCenter: conn?.glByCostCenter ?? false,
     };
     res.json(body);
   } catch (err) {
@@ -215,7 +218,7 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
   try {
     const run = await prisma.payrollRun.findUnique({
       where: { id: req.params.runId },
-      include: { items: true },
+      include: { items: { include: { associate: { select: { costCenterId: true } } } } },
     });
     if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
     if (run.status === 'DRAFT') {
@@ -313,6 +316,8 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
           txnDate,
           memo: `Payroll ${periodLabel}`,
           ...totals,
+          // GL by cost center (lib/quickbooks expenseSplitsForItems).
+          expenseSplits: await expenseSplitsForItems(prisma, conn, run.items),
         });
         primaryJournalId = result.journalEntryId;
         await prisma.payrollRun.update({
@@ -351,6 +356,71 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
       if (err instanceof HttpError) throw err;
       throw new HttpError(502, 'qbo_post_failed', `QuickBooks rejected the post: ${msg}`);
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /quickbooks/cost-centers?clientId — GL by cost center: the switch,
+ * every cost center the client (and the org) has, and the expense account
+ * each one debits. PUT replaces the set.
+ */
+quickbooksRouter.get('/cost-centers', VIEW, async (req, res, next) => {
+  try {
+    const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : '';
+    if (!clientId) throw new HttpError(400, 'invalid_query', 'clientId is required');
+    const conn = await prisma.quickbooksConnection.findUnique({ where: { clientId }, include: { costCenterMappings: true } });
+    const costCenters = await prisma.costCenter.findMany({
+      where: { deletedAt: null, OR: [{ clientId }, { clientId: null }] },
+      orderBy: [{ code: 'asc' }],
+      select: { id: true, code: true, name: true, clientId: true, _count: { select: { associates: true } } },
+    });
+    const byCc = new Map((conn?.costCenterMappings ?? []).map((m) => [m.costCenterId, m]));
+    res.json({
+      connected: !!conn,
+      glByCostCenter: conn?.glByCostCenter ?? false,
+      costCenters: costCenters.map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        orgWide: c.clientId === null,
+        people: c._count.associates,
+        accountRef: byCc.get(c.id)?.accountRef ?? null,
+        accountName: byCc.get(c.id)?.accountName ?? null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CostCenterMappingInput = z.object({
+  clientId: z.string().uuid(),
+  glByCostCenter: z.boolean(),
+  mappings: z.array(z.object({ costCenterId: z.string().uuid(), accountRef: z.string().trim().min(1).max(64).nullable(), accountName: z.string().trim().max(120).nullable().optional() })).max(500),
+});
+
+quickbooksRouter.put('/cost-centers', MANAGE, async (req, res, next) => {
+  try {
+    const input = CostCenterMappingInput.parse(req.body ?? {});
+    const conn = await prisma.quickbooksConnection.findUnique({ where: { clientId: input.clientId }, select: { id: true } });
+    if (!conn) throw new HttpError(409, 'qbo_not_connected', 'Connect QuickBooks for this client first.');
+    await prisma.$transaction(async (tx) => {
+      await tx.quickbooksConnection.update({ where: { id: conn.id }, data: { glByCostCenter: input.glByCostCenter } });
+      for (const m of input.mappings) {
+        if (!m.accountRef) {
+          await tx.quickbooksCostCenterMapping.deleteMany({ where: { connectionId: conn.id, costCenterId: m.costCenterId } });
+          continue;
+        }
+        await tx.quickbooksCostCenterMapping.upsert({
+          where: { connectionId_costCenterId: { connectionId: conn.id, costCenterId: m.costCenterId } },
+          create: { connectionId: conn.id, costCenterId: m.costCenterId, accountRef: m.accountRef, accountName: m.accountName ?? null },
+          update: { accountRef: m.accountRef, accountName: m.accountName ?? null },
+        });
+      }
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

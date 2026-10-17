@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import {
   Activity,
+  Archive,
   Bot,
   Building2,
   CreditCard,
@@ -18,6 +19,7 @@ import {
   Users,
   ListTodo,
   Briefcase,
+  ClipboardCheck,
 } from 'lucide-react';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 import { useAuth, useTenant } from '@/lib/auth';
@@ -45,11 +47,14 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'org-units', label: 'Organizational tree', to: '/admin/org-units', icon: Network, section: 'Organization', description: 'Divisions, regions, business units and cost centers with their ledger codes.', show: can('view:org') },
       { key: 'regions', label: 'Regions', to: '/admin/regions', icon: Map, section: 'Organization', description: 'Which sites roll up to which region, and the accounts that run each one.', show: can('view:org') && tenant.modules.clientPortal },
       { key: 'employers', label: 'Employers of record', to: '/admin/employers', icon: Briefcase, section: 'Organization', description: 'Who legally employs each person: the name, EIN and address their forms print.', show: can('view:org') },
+      { key: 'document-retention', label: 'Document retention', to: '/admin/document-retention', icon: Archive, section: 'Organization', description: 'How long each kind of document is kept after a person leaves, and what the next sweep would purge.', show: can('view:hr-admin') },
       { key: 'branding', label: 'Branding & terminology', to: '/admin/branding', icon: Palette, section: 'Organization', description: 'Name, colour and logo on every email; the words the product uses for your people and places.', show: can('view:hr-admin') },
       // Access & trust
       { key: 'users', label: 'Users, roles & access', to: '/admin/users', icon: Users, section: 'Access & trust', description: 'Every account, its role and status; the permission matrix.', show: can('view:hr-admin') },
       { key: 'sign-in', label: 'Sign-in & provisioning', to: '/admin/sign-in', icon: KeyRound, section: 'Access & trust', description: 'Your identity provider, the email domains that lead to it, and SCIM.', show: can('manage:org') },
       { key: 'audit', label: 'Audit & integrity', to: '/audit', icon: ScrollText, section: 'Access & trust', description: 'Every event, searchable and exportable, on a chain you can verify.', show: can('view:audit') },
+      { key: 'approval-record', label: 'Approval record', to: '/audit/approvals', icon: ClipboardCheck, section: 'Access & trust', description: 'Every change that went to a second person: who asked, who decided, the before and after.', show: can('view:audit') || can('manage:org') || can('process:payroll') },
+      { key: 'access-certifications', label: 'Access certifications', to: '/admin/access-certifications', icon: ClipboardCheck, section: 'Access & trust', description: 'Every account reviewed by its manager on a campaign with a due date — keep, revoke or change, on the record.', show: can('manage:org') },
       { key: 'compliance-evidence', label: 'Security & compliance', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', description: 'Every control with its latest evidence, and the sign-offs a person owes.', show: can('view:org') },
       { key: 'trust', label: 'Trust Center', to: '/trust', icon: ShieldCheck, section: 'Access & trust', description: 'How the platform is run, with the evidence, and your own numbers.', show: can('manage:org') || can('view:executive') || can('view:audit') },
       // The agents themselves are a People page (/agents); this is their governance.

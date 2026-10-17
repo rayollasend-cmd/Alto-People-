@@ -147,3 +147,29 @@ export function denyTeamTimeOff(
     body: { note },
   });
 }
+
+/** The Manager's home beyond the approval queues (GET /team/home). */
+export interface TeamHomePerson {
+  associateId: string;
+  associateName: string;
+}
+export interface TeamHome {
+  due: {
+    reviews: Array<TeamHomePerson & { lastPeriodEnd: string | null; overdueDays: number }>;
+    oneOnOnes: Array<TeamHomePerson & { id: string; scheduledFor: string }>;
+    probations: Array<TeamHomePerson & { id: string; endDate: string }>;
+    rampMilestones: Array<TeamHomePerson & { id: string; planId: string; title: string; dueOn: string; status: string }>;
+    documents: Array<TeamHomePerson & { id: string; kind: string; expiresAt: string; expired: boolean }>;
+    credentials: Array<TeamHomePerson & { id: string; name: string; expiresAt: string; expired: boolean }>;
+    pips: Array<TeamHomePerson & { id: string; endDate: string }>;
+  };
+  today: {
+    shifts: Array<TeamHomePerson & { id: string; startsAt: string; endsAt: string; position: string; location: string | null }>;
+    onClock: Array<TeamHomePerson & { since: string }>;
+    out: Array<TeamHomePerson & { category: string; until: string }>;
+    celebrations: Array<TeamHomePerson & { kind: 'BIRTHDAY' | 'ANNIVERSARY'; years: number | null }>;
+  };
+  suggestions: Array<{ key: string; text: string; link: string; count: number }>;
+}
+
+export const getTeamHome = () => apiFetch<TeamHome>('/team/home');

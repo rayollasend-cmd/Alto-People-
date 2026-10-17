@@ -6,15 +6,17 @@
 //   - No primary payout method (WARNING; disbursement will fail)
 //   - Soft-deleted before / during the period (WARNING; usually a typo)
 //   - > 20 OT hours (INFO; either real overtime or a missed time edit)
-//   - State has no real SIT table (INFO; the 4% fallback is approximate)
+//   - State has no SIT table (BLOCKING; nothing would be withheld)
+//   - Retroactive pay owed from a back-dated rate change (INFO)
 //
 // Pure-ish like the aggregator: reads from the DB but writes nothing.
 // Reused by POST /payroll/exceptions and the GET /payroll/upcoming summary
 // so we have ONE source of truth for what counts as an exception.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { isStateTaxSupported } from './payrollTax.js';
+import { isStateTaxSupported, supportedStates } from './payrollTax.js';
 import { sumApprovedHours, splitWeeklyOvertime } from './payroll.js';
+import { computeRetroPay, summarizeRetro } from './retroPay.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -31,7 +33,8 @@ export type ExceptionKind =
   | 'OT_SPIKE'
   | 'UNSUPPORTED_STATE'
   | 'UNAPPROVED_TIME'
-  | 'MISSING_COMP_RECORD';
+  | 'MISSING_COMP_RECORD'
+  | 'RETRO_PAY';
 
 export type ExceptionSeverity = 'BLOCKING' | 'WARNING' | 'INFO';
 
@@ -49,9 +52,10 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   MISSING_BANK_ACCOUNT: 'WARNING',
   TERMINATED_IN_RUN: 'WARNING',
   OT_SPIKE: 'INFO',
-  UNSUPPORTED_STATE: 'INFO',
+  UNSUPPORTED_STATE: 'BLOCKING',
   UNAPPROVED_TIME: 'WARNING',
   MISSING_COMP_RECORD: 'WARNING',
+  RETRO_PAY: 'INFO',
 };
 
 export interface ExceptionsResult {
@@ -182,6 +186,8 @@ export async function computePayrollExceptions(
     }
 
     // 5. UNSUPPORTED_STATE — only for W-2; 1099 has no SIT to compute.
+    // BLOCKING: nothing would be withheld, so the run cannot finalize with
+    // this person in it until the state is covered (or configured).
     if (a.employmentType === 'W2_EMPLOYEE' && !isStateTaxSupported(a.state)) {
       exceptions.push({
         associateId,
@@ -189,11 +195,28 @@ export async function computePayrollExceptions(
         kind: 'UNSUPPORTED_STATE',
         severity: SEVERITY.UNSUPPORTED_STATE,
         message: a.state
-          ? `${a.state} is not in the bracketed/flat-rate tables — using a 4% fallback.`
-          : 'No state on file — using a 4% fallback for state withholding.',
-        detail: { state: a.state ?? null },
+          ? `State income tax is not supported for ${a.state} — no state tax would be withheld. Supported: ${supportedStates().join(', ')}. Add a configured rate in Payroll → Settings or move them to a covered state before this run finalizes.`
+          : `No work state on file — state income tax cannot be computed. Supported: ${supportedStates().join(', ')}.`,
+        detail: { state: a.state ?? null, supported: supportedStates() },
       });
     }
+  }
+
+  // 8. RETRO_PAY — a rate change dated into a period already paid: the
+  // delta lands on this run as a Retroactive pay line (lib/retroPay.ts).
+  const retro = await computeRetroPay(tx, { associateIds: [...byAssociate.keys()], asOf: periodEndExclusive });
+  for (const [associateId, cands] of retro) {
+    const a = byAssociate.get(associateId)?.[0]?.associate;
+    if (!a) continue;
+    const { amount, note } = summarizeRetro(cands);
+    exceptions.push({
+      associateId,
+      associateName: `${a.firstName} ${a.lastName}`.trim(),
+      kind: 'RETRO_PAY',
+      severity: SEVERITY.RETRO_PAY,
+      message: `$${amount.toFixed(2)} of retroactive pay will be added to this check — ${note.replace(/^Retroactive pay — /, '')}.`,
+      detail: { amount, pairs: cands.length, effectiveFrom: cands.map((c) => c.effectiveFrom).sort()[0] },
+    });
   }
 
   // 6. UNAPPROVED_TIME — clocked-out but unreviewed hours, per associate.

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, ClipboardCheck, ListTodo, Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
+import { ApprovalGateEditor, deciderOf } from './ApprovalGateEditor';
+import { finishWorkflowTask, listWorkflowTasks, type WorkflowTask } from '@/lib/approvalRequestsApi';
 import {
   createWorkflow,
   deleteWorkflow,
@@ -78,6 +81,7 @@ const ACTION_KINDS: WorkflowActionKind[] = [
   'ASSIGN_TASK',
   'CREATE_AUDIT_LOG',
   'WEBHOOK',
+  'REQUIRE_APPROVAL',
 ];
 
 const ACTION_KIND_LABELS: Record<WorkflowActionKind, string> = {
@@ -86,6 +90,7 @@ const ACTION_KIND_LABELS: Record<WorkflowActionKind, string> = {
   ASSIGN_TASK: 'Assign task',
   CREATE_AUDIT_LOG: 'Create audit log',
   WEBHOOK: 'Webhook',
+  REQUIRE_APPROVAL: 'Require approval',
 };
 
 const RUN_STATUSES: WorkflowRunSummary['status'][] = [
@@ -94,6 +99,7 @@ const RUN_STATUSES: WorkflowRunSummary['status'][] = [
   'COMPLETED',
   'FAILED',
   'CANCELLED',
+  'WAITING',
 ];
 
 const RUN_STATUS_LABELS: Record<string, string> = {
@@ -102,6 +108,8 @@ const RUN_STATUS_LABELS: Record<string, string> = {
   COMPLETED: 'Completed',
   FAILED: 'Failed',
   CANCELLED: 'Cancelled',
+  WAITING: 'Waiting on approval',
+  SKIPPED: 'Skipped',
 };
 
 /** Badge variant per run/step status — RUNNING is in-flight gold per the
@@ -117,6 +125,7 @@ function runStatusVariant(
     case 'RUNNING':
       return 'accent';
     case 'CANCELLED':
+    case 'SKIPPED':
       return 'default';
     default:
       return 'pending';
@@ -126,7 +135,16 @@ function runStatusVariant(
 export function WorkflowsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [tab, setTab] = useState<'definitions' | 'runs'>('definitions');
+  // ?tab=runs|tasks — the Inbox and a task's notification open the tasks; an approval gate opens the runs.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: 'definitions' | 'runs' | 'tasks' = tabParam === 'runs' || tabParam === 'tasks' ? tabParam : 'definitions';
+  const setTab = (next: 'definitions' | 'runs' | 'tasks') => {
+    const sp = new URLSearchParams(searchParams);
+    if (next === 'definitions') sp.delete('tab');
+    else sp.set('tab', next);
+    setSearchParams(sp, { replace: true });
+  };
   const [drawerTarget, setDrawerTarget] = useState<WorkflowDefinition | 'new' | null>(null);
   const drawerDirty = useRef(false);
   const [defSearch, setDefSearch] = useState('');
@@ -201,6 +219,10 @@ export function WorkflowsHome() {
           <TabsTrigger value="runs">
             <Zap className="h-3.5 w-3.5" />
             Run history
+          </TabsTrigger>
+          <TabsTrigger value="tasks">
+            <ListTodo className="h-3.5 w-3.5" />
+            Tasks
           </TabsTrigger>
         </TabsList>
 
@@ -290,6 +312,10 @@ export function WorkflowsHome() {
 
         <TabsContent value="runs">
           <RunsTab />
+        </TabsContent>
+
+        <TabsContent value="tasks">
+          <TasksTab />
         </TabsContent>
       </Tabs>
 
@@ -403,6 +429,20 @@ function RunsTab() {
           </Badge>
         ),
       },
+      {
+        key: 'waiting',
+        header: 'Waiting on',
+        accessor: (r) => r.waitingOn?.title ?? '',
+        searchable: true,
+        cell: (r) =>
+          r.status === 'WAITING' && r.waitingOn ? (
+            <Link to={`/approvals?tab=requests&approval=${r.waitingOn.approvalId}`} className="text-gold underline-offset-2 hover:underline">
+              {r.waitingOn.title}
+            </Link>
+          ) : (
+            <span className="text-silver">—</span>
+          ),
+      },
     ],
     [],
   );
@@ -464,6 +504,63 @@ function RunsTab() {
   );
 }
 
+/** What workflows handed this person, or their role, to do — finished from here. */
+function TasksTab() {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState<'OPEN' | 'DONE'>('OPEN');
+  const q = useQuery({ queryKey: ['workflow-tasks', status], queryFn: () => listWorkflowTasks(status) });
+  const finish = useMutation({
+    mutationFn: (id: string) => finishWorkflowTask(id),
+    onSuccess: async () => {
+      toast.success('Done.');
+      await Promise.all([qc.invalidateQueries({ queryKey: ['workflow-tasks'] }), qc.invalidateQueries({ queryKey: ['inbox'] })]);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not finish the task.'),
+  });
+  const columns = useMemo<GridColumn<WorkflowTask>[]>(
+    () => [
+      { key: 'title', header: 'Task', accessor: (t) => t.title, primary: true, sortable: true, cell: (t) => (
+        <div>
+          <div className="font-medium">{t.linkUrl ? <Link to={t.linkUrl} className="hover:underline">{t.title}</Link> : t.title}</div>
+          {t.details && <div className="text-xs text-silver">{t.details}</div>}
+        </div>
+      ) },
+      { key: 'due', header: 'Due', accessor: (t) => (t.dueAt ? new Date(t.dueAt).getTime() : null), csv: (t) => t.dueAt ?? '', sortable: true, searchable: false, className: 'tabular-nums text-silver', cell: (t) => (t.dueAt ? fmtDateTime(t.dueAt) : '—') },
+      { key: 'created', header: 'Handed over', accessor: (t) => new Date(t.createdAt).getTime(), csv: (t) => t.createdAt, sortable: true, searchable: false, className: 'tabular-nums text-silver', cell: (t) => fmtDateTime(t.createdAt) },
+      { key: 'action', header: '', accessor: () => '', searchable: false, cell: (t) => (t.status === 'OPEN' ? (
+        <Button size="sm" variant="outline" onClick={() => finish.mutate(t.id)} disabled={finish.isPending}>
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Done
+        </Button>
+      ) : <span className="text-silver">{t.doneAt ? fmtDateTime(t.doneAt) : 'Done'}</span>) },
+    ],
+    [finish],
+  );
+  return (
+    <DataGrid<WorkflowTask>
+      id="workflow-tasks"
+      caption="Workflow tasks"
+      rows={q.data?.tasks ?? null}
+      loading={q.isPending}
+      error={q.error ? (q.error instanceof ApiError ? q.error.message : 'Failed to load tasks.') : null}
+      onRetry={() => void q.refetch()}
+      columns={columns}
+      rowKey={(t) => t.id}
+      urlState={false}
+      noun={{ one: 'task', many: 'tasks' }}
+      filters={
+        <div className="w-36">
+          <Select size="sm" value={status} onChange={(e) => setStatus(e.target.value as 'OPEN' | 'DONE')} aria-label="Filter tasks by status">
+            <option value="OPEN">Open</option>
+            <option value="DONE">Done</option>
+          </Select>
+        </div>
+      }
+      empty={{ icon: ListTodo, title: status === 'OPEN' ? 'No tasks waiting' : 'Nothing finished yet', description: 'When a workflow hands you or your role something to do, it lands here.' }}
+    />
+  );
+}
+
 function RunDetailPanel({
   detail,
   onRetry,
@@ -496,6 +593,15 @@ function RunDetailPanel({
   return (
     <div className="py-2 space-y-3 text-xs">
       {detail.failureReason && <ErrorBanner>{detail.failureReason}</ErrorBanner>}
+      {detail.status === 'WAITING' && detail.waitingOn && (
+        <div className="flex flex-wrap items-center gap-2 rounded border border-warning/30 bg-warning/5 p-2 text-sm" role="status">
+          <ClipboardCheck className="h-4 w-4 text-warning" aria-hidden="true" />
+          <span className="text-ink">Waiting on a decision:</span>
+          <Link to={`/approvals?tab=requests&approval=${detail.waitingOn.approvalId}`} className="text-gold underline-offset-2 hover:underline">
+            {detail.waitingOn.title}
+          </Link>
+        </div>
+      )}
       <div className="text-silver">
         Entity{' '}
         <span className="font-mono text-white">
@@ -624,6 +730,23 @@ interface ActionRowState {
   paramsError: string | null;
 }
 
+/** A gate step's params from its text (an unparsable one reads as empty). */
+function gateParams(text: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = text.trim() ? JSON.parse(text) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Does a gate name its decider? */
+function gateNamed(params: Record<string, unknown>): boolean {
+  const kind = deciderOf(params);
+  const v = params[kind === 'person' ? 'userId' : kind];
+  return typeof v === 'string' && v.trim() !== '';
+}
+
 /** null when the text parses to a JSON object (or is blank = `{}`). */
 function paramsProblem(text: string): string | null {
   if (!text.trim()) return null;
@@ -736,6 +859,9 @@ function DefinitionDrawer({
         );
         throw new Error(`Action #${firstBad + 1}: ${problems[firstBad]}`);
       }
+      // An approval gate must name who decides (the API refuses it otherwise; say so here first).
+      const openGate = actionRows.findIndex((a) => a.kind === 'REQUIRE_APPROVAL' && !gateNamed(gateParams(a.paramsText)));
+      if (openGate >= 0) throw new Error(`Action #${openGate + 1}: name who decides the approval.`);
       const actions: WorkflowAction[] = actionRows.map((a) => ({
         kind: a.kind,
         params: a.paramsText.trim()
@@ -1035,6 +1161,13 @@ function DefinitionDrawer({
                         </Button>
                       )}
                     </div>
+                    {a.kind === 'REQUIRE_APPROVAL' ? (
+                      <ApprovalGateEditor
+                        params={gateParams(a.paramsText)}
+                        onChange={(next) => patchAction(idx, { paramsText: JSON.stringify(next, null, 2), paramsError: null })}
+                        disabled={!canManage}
+                      />
+                    ) : (
                     <Textarea
                       value={a.paramsText}
                       onChange={(e) => {
@@ -1054,6 +1187,7 @@ function DefinitionDrawer({
                       className="text-xs font-mono"
                       aria-invalid={a.paramsError ? true : undefined}
                     />
+                    )}
                     {a.paramsError && (
                       <p role="alert" className="text-xs text-alert">
                         {a.paramsError}

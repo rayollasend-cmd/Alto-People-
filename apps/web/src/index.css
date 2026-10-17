@@ -1003,3 +1003,9 @@ input[type='radio'] {
 .glow {
   background-image: radial-gradient(closest-side, var(--glow, transparent), transparent);
 }
+
+/* Access pack: the keyboard cursor over a list row (lib/shortcuts useListKeyboard). */
+[data-kb-cursor='true'] {
+  box-shadow: inset 3px 0 0 0 var(--accent, #c9a227);
+  background-color: color-mix(in srgb, var(--accent, #c9a227) 8%, transparent);
+}

@@ -8,7 +8,9 @@ import { HttpError } from '../middleware/error.js';
 import { actsAs, actsAsAny } from '../lib/roleScope.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { notifyAssociate, notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { notifyAssociate, notifyClientSupervisors, notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { assertDriverFit, hosSettings } from '../lib/transportDrivers.js';
+import { resetDrift } from '../lib/transportSafety.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
@@ -874,6 +876,7 @@ const runInclude = {
   van: { select: { id: true, name: true, plate: true, capacity: true, make: true, model: true, color: true, year: true } },
   driver: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
   rides: { orderBy: [{ pickupOrder: 'asc' }, { targetAt: 'asc' }], select: rideSelect },
+  preTripCheck: { select: { id: true, passed: true, createdAt: true } },
 } satisfies Prisma.RideRunInclude;
 
 type RunRow = Prisma.RideRunGetPayload<{ include: typeof runInclude }>;
@@ -893,6 +896,16 @@ function toRunView(r: RunRow) {
     driver: { userId: r.driver.id, name: personName(r.driver) },
     seats: { taken: live.length, capacity: r.van.capacity },
     rides: r.rides.map(toRideView),
+    /** The walk around the van before this run leaves (lib/transportDrivers). */
+    preTrip: r.preTripCheck ? { passed: r.preTripCheck.passed, at: r.preTripCheck.createdAt.toISOString() } : null,
+    /** The safety toolkit's stamps (lib/transportSafety). */
+    safety: {
+      sosAt: r.sosAt?.toISOString() ?? null,
+      sosAckAt: r.sosAckAt?.toISOString() ?? null,
+      /** The driver was asked "everything OK?" and hasn't answered. */
+      promptedAt: r.stallAlertedAt?.toISOString() ?? null,
+      escalatedAt: r.stallEscalatedAt?.toISOString() ?? null,
+    },
   };
 }
 
@@ -917,7 +930,31 @@ transportRouter.get('/driver/runs', DRIVE, async (req, res) => {
   res.json({ today, runs: runs.map(toRunView) });
 });
 
+/**
+ * The run leaves only once the van has been walked around: a passed
+ * pre-trip check (lib/transportDrivers), unless the fleet switched the
+ * check off. Marking the first rider starts the run too, so this guards
+ * both doors.
+ */
+async function assertPreTrip(runId: string, vanId: string): Promise<void> {
+  const [settings, check, van] = await Promise.all([
+    hosSettings(),
+    prisma.preTripCheck.findUnique({ where: { runId }, select: { passed: true } }),
+    prisma.van.findUnique({ where: { id: vanId }, select: { name: true, outOfServiceAt: true, outOfServiceReason: true } }),
+  ]);
+  // A parked van never leaves, check or no check.
+  if (van?.outOfServiceAt) {
+    throw new HttpError(409, 'van_out_of_service', `${van.name} is out of service${van.outOfServiceReason ? ` — ${van.outOfServiceReason}` : ''}. Transportation has to put it back or move this run to another van.`);
+  }
+  if (!settings.preTripRequired) return;
+  if (!check?.passed) {
+    throw new HttpError(409, 'pretrip_required', check ? 'The pre-trip check failed — the van stays until a check passes.' : 'Do the pre-trip check before the run leaves.');
+  }
+}
+
 async function startRun(runId: string, actorId: string) {
+  const planned = await prisma.rideRun.findUnique({ where: { id: runId }, select: { vanId: true, status: true } });
+  if (planned?.status === 'PLANNED') await assertPreTrip(runId, planned.vanId);
   const run = await prisma.rideRun.update({
     where: { id: runId },
     data: { status: 'ACTIVE', startedAt: new Date() },
@@ -965,8 +1002,52 @@ transportRouter.post('/driver/runs/:id/complete', DRIVE, async (req, res) => {
     prisma.rideRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', endedAt: now } }),
   ]);
   enqueueAudit({ actorUserId: req.user!.id, action: 'transport.run_completed', entityType: 'RideRun', entityId: run.id }, 'transport');
+  await tellRidersTheyreDroppedOff(run.id, now);
   res.json({ run: toRunView((await prisma.rideRun.findUnique({ where: { id: run.id }, include: runInclude }))!) });
 });
+
+/**
+ * The last word of a ride: each rider hears they're dropped off (once),
+ * and — to work — the store's supervisors hear who arrived by van, so the
+ * arrivals view and the floor agree the person is in the building.
+ */
+async function tellRidersTheyreDroppedOff(runId: string, now: Date) {
+  const run = await prisma.rideRun.findUnique({ where: { id: runId }, include: runInclude });
+  if (!run) return;
+  const dropped = run.rides.filter((r) => r.status === 'COMPLETED');
+  for (const r of dropped) {
+    const claimed = await prisma.ride.updateMany({ where: { id: r.id, droppedNotifiedAt: null }, data: { droppedNotifiedAt: now } });
+    if (claimed.count === 0) continue;
+    void trackNotificationWork(
+      notifyAssociate(r.associate.id, {
+        subject: r.direction === 'TO_WORK' ? `You're at ${r.location.name}` : "You're home",
+        body:
+          `${run.van.name} dropped you off at ${fmtTime(now, r.location.timezone)}. ` +
+          'How was the ride? A thumbs up or down in the Ride tab helps the next one.',
+        category: 'transport',
+        linkUrl: '/rides',
+      }),
+    );
+  }
+  if (run.direction === 'TO_WORK' && dropped.length > 0) {
+    const byStore = new Map<string, typeof dropped>();
+    for (const r of dropped) byStore.set(r.location.id, [...(byStore.get(r.location.id) ?? []), r]);
+    for (const [, riders] of byStore) {
+      const store = riders[0]!.location;
+      void trackNotificationWork(
+        notifyClientSupervisors(store.client?.id ?? null, {
+          subject: `${run.van.name} arrived at ${store.name}`,
+          body: `${riders.map((r) => `${r.associate.firstName} ${r.associate.lastName}`).join(', ')} dropped off at ${fmtTime(now, store.timezone)}.`,
+          category: 'transport',
+          linkUrl: '/',
+          at: { locationId: store.id, startsAt: now },
+        }),
+      );
+    }
+  }
+  const riders = await prisma.user.findMany({ where: { associateId: { in: dropped.map((r) => r.associate.id) }, status: 'ACTIVE', deletedAt: null }, select: { id: true } });
+  for (const u of riders) emitLiveEvent(u.id, 'transport');
+}
 
 async function driverRide(req: Request) {
   const id = z.string().uuid().parse(req.params.id);
@@ -978,6 +1059,8 @@ async function driverRide(req: Request) {
   }
   // Marking the first rider starts the run.
   if (run.status === 'PLANNED') await startRun(run.id, req.user!.id);
+  // A mark moves the next stop on: the safety watch's drift starts over.
+  await resetDrift(run.id);
   return ride;
 }
 
@@ -1009,6 +1092,8 @@ transportRouter.post('/driver/runs/:id/arrived', DRIVE, async (req, res) => {
   if (run.status === 'PLANNED') run = await startRun(run.id, req.user!.id);
   const here = run.rides.filter((r) => rideIds.includes(r.id) && r.status === 'SCHEDULED' && !r.vanArrivedAt);
   const now = new Date();
+  // The next stop changes from here: the safety watch's drift starts over.
+  await resetDrift(run.id);
   if (here.length > 0) {
     await prisma.ride.updateMany({ where: { id: { in: here.map((r) => r.id) } }, data: { vanArrivedAt: now } });
     for (const r of here) {
@@ -1196,6 +1281,14 @@ async function runMapView(run: LiveRunRow, live: RunLive) {
     driver: { userId: run.driver.id, name: personName(run.driver) },
     position: live.van,
     stale: live.stale,
+    /** The safety toolkit (lib/transportSafety): an SOS, a prompt unanswered. */
+    safety: {
+      sosAt: iso(run.sosAt),
+      sosNote: run.sosNote,
+      sosAckAt: iso(run.sosAckAt),
+      promptedAt: iso(run.stallAlertedAt),
+      escalatedAt: iso(run.stallEscalatedAt),
+    },
     trail,
     waypoints: live.plan.waypoints.map((w) => ({
       kind: w.kind,
@@ -2009,7 +2102,8 @@ transportRouter.get('/board', VIEW, async (req, res) => {
   const [rides, runs, vans, drivers, openIssues, settings] = await Promise.all([
     prisma.ride.findMany({ where: { serviceDate: date }, orderBy: { targetAt: 'asc' }, select: rideSelect }),
     prisma.rideRun.findMany({ where: { serviceDate: date }, orderBy: { departAt: 'asc' }, include: runInclude }),
-    prisma.van.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
+    // A van out of service is not offered for dispatch.
+    prisma.van.findMany({ where: { isActive: true, outOfServiceAt: null }, orderBy: { name: 'asc' } }),
     prisma.user.findMany({
       where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
       select: { id: true, email: true, role: true, additionalRoles: true, associate: { select: { firstName: true, lastName: true, phone: true } } },
@@ -2155,7 +2249,7 @@ const RunInput = z.object({
   rides: z.array(z.object({ rideId: z.string().uuid(), pickupAt: z.string().datetime() })).min(1).max(60),
 });
 
-async function assertVanAndDriver(vanId: string, driverUserId: string, riders: number) {
+async function assertVanAndDriver(vanId: string, driverUserId: string, riders: number, departAt?: Date, excludeRunId?: string) {
   const [van, driver] = await Promise.all([
     prisma.van.findFirst({ where: { id: vanId, isActive: true } }),
     prisma.user.findFirst({
@@ -2164,10 +2258,16 @@ async function assertVanAndDriver(vanId: string, driverUserId: string, riders: n
     }),
   ]);
   if (!van) throw new HttpError(400, 'van_not_found', 'Pick an active van.');
+  if (van.outOfServiceAt) {
+    throw new HttpError(409, 'van_out_of_service', `${van.name} is out of service${van.outOfServiceReason ? ` — ${van.outOfServiceReason}` : ''}. Put it back in the fleet record first.`);
+  }
   if (!driver) throw new HttpError(400, 'driver_not_found', 'Pick an active driver.');
   if (riders > van.capacity) {
     throw new HttpError(400, 'over_capacity', `${van.name} seats ${van.capacity} — this run has ${riders} riders.`);
   }
+  // Credentials current, on shift if the day schedules drivers, and under
+  // the day's hours of service (lib/transportDrivers).
+  if (departAt) await assertDriverFit(driverUserId, departAt, { excludeRunId });
   return van;
 }
 
@@ -2202,7 +2302,7 @@ async function tellRidersTheyreScheduled(runId: string, rideIds: string[]) {
 
 transportRouter.post('/runs', MANAGE, async (req, res) => {
   const input = RunInput.parse(req.body);
-  await assertVanAndDriver(input.vanId, input.driverUserId, input.rides.length);
+  await assertVanAndDriver(input.vanId, input.driverUserId, input.rides.length, new Date(input.departAt));
   const ids = input.rides.map((r) => r.rideId);
   const rides = await prisma.ride.findMany({ where: { id: { in: ids } }, select: { id: true, status: true, direction: true, serviceDate: true, runId: true } });
   if (rides.length !== ids.length) throw new HttpError(400, 'ride_not_found', 'A ride on this run no longer exists.');
@@ -2264,7 +2364,14 @@ transportRouter.patch('/runs/:id', MANAGE, async (req, res) => {
   if (run.status !== 'PLANNED') throw new HttpError(409, 'not_planned', 'Only a run that hasn’t left can be changed.');
   const current = run.rides.filter((r) => r.status === 'SCHEDULED');
   const nextRides = input.rides ?? current.map((r) => ({ rideId: r.id, pickupAt: r.pickupAt!.toISOString() }));
-  await assertVanAndDriver(input.vanId ?? run.vanId, input.driverUserId ?? run.driverUserId, nextRides.length);
+  await assertVanAndDriver(
+    input.vanId ?? run.vanId,
+    input.driverUserId ?? run.driverUserId,
+    nextRides.length,
+    // Only a changed driver or time is judged again; the run already stands.
+    input.driverUserId || input.departAt ? new Date(input.departAt ?? run.departAt) : undefined,
+    run.id,
+  );
   const nextIds = nextRides.map((r) => r.rideId);
   const removed = current.filter((r) => !nextIds.includes(r.id)).map((r) => r.id);
   const added = nextIds.filter((rid) => !current.some((r) => r.id === rid));
@@ -2359,6 +2466,7 @@ transportRouter.post('/runs/:id/complete', MANAGE, async (req, res) => {
     }),
     prisma.rideRun.update({ where: { id: run.id }, data: { status: 'COMPLETED', endedAt: now } }),
   ]);
+  await tellRidersTheyreDroppedOff(run.id, now);
   enqueueAudit(
     {
       actorUserId: req.user!.id,
@@ -2459,6 +2567,12 @@ const vanSelect = {
   model: true,
   color: true,
   year: true,
+  // The fleet record's headline (routes/transportOps has the rest).
+  outOfServiceAt: true,
+  outOfServiceReason: true,
+  registrationExpiresAt: true,
+  insuranceExpiresAt: true,
+  inspectionDueAt: true,
   driver: {
     select: {
       id: true,
@@ -2483,6 +2597,16 @@ function toVanView(v: Prisma.VanGetPayload<{ select: typeof vanSelect }>) {
     color: v.color,
     year: v.year,
     look: vanLook(v),
+    /** Parked by the desk or by an incident: not planned, not dispatched. */
+    outOfService: v.outOfServiceAt ? { since: v.outOfServiceAt.toISOString(), reason: v.outOfServiceReason } : null,
+    /** The van's papers lapsing inside 30 days (or lapsed). */
+    papersDue: [
+      ['Registration', v.registrationExpiresAt],
+      ['Insurance', v.insuranceExpiresAt],
+      ['State inspection', v.inspectionDueAt],
+    ]
+      .filter((x): x is [string, Date] => x[1] instanceof Date && x[1].getTime() < Date.now() + 30 * 86_400_000)
+      .map(([label, at]) => ({ label, expiresAt: at.toISOString().slice(0, 10), expired: at.getTime() < Date.now() })),
     driver: v.driver
       ? {
           userId: v.driver.id,
@@ -3140,6 +3264,11 @@ transportRouter.put('/settings', MANAGE, async (req, res) => {
       noShowFeeCents: z.number().int().min(0).max(10_000),
       cutoffHours: z.number().int().min(0).max(72),
       shortNoticeMinutes: z.number().int().min(0).max(24 * 60).optional(),
+      /** Drivers' hours of service, and the pre-trip switch (lib/transportDrivers). */
+      driverMaxHoursPerDay: z.number().int().min(1).max(24).optional(),
+      driverMinRestHours: z.number().int().min(0).max(24).optional(),
+      preTripRequired: z.boolean().optional(),
+      driverShiftLocationId: z.string().uuid().nullable().optional(),
       dispatchPhone: z.string().trim().max(40).nullable().optional(),
       /** Brief 1A-3: the day the fare and fee take effect (today by default;
        *  never before the rate already in force). A change asks every rider
@@ -3222,6 +3351,8 @@ transportRouter.get('/arrivals', requireAuth, async (req, res) => {
       etaAt: eta.get(r.id)?.toISOString() ?? null,
       lateMinutes: eta.get(r.id) ? Math.max(0, Math.round((eta.get(r.id)!.getTime() - r.targetAt.getTime()) / 60_000)) : 0,
       status: r.status,
+      /** The van finished and dropped them: in the building. */
+      droppedAt: r.completedAt?.toISOString() ?? null,
       van: r.run?.van.name ?? null,
       hasShift: shifts.some(
         (s) =>

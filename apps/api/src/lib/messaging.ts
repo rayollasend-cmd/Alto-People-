@@ -17,9 +17,12 @@ import { emitLiveEvent } from './liveEvents.js';
  *     the other supervisors at their client, and every internal desk.
  *   - Internal roles reach every internal person, every portal account,
  *     and every supervisor.
- *   - Associates are never reachable and never callers: the floor rule is
- *     no phones, and a store messaging an associate directly bypasses
- *     Alto's supervision. Supervisors are the store's line into the crew.
+ *   - An associate (field roles, 2026-10) reaches the Alto desks and the
+ *     supervisors of a store they are placed at, and those reach them —
+ *     the record's Message button lands in their app, not an SMS. A store
+ *     manager still never reaches an associate directly (that bypasses
+ *     Alto's supervision), and associates never reach each other here:
+ *     the crew's channel is the supervisor.
  */
 
 export const MESSAGING_ROLES: Role[] = [
@@ -38,6 +41,8 @@ export const MESSAGING_ROLES: Role[] = [
   // store supervisors ("Van 2 is running 15 late").
   'TRANSPORTATION_DIRECTOR',
   'DRIVER',
+  // The person themself: their supervisors and the desks, nobody else.
+  'ASSOCIATE',
 ];
 const STORE_ROLES: Role[] = ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'];
 const DESK_ROLES: Role[] = [
@@ -47,7 +52,7 @@ const DESK_ROLES: Role[] = [
   'FINANCE_ACCOUNTANT',
 ];
 const INTERNAL_ROLES: Role[] = MESSAGING_ROLES.filter(
-  (r) => r !== 'CLIENT_PORTAL' && !STORE_ROLES.includes(r),
+  (r) => r !== 'CLIENT_PORTAL' && r !== 'ASSOCIATE' && !STORE_ROLES.includes(r),
 );
 
 export interface Messenger {
@@ -56,6 +61,17 @@ export interface Messenger {
   clientId: string | null;
   locationId?: string | null;
   regionId?: string | null;
+  /** The person's own record, for an associate's login. */
+  associateId?: string | null;
+}
+
+/** Clients an associate is placed at — an approved application or an open store assignment. */
+export async function placedClientsOf(associateId: string, prisma: PrismaClient = defaultPrisma): Promise<string[]> {
+  const [apps, assignments] = await Promise.all([
+    prisma.application.findMany({ where: { associateId, status: 'APPROVED', deletedAt: null }, select: { clientId: true } }),
+    prisma.associateAssignment.findMany({ where: { associateId, endedAt: null }, select: { location: { select: { clientId: true } } } }),
+  ]);
+  return [...new Set([...apps.map((a) => a.clientId), ...assignments.map((a) => a.location.clientId)].filter((id): id is string => id !== null))];
 }
 
 export function canUseMessenger(role: Role): boolean {
@@ -75,11 +91,16 @@ export function canMessage(from: Messenger, to: Messenger): boolean {
     if (DESK_ROLES.includes(to.role)) return true;
     return false;
   }
+  // An associate: the desks, and (checked against their placements in
+  // canMessageAsync) the supervisors of a store they work at.
+  if (from.role === 'ASSOCIATE') return INTERNAL_ROLES.includes(to.role) || STORE_ROLES.includes(to.role);
   if (STORE_ROLES.includes(from.role)) {
     if (to.role === 'CLIENT_PORTAL' || STORE_ROLES.includes(to.role)) return sameClient;
+    // Their crew: an associate placed at their client (canMessageAsync).
+    if (to.role === 'ASSOCIATE') return !!from.clientId;
     return INTERNAL_ROLES.includes(to.role);
   }
-  // Internal roles: everyone but associates.
+  // Internal roles: everyone.
   return true;
 }
 
@@ -102,12 +123,33 @@ export async function canMessageAsync(from: Messenger, to: Messenger, prisma: Pr
   if (from.role === 'CLIENT_PORTAL' && !from.clientId && from.regionId && STORE_ROLES.includes(to.role)) {
     return !!to.clientId && (await regionClientIds(from.regionId, prisma)).includes(to.clientId);
   }
+  // A supervisor and an associate: the associate must be placed at the supervisor's client.
+  const pair =
+    from.role === 'ASSOCIATE' && STORE_ROLES.includes(to.role)
+      ? { associateId: from.associateId, clientId: to.clientId }
+      : to.role === 'ASSOCIATE' && STORE_ROLES.includes(from.role)
+        ? { associateId: to.associateId, clientId: from.clientId }
+        : null;
+  if (pair) {
+    if (!pair.associateId || !pair.clientId) return false;
+    return (await placedClientsOf(pair.associateId, prisma)).includes(pair.clientId);
+  }
   return true;
 }
 
 /** The "where" the caller may message into, as a Prisma filter over users. */
-export function directoryWhere(from: Messenger, regionClients: string[] = []) {
+export function directoryWhere(from: Messenger, regionClients: string[] = [], placedClients: string[] = []) {
   const base = { status: 'ACTIVE' as const, deletedAt: null, id: { not: from.id } };
+  const noClient = '00000000-0000-0000-0000-000000000000';
+  if (from.role === 'ASSOCIATE') {
+    return {
+      ...base,
+      OR: [
+        { role: { in: INTERNAL_ROLES } },
+        { role: { in: STORE_ROLES }, clientId: { in: placedClients.length ? placedClients : [noClient] } },
+      ],
+    };
+  }
   if (from.role === 'CLIENT_PORTAL' && !from.clientId && from.regionId) {
     return {
       ...base,
@@ -127,14 +169,25 @@ export function directoryWhere(from: Messenger, regionClients: string[] = []) {
     };
   }
   if (STORE_ROLES.includes(from.role)) {
+    const clientId = from.clientId ?? noClient;
     return {
       ...base,
       OR: [
         {
           role: { in: ['CLIENT_PORTAL', ...STORE_ROLES] as Role[] },
-          clientId: from.clientId ?? '00000000-0000-0000-0000-000000000000',
+          clientId,
         },
         { role: { in: INTERNAL_ROLES } },
+        // Their crew: associates placed at their client.
+        {
+          role: 'ASSOCIATE' as Role,
+          associate: {
+            OR: [
+              { assignments: { some: { endedAt: null, location: { clientId } } } },
+              { applications: { some: { clientId, status: 'APPROVED' as const, deletedAt: null } } },
+            ],
+          },
+        },
       ],
     };
   }

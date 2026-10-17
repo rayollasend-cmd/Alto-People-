@@ -43,6 +43,9 @@ export const TENANT_MODULES = [
   // an existing tenant; the Organization profile turns them off.
   'talent',
   'perks',
+  // Earned-wage access: an associate draws part of what they have earned
+  // before payday. On by default; a tenant that does not offer it turns it off.
+  'earnedWage',
 ] as const;
 export type TenantModule = (typeof TENANT_MODULES)[number];
 export const TenantModuleSchema = /* @__PURE__ */ (() => z.enum(TENANT_MODULES))();
@@ -62,6 +65,7 @@ export const TENANT_MODULE_LABEL: Record<TenantModule, string> = {
   agentBuilder: 'Agent builder',
   talent: 'Talent programs (skills, career, mentorship, succession, probation, 30/60/90 plans, pulse)',
   perks: 'Perks (tuition, equity, volunteer match)',
+  earnedWage: 'Earned-wage access (pay before payday)',
 };
 
 export const TenantModulesSchema = /* @__PURE__ */ (() => z.object({
@@ -79,6 +83,7 @@ export const TenantModulesSchema = /* @__PURE__ */ (() => z.object({
   agentBuilder: z.boolean(),
   talent: z.boolean(),
   perks: z.boolean(),
+  earnedWage: z.boolean(),
 }))();
 export type TenantModules = z.infer<typeof TenantModulesSchema>;
 
@@ -97,6 +102,7 @@ const ALL_ON: TenantModules = {
   agentBuilder: true,
   talent: true,
   perks: true,
+  earnedWage: true,
 };
 
 /** The switches a business model starts with. */

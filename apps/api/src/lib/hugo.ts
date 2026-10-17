@@ -29,6 +29,7 @@ export type HugoIntentKey =
   | 'PAYDAY'
   | 'RIDE'
   | 'SCHEDULE'
+  | 'HELP_CENTER'
   | 'HANDOFF';
 
 export type HugoAudience = 'associate' | 'manager' | 'admin';
@@ -161,7 +162,24 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
     match: (t) => SCHEDULE.test(t),
     help: h(['Your next shifts', "What's my schedule?"], ['Tus próximos turnos', '¿Cuál es mi horario?'], ['Sonraki vardiyaların', 'Programım ne?']),
   },
+  // The help center (HR pack 2026-10): policy and how-to questions are answered
+  // from the published articles, with the article linked. Last in precedence —
+  // a question about pay or a ride is answered from the records first.
+  {
+    key: 'HELP_CENTER',
+    capability: null,
+    audiences: EVERYONE,
+    channels: ['app'],
+    requiresModule: null,
+    match: (t) => HELP_CENTER.test(t),
+    help: h(['Policies and how-tos', 'How many sick days do I get?'], ['Políticas y guías', '¿Cuántos días de enfermedad tengo?'], ['Politikalar ve nasıl yapılır', 'Kaç gün hastalık iznim var?']),
+  },
 ];
+
+// Question-shaped only: a how/what/where/can-I question, or the words policy,
+// handbook or rules. A bare problem ("my badge broke") is not a policy
+// question — it stays a hand-off to a person.
+const HELP_CENTER = /\b(how (do|can|should|does|long|many|much)\b|what (is|are|does) (the|our|your) (policy|rule|rules|process|procedure)|what('s| is) the (policy|rule|process)|policy|policies|handbook|rule book|the rules|am i allowed|is it allowed|allowed to|where (do|can) i (find|get|see)|cual es la politica|que dice la politica|politica|politicas|manual del empleado|reglas|como (puedo|hago|funciona)|puedo (tomar|pedir|usar)|politika|politikasi|kurallar|el kitabi|nasil (yapilir|alirim|basvururum)|izin alabilir miyim)\b/;
 
 export interface HugoContext {
   channel: HugoChannel;

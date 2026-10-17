@@ -4,6 +4,7 @@ import {
   JobCreateInputSchema,
   JobListResponseSchema,
   JobUpdateInputSchema,
+  can,
   type Job,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -11,6 +12,21 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { assertClientInScope, effectiveClientIdFilter, scopeClients } from '../lib/scope.js';
+import { cardOn, loadRateCards, type RateCard } from '../lib/rateCards.js';
+import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { applyBillRateChange } from '../lib/payChanges.js';
+
+/**
+ * Money on a job — the bill rate and the pay rate — is org economics. A
+ * store-bound supervisor schedules against the job's NAME; the rates are
+ * withheld from their reads (null) and refused on their writes, the same
+ * rule the labor-cost reads and the web's useLaborCostVisible apply. Who
+ * sees money: anyone who reads payroll or the executive surface.
+ */
+function seesMoney(user: SessionUser): boolean {
+  return can(user, 'view:payroll') || can(user, 'view:executive') || can(user, 'manage:clients');
+}
 
 export const jobsRouter = Router();
 
@@ -37,16 +53,71 @@ const jobInScope = (user: SessionUser, id: string): Prisma.JobWhereInput => ({
 
 type RawJob = Prisma.JobGetPayload<{ include: { client: { select: { name: true } } } }>;
 
-function toJob(row: RawJob): Job {
+/**
+ * Approval engine (2026-10): the rates on a job are READ from the dated
+ * rate card for (client, job name) in force today — the job's own columns
+ * are the legacy value a card has not replaced yet. A rate write never
+ * lands here directly: it becomes a dated card, and a second person
+ * approves it where the tenant's switch says so.
+ */
+function toJob(row: RawJob, money = true, cards: RateCard[] = [], on: Date = new Date()): Job {
+  const card = cardOn(cards, row.clientId, row.name, on);
+  const billRate = card ? card.billRate : row.billRate ? Number(row.billRate) : null;
+  const payRate = card ? card.payRate : row.payRate ? Number(row.payRate) : null;
   return {
     id: row.id,
     clientId: row.clientId,
     clientName: row.client?.name ?? null,
     name: row.name,
-    billRate: row.billRate ? Number(row.billRate) : null,
-    payRate: row.payRate ? Number(row.payRate) : null,
+    billRate: money ? billRate : null,
+    payRate: money ? payRate : null,
     isActive: row.isActive,
   };
+}
+
+/**
+ * Set a job's rates as a dated card (today). Returns the approval when a
+ * second person has to decide, or null when the card was written.
+ */
+async function setJobRates(user: SessionUser, job: RawJob, rates: { billRate?: number | null; payRate?: number | null }) {
+  const cards = await loadRateCards(prisma, [job.clientId]);
+  const current = cardOn(cards, job.clientId, job.name, new Date());
+  const before = current
+    ? { payRate: current.payRate, billRate: current.billRate }
+    : job.payRate || job.billRate
+      ? { payRate: job.payRate ? Number(job.payRate) : 0, billRate: job.billRate ? Number(job.billRate) : null }
+      : null;
+  const payRate = rates.payRate !== undefined ? (rates.payRate ?? 0) : (before?.payRate ?? 0);
+  const billRate = rates.billRate !== undefined ? rates.billRate : (before?.billRate ?? null);
+  const billChanged = (before?.billRate ?? null) !== (billRate ?? null);
+  const policy = await loadApprovalPolicy(prisma);
+  if (billChanged && policy.billRateApproval && (await secondPersonExists(prisma, 'process:payroll', user.id))) {
+    const open = await prisma.approvalRequest.findFirst({ where: { kind: 'BILL_RATE_CHANGE', clientId: job.clientId, status: 'PENDING', proposed: { path: ['position'], equals: job.name } }, select: { id: true } });
+    if (open) throw new HttpError(409, 'approval_pending', 'A rate change for this job is already waiting on a decision.');
+    const fmt = (n: number | null) => (n == null ? '—' : `$${n.toFixed(2)}`);
+    return createApprovalRequest(prisma, {
+      kind: 'BILL_RATE_CHANGE',
+      subjectType: 'Job',
+      subjectId: job.id,
+      title: `${job.client?.name ?? 'Client'} · ${job.name}: bill ${fmt(before?.billRate ?? null)} → ${fmt(billRate)}`,
+      summary: `Pay ${fmt(payRate)}/h, bill ${fmt(billRate)}/h, effective today. A dated rate card replaces the one in force.`,
+      proposed: { clientId: job.clientId, position: job.name, payRate, billRate },
+      before,
+      requesterUserId: user.id,
+      approver: { capability: 'process:payroll' },
+      clientId: job.clientId,
+    });
+  }
+  await applyBillRateChange(prisma, { clientId: job.clientId, position: job.name, payRate, billRate, actorUserId: user.id, note: billChanged && policy.billRateApproval ? 'No second approver was available.' : null }, before);
+  return null;
+}
+
+/** A caller who may not see money may not set it either. */
+function refuseRates(user: SessionUser, input: { billRate?: number | null; payRate?: number | null }): void {
+  if (seesMoney(user)) return;
+  if (input.billRate !== undefined || input.payRate !== undefined) {
+    throw new HttpError(403, 'rates_withheld', 'Rates on a job are set by Finance or HR, not from the floor.');
+  }
 }
 
 const JOB_INCLUDE = { client: { select: { name: true } } } as const;
@@ -72,7 +143,9 @@ jobsRouter.get('/', async (req, res, next) => {
       take: 200,
       include: JOB_INCLUDE,
     });
-    res.json(JobListResponseSchema.parse({ jobs: rows.map(toJob) }));
+    const money = seesMoney(req.user!);
+    const cards = money ? await loadRateCards(prisma, [...new Set(rows.map((r) => r.clientId))]) : [];
+    res.json(JobListResponseSchema.parse({ jobs: rows.map((r) => toJob(r, money, cards)) }));
   } catch (err) {
     next(err);
   }
@@ -85,19 +158,22 @@ jobsRouter.post('/', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const i = parsed.data;
+    refuseRates(req.user!, i);
     await assertClientInScope(prisma, req.user!, i.clientId);
 
     try {
       const created = await prisma.job.create({
-        data: {
-          clientId: i.clientId,
-          name: i.name,
-          billRate: i.billRate ?? null,
-          payRate: i.payRate ?? null,
-        },
+        data: { clientId: i.clientId, name: i.name },
         include: JOB_INCLUDE,
       });
-      res.status(201).json(toJob(created));
+      if (i.billRate !== undefined || i.payRate !== undefined) {
+        const pending = await setJobRates(req.user!, created, { billRate: i.billRate ?? null, payRate: i.payRate ?? null });
+        if (pending) {
+          res.status(202).json({ ...pendingResponse(pending), job: toJob(created, seesMoney(req.user!)) });
+          return;
+        }
+      }
+      res.status(201).json(toJob(created, seesMoney(req.user!), await loadRateCards(prisma, [created.clientId])));
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new HttpError(409, 'job_name_taken', 'A job with this name already exists for this client');
@@ -117,16 +193,16 @@ jobsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     }
     const existing = await prisma.job.findFirst({
       where: jobInScope(req.user!, req.params.id),
+      include: JOB_INCLUDE,
     });
     if (!existing) throw new HttpError(404, 'job_not_found', 'Job not found');
 
     // clientId is deliberately not updatable: moving a job between clients
     // would carry every time entry already pinned to it across with it.
     const i = parsed.data;
+    refuseRates(req.user!, i);
     const data: Prisma.JobUpdateInput = {};
     if (i.name !== undefined) data.name = i.name;
-    if (i.billRate !== undefined) data.billRate = i.billRate;
-    if (i.payRate !== undefined) data.payRate = i.payRate;
     if (i.isActive !== undefined) data.isActive = i.isActive;
 
     const updated = await prisma.job.update({
@@ -134,7 +210,14 @@ jobsRouter.patch('/:id', MANAGE, async (req, res, next) => {
       data,
       include: JOB_INCLUDE,
     });
-    res.json(toJob(updated));
+    if (i.billRate !== undefined || i.payRate !== undefined) {
+      const pending = await setJobRates(req.user!, updated, { billRate: i.billRate, payRate: i.payRate });
+      if (pending) {
+        res.status(202).json({ ...pendingResponse(pending), job: toJob(updated, seesMoney(req.user!), await loadRateCards(prisma, [updated.clientId])) });
+        return;
+      }
+    }
+    res.json(toJob(updated, seesMoney(req.user!), await loadRateCards(prisma, [updated.clientId])));
   } catch (err) {
     next(err);
   }

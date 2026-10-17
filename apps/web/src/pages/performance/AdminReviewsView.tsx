@@ -208,9 +208,16 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
             : 'Read-only view of performance reviews.'
         }
         secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/performance/extras">Goals, PIPs &amp; 360s</Link>
-          </Button>
+          <>
+            {canManage && (
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/performance/calibration">Calibrate</Link>
+              </Button>
+            )}
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/performance/extras">Goals, PIPs &amp; 360s</Link>
+            </Button>
+          </>
         }
         primaryAction={
           canManage ? (

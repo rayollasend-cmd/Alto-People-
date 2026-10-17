@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { SeasonPlanInputSchema, SeasonPlanUpdateSchema } from '@alto-people/shared';
+import { SeasonPlanInputSchema, SeasonPlanUpdateSchema, isClientBoundedRole, type Role } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { createPlan, defaultDemandFor, duplicatePlan, getPlan, listPlans, planCsv, seasonWeeks, updatePlan } from '../lib/seasonPlanner.js';
 import { renderSeasonPlanSitePdf } from '../lib/seasonPlanPdf.js';
+import { applyLiveWhatIf, discardLiveWhatIf, liveWhatIf } from '../lib/seasonLive.js';
 import { getBrandingSync } from '../lib/branding.js';
 
 /**
@@ -21,6 +22,9 @@ import { getBrandingSync } from '../lib/branding.js';
  *   POST  /season-plans/:id/duplicate          a copy to try something on
  *   GET   /season-plans/:id/csv                site × week rows
  *   GET   /season-plans/:id/sites/:locationId/pdf   the per-store plan
+ *   GET   /season-plans/:id/live?week=             the plan against the live schedule for one week (what-if)
+ *   POST  /season-plans/:id/live/apply {week}      the shortfall as draft open shifts   (manage:scheduling)
+ *   POST  /season-plans/:id/live/discard {week}    those drafts, taken back
  */
 export const seasonPlansRouter = Router();
 
@@ -91,6 +95,54 @@ seasonPlansRouter.post('/', MANAGE, async (req, res, next) => {
       'seasonPlans',
     );
     res.status(201).json(plan);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What-if on the live week (field roles, 2026-10). Before /:id so the literal wins.
+seasonPlansRouter.get('/:id/live', VIEW, async (req, res, next) => {
+  try {
+    res.json(await liveWhatIf(prisma, Id.parse(req.params.id), req.query.week?.toString()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const LiveWeek = z.object({ week: DateOnly.optional() });
+
+/**
+ * Writing a plan into the live week is field leadership's: manage:scheduling,
+ * and never a store-bound role — a shift supervisor holds manage:scheduling
+ * for their one client, and a plan's stores span clients.
+ */
+function assertMayWriteLive(user: { role: Role }): void {
+  if (isClientBoundedRole(user.role)) {
+    throw new HttpError(403, 'forbidden', 'A season plan is applied by field leadership, not from one store.');
+  }
+}
+
+seasonPlansRouter.post('/:id/live/apply', requireCapability('manage:scheduling'), async (req, res, next) => {
+  try {
+    assertMayWriteLive(req.user!);
+    const id = Id.parse(req.params.id);
+    const { week } = LiveWeek.parse(req.body ?? {});
+    const r = await applyLiveWhatIf(prisma, id, week, req.user!.id);
+    enqueueAudit({ actorUserId: req.user!.id, action: 'season_plan.applied_to_live', entityType: 'SeasonPlan', entityId: id, metadata: r }, 'season_plan.live');
+    res.status(201).json(r);
+  } catch (err) {
+    next(err);
+  }
+});
+
+seasonPlansRouter.post('/:id/live/discard', requireCapability('manage:scheduling'), async (req, res, next) => {
+  try {
+    assertMayWriteLive(req.user!);
+    const id = Id.parse(req.params.id);
+    const { week } = LiveWeek.parse(req.body ?? {});
+    const r = await discardLiveWhatIf(prisma, id, week);
+    enqueueAudit({ actorUserId: req.user!.id, action: 'season_plan.live_discarded', entityType: 'SeasonPlan', entityId: id, metadata: r }, 'season_plan.live');
+    res.json(r);
   } catch (err) {
     next(err);
   }

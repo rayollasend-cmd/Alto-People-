@@ -87,10 +87,13 @@ async function seedForms() {
 describe('an individual W-2 prints a full SSN', () => {
   it('is refused to a role that runs payroll but holds no PII export', async () => {
     const { w2 } = await seedForms();
-    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER'] as const) {
+    for (const role of ['INTERNAL_RECRUITER', 'MANAGER'] as const) {
       const a = await agentFor(role);
       expect((await a.get(`/tax-forms/${w2.id}/pdf`)).status, role).toBe(404);
     }
+    // Marketing no longer runs payroll at all (its own charter, 2026-10-17);
+    // the route answers its refusals as 404 so a probe learns nothing.
+    expect((await (await agentFor('MARKETING_MANAGER')).get(`/tax-forms/${w2.id}/pdf`)).status).toBe(404);
   });
 
   it('is refused to oversight roles that can read every other payroll document', async () => {
@@ -272,10 +275,11 @@ describe('a paystub is not an SSN', () => {
     const fakeItem = '00000000-0000-0000-0000-000000000001';
     expect((await hr.get(`/payroll/items/${fakeItem}/paystub.pdf`)).status).toBe(404);
 
-    for (const role of ['MARKETING_MANAGER', 'INTERNAL_RECRUITER', 'MANAGER'] as const) {
+    for (const role of ['INTERNAL_RECRUITER', 'MANAGER'] as const) {
       const a = await agentFor(role);
       expect((await a.get(`/payroll/items/${fakeItem}/paystub.pdf`)).status, role).toBe(404);
     }
+    expect((await (await agentFor('MARKETING_MANAGER')).get(`/payroll/items/${fakeItem}/paystub.pdf`)).status).toBe(403);
     expect(assoc.id).toBeTruthy();
   });
 });

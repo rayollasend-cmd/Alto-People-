@@ -12,6 +12,8 @@ import {
   notifyAssociate,
   notifyUser,
 } from '../lib/notify.js';
+import { CATEGORIES, PRIORITIES, clockDataFor, dueAtFor, slaTargets, slaView, targetHoursFor } from '../lib/hrCaseSla.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 /**
  * Phase 123 — HR cases (ticketing) — now the company's internal case desk.
@@ -77,6 +79,9 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
     );
   }
   const input = FileInputSchema.parse(req.body);
+  // The SLA clock starts now: due = filed + the target for this category × priority.
+  const now = new Date();
+  const dueAt = dueAtFor(now, await targetHoursFor(input.category, input.priority));
   const created = await prisma.hrCase.create({
     data: {
       associateId: req.user!.associateId,
@@ -84,6 +89,7 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
       subject: input.subject,
       description: input.description,
       priority: input.priority,
+      dueAt,
     },
   });
   // Fire-and-forget after the write — never inside a transaction.
@@ -126,6 +132,7 @@ hrCases123Router.get('/my/hr-cases', requireAuth, async (req, res) => {
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
       resolvedAt: c.resolvedAt?.toISOString() ?? null,
+      sla: slaView(c),
     })),
   });
 });
@@ -146,6 +153,8 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
   // One person's cases — the person record's Cases tab. The desk scope
   // still applies: Finance sees only their PAYROLL cases.
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
+  // ?sla=breached — the Inbox's deep link: open and past due.
+  const sla = z.enum(['breached']).optional().parse(req.query.sla);
 
   const rows = await prisma.hrCase.findMany({
     take: 100,
@@ -156,6 +165,7 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       ...(category && scope !== 'payroll' ? { category } : {}),
       ...(assignedToMe === 'true' ? { assignedToId: req.user!.id } : {}),
       ...(associateId ? { associateId } : {}),
+      ...(sla === 'breached' ? { status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } : {}),
     },
     include: {
       associate: {
@@ -184,6 +194,7 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       commentCount: c._count.comments,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
+      sla: slaView(c),
     })),
   });
 });
@@ -243,6 +254,7 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
     resolution: c.resolution,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
+    sla: slaView(c),
     comments: c.comments
       .filter((cm) => canManage || !cm.internalNote)
       .map((cm) => ({
@@ -301,10 +313,15 @@ hrCases123Router.post(
         authorAssociateId: !canManage && isOwner ? req.user!.associateId : null,
       },
     });
-    // Bump updatedAt on the case.
+    // Bump updatedAt on the case. The associate's reply also restarts the
+    // SLA clock when the case was waiting on them.
+    const resumed = !canManage && isOwner && c.status === 'WAITING_ASSOCIATE';
     await prisma.hrCase.update({
       where: { id },
-      data: { updatedAt: new Date() },
+      data: {
+        updatedAt: new Date(),
+        ...(resumed ? { status: 'IN_PROGRESS', ...clockDataFor(c, 'IN_PROGRESS') } : {}),
+      },
     });
     // HR replied (not an internal note) → tell the associate. Skip when the
     // commenter is the case's own associate (they don't need an echo).
@@ -345,9 +362,18 @@ hrCases123Router.patch('/hr-cases/:id', requireAuth, async (req, res) => {
     throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
   }
   const willResolve = input.status === 'RESOLVED' && c.status !== 'RESOLVED';
+  // A new priority re-targets the clock from when the case was filed;
+  // a status change pauses or resumes it (lib/hrCaseSla).
+  const retarget =
+    input.priority !== undefined && input.priority !== c.priority
+      ? { dueAt: dueAtFor(c.createdAt, await targetHoursFor(c.category, input.priority), c.slaPausedMinutes) }
+      : {};
+  const clock = input.status !== undefined ? clockDataFor({ ...c, ...retarget }, input.status) : {};
   await prisma.hrCase.update({
     where: { id },
     data: {
+      ...retarget,
+      ...clock,
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.assignedToId !== undefined
@@ -397,7 +423,8 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
     throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
   }
   const desk = scope === 'payroll' ? { category: 'PAYROLL' as const } : {};
-  const [openTotal, byStatus, byPriority, byCategory] = await Promise.all([
+  const now = new Date();
+  const [openTotal, byStatus, byPriority, byCategory, breached, atRisk] = await Promise.all([
     prisma.hrCase.count({
       where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] } },
     }),
@@ -412,6 +439,10 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
       where: { ...desk, status: { not: 'CLOSED' } },
       _count: { _all: true },
     }),
+    prisma.hrCase.count({ where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: now } } }),
+    prisma.hrCase.count({
+      where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { gte: now, lt: new Date(now.getTime() + 4 * 3_600_000) } },
+    }),
   ]);
   const status: Record<string, number> = {};
   const priority: Record<string, number> = {};
@@ -419,7 +450,61 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
   for (const r of byStatus) status[r.status] = r._count._all;
   for (const r of byPriority) priority[r.priority] = r._count._all;
   for (const r of byCategory) category[r.category] = r._count._all;
-  res.json({ openTotal, byStatus: status, byPriority: priority, byCategory: category });
+  res.json({ openTotal, byStatus: status, byPriority: priority, byCategory: category, sla: { breached, atRisk } });
+});
+
+// ----- SLA targets (tenant-editable) ----------------------------------------
+//
+// The grid every case's due time comes from. Reading it is part of working
+// the desk; changing a target is an HR administrator's call (manage:org).
+
+hrCases123Router.get('/hr-cases-sla', requireAuth, async (req, res) => {
+  if (!deskScope(req.user!.role)) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+  }
+  res.json({ targets: await slaTargets() });
+});
+
+const SlaInputSchema = z.object({
+  targets: z
+    .array(
+      z.object({
+        category: z.enum(CATEGORIES as [string, ...string[]]),
+        priority: z.enum(PRIORITIES as [string, ...string[]]),
+        /** Null restores the built-in default. */
+        targetHours: z.number().int().min(1).max(24 * 90).nullable(),
+      }),
+    )
+    .min(1)
+    .max(64),
+});
+
+hrCases123Router.put('/hr-cases-sla', requireAuth, async (req, res) => {
+  if (!hasCapability(req.user!.role, 'manage:org')) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:org');
+  }
+  const input = SlaInputSchema.parse(req.body);
+  const tenantId = tenantIdForWrite();
+  await prisma.$transaction(async (tx) => {
+    for (const t of input.targets) {
+      const category = t.category as (typeof CATEGORIES)[number];
+      const priority = t.priority as (typeof PRIORITIES)[number];
+      if (t.targetHours === null) {
+        await tx.hrCaseSlaPolicy.deleteMany({ where: { tenantId, category, priority } });
+      } else {
+        await tx.hrCaseSlaPolicy.upsert({
+          where: { tenantId_category_priority: { tenantId, category, priority } },
+          create: { tenantId, category, priority, targetHours: t.targetHours },
+          update: { targetHours: t.targetHours },
+        });
+      }
+    }
+  });
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'hr_case.sla_targets_changed', entityType: 'HrCaseSlaPolicy', entityId: tenantId, metadata: { targets: input.targets } },
+    'hr_case.sla_targets_changed',
+  );
+  res.json({ targets: await slaTargets() });
 });
 
 // ----- The routing directory ------------------------------------------------

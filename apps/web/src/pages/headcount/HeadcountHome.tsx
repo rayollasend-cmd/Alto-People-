@@ -72,6 +72,11 @@ export function HeadcountHome() {
     <ListTemplate
         className="space-y-6"
         title="Headcount" subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: 'Headcount' }]}
+        secondaryActions={
+          <Button asChild variant="outline">
+            <Link to="/headcount/plan">Headcount plan</Link>
+          </Button>
+        }
     >
 
       {overview.isError && <QueryError what="the headcount" query={overview} />}

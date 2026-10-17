@@ -1,18 +1,10 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Clock,
-  KeyRound,
-  Lock,
-  RefreshCw,
-  Repeat,
-  ShieldCheck,
-  Unlock,
-  UserRound,
-  Users,
-} from 'lucide-react';
+import { Clock, KeyRound, Lock, MapPin, RefreshCw, Repeat, ShieldAlert, ShieldCheck, Unlock, UserRound, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ROLES, type Role } from '@/lib/roles';
 import { SecondRoleDialog } from './SecondRoleDialog';
+import { ElevateAccessDialog } from './ElevateAccessDialog';
+import { isPending } from '@/lib/approvalRequestsApi';
 import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { roleOfferedFor } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
@@ -54,6 +46,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { ApproverPicker } from '@/components/ApproverPicker';
+import { BreakGlassDialog, ScopeDialog } from '@/components/admin/AccessBindingDialogs';
 import { AccessReport, DeactivateDialog } from './AccessReport';
 import { deactivateUsers, reactivateUser } from '@/lib/usersAdminApi';
 
@@ -136,11 +129,16 @@ export function UsersAdmin() {
   // Brief 1A-4: the accounts list, or the access report (flags, bulk
   // deactivation reversible for 30 days).
   const [view, setView] = useState<'accounts' | 'report' | 'roles'>('accounts');
+  // Whose temporary-access dialog is open (approval engine: a role until a date).
+  const [elevateFor, setElevateFor] = useState<AdminUser | null>(null);
   // A region binding waits here for its named approver.
   // A bulk 'Disabled' from the accounts list goes the reversible way: a
   // reason, one audit row per account, 30 days to undo.
   const [bulkDeactivate, setBulkDeactivate] = useState<{ ids: string[]; clear: () => void } | null>(null);
   const [regionApproval, setRegionApproval] = useState<{ user: AdminUser; regionId: string; regionName: string } | null>(null);
+  // Access pack: the account whose site/region scope, or break-glass flag, is being set.
+  const [scopeFor, setScopeFor] = useState<AdminUser | null>(null);
+  const [breakGlassFor, setBreakGlassFor] = useState<AdminUser | null>(null);
 
   // A role change to a client-scoped role for a user with no client is held
   // here until a client is picked, then applied together.
@@ -337,7 +335,10 @@ export function UsersAdmin() {
     ) {
       return;
     }
-    await runBulk(ids, clear, 'Set role', (id) => patchAdminUser(id, { role: newRole }));
+    await runBulk(ids, clear, 'Set role', async (id) => {
+      // An elevation waits for a second administrator (202); the row counts as handled.
+      await patchAdminUser(id, { role: newRole });
+    });
   };
 
   const onBulkStatus = async (ids: string[], clear: () => void, newStatus: UserStatus) => {
@@ -359,7 +360,9 @@ export function UsersAdmin() {
     ) {
       return;
     }
-    await runBulk(ids, clear, 'Set status', (id) => patchAdminUser(id, { status: newStatus }));
+    await runBulk(ids, clear, 'Set status', async (id) => {
+      await patchAdminUser(id, { status: newStatus });
+    });
   };
 
   const onBulkForceReset = async (ids: string[], clear: () => void) => {
@@ -404,13 +407,15 @@ export function UsersAdmin() {
     }
     setPendingId(u.id);
     try {
-      await patchAdminUser(u.id, { role: newRole });
+      const r = await patchAdminUser(u.id, { role: newRole });
       setDraftRole((d) => {
         const next = { ...d };
         delete next[u.id];
         return next;
       });
-      toast.success('Role updated.');
+      // Approval engine: more access than the account holds waits for a second administrator.
+      if (isPending(r)) toast.success('Sent for approval. The role changes when a second administrator approves it.');
+      else toast.success('Role updated.');
       await load();
       // A supervisor at a client is assigned their shift next — and a
       // floor supervisor, the shift supervisor in charge of them.
@@ -623,6 +628,18 @@ export function UsersAdmin() {
             )}
             {u.activeRole && u.activeRole !== u.role && (
               <div className="mt-1 text-xs2 text-gold">working as {roleLabel(u.activeRole)} now</div>
+            )}
+            {!isMe && u.role !== 'CLIENT_PORTAL' && !draftRole[u.id] && (
+              <button
+                type="button"
+                onClick={() => setElevateFor(u)}
+                disabled={busy}
+                className="mt-1 flex w-full items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs2 text-silver/80 hover:border-silver/40 hover:text-ink"
+                title="A role until a date, taken back on time"
+              >
+                <Clock className="h-3 w-3 shrink-0 text-gold" aria-hidden="true" />
+                <span className="truncate text-silver/50">temporary access…</span>
+              </button>
             )}
           </>
         );
@@ -845,6 +862,31 @@ export function UsersAdmin() {
               <KeyRound className="mr-1 h-3 w-3" />
               Force reset
             </Button>
+            {can('manage:org') && !isMe && !['ASSOCIATE', 'CLIENT_PORTAL', 'SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR', 'LIVE_ASN'].includes(draftRole[u.id] ?? u.role) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setScopeFor(u)}
+                disabled={busy}
+                title="Narrow this internal role to sites and regions; empty = the whole organization"
+              >
+                <MapPin className="mr-1 h-3 w-3" />
+                {(u.scopeSiteIds?.length ?? 0) + (u.scopeRegionIds?.length ?? 0) > 0 ? `Scope (${(u.scopeSiteIds?.length ?? 0) + (u.scopeRegionIds?.length ?? 0)})` : 'Scope'}
+              </Button>
+            )}
+            {can('manage:org') && !isMe && (draftRole[u.id] ?? u.role) !== 'ASSOCIATE' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setBreakGlassFor(u)}
+                disabled={busy}
+                className={u.breakGlass ? 'text-warning' : undefined}
+                title={u.breakGlass ? 'A break-glass owner: password + two-step works while company sign-in is required' : 'Make a break-glass owner for identity-provider outages'}
+              >
+                <ShieldAlert className="mr-1 h-3 w-3" />
+                {u.breakGlass ? 'Break-glass on' : 'Break-glass'}
+              </Button>
+            )}
           </>
         );
       },
@@ -1095,6 +1137,27 @@ export function UsersAdmin() {
         />
       )}
 
+      {scopeFor && (
+        <ScopeDialog
+          user={scopeFor}
+          onClose={() => setScopeFor(null)}
+          onSaved={() => {
+            setScopeFor(null);
+            void load();
+          }}
+        />
+      )}
+      {breakGlassFor && (
+        <BreakGlassDialog
+          user={breakGlassFor}
+          onClose={() => setBreakGlassFor(null)}
+          onSaved={() => {
+            setBreakGlassFor(null);
+            void load();
+          }}
+        />
+      )}
+
       {secondRoleFor && (
 
         <SecondRoleDialog
@@ -1109,6 +1172,9 @@ export function UsersAdmin() {
 
         />
 
+      )}
+      {elevateFor && (
+        <ElevateAccessDialog user={elevateFor} onClose={() => setElevateFor(null)} onChanged={() => load()} />
       )}
 
       {shiftFor && (

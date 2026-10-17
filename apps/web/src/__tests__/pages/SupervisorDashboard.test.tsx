@@ -77,6 +77,9 @@ function renderPage(
     role?: 'SHIFT_SUPERVISOR' | 'FLOOR_SUPERVISOR';
     floorTeam?: Record<string, unknown>;
     arrivals?: Array<Record<string, unknown>>;
+    flags?: Array<Record<string, unknown>>;
+    handover?: Array<Record<string, unknown>>;
+    week?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const role = opts.role ?? 'SHIFT_SUPERVISOR';
@@ -109,6 +112,11 @@ function renderPage(
         ...(opts.onFloorNow ? { onFloorNow: opts.onFloorNow } : {}),
       };
     if (path === '/transport/arrivals') return { arrivals: opts.arrivals ?? [] };
+    // The floor from a phone (field roles, 2026-10).
+    if (path === '/floor/flags') return { flags: opts.flags ?? [] };
+    if (path.startsWith('/floor/flags/') && init?.method === 'POST') return { ok: true };
+    if (path === '/floor/handover') return { items: opts.handover ?? [] };
+    if (path === '/floor/week') return { today: '2026-10-17', timezone: tz, days: opts.week ?? [] };
     if (path === '/approvals/count')
       return { swaps: 1, pickups: 2, timeOff: 2, timesheets: 6, clockIns: 1, total: 12 };
     throw new Error(`unexpected ${path}`);
@@ -518,5 +526,45 @@ describe('<SupervisorDashboard> — arriving by van', () => {
     renderPage();
     await screen.findByText('Front Beach 218');
     expect(screen.queryByText('Arriving by van')).not.toBeInTheDocument();
+  });
+});
+
+describe('<SupervisorDashboard> — the floor from a phone', () => {
+  it('the last shift\u2019s handover is the first thing the lead sees, and a floor flag waits for their "Got it"', async () => {
+    renderPage({
+      handover: [{ id: 'h1', kind: 'EQUIPMENT', body: 'Pallet jack 3 is down.', priority: 'HIGH', createdAt: new Date().toISOString(), from: { shiftId: 'o1', position: 'Evening lead', period: 'EVENING', dateKey: '2026-10-16', department: 'Grocery', by: 'Marcus Hill' } }],
+      flags: [{ id: 'f1', kind: 'NO_SHOW', note: 'Not here 20 minutes in.', status: 'OPEN', createdAt: new Date().toISOString(), acknowledgedAt: null, associate: { id: 'a1', name: 'Ann Lee' }, shiftId: null, raisedBy: 'Marcus Hill' }],
+    });
+    const banner = await screen.findByTestId('handover-banner');
+    expect(banner).toHaveTextContent('Marcus’s Evening lead shift handed over 1 note');
+    expect(banner).toHaveTextContent('Pallet jack 3 is down.');
+    const flags = await screen.findByTestId('floor-flags');
+    expect(flags).toHaveTextContent('Ann Lee · Not here 20 minutes in.');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Got it' }));
+    expect(apiFetch).toHaveBeenCalledWith('/floor/flags/f1/ack', { method: 'POST' });
+  });
+
+  it('files an incident from the home, and never shows money', async () => {
+    renderPage();
+    await screen.findByText('Front Beach 218');
+    await userEvent.setup().click(screen.getByRole('button', { name: /report an incident/i }));
+    expect(await screen.findByRole('dialog', { name: /report an incident/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add a photo/i })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\$/);
+  });
+
+  it('a watch-only floor lead flags a no-show in two taps and sees the week beyond tomorrow', async () => {
+    vi.clearAllMocks();
+    renderPage({
+      role: 'FLOOR_SUPERVISOR',
+      clockedIn: true,
+      floorTeam: floorTeam(),
+      week: Array.from({ length: 7 }, (_, i) => ({ date: `2026-10-${String(17 + i).padStart(2, '0')}`, scheduled: i === 2 ? 5 : 0, open: i === 2 ? 1 : 0, confirmed: 0 })),
+    });
+    expect(await screen.findByTestId('floor-week')).toHaveTextContent('This week at the store');
+    expect(screen.queryByTestId('floor-flags')).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: /flag a no-show or hazard/i }));
+    expect(await screen.findByRole('dialog', { name: /flag it/i })).toBeInTheDocument();
+    expect(apiFetch).not.toHaveBeenCalledWith('/floor/flags');
   });
 });

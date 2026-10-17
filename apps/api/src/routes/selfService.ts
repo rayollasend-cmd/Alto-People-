@@ -8,6 +8,8 @@ import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import {
   accountFingerprint,
   addressSummary,
@@ -102,16 +104,51 @@ selfServiceRouter.get('/me/profile', async (req, res) => {
   });
 });
 
+/**
+ * Approval engine (2026-10): when the tenant switches it on, an address or
+ * dependents change waits for HR (manage:onboarding) instead of landing.
+ * Returns the approval when it waits, null when the change may land now.
+ */
+async function selfServiceGate(req: Request, associateId: string, title: string, summary: string, proposed: Record<string, unknown>, before: Record<string, unknown> | null) {
+  const policy = await loadApprovalPolicy(prisma);
+  if (!policy.selfServiceApproval) return null;
+  if (!(await secondPersonExists(prisma, 'manage:onboarding', req.user!.id))) return null;
+  return createApprovalRequest(prisma, {
+    kind: 'SELF_SERVICE_CHANGE',
+    subjectType: 'Associate',
+    subjectId: associateId,
+    title,
+    summary,
+    proposed,
+    before,
+    requesterUserId: req.user!.id,
+    approver: { capability: 'manage:onboarding' },
+    associateId,
+  });
+}
+
 selfServiceRouter.put('/me/profile', async (req, res) => {
   const id = requireAssociate(req);
   const input = ProfileUpdateSchema.parse(req.body);
   const before = await prisma.associate.findUnique({
     where: { id },
-    select: { state: true, addressLine1: true, addressLine2: true, city: true, zip: true, phone: true },
+    select: { state: true, addressLine1: true, addressLine2: true, city: true, zip: true, phone: true, firstName: true, lastName: true },
   });
   const addressTouched = (['addressLine1', 'addressLine2', 'city', 'state', 'zip'] as const).some(
     (k) => input[k] !== undefined && (input[k] ?? null) !== (before?.[k] ?? null),
   );
+  if (addressTouched && before) {
+    const data = Object.fromEntries((['addressLine1', 'addressLine2', 'city', 'state', 'zip'] as const).filter((k) => input[k] !== undefined).map((k) => [k, input[k] ?? null]));
+    const pending = await selfServiceGate(req, id, `${before.firstName} ${before.lastName}: new home address`, `From ${addressSummary(before)} to ${addressSummary({ ...before, ...data })}.`, { op: 'profile', associateId: id, data }, { address: addressSummary(before) });
+    if (pending) {
+      // The phone may still change now; the address waits.
+      if (input.phone !== undefined && (input.phone ?? null) !== (before.phone ?? null)) {
+        await prisma.associate.update({ where: { id }, data: { phone: input.phone } });
+      }
+      res.status(202).json(pendingResponse(pending));
+      return;
+    }
+  }
   const phoneTouched = input.phone !== undefined && (input.phone ?? null) !== (before?.phone ?? null);
   const { updated, change } = await prisma.$transaction(async (tx) => {
     // Recorded before the phone changes: Finance verifies on the number
@@ -368,6 +405,11 @@ selfServiceRouter.get('/me/dependents', async (req, res) => {
 selfServiceRouter.post('/me/dependents', async (req, res) => {
   const id = requireAssociate(req);
   const input = DependentInputSchema.parse(req.body);
+  const pending = await selfServiceGate(req, id, `New dependent: ${input.firstName} ${input.lastName}`, `${input.relation.replace(/_/g, ' ').toLowerCase()}${input.dob ? `, born ${input.dob}` : ''}.`, { op: 'dependent.create', associateId: id, data: input }, null);
+  if (pending) {
+    res.status(202).json(pendingResponse(pending));
+    return;
+  }
   const created = await prisma.dependent.create({
     data: {
       associateId: id,
@@ -389,6 +431,11 @@ selfServiceRouter.put('/me/dependents/:id', async (req, res) => {
   const existing = await prisma.dependent.findUnique({ where: { id } });
   if (!existing || existing.associateId !== associateId || existing.deletedAt) {
     throw new HttpError(404, 'not_found', 'Dependent not found.');
+  }
+  const pendingUpdate = await selfServiceGate(req, associateId, `Dependent updated: ${existing.firstName} ${existing.lastName}`, 'Details changed on a dependent.', { op: 'dependent.update', associateId, dependentId: id, data: input }, { firstName: existing.firstName, lastName: existing.lastName, relation: existing.relation, isCovered: existing.isCovered });
+  if (pendingUpdate) {
+    res.status(202).json(pendingResponse(pendingUpdate));
+    return;
   }
   await prisma.dependent.update({
     where: { id },
@@ -415,6 +462,11 @@ selfServiceRouter.delete('/me/dependents/:id', async (req, res) => {
   const existing = await prisma.dependent.findUnique({ where: { id } });
   if (!existing || existing.associateId !== associateId || existing.deletedAt) {
     throw new HttpError(404, 'not_found', 'Dependent not found.');
+  }
+  const pendingDelete = await selfServiceGate(req, associateId, `Dependent removed: ${existing.firstName} ${existing.lastName}`, 'A dependent is being taken off the record.', { op: 'dependent.delete', associateId, dependentId: id }, { firstName: existing.firstName, lastName: existing.lastName, relation: existing.relation });
+  if (pendingDelete) {
+    res.status(202).json(pendingResponse(pendingDelete));
+    return;
   }
   await prisma.dependent.update({
     where: { id },

@@ -28,6 +28,10 @@ export interface FinanceOverview {
     }>;
   };
   payrollCases: { open: number; assignedToMe: number };
+  /** Finance's hold queue: pay-account / W-4 changes awaiting a verification call. */
+  financialChanges?: { pending: number; held: number; open: number };
+  /** The next weeks of cash movement (GET /finance/cash-forecast has every line). */
+  cash?: { from: string; to: string; weeks: CashWeek[]; totals: { inflow: number; outflow: number; net: number } } | null;
   settlements: { count: number; total: number };
   receivables: {
     outstandingTotal: number;
@@ -53,6 +57,34 @@ export interface FinanceOverview {
     paidGross: number;
     variance: number;
   } | null;
+}
+
+export interface CashWeek {
+  weekStart: string;
+  weekEnd: string;
+  inflow: number;
+  outflow: number;
+  net: number;
+  cumulative: number;
+}
+
+export interface CashLine {
+  date: string;
+  kind: 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE';
+  label: string;
+  /** Signed: money in positive, money out negative. */
+  amount: number;
+  confidence: 'scheduled' | 'estimated' | 'overdue';
+  linkUrl: string;
+}
+
+export interface CashForecast {
+  generatedAt: string;
+  from: string;
+  to: string;
+  weeks: CashWeek[];
+  lines: CashLine[];
+  totals: { inflow: number; outflow: number; net: number };
 }
 
 export interface PayCycle {

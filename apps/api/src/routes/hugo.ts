@@ -11,11 +11,12 @@ import { answerWithModel, modelAvailable, type AssistantPage, type AssistantTool
 import { getBrandingSync } from '../lib/branding.js';
 import { computeCoverageForecast } from '../lib/coverageForecast.js';
 import { answerRenewals } from '../lib/complianceAgent.js';
-import { detectHugoIntent, hugoAudienceOf, intentsFor, type HugoAudience, type HugoContext, type HugoIntent, type HugoIntentKey } from '../lib/hugo.js';
+import { HUGO_INTENTS, detectHugoIntent, hugoAudienceOf, intentsFor, type HugoAudience, type HugoContext, type HugoIntent, type HugoIntentKey } from '../lib/hugo.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { placedClientIds } from '../lib/openShiftEligibility.js';
 import { answerPayday, answerRide, answerSchedule, handoff } from '../lib/whatsappAssistant.js';
+import { helpCenterReply, helpCenterToolText, searchHelpCenter } from '../lib/helpCenterSearch.js';
 import { WA_REPLY, toWaLang, type WaLang } from '../lib/whatsappContent.js';
 
 /**
@@ -92,11 +93,27 @@ async function contextFor(user: Asker): Promise<{ tenantId: string; audience: Hu
   return { tenantId, audience, ctx, lang: toWaLang(user.language), name, profile };
 }
 
-function canList(ctx: HugoContext, lang: WaLang) {
-  return intentsFor(ctx)
-    .filter((i) => i.help)
-    .map((i) => ({ key: i.key, label: i.help![lang].label, example: i.help![lang].example }));
+/**
+ * The chips under the intro: one per tool the assistant can actually call
+ * for this person right now. Derived from the tool list — the same list
+ * the model is handed — not from the intent table, so a chip can never
+ * offer a question the registry has no runner for (a module off, a
+ * capability paused, an intent added without an answer here).
+ */
+function canList(tools: AssistantTool[], lang: WaLang) {
+  return tools.flatMap((tool) => {
+    const i = HUGO_INTENTS.find((x) => x.key === tool.key);
+    return i?.help ? [{ key: i.key, label: i.help[lang].label, example: i.help[lang].example }] : [];
+  });
 }
+
+/** The registry for one person, in one place: the runner per intent and the tools the model may call. */
+function registryFor(user: Asker, tenantId: string, lang: WaLang, sitesNoun: string, now: Date, name: string, ctx: HugoContext, text = '') {
+  const mk = (k: HugoIntentKey) => answerFor(k, user, tenantId, lang, sitesNoun, now, name, ctx, text);
+  return { mk, tools: toolsFor(intentsFor(ctx), mk) };
+}
+
+type Runner = (args?: Record<string, unknown>) => Promise<Answer>;
 
 const dayLabel = (ymd: string, lang: WaLang) =>
   new Intl.DateTimeFormat(lang === 'es' ? 'es-US' : lang === 'tr' ? 'tr-TR' : 'en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${ymd}T12:00:00Z`));
@@ -138,12 +155,22 @@ async function answerDesk(user: Asker, tenantId: string, lang: WaLang): Promise<
 }
 
 /** The registry's answer for one intent — the rules path, and the model's tools. */
-function answerFor(intent: HugoIntentKey, user: Asker, tenantId: string, lang: WaLang, sitesNoun: string, now: Date, name: string, ctx: HugoContext): (() => Promise<Answer>) | null {
+function answerFor(intent: HugoIntentKey, user: Asker, tenantId: string, lang: WaLang, sitesNoun: string, now: Date, name: string, ctx: HugoContext, text = ''): Runner | null {
   switch (intent) {
+    case 'HELP_CENTER':
+      // The question's own words are the search; the model may narrow them.
+      // Called with args it is the model's tool (every hit, for quoting);
+      // without, the rules path (the best article, in the person's language).
+      return async (args) => {
+        const q = typeof args?.query === 'string' && args.query.trim() ? args.query : text;
+        const hits = await searchHelpCenter(q, { clientId: user.clientId });
+        const linkUrl = hits[0] ? `/help-center?article=${hits[0].slug}` : null;
+        return args ? { reply: helpCenterToolText(hits), linkUrl } : { ...helpCenterReply(lang, hits), linkUrl };
+      };
     case 'WHO':
       return async () => ({ reply: WA_REPLY.whoAmI(lang, name), linkUrl: null });
     case 'HELP':
-      return async () => ({ reply: WA_REPLY.appIntro(lang, name, canList(ctx, lang).map((c) => c.label.toLowerCase())), linkUrl: null });
+      return async () => ({ reply: WA_REPLY.appIntro(lang, name, canList(registryFor(user, tenantId, lang, sitesNoun, now, name, ctx).tools, lang).map((c) => c.label.toLowerCase())), linkUrl: null });
     case 'COVERAGE':
       return () => answerCoverage(user, tenantId, lang, sitesNoun, now);
     case 'DESK':
@@ -162,8 +189,9 @@ function answerFor(intent: HugoIntentKey, user: Asker, tenantId: string, lang: W
 }
 
 /** What the model may call: the registry's answers open to this person, as tools. */
-function toolsFor(open: HugoIntent[], mk: (k: HugoIntentKey) => (() => Promise<Answer>) | null): AssistantTool[] {
+function toolsFor(open: HugoIntent[], mk: (k: HugoIntentKey) => Runner | null): AssistantTool[] {
   const describe: Partial<Record<HugoIntentKey, [string, string]>> = {
+    HELP_CENTER: ['search_help_center', "Search the organization's published help-center articles (policies, how-tos, benefits, time off, conduct). Returns the best matches with an excerpt and a link. Use it for any question about a policy or how something works here, and quote the article."],
     DESK: ['whats_waiting_on_my_desk', "What the agents have waiting on the person's desk: proposals and decisions to make, with a count."],
     COVERAGE: ['coverage_next_7_days', "Where the person's sites are short of people over the next seven days, with the gap per day."],
     RENEW: ['my_documents_to_renew', "The person's own documents that expire soon and what to renew."],
@@ -176,7 +204,13 @@ function toolsFor(open: HugoIntent[], mk: (k: HugoIntentKey) => (() => Promise<A
     const d = describe[i.key];
     const run = mk(i.key);
     if (!d || !run) continue;
-    out.push({ key: i.key, name: d[0], description: d[1], run });
+    out.push({
+      key: i.key,
+      name: d[0],
+      description: d[1],
+      ...(i.key === 'HELP_CENTER' ? { input: { properties: { query: { type: 'string', description: 'What to search for, in a few words.' } }, required: ['query'] } } : {}),
+      run,
+    });
   }
   return out;
 }
@@ -203,8 +237,9 @@ async function escalationFor(user: Asker): Promise<{ who: string | null } | null
 
 hugoRouter.get('/', requireAuth, async (req, res) => {
   const user = req.user! as Asker;
-  const { audience, ctx, lang, name } = await contextFor(user);
-  const can = canList(ctx, lang);
+  const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
+  const sitesNoun = termsIn(profile, lang).sites.toLowerCase();
+  const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang);
   res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase())), can, model: modelAvailable() });
 });
 
@@ -215,11 +250,11 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   const now = new Date();
   const terms = termsIn(profile, lang);
   const sitesNoun = terms.sites.toLowerCase();
-  const mk = (k: HugoIntentKey) => answerFor(k, user, tenantId, lang, sitesNoun, now, name, ctx);
+  const { mk, tools } = registryFor(user, tenantId, lang, sitesNoun, now, name, ctx, text);
 
   let intent: string;
   let out: Answer;
-  let offer: { summary: string; who: string | null } | null = null;
+  let offer: { summary: string; who: string | null } | null;
   let source: 'model' | 'rules' = 'rules';
   let toolsUsed: string[] = [];
 
@@ -231,7 +266,7 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
         text,
         history: history ?? [],
         page: (page ?? null) as AssistantPage | null,
-        tools: toolsFor(intentsFor(ctx), mk),
+        tools,
         identity: {
           name,
           product: getBrandingSync().orgName || 'Alto People',
@@ -245,17 +280,17 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
       });
       intent = 'MODEL';
       toolsUsed = answer.toolsUsed;
-      out = { reply: answer.reply || WA_REPLY.appIntro(lang, name, canList(ctx, lang).map((c) => c.label.toLowerCase())), linkUrl: answer.linkUrl };
+      out = { reply: answer.reply || WA_REPLY.appIntro(lang, name, canList(tools, lang).map((c) => c.label.toLowerCase())), linkUrl: answer.linkUrl };
       offer = answer.handoff;
     } catch (err) {
       // The model is a convenience over the registry, never a dependency:
       // a timeout or an outage falls back to the rules path below.
       console.warn('[assistant] model answer failed; answering from the registry:', err instanceof Error ? err.message : err);
       source = 'rules';
-      ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk));
+      ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
     }
   } else {
-    ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk));
+    ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
   }
 
   // On the assistant's trail and the audit log: the intent and the tools, never the words.
@@ -264,6 +299,12 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source });
 });
 
+/** A question, as opposed to a statement: ends in "?" or opens with a question word. */
+function looksLikeQuestion(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return t.endsWith('?') || /^(how|what|where|when|why|which|who|can|could|do|does|is|are|should|am|may|cuando|como|donde|que|cual|puedo|nasil|nerede|ne zaman|hangi)\b/.test(t);
+}
+
 /** The registry alone: the first intent the words reach, or the channel's fallback. */
 async function rulesAnswer(
   text: string,
@@ -271,9 +312,19 @@ async function rulesAnswer(
   ctx: HugoContext,
   lang: WaLang,
   name: string,
-  mk: (k: HugoIntentKey) => (() => Promise<Answer>) | null,
+  mk: (k: HugoIntentKey) => Runner | null,
+  tools: AssistantTool[],
 ): Promise<{ intent: string; out: Answer; offer: { summary: string; who: string | null } | null }> {
   const { intent } = detectHugoIntent(text, ctx);
+  if ((intent === 'HANDOFF' && looksLikeQuestion(text)) || intent === 'HELP') {
+    // Nothing in the registry covers a QUESTION: the help center may. A
+    // published article that matches answers before anyone is bothered. A
+    // problem stated plainly ("my badge broke") still goes to a person.
+    if (mk('HELP_CENTER')) {
+      const hits = await searchHelpCenter(text, { clientId: user.clientId });
+      if (hits.length > 0) return { intent: 'HELP_CENTER', out: { ...helpCenterReply(lang, hits), linkUrl: `/help-center?article=${hits[0]!.slug}` }, offer: null };
+    }
+  }
   if (intent === 'HANDOFF') {
     // Nothing covers it. An associate is offered a person and confirms;
     // the question is not sent anywhere yet.
@@ -285,7 +336,7 @@ async function rulesAnswer(
     };
   }
   const run = mk(intent as HugoIntentKey);
-  const out = run ? await run() : { reply: WA_REPLY.appIntro(lang, name, canList(ctx, lang).map((c) => c.label.toLowerCase())), linkUrl: null };
+  const out = run ? await run() : { reply: WA_REPLY.appIntro(lang, name, canList(tools, lang).map((c) => c.label.toLowerCase())), linkUrl: null };
   return { intent, out, offer: null };
 }
 

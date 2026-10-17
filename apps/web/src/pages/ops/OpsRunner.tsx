@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { isQueued } from '@/lib/offlineQueue';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -1214,6 +1215,12 @@ function TaskRow({
     setBusy(true);
     try {
       const res = await patchOpsTask(task.id, body);
+      if (isQueued(res)) {
+        // No signal: it is saved on this device and sends when the API answers.
+        toast.info(tr('opsRun.savedOffline'));
+        onChanged();
+        return;
+      }
       // The answer is on the server — the draft has done its job.
       if (body.answerNumber !== undefined || body.answerText !== undefined) {
         removeOpsDraft(shiftId, task.id);

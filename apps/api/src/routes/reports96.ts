@@ -8,6 +8,8 @@ import { requireCapability } from '../middleware/auth.js';
 import {
   ENTITY_COLUMNS,
   SpecSchema,
+  aggregateColumns,
+  buildGroupBy,
   buildOrderBy,
   buildSelect,
   buildWhere,
@@ -124,6 +126,7 @@ reports96Router.post('/reports', VIEW, async (req, res) => {
   buildSelect(input.entity, input.spec.columns);
   buildWhere(input.entity, input.spec.filters);
   buildOrderBy(input.entity, input.spec.sort);
+  if (input.spec.groupBy?.length) buildGroupBy(input.entity, input.spec);
 
   const created = await prisma.report.create({
     data: {
@@ -155,6 +158,7 @@ reports96Router.patch('/reports/:id', VIEW, async (req, res) => {
   buildSelect(entity, spec.columns);
   buildWhere(entity, spec.filters);
   buildOrderBy(entity, spec.sort);
+  if (spec.groupBy?.length) buildGroupBy(entity, spec);
 
   await prisma.report.update({
     where: { id: r.id },
@@ -229,7 +233,7 @@ reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
   }
   const spec = SpecSchema.parse(r.spec);
   const rows = await runReport(r.entity, spec, req.user!);
-  res.json({ entity: r.entity, columns: spec.columns, rows });
+  res.json({ entity: r.entity, columns: spec.groupBy?.length ? aggregateColumns(spec) : spec.columns, rows });
 });
 
 /**
@@ -239,7 +243,7 @@ reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
 reports96Router.post('/reports/preview', VIEW, async (req, res) => {
   const input = ReportInputSchema.parse(req.body);
   const rows = await runReport(input.entity, input.spec, req.user!);
-  res.json({ entity: input.entity, columns: input.spec.columns, rows });
+  res.json({ entity: input.entity, columns: input.spec.groupBy?.length ? aggregateColumns(input.spec) : input.spec.columns, rows });
 });
 
 // ----- Schedules --------------------------------------------------------

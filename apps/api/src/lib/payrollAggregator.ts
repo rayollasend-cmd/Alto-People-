@@ -13,6 +13,7 @@
 // re-run after fixing inputs.
 
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
+import { computeRetroPay, summarizeRetro, type RetroCandidate } from './retroPay.js';
 import {
   payableMs,
   round2,
@@ -124,7 +125,7 @@ const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
 };
 
 export interface ProjectedEarning {
-  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | AddOnKind;
+  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | 'RETRO' | AddOnKind;
   /** Null for flat-amount earnings (salary, bonus, commission…). */
   hours: number | null;
   rate: number | null;
@@ -234,6 +235,9 @@ export interface ProjectedItem {
   reimbursementsTotal: number;
   /** IDs of Reimbursement rows consumed for this item — empty in preview. */
   reimbursementIds: string[];
+  /** Retroactive pay settled on this check (lib/retroPay.ts); persisted by the run. */
+  retro: RetroCandidate[];
+  retroPay: number;
   netPay: number;
   /** Employer-side accruals (informational; not deducted from net). */
   employerFica: number;
@@ -410,6 +414,15 @@ export async function aggregatePayrollProjection(
     ...addOnsByAssociate.keys(),
     ...tipsByAssociate.keys(),
   ]);
+
+  // Retroactive pay from back-dated rate changes, for everyone in the
+  // universe — settled as one RETRO line per person on a REGULAR run.
+  // Preview and persist see the same pairs (persist stamps them).
+  const retroByAssociate = await computeRetroPay(tx, {
+    associateIds: [...universe],
+    asOf: periodEndExclusive,
+    runId: input.runId,
+  });
 
   // Associates in the universe with no time entries still need their W-4 /
   // schedule / state metadata.
@@ -710,6 +723,9 @@ export async function aggregatePayrollProjection(
     supplementalGross = round2(supplementalGross);
     regularAddOnGross = round2(regularAddOnGross);
 
+    const retroCands = retroByAssociate.get(associateId) ?? [];
+    const retroPay = retroCands.length > 0 ? summarizeRetro(retroCands).amount : 0;
+
     const grossPay = round2(
       regularPay +
         overtimePay +
@@ -717,7 +733,8 @@ export async function aggregatePayrollProjection(
         salaryPay +
         tipsGross +
         supplementalGross +
-        regularAddOnGross,
+        regularAddOnGross +
+        retroPay,
     );
 
     // Gap 8 — live YTD aggregation. Excludes CANCELLED (voided) runs and
@@ -921,6 +938,16 @@ export async function aggregatePayrollProjection(
         isTaxable: true,
       });
     }
+    if (retroPay > 0) {
+      earnings.push({
+        kind: 'RETRO',
+        hours: null,
+        rate: null,
+        amount: retroPay,
+        isTaxable: true,
+        note: summarizeRetro(retroCands).note,
+      });
+    }
 
     const associateName = `${meta.firstName} ${meta.lastName}`.trim();
 
@@ -948,6 +975,8 @@ export async function aggregatePayrollProjection(
       postTaxDeductions,
       reimbursementsTotal,
       reimbursementIds,
+      retro: retroCands,
+      retroPay,
       netPay: finalNetPay,
       employerFica: breakdown.employer.fica,
       employerMedicare: breakdown.employer.medicare,

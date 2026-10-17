@@ -49,6 +49,11 @@ export interface TransportSettingsView {
    *  minutes before its time; 0 = never. */
   shortNoticeMinutes: number;
   dispatchPhone: string | null;
+  /** Drivers' hours of service and the pre-trip switch (lib/transportDrivers). */
+  driverMaxHoursPerDay: number;
+  driverMinRestHours: number;
+  preTripRequired: boolean;
+  driverShiftLocationId: string | null;
 }
 
 export const MAX_DAYS_AHEAD = 30;
@@ -95,6 +100,10 @@ export async function getTransportSettings(db: Db = prisma): Promise<TransportSe
     cutoffHours: row.cutoffHours,
     shortNoticeMinutes: row.shortNoticeMinutes,
     dispatchPhone: row.dispatchPhone,
+    driverMaxHoursPerDay: row.driverMaxHoursPerDay,
+    driverMinRestHours: row.driverMinRestHours,
+    preTripRequired: row.preTripRequired,
+    driverShiftLocationId: row.driverShiftLocationId,
   };
 }
 

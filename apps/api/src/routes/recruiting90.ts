@@ -23,6 +23,7 @@ import {
 } from '../lib/candidateOffers.js';
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import { sendInterviewInvites, type InviteContext } from '../lib/interviewInvites.js';
+import { proposeReferralBonus } from '../lib/marketing.js';
 import { boardKey, buildJobFeed } from '../lib/jobFeed.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import {
@@ -971,6 +972,8 @@ const ReferralInputSchema = z.object({
   notes: z.string().max(4000).optional().nullable(),
   bonusAmount: z.number().nonnegative().optional().nullable(),
   bonusCurrency: z.string().length(3).optional(),
+  /** The marketing campaign it is made under; its bonus applies. */
+  campaignId: z.string().uuid().optional().nullable(),
 });
 
 recruiting90Router.get('/referrals', VIEW, async (req, res) => {
@@ -1023,6 +1026,10 @@ recruiting90Router.post('/referrals', requireAuth, async (req, res) => {
       notes: input.notes ?? null,
       bonusAmount: input.bonusAmount ?? null,
       bonusCurrency: input.bonusCurrency ?? 'USD',
+      // Only a campaign that is on; a referral under a closed one is plain.
+      campaignId: input.campaignId
+        ? (await prisma.referralCampaign.findFirst({ where: { id: input.campaignId, status: 'ACTIVE' }, select: { id: true } }))?.id ?? null
+        : null,
     },
   });
   res.status(201).json({ id: created.id });
@@ -1036,6 +1043,12 @@ recruiting90Router.post('/referrals/:id/status', MANAGE, async (req, res) => {
     where: { id: req.params.id },
     data: { status },
   });
+  // A hire under a campaign starts the bonus clock; once the waiting
+  // period has passed the payout is proposed to Finance (lib/marketing).
+  // Proposed now when the campaign has no waiting period.
+  if (status === 'HIRED') {
+    await proposeReferralBonus(req.params.id, req.user!.id).catch(() => undefined);
+  }
   res.json({ ok: true });
 });
 

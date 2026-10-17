@@ -345,12 +345,13 @@ const BRACKET_STATES_2024: Record<string, Bracket[]> = {
 };
 
 /**
- * Flat-rate fallback for states we don't have a real table for yet.
- * Wave 2.1 — most US workers are now covered by an explicit table or
- * NO_SIT_STATES; this only fires for the long tail (HI, AR, MS, MT, etc.).
- * Kept intentionally on the high side to avoid under-withholding.
+ * There is no flat-rate fallback any more. A state with no table here and
+ * no configured rate withholds nothing, and the payroll exceptions flag
+ * the person as BLOCKING (UNSUPPORTED_STATE) so the run cannot finalize
+ * with them in it — a guessed 4% was a liability dressed as a feature.
+ * `supportedStates()` lists what is covered, for the exception message
+ * and the readiness page.
  */
-const FALLBACK_FLAT_RATE = 0.04;
 
 export interface StateInput {
   grossPay: number;
@@ -381,9 +382,17 @@ export function computeStateIncomeTax(input: StateInput): number {
     }
   }
 
-  // Long-tail fallback for states we haven't tabulated. Slightly above
-  // the lowest US bracket so we never under-withhold.
-  return round2(input.grossPay * FALLBACK_FLAT_RATE);
+  // Not covered: nothing is withheld, and the run is blocked upstream
+  // (lib/payrollExceptions.ts UNSUPPORTED_STATE) until the state is.
+  return 0;
+}
+
+/** Every state the engine withholds for, sorted — no-tax states included. */
+export function supportedStates(): string[] {
+  const configured = Object.entries(CONFIG_CACHE?.stateFlatRates ?? {})
+    .filter(([, v]) => typeof v === 'number')
+    .map(([k]) => k.toUpperCase());
+  return [...new Set([...NO_SIT_STATES, ...Object.keys(FLAT_STATE_RATES_2024), ...Object.keys(BRACKET_STATES_2024), ...configured])].sort();
 }
 
 /** True if `state` has a real (non-fallback) tax model. Surfaced for the

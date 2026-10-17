@@ -1186,7 +1186,9 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
           status: true,
           acknowledgedAt: true,
           assignedAssociateId: true,
-          assignedAssociate: { select: { firstName: true, lastName: true } },
+          // The phone rides along only for the shift supervisor (below); a
+          // store account never sees it.
+          assignedAssociate: { select: { firstName: true, lastName: true, phone: true, user: { select: { id: true, status: true, deletedAt: true } } } },
           locationId: true,
           locationRel: { select: { name: true, timezone: true } },
         },
@@ -1251,6 +1253,13 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
         shiftId: s.id,
         associateId: s.assignedAssociateId,
         name: s.assignedAssociate ? fullName(s.assignedAssociate) : null,
+        // Field roles (2026-10): the shift supervisor reaches their crew
+        // from the face wall — call, text, message. Nobody else gets the
+        // number here: not the store, not the watch-only floor lead.
+        ...(req.user!.role === 'SHIFT_SUPERVISOR' && s.assignedAssociate?.phone ? { phone: s.assignedAssociate.phone } : {}),
+        ...(req.user!.role === 'SHIFT_SUPERVISOR' && s.assignedAssociate?.user && s.assignedAssociate.user.status === 'ACTIVE' && !s.assignedAssociate.user.deletedAt
+          ? { messageUserId: s.assignedAssociate.user.id }
+          : {}),
         position: s.position,
         isLead: leadNames.has(s.position),
         startsAt: s.startsAt.toISOString(),

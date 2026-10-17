@@ -1,13 +1,16 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { toDateOnly } from '@alto-people/shared';
+import { hasCapability, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { applyPayRateChange, currentComp, listPayChanges } from '../lib/payChanges.js';
+import { coveringManagerIds } from '../lib/delegations.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -157,40 +160,55 @@ compensationRouter.post(
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
     const effectiveFrom = input.effectiveFrom ? new Date(input.effectiveFrom) : new Date();
-    await prisma.$transaction(async (tx) => {
-      await tx.compensationRecord.updateMany({
-        where: { associateId, effectiveTo: null },
-        data: { effectiveTo: effectiveFrom },
+    // Approval engine: a change past the tenant's threshold (or every change,
+    // when the switch says so) goes to a second manage:comp holder; the
+    // record then carries the decider's name, not the requester's.
+    const policy = await loadApprovalPolicy(prisma);
+    const current = await currentComp(prisma, associateId);
+    const sameType = !current || current.payType === input.payType;
+    // A switch between hourly and salary is always a second person's call.
+    const needs = current && !sameType ? true : payChangeNeedsApproval(policy, current?.amount ?? null, input.amount);
+    const who = `${associate.firstName} ${associate.lastName}`;
+    if (needs && (await secondPersonExists(prisma, 'manage:comp', req.user!.id))) {
+      const open = await prisma.approvalRequest.findFirst({ where: { kind: 'PAY_RATE_CHANGE', associateId, status: 'PENDING' }, select: { id: true } });
+      if (open) throw new HttpError(409, 'approval_pending', 'A pay change for this person is already waiting on a decision.');
+      const fmt = (n: number) => `$${n.toFixed(2)}`;
+      const request = await createApprovalRequest(prisma, {
+        kind: 'PAY_RATE_CHANGE',
+        subjectType: 'Associate',
+        subjectId: associateId,
+        title: `${who}: ${current ? `${fmt(current.amount)} → ` : ''}${fmt(input.amount)} ${input.payType === 'SALARY' ? 'per year' : 'per hour'}`,
+        summary: `${input.reason.replace(/_/g, ' ').toLowerCase()}, effective ${effectiveFrom.toISOString().slice(0, 10)}${input.notes ? ` — ${input.notes}` : ''}`,
+        proposed: { associateId, effectiveFrom: effectiveFrom.toISOString(), payType: input.payType, amount: input.amount, reason: input.reason, notes: input.notes ?? null },
+        before: current ? { payType: current.payType, amount: current.amount } : null,
+        requesterUserId: req.user!.id,
+        approver: { capability: 'manage:comp' },
+        associateId,
       });
-      await tx.compensationRecord.create({
-        data: {
-          associateId,
-          effectiveFrom,
-          payType: input.payType,
-          amount: new Prisma.Decimal(input.amount),
-          reason: input.reason,
-          notes: input.notes ?? null,
-          actorUserId: req.user!.id,
-        },
-      });
-    });
-    // Fire-and-forget, after the transaction commits. emailFallback so a
-    // pay change reaches the person even without an active account.
-    const effectiveDate = effectiveFrom.toISOString().slice(0, 10);
-    void notifyAssociate(associateId, {
-      subject: 'Your pay rate was updated',
-      body: `New rate effective ${effectiveDate}. Open your profile for details.`,
-      category: 'compensation',
-      linkUrl: '/me',
-      emailFallback: true,
-    });
-    void notifyManager(associateId, {
-      subject: 'Pay rate updated on your team',
-      body: `${associate.firstName} ${associate.lastName} has a new rate effective ${effectiveDate}.`,
-      category: 'compensation',
-      linkUrl: `/people?associateId=${associateId}`,
+      res.status(202).json(pendingResponse(request));
+      return;
+    }
+    await applyPayRateChange(prisma, {
+      associateId,
+      effectiveFrom,
+      payType: input.payType,
+      amount: input.amount,
+      reason: input.reason,
+      notes: input.notes ?? null,
+      actorUserId: req.user!.id,
+      note: needs ? 'No second approver was available.' : null,
     });
     res.status(201).json({ ok: true });
+  },
+);
+
+/** GET /comp/changes — every pay and bill-rate change, newest first (Finance's audit of pay). */
+compensationRouter.get(
+  '/changes',
+  requireCapability('view:comp'),
+  async (req, res) => {
+    const q = z.object({ associateId: z.string().uuid().optional(), clientId: z.string().uuid().optional() }).parse(req.query);
+    res.json({ changes: await listPayChanges(prisma, q) });
   },
 );
 
@@ -610,3 +628,149 @@ compensationRouter.post(
     res.json({ applied: applyProposals.length, stale: staleProposalIds.length });
   },
 );
+
+// ----- Compensation planning (HR pack 2026-10) --------------------------------
+//
+// The manager's worksheet: their own reports' proposals in one cycle, each
+// beside the person's band position, with the slice of the cycle's budget
+// that is theirs (pro rata to their reports' current pay). HR's calibration
+// view: the distribution of proposed increases, by manager, with the
+// outliers — so the cycle is decided on one screen, not a spreadsheet.
+
+function bandPosition(amount: number, band: { minAmount: Prisma.Decimal; maxAmount: Prisma.Decimal } | null): number | null {
+  if (!band) return null;
+  const min = Number(band.minAmount);
+  const max = Number(band.maxAmount);
+  if (max <= min) return null;
+  return Math.round(((amount - min) / (max - min)) * 1000) / 10;
+}
+
+async function cycleWorksheet(cycleId: string, managerIds: string[] | null) {
+  const cycle = await prisma.meritCycle.findUnique({ where: { id: cycleId } });
+  if (!cycle) throw new HttpError(404, 'not_found', 'Cycle not found.');
+  const proposals = await prisma.meritProposal.findMany({
+    take: 2000,
+    where: { cycleId, ...(managerIds ? { associate: { managerId: { in: managerIds } } } : {}) },
+    include: {
+      associate: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          managerId: true,
+          jobProfileId: true,
+          manager: { select: { firstName: true, lastName: true } },
+          jobProfile: { select: { title: true } },
+          performanceReviews: { orderBy: { periodEnd: 'desc' }, take: 1, select: { overallRating: true, periodEnd: true } },
+        },
+      },
+    },
+    orderBy: [{ associate: { lastName: 'asc' } }],
+  });
+  const bands = await prisma.compBand.findMany({ where: { clientId: cycle.clientId, effectiveTo: null }, select: { jobProfileId: true, payType: true, minAmount: true, midAmount: true, maxAmount: true, name: true } });
+  const bandFor = (jobProfileId: string | null, payType: string) => bands.find((b) => b.jobProfileId === jobProfileId && b.payType === payType) ?? bands.find((b) => b.jobProfileId === null && b.payType === payType) ?? null;
+  const totalCurrent = proposals.reduce((sum, p) => sum + Number(p.currentAmount), 0);
+  const rows = proposals.map((p) => {
+    const band = bandFor(p.associate.jobProfileId, p.currentPayType);
+    const current = Number(p.currentAmount);
+    const proposed = Number(p.proposedAmount);
+    const review = p.associate.performanceReviews[0] ?? null;
+    return {
+      id: p.id,
+      associateId: p.associateId,
+      associateName: `${p.associate.firstName} ${p.associate.lastName}`.trim(),
+      jobTitle: p.associate.jobProfile?.title ?? null,
+      managerId: p.associate.managerId,
+      managerName: p.associate.manager ? `${p.associate.manager.firstName} ${p.associate.manager.lastName}`.trim() : null,
+      payType: p.currentPayType,
+      currentAmount: current.toFixed(2),
+      proposedAmount: proposed.toFixed(2),
+      increasePct: current > 0 ? Math.round(((proposed - current) / current) * 1000) / 10 : null,
+      status: p.status,
+      proposedNotes: p.proposedNotes,
+      decisionNote: p.decisionNote,
+      band: band ? { name: band.name, min: Number(band.minAmount).toFixed(2), mid: Number(band.midAmount).toFixed(2), max: Number(band.maxAmount).toFixed(2) } : null,
+      bandPositionNow: bandPosition(current, band),
+      bandPositionProposed: bandPosition(proposed, band),
+      lastRating: review?.overallRating ?? null,
+      lastReviewEnd: review?.periodEnd.toISOString().slice(0, 10) ?? null,
+    };
+  });
+  return { cycle, rows, totalCurrent };
+}
+
+/** Pay increases are annualized so hourly and salaried people add up in one budget. */
+const annual = (amount: number, payType: string) => (payType === 'HOURLY' ? amount * 2080 : amount);
+
+compensationRouter.get('/cycles/:id/worksheet', requireCapability('view:comp'), async (req, res) => {
+  await assertInTenant('meritCycle', String(req.params.id), 'Cycle not found.');
+  // A manager sees their reports; HR (manage:comp) may ask for any manager's sheet or everyone's.
+  // A line manager (the MANAGER role) sees their own reports even though the
+  // role carries manage:comp; HR and the owner roles see everyone.
+  const hr = hasCapability(req.user!.role, 'manage:comp') && req.user!.role !== 'MANAGER';
+  const managerParam = z.string().uuid().optional().parse(req.query.managerId);
+  let managerIds: string[] | null;
+  if (hr) managerIds = managerParam ? [managerParam] : null;
+  else {
+    managerIds = await coveringManagerIds(req.user!);
+    if (managerIds.length === 0) throw new HttpError(403, 'no_team', 'Your account is not linked to a team.');
+  }
+  const { cycle, rows } = await cycleWorksheet(String(req.params.id), managerIds);
+  // This manager's share of the budget: pro rata to their reports' current annual pay.
+  const all = managerIds ? await prisma.meritProposal.findMany({ where: { cycleId: cycle.id }, select: { currentAmount: true, currentPayType: true } }) : [];
+  const cycleCurrent = managerIds ? all.reduce((sum, p) => sum + annual(Number(p.currentAmount), p.currentPayType), 0) : rows.reduce((sum, r) => sum + annual(Number(r.currentAmount), r.payType), 0);
+  const mineCurrent = rows.reduce((sum, r) => sum + annual(Number(r.currentAmount), r.payType), 0);
+  const budget = cycle.budget ? Number(cycle.budget) : null;
+  const share = budget === null ? null : cycleCurrent > 0 ? Math.round(budget * (mineCurrent / cycleCurrent) * 100) / 100 : budget;
+  const spent = rows.filter((r) => r.status !== 'REJECTED').reduce((sum, r) => sum + annual(Number(r.proposedAmount) - Number(r.currentAmount), r.payType), 0);
+  res.json({
+    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10), budget: budget?.toFixed(2) ?? null },
+    budget: { share: share?.toFixed(2) ?? null, spent: Math.round(spent * 100) / 100, remaining: share === null ? null : Math.round((share - spent) * 100) / 100 },
+    rows,
+    editable: cycle.status === 'DRAFT' || cycle.status === 'OPEN',
+  });
+});
+
+compensationRouter.get('/cycles/:id/calibration', requireCapability('manage:comp'), async (req, res) => {
+  await assertInTenant('meritCycle', String(req.params.id), 'Cycle not found.');
+  const { cycle, rows } = await cycleWorksheet(String(req.params.id), null);
+  const pcts = rows.map((r) => r.increasePct).filter((x): x is number => x !== null);
+  const sorted = [...pcts].sort((a, b) => a - b);
+  const q = (p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]! : null);
+  const mean = sorted.length ? Math.round((sorted.reduce((a, b) => a + b, 0) / sorted.length) * 10) / 10 : null;
+  const buckets = [
+    { label: '0%', min: -Infinity, max: 0 },
+    { label: '0–2%', min: 0, max: 2 },
+    { label: '2–4%', min: 2, max: 4 },
+    { label: '4–6%', min: 4, max: 6 },
+    { label: '6–10%', min: 6, max: 10 },
+    { label: '10%+', min: 10, max: Infinity },
+  ].map((b) => ({ label: b.label, count: pcts.filter((p) => (b.min === -Infinity ? p <= 0 : p > b.min) && p <= b.max).length }));
+  const byManager = new Map<string, { managerId: string | null; managerName: string; people: number; avgPct: number; spent: number; pending: number }>();
+  for (const r of rows) {
+    const key = r.managerId ?? 'none';
+    const m = byManager.get(key) ?? { managerId: r.managerId, managerName: r.managerName ?? 'No manager', people: 0, avgPct: 0, spent: 0, pending: 0 };
+    m.people += 1;
+    m.avgPct += r.increasePct ?? 0;
+    m.spent += annual(Number(r.proposedAmount) - Number(r.currentAmount), r.payType);
+    if (r.status === 'DRAFT' || r.status === 'SUBMITTED') m.pending += 1;
+    byManager.set(key, m);
+  }
+  const managers = [...byManager.values()].map((m) => ({ ...m, avgPct: m.people ? Math.round((m.avgPct / m.people) * 10) / 10 : 0, spent: Math.round(m.spent * 100) / 100 }));
+  // Outliers: an increase far from the pack, or one that leaves the band.
+  const p25 = q(0.25) ?? 0;
+  const p75 = q(0.75) ?? 0;
+  const fence = (p75 - p25) * 1.5;
+  const outliers = rows.filter((r) => (r.increasePct !== null && (r.increasePct > p75 + fence || r.increasePct < p25 - fence)) || (r.bandPositionProposed !== null && (r.bandPositionProposed > 100 || r.bandPositionProposed < 0)) || (r.lastRating !== null && r.lastRating <= 2 && (r.increasePct ?? 0) > 0))
+    .map((r) => ({ ...r, reason: r.bandPositionProposed !== null && r.bandPositionProposed > 100 ? 'Above the band' : r.bandPositionProposed !== null && r.bandPositionProposed < 0 ? 'Below the band' : r.lastRating !== null && r.lastRating <= 2 && (r.increasePct ?? 0) > 0 ? 'Raise with a low rating' : 'Far from the pack' }));
+  const spent = rows.filter((r) => r.status !== 'REJECTED').reduce((sum, r) => sum + annual(Number(r.proposedAmount) - Number(r.currentAmount), r.payType), 0);
+  const budget = cycle.budget ? Number(cycle.budget) : null;
+  res.json({
+    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, budget: budget?.toFixed(2) ?? null, effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10) },
+    totals: { people: rows.length, spent: Math.round(spent * 100) / 100, remaining: budget === null ? null : Math.round((budget - spent) * 100) / 100, meanPct: mean, medianPct: q(0.5), p25, p75, pending: rows.filter((r) => r.status === 'DRAFT' || r.status === 'SUBMITTED').length },
+    distribution: buckets,
+    managers,
+    outliers,
+    rows,
+  });
+});

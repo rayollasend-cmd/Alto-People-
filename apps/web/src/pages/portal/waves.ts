@@ -37,6 +37,10 @@ export interface WaveRow {
   /** The shift's store — places it in a supervisor's shift window. */
   locationId?: string | null;
   locationName: string | null;
+  /** Only for the shift supervisor (the API withholds it from everyone else). */
+  phone?: string | null;
+  /** Their login in the messenger, for the shift supervisor's Message action. */
+  messageUserId?: string | null;
   state: DayState;
 }
 

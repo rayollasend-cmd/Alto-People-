@@ -47,7 +47,11 @@ interface SeedDisbursedRun {
 async function seedDisbursedRun(): Promise<SeedDisbursedRun> {
   const client = await createClient();
   const a1 = await createAssociate({ firstName: 'Alice', lastName: 'Anderson' });
+  // A work state the engine withholds for — finalize refuses one it can't.
+  await prisma.associate.update({ where: { id: a1.id }, data: { state: 'FL' } });
   const a2 = await createAssociate({ firstName: 'Bob', lastName: 'Brown' });
+  // A work state the engine withholds for — finalize refuses one it can't.
+  await prisma.associate.update({ where: { id: a2.id }, data: { state: 'FL' } });
   const start = new Date('2026-04-01T13:00:00Z');
   for (const a of [a1, a2]) {
     await prisma.timeEntry.create({
@@ -184,6 +188,8 @@ describe('POST /payroll/runs/:id/void — Gap 3', () => {
   it('refuses to void a DRAFT run', async () => {
     const client = await createClient();
     const associate = await createAssociate();
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,
@@ -222,6 +228,8 @@ describe('POST /payroll/runs/:id/void — Gap 3', () => {
   it('refuses to void a FINALIZED run', async () => {
     const client = await createClient();
     const associate = await createAssociate();
+    // A work state the engine withholds for — finalize refuses one it can't.
+    await prisma.associate.update({ where: { id: associate.id }, data: { state: 'FL' } });
     await prisma.timeEntry.create({
       data: {
         associateId: associate.id,

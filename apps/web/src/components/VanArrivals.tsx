@@ -72,6 +72,7 @@ function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
             {a.van ?? 'Waiting on a van'}
             {showStore ? ` · ${a.store.name}` : ''}
             {a.etaAt && !arrived && <> · here about {fmtTimeTz(a.etaAt)}</>}
+            {arrived && a.droppedAt && <> · dropped off {fmtTimeTz(a.droppedAt)}</>}
           </span>
           {a.lateMinutes >= 5 && !arrived && (
             <Badge size="sm" variant="pending">

@@ -1,6 +1,12 @@
 import { Router } from 'express';
+import { z } from 'zod';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { requireCapability } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error.js';
+import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { cardOn, loadRateCards } from '../lib/rateCards.js';
 import {
   orgDateKey,
   startOfWeekUTC,
@@ -84,9 +90,12 @@ workforceOverviewRouter.get(
               endsAt: { gt: todayStart },
             },
             select: {
+              id: true,
               status: true,
               startsAt: true,
               endsAt: true,
+              position: true,
+              payRate: true,
               client: { select: { id: true, name: true } },
             },
             take: 2000,
@@ -326,8 +335,20 @@ workforceOverviewRouter.get(
         noShowsToday: number;
         incidentsToday: number;
         unscheduledNow: number;
+        /** Today's scheduled labor in dollars (shift hours × pay rate), org roles only; null when withheld. */
+        laborToday: number | null;
+        /** Shifts today with no resolvable pay rate — a $0 that means "rate missing". */
+        laborUnpriced: number;
+        /** Agent proposals waiting on a person, about this store's shifts. */
+        proposalsPending: number;
         status: 'red' | 'amber' | 'green';
       }
+      // Labor dollars (field roles, 2026-10): the Workforce Manager flew
+      // blind on cost by charter; the charter changed. Priced like the
+      // scheduling KPI strip — the shift's own rate, else the rate card in
+      // force. Store-bound callers still get null.
+      const showCost = !(user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR');
+      const cards = showCost ? await loadRateCards(prisma, [...new Set(todayShifts.map((s) => s.client?.id ?? null))]) : [];
       const storeMap = new Map<string, StoreTile>();
       const storeBucket = (id: string | null, name: string | null) => {
         const key = id ?? 'none';
@@ -345,13 +366,18 @@ workforceOverviewRouter.get(
             noShowsToday: 0,
             incidentsToday: 0,
             unscheduledNow: 0,
+            laborToday: showCost ? 0 : null,
+            laborUnpriced: 0,
+            proposalsPending: 0,
             status: 'green',
           } as StoreTile);
         storeMap.set(key, b);
         return b;
       };
+      const shiftClient = new Map<string, string | null>();
       for (const s of todayShifts) {
         const b = storeBucket(s.client?.id ?? null, s.client?.name ?? null);
+        shiftClient.set(s.id, s.client?.id ?? null);
         if (s.status === 'OPEN') b.openToday += 1;
         else if (
           s.startsAt.getTime() <= now.getTime() &&
@@ -359,6 +385,23 @@ workforceOverviewRouter.get(
         ) {
           b.scheduledNow += 1;
         }
+        if (showCost && b.laborToday !== null) {
+          const rate = s.payRate !== null ? Number(s.payRate) : cardOn(cards, s.client?.id ?? null, s.position, s.startsAt)?.payRate ?? null;
+          if (rate === null) b.laborUnpriced += 1;
+          else b.laborToday += ((s.endsAt.getTime() - s.startsAt.getTime()) / 3_600_000) * rate;
+        }
+      }
+      // The agents' proposals, grouped by store: each names the shift it is about.
+      const pendingProposals = await prisma.agentProposal.findMany({
+        where: { tenantId: tenantIdForWrite(), status: 'PROPOSED', subjectType: 'Shift', subjectId: { in: [...shiftClient.keys()] } },
+        select: { subjectId: true },
+        take: 500,
+      });
+      for (const p of pendingProposals) {
+        const cid = p.subjectId ? shiftClient.get(p.subjectId) : undefined;
+        if (cid === undefined) continue;
+        const b = storeMap.get(cid ?? 'none');
+        if (b) b.proposalsPending += 1;
       }
       for (const s of tomorrowShifts) {
         if (!s.client?.id) continue;
@@ -415,6 +458,7 @@ workforceOverviewRouter.get(
             s.onFloor + s.scheduledNow + s.openToday + s.unconfirmedTomorrow + s.openTomorrow > 0,
         )
         .map((s) => {
+          if (s.laborToday !== null) s.laborToday = Math.round(s.laborToday * 100) / 100;
           s.status =
             s.noShowsToday > 0 ||
             s.incidentsToday > 0 ||
@@ -579,11 +623,14 @@ workforceOverviewRouter.get(
           email: true,
           role: true,
           clientId: true,
+          locationId: true,
           photoS3Key: true,
           photoUpdatedAt: true,
           associate: {
             select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true },
           },
+          supervisorShiftWindows: { select: { locationId: true, label: true } },
+          lead: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
         take: 200,
       });
@@ -613,6 +660,11 @@ workforceOverviewRouter.get(
           photoUrl: accountPhotoUrlFor(u),
           clientId: u.clientId,
           clientName: u.clientId ? clients.get(u.clientId) ?? null : null,
+          locationId: u.locationId,
+          windows: u.supervisorShiftWindows,
+          lead: u.lead
+            ? { userId: u.lead.id, name: u.lead.associate ? `${u.lead.associate.firstName} ${u.lead.associate.lastName}`.trim() : u.lead.email.split('@')[0]! }
+            : null,
         }))
         .sort(
           (a, b) =>
@@ -621,6 +673,73 @@ workforceOverviewRouter.get(
             a.name.localeCompare(b.name),
         );
       res.json({ supervisors: rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * The supervisor corps (field roles, 2026-10): the Workforce Manager places
+ * a supervisor at a client and store without opening Users & access. Only
+ * the two supervisor roles, only the client and store — role, status and
+ * everything else stay with HR (PATCH /admin/users/:id). A client change
+ * drops the shift windows, which belong to the old client's stores.
+ */
+const PlaceInput = z.object({
+  clientId: z.string().uuid().nullable().optional(),
+  locationId: z.string().uuid().nullable().optional(),
+});
+
+workforceOverviewRouter.patch(
+  '/workforce/supervisors/:userId',
+  requireCapability('manage:org'),
+  async (req, res, next) => {
+    try {
+      const actor = req.user!;
+      if (!can(actor, 'manage:scheduling')) throw new HttpError(403, 'forbidden', 'The supervisor corps is placed by field leadership.');
+      const id = z.string().uuid().parse(req.params.userId);
+      const input = PlaceInput.parse(req.body ?? {});
+      if (input.clientId === undefined && input.locationId === undefined) {
+        throw new HttpError(400, 'nothing_to_change', 'Name the client or the store.');
+      }
+      const target = await prisma.user.findFirst({
+        where: { id, deletedAt: null, tenantId: tenantIdForWrite() },
+        select: { id: true, role: true, clientId: true, locationId: true },
+      });
+      if (!target) throw new HttpError(404, 'not_found', 'User not found.');
+      if (target.role !== 'SHIFT_SUPERVISOR' && target.role !== 'FLOOR_SUPERVISOR') {
+        throw new HttpError(400, 'not_a_supervisor', 'Only shift and floor supervisors are placed here.');
+      }
+      const clientId = input.clientId === undefined ? target.clientId : input.clientId;
+      const locationId = input.locationId === undefined ? target.locationId : input.locationId;
+      if (clientId) {
+        const client = await prisma.client.findFirst({ where: { id: clientId, deletedAt: null }, select: { id: true } });
+        if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+      }
+      if (locationId) {
+        const site = await prisma.site.findFirst({ where: { id: locationId, deletedAt: null }, select: { clientId: true } });
+        if (!site) throw new HttpError(404, 'site_not_found', 'Store not found.');
+        if (site.clientId !== clientId) throw new HttpError(400, 'site_not_at_client', 'That store belongs to another client.');
+      }
+      const clientChanged = clientId !== target.clientId;
+      await prisma.$transaction([
+        prisma.user.update({ where: { id }, data: { clientId, locationId: clientChanged && input.locationId === undefined ? null : locationId } }),
+        ...(clientChanged ? [prisma.supervisorShiftWindow.deleteMany({ where: { userId: id } })] : []),
+      ]);
+      invalidateUserCache(id);
+      enqueueAudit(
+        {
+          actorUserId: actor.id,
+          clientId: clientId ?? null,
+          action: 'user.placed_by_field',
+          entityType: 'User',
+          entityId: id,
+          metadata: { from: { clientId: target.clientId, locationId: target.locationId }, to: { clientId, locationId }, windowsDropped: clientChanged },
+        },
+        'workforce.place_supervisor',
+      );
+      res.json({ userId: id, clientId, locationId, windowsDropped: clientChanged });
     } catch (err) {
       next(err);
     }

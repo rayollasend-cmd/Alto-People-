@@ -24,13 +24,14 @@ import {
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtTime } from '@/lib/format';
+import { fmtDate, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ClockStrip } from '@/components/ClockStrip';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Avatar } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -65,6 +66,11 @@ interface StoreTile {
   noShowsToday: number;
   incidentsToday: number;
   unscheduledNow: number;
+  /** Today's scheduled labor in dollars; null when withheld from the caller. */
+  laborToday?: number | null;
+  laborUnpriced?: number;
+  /** Agent proposals waiting on a person, about this store's shifts. */
+  proposalsPending?: number;
   status: 'red' | 'amber' | 'green';
 }
 
@@ -222,7 +228,7 @@ export function WorkforceDashboard() {
 
   // Ways in (§4.1): the six doors.
   const doors = (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-6 md:gap-3">
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-7 md:gap-3">
       {(
         [
           ['/scheduling', 'wf.goScheduling', CalendarDays],
@@ -231,6 +237,7 @@ export function WorkforceDashboard() {
           ['/ops', 'wf.goOps', ClipboardList],
           ['/marketplace', 'wf.goMarketplace', CalendarPlus],
           ['/compliance', 'wf.goIncidents', ShieldAlert],
+          ['/scheduling/supervisors', 'wf.goCorps', Users],
         ] as const
       ).map(([to, key, Icon]) => (
         <Link
@@ -386,7 +393,7 @@ export function WorkforceDashboard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {data.today.stores.map((s, i) => {
               const sups = s.clientId ? supsByClient.get(s.clientId) ?? [] : [];
-              const chips: Array<{ text: string; cls: string }> = [
+              const chips: Array<{ text: string; cls: string; to?: string }> = [
                 s.noShowsToday > 0 && {
                   text: t('wf.tileNoShows', { count: s.noShowsToday }),
                   cls: 'bg-alert/15 text-alert',
@@ -407,7 +414,13 @@ export function WorkforceDashboard() {
                   text: t('wf.tileUnconf', { count: s.unconfirmedTomorrow }),
                   cls: 'bg-warning/15 text-warning',
                 },
-              ].filter(Boolean) as Array<{ text: string; cls: string }>;
+                // The agents' proposals, grouped by store — decided in Approvals.
+                (s.proposalsPending ?? 0) > 0 && {
+                  text: t('wf.tileProposals', { count: s.proposalsPending ?? 0 }),
+                  cls: 'bg-gold/15 text-gold',
+                  to: '/approvals?tab=proposals',
+                },
+              ].filter(Boolean) as Array<{ text: string; cls: string; to?: string }>;
               const pct =
                 s.scheduledNow > 0
                   ? Math.min(100, (s.onFloor / s.scheduledNow) * 100)
@@ -436,6 +449,15 @@ export function WorkforceDashboard() {
                         {t('wf.storeNow', { on: s.onFloor, sched: s.scheduledNow })}
                       </span>
                     </div>
+                    {/* Labor dollars (field roles, 2026-10): today's scheduled
+                        cost, the charter's one change — null when withheld. */}
+                    {s.laborToday !== null && s.laborToday !== undefined && (
+                      <Link to="/labor-costs" className="mt-1 inline-flex items-center gap-1 text-xs tabular-nums text-silver hover:text-gold-bright">
+                        <span className="text-ink">{fmtMoneyCompact(s.laborToday)}</span>
+                        {t('wf.tileLabor')}
+                        {(s.laborUnpriced ?? 0) > 0 && <span className="text-warning">· {t('wf.tileUnpriced', { count: s.laborUnpriced ?? 0 })}</span>}
+                      </Link>
+                    )}
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
                       <div
                         className={cn(
@@ -449,17 +471,25 @@ export function WorkforceDashboard() {
                       {chips.length === 0 ? (
                         <span className="text-xs text-success">{t('wf.tileQuiet')}</span>
                       ) : (
-                        chips.map((c) => (
-                          <span
-                            key={c.text}
-                            className={cn(
-                              'rounded-full px-2 py-0.5 text-2xs font-medium tabular-nums',
-                              c.cls,
-                            )}
-                          >
-                            {c.text}
-                          </span>
-                        ))
+                        chips.map((c) =>
+                          c.to ? (
+                            <Link key={c.text} to={c.to} className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright">
+                              <Badge variant="accent" size="sm">
+                                {c.text}
+                              </Badge>
+                            </Link>
+                          ) : (
+                            <span
+                              key={c.text}
+                              className={cn(
+                                'rounded-full px-2 py-0.5 text-2xs font-medium tabular-nums',
+                                c.cls,
+                              )}
+                            >
+                              {c.text}
+                            </span>
+                          ),
+                        )
                       )}
                     </div>
                     {sups.length > 0 && (

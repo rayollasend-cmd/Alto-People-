@@ -1,20 +1,15 @@
 import { Router } from 'express';
-import { endEmployment } from '../lib/employment.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
-import { releaseFutureShifts } from '../lib/deactivation.js';
-import { repairSoon } from '../lib/scheduleRepair.js';
-import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
-import { maybeNotifyFinanceDeparture } from '../lib/fieldglassNotify.js';
-import { notifyAllAdmins, notifyManager, trackNotificationWork } from '../lib/notify.js';
-import { emitWebhookEvent } from '../lib/webhookDispatch.js';
-import {
-  assertCanCloseAssignments,
-  closeOpenAssignments,
-} from '../lib/assignmentDates.js';
-import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
+import { requireCapability } from '../middleware/auth.js';
+import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { assertCanCloseAssignments } from '../lib/assignmentDates.js';
+import { getLaborPolicy } from '../lib/stateLaborPolicy.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { assertAssetsReturned, completeSeparation } from '../lib/separationComplete.js';
+import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
+import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 
 /**
  * Phase 119 â€” Separations + exit interviews.
@@ -266,99 +261,37 @@ separation119Router.post(
     }
     const next: 'IN_PROGRESS' | 'COMPLETE' =
       existing.status === 'PLANNED' ? 'IN_PROGRESS' : 'COMPLETE';
-    // Completion DEACTIVATES the associate, atomically with the status
-    // flip. Before this transaction existed, completing a separation
-    // changed nothing outside the Separation row: the associate stayed
-    // "Active" in the directory forever (status derives from having an
-    // approved application) and their login kept working even though the
-    // completion notice claimed "access revoked".
-    const disabledUserIds: string[] = [];
-    let releasedShiftIds: string[] = [];
-    await prisma.$transaction(async (tx) => {
-      await tx.separation.update({
-        where: { id },
-        data: {
-          status: next,
-          ...(next === 'COMPLETE'
-            ? { completedAt: new Date(), completedById: req.user!.id }
-            : {}),
-        },
-      });
-      if (next !== 'COMPLETE') return;
-      await tx.associate.update({
-        where: { id: existing.associateId },
-        data: { separatedAt: new Date() },
-      });
-      // Brief 2-1b: the employment spell ends on the last day worked.
-      await endEmployment(tx, existing.associateId, existing.lastDayWorked ?? new Date());
-      // Close any open site assignment as of the last day worked, so
-      // location rosters and the audit packet's assignment spans reflect
-      // reality. Guarded: a last day worked that precedes the start of the
-      // assignment it closes is a 400 naming both dates, not a raw
-      // constraint violation out of Postgres.
-      await closeOpenAssignments(tx, {
-        associateId: existing.associateId,
-        endedAt: existing.lastDayWorked,
-        endLabel: 'last day worked',
-      });
-      // Off every shift still ahead of them — completing a separation used
-      // to leave the person assigned on the schedule indefinitely (same
-      // rule as deactivation).
-      ({ releasedShiftIds } = await releaseFutureShifts(tx, existing.associateId, new Date(), 'Associate separated.'));
-      // Actually revoke access: disable the login and kill live sessions.
-      const users = await tx.user.findMany({
-        where: { associateId: existing.associateId, deletedAt: null, status: { not: 'DISABLED' } },
-        select: { id: true },
-      });
-      if (users.length > 0) {
-        await tx.user.updateMany({
-          where: { id: { in: users.map((u) => u.id) } },
-          data: { status: 'DISABLED', tokenVersion: { increment: 1 } },
-        });
-        disabledUserIds.push(...users.map((u) => u.id));
-      }
-    });
-    for (const uid of disabledUserIds) invalidateUserCache(uid);
-    // The Workforce agent proposes cover for the shifts the separation opened (fire-and-forget).
-    repairSoon(releasedShiftIds, { kind: 'separation', associateId: existing.associateId });
-    // Phase 131 follow-up â€” when the offboarding completes, drop the
-    // associate's selfies and face reference immediately rather than
-    // waiting for the 90-day retention sweep. Punch rows stay for HR
-    // audit; only the biometric bytes are removed. Best-effort: a
-    // failure here is logged but doesn't block the status advance.
-    if (next === 'COMPLETE') {
-      try {
-        await purgeAssociateBiometrics(prisma, existing.associateId);
-      } catch (err) {
-        console.warn(
-          '[separation119] purgeAssociateBiometrics failed',
-          { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
-        );
-      }
-      // The Finance baton: a separated worker with a live Fieldglass
-      // registration is an open account at the client for someone who no
-      // longer works here. Fire-and-forget — never blocks the completion.
-      void trackNotificationWork(
-        maybeNotifyFinanceDeparture(existing.associateId, existing.lastDayWorked),
-      );
-      // Outbound webhooks â€” the separation completing IS the termination
-      // event (access revoked, biometrics purged). Ids + dates only.
-      emitWorkerStatusChanged({ associateId: existing.associateId }, 'separated');
-      void emitWebhookEvent('associate.terminated', {
-        associateId: existing.associateId,
-        separationId: existing.id,
-        reason: existing.reason,
-        lastDayWorked: existing.lastDayWorked.toISOString().slice(0, 10),
-      });
-      const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
-      void notifyAllAdmins({
-        subject: `Separation completed: ${who}`,
-        body: `Separation completed for ${who} â€” access revoked, biometrics purged.`,
-        category: 'separation',
-        linkUrl: '/separations',
-        excludeUserId: req.user!.id,
-      });
+    if (next === 'IN_PROGRESS') {
+      await prisma.separation.update({ where: { id }, data: { status: next } });
+      res.json({ ok: true, status: next });
+      return;
     }
+    // Offboarding (HR pack 2026-10): nothing completes while company property
+    // is still out, unless HR waives it with a reason that stays on the record.
+    await assertAssetsReturned(existing.associateId, existing.assetsWaivedAt);
+    // Approval engine: completing a separation is the termination event, so
+    // it takes a second person where one exists (the tenant's switch).
+    const policy = await loadApprovalPolicy(prisma);
+    const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
+    if (policy.separationSecondPerson && (await secondPersonExists(prisma, 'manage:onboarding', req.user!.id))) {
+      const open = await prisma.approvalRequest.findFirst({ where: { kind: 'SEPARATION_COMPLETE', subjectId: id, status: 'PENDING' } });
+      if (open) throw new HttpError(409, 'approval_pending', 'This separation is already waiting on a second person.');
+      const request = await createApprovalRequest(prisma, {
+        kind: 'SEPARATION_COMPLETE',
+        subjectType: 'Separation',
+        subjectId: id,
+        title: `Complete ${who}'s separation`,
+        summary: `${existing.reason.replace(/_/g, ' ').toLowerCase()} · last day ${existing.lastDayWorked.toISOString().slice(0, 10)}. Completing revokes access, ends the employment record and purges biometrics.`,
+        proposed: { separationId: id, status: 'COMPLETE' },
+        before: { status: existing.status },
+        requesterUserId: req.user!.id,
+        approver: { capability: 'manage:onboarding' },
+        associateId: existing.associateId,
+      });
+      res.status(202).json(pendingResponse(request));
+      return;
+    }
+    await completeSeparation(id, req.user!.id, { note: policy.separationSecondPerson ? 'No second approver was available.' : null });
     res.json({ ok: true, status: next });
   },
 );
@@ -400,3 +333,129 @@ separation119Router.post(
     res.json({ ok: true });
   },
 );
+
+// ----- Offboarding: final pay preview + asset return (HR pack 2026-10) -------
+//
+// Final pay is a PREVIEW, not a payment: unpaid approved hours and hours
+// still awaiting approval, the leave balances (vacation and PTO are paid out
+// where the policy says so; sick is not), the current rate, and the day the
+// state requires the last check by. The snapshot is kept on the separation
+// so the packet shows what HR saw.
+
+/** State final-paycheck deadlines, in days after the last day worked, by how the person left.
+ *  Null = the next regular payday. The states Alto runs in are named; the rest fall to federal (next payday). */
+const FINAL_PAY_DEADLINE: Record<string, { involuntary: number | null; voluntary: number | null; note: string }> = {
+  CA: { involuntary: 0, voluntary: 3, note: 'California: immediately on discharge; within 72 hours of a resignation without notice.' },
+  CO: { involuntary: 0, voluntary: null, note: 'Colorado: immediately on discharge; next payday on resignation.' },
+  MA: { involuntary: 0, voluntary: null, note: 'Massachusetts: the day of discharge; next payday on resignation.' },
+  NV: { involuntary: 3, voluntary: 7, note: 'Nevada: within 3 days of discharge; 7 days or next payday on resignation.' },
+  IL: { involuntary: null, voluntary: null, note: 'Illinois: by the next regular payday.' },
+  NY: { involuntary: null, voluntary: null, note: 'New York: by the next regular payday.' },
+  TX: { involuntary: 6, voluntary: null, note: 'Texas: within 6 days of discharge; next payday on resignation.' },
+  AZ: { involuntary: 7, voluntary: null, note: 'Arizona: within 7 working days or the next payday, whichever is sooner, on discharge.' },
+  FL: { involuntary: null, voluntary: null, note: 'Florida sets no deadline; federal law requires the next regular payday.' },
+  AL: { involuntary: null, voluntary: null, note: 'Alabama sets no deadline; federal law requires the next regular payday.' },
+  GA: { involuntary: null, voluntary: null, note: 'Georgia sets no deadline; federal law requires the next regular payday.' },
+};
+
+separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const s = await prisma.separation.findUnique({
+    where: { id },
+    include: {
+      associate: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          state: true,
+          compRecords: { where: { effectiveTo: null }, take: 1, select: { payType: true, amount: true } },
+          timeOffBalances: { select: { category: true, balanceMinutes: true } },
+          assetAssignments: {
+            where: { returnedAt: null },
+            include: { asset: { select: { id: true, kind: true, label: true, serial: true } } },
+          },
+          payrollSchedule: { select: { name: true, frequency: true } },
+        },
+      },
+    },
+  });
+  if (!s) throw new HttpError(404, 'not_found', 'Separation not found.');
+  const a = s.associate;
+  // Paid through the last finalized run that carried this person: approved
+  // hours after it are the ones the final check still owes.
+  const lastPaid = await prisma.payrollItem.findFirst({
+    where: { associateId: a.id, payrollRun: { status: { in: ['FINALIZED', 'DISBURSED'] } } },
+    orderBy: { payrollRun: { periodEnd: 'desc' } },
+    select: { payrollRun: { select: { periodEnd: true } } },
+  });
+  const paidThrough = lastPaid ? new Date(lastPaid.payrollRun.periodEnd.getTime() + 86_400_000) : null;
+  const [approved, awaiting] = await Promise.all([
+    prisma.timeEntry.findMany({
+      where: { associateId: a.id, status: 'APPROVED', clockOutAt: { not: null }, ...(paidThrough ? { clockInAt: { gte: paidThrough } } : {}) },
+      select: { clockInAt: true, clockOutAt: true },
+    }),
+    prisma.timeEntry.findMany({ where: { associateId: a.id, status: 'COMPLETED', clockOutAt: { not: null } }, select: { clockInAt: true, clockOutAt: true } }),
+  ]);
+  const hours = (rows: { clockInAt: Date; clockOutAt: Date | null }[]) =>
+    Math.round(rows.reduce((sum, r) => sum + ((r.clockOutAt?.getTime() ?? r.clockInAt.getTime()) - r.clockInAt.getTime()) / 3_600_000, 0) * 100) / 100;
+  const comp = a.compRecords[0] ?? null;
+  const hourly = comp?.payType === 'HOURLY' ? Number(comp.amount) : comp ? Number(comp.amount) / 2080 : null;
+  const unpaidHours = hours(approved);
+  const awaitingHours = hours(awaiting);
+  const payable = a.timeOffBalances.filter((b) => (b.category === 'VACATION' || b.category === 'PTO') && b.balanceMinutes > 0);
+  const leaveHours = Math.round((payable.reduce((sum, b) => sum + b.balanceMinutes, 0) / 60) * 100) / 100;
+  const state = (a.state ?? '').toUpperCase();
+  const rule = FINAL_PAY_DEADLINE[state] ?? { involuntary: null, voluntary: null, note: 'No state deadline on file; federal law requires the next regular payday.' };
+  const involuntary = s.reason.startsWith('INVOLUNTARY');
+  const days = involuntary ? rule.involuntary : rule.voluntary;
+  const deadline = days === null ? null : new Date(s.lastDayWorked.getTime() + days * 86_400_000).toISOString().slice(0, 10);
+  const policy = getLaborPolicy(state || null);
+  const snapshot = {
+    computedAt: new Date().toISOString(),
+    state: state || null,
+    rate: hourly,
+    payType: comp?.payType ?? null,
+    paidThrough: paidThrough ? paidThrough.toISOString().slice(0, 10) : null,
+    unpaidApprovedHours: unpaidHours,
+    awaitingApprovalHours: awaitingHours,
+    leavePayoutHours: leaveHours,
+    leaveBalances: a.timeOffBalances.map((b) => ({ category: b.category, hours: Math.round((b.balanceMinutes / 60) * 100) / 100, paidOut: b.category === 'VACATION' || b.category === 'PTO' })),
+    estimatedGross: hourly === null ? null : Math.round((unpaidHours + leaveHours) * hourly * 100) / 100,
+    deadline: { date: deadline, basis: deadline ? `${days} day${days === 1 ? '' : 's'} after the last day worked` : 'next regular payday', note: rule.note, minimumWageCents: policy.minimumWageCents },
+    paySchedule: a.payrollSchedule ? { name: a.payrollSchedule.name, frequency: a.payrollSchedule.frequency } : null,
+    finalPaycheckDate: s.finalPaycheckDate?.toISOString().slice(0, 10) ?? null,
+    finalPaycheckLate: deadline && s.finalPaycheckDate ? s.finalPaycheckDate.toISOString().slice(0, 10) > deadline : false,
+  };
+  await prisma.separation.update({ where: { id }, data: { finalPaySnapshot: snapshot } });
+  res.json({
+    separationId: id,
+    associateName: `${a.firstName} ${a.lastName}`.trim(),
+    finalPay: snapshot,
+    assets: {
+      outstanding: a.assetAssignments.map((x) => ({ assignmentId: x.id, assetId: x.asset.id, kind: x.asset.kind, label: x.asset.label, serial: x.asset.serial, assignedAt: x.assignedAt.toISOString() })),
+      waivedAt: s.assetsWaivedAt?.toISOString() ?? null,
+      waiveReason: s.assetsWaiveReason,
+      clear: a.assetAssignments.length === 0 || Boolean(s.assetsWaivedAt),
+    },
+    access: {
+      // Access removal is part of completion; before that, the login is live.
+      removed: s.status === 'COMPLETE',
+      activeLogins: s.status === 'COMPLETE' ? 0 : await prisma.user.count({ where: { associateId: a.id, deletedAt: null, status: { not: 'DISABLED' } } }),
+    },
+  });
+});
+
+separation119Router.post('/separations/:id/assets/waive', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const reason = z.string().trim().min(3).max(500).parse(req.body?.reason);
+  const s = await prisma.separation.findUnique({ where: { id } });
+  if (!s) throw new HttpError(404, 'not_found', 'Separation not found.');
+  if (s.status === 'COMPLETE') throw new HttpError(409, 'already_complete', 'Already complete.');
+  await prisma.separation.update({ where: { id }, data: { assetsWaivedAt: new Date(), assetsWaivedById: req.user!.id, assetsWaiveReason: reason } });
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'separation.assets_waived', entityType: 'Separation', entityId: id, metadata: { associateId: s.associateId, reason } },
+    'separation.assets_waived',
+  );
+  res.json({ ok: true });
+});

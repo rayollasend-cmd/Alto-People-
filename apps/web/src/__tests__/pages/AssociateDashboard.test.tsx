@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -36,6 +36,19 @@ vi.mock('@/lib/documentsApi', () => ({
 vi.mock('@/lib/communicationsApi', () => ({
   listMyInbox: vi.fn(),
 }));
+// The counted "Needs you" reads the same inbox the sidebar badge reads.
+vi.mock('@/lib/inboxApi', async () => {
+  const { useQuery } = await import('@tanstack/react-query');
+  const getInbox = vi.fn();
+  return {
+    getInbox,
+    INBOX_QUERY_KEY: ['inbox'],
+    useInbox: () => useQuery({ queryKey: ['inbox'], queryFn: getInbox }),
+  };
+});
+vi.mock('@/lib/lms94Api', () => ({
+  getMyTraining: vi.fn().mockResolvedValue({ enrollments: [] }),
+}));
 vi.mock('@/lib/emergencyApi', () => ({
   getMyEmergency: vi.fn().mockResolvedValue({ emergency: null, checkIn: null }),
   emergencyCheckIn: vi.fn(),
@@ -55,6 +68,8 @@ import { listOpenShifts } from '@/lib/qualApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
+import { getInbox } from '@/lib/inboxApi';
+import { getMyTraining } from '@/lib/lms94Api';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
@@ -134,6 +149,8 @@ beforeEach(() => {
   vi.mocked(listMyAgreements).mockResolvedValue({ agreements: [] } as never);
   vi.mocked(listMyDocuments).mockResolvedValue({ documents: [] } as never);
   vi.mocked(listMyInbox).mockResolvedValue({ notifications: [] } as never);
+  vi.mocked(getInbox).mockResolvedValue({ total: 0, sources: [] });
+  vi.mocked(getMyTraining).mockResolvedValue({ enrollments: [] });
   vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [] });
   vi.mocked(getMyShiftDetail).mockResolvedValue({ shift: {} as never, teammates: [], supervisors: [] });
 });
@@ -237,7 +254,7 @@ describe('<AssociateDashboard>', () => {
   it('says the check was incomplete rather than vanishing, when its own source fails', async () => {
     // Silently disappearing was still a kind of all-clear: an associate
     // with an unsigned agreement saw nothing at all and no reason why.
-    vi.mocked(listMyAgreements).mockRejectedValue(new Error('network down'));
+    vi.mocked(getInbox).mockRejectedValue(new Error('network down'));
     renderDashboard();
     expect(
       await screen.findByText(/couldn’t check everything just now/i),
@@ -292,35 +309,46 @@ describe('<AssociateDashboard>', () => {
   });
 });
 
-describe("<AssociateDashboard> action-needed card", () => {
-  it("says all caught up when every source loaded and found nothing", async () => {
+describe('<AssociateDashboard> — the counted "Needs you"', () => {
+  it('says all caught up when the inbox loaded and found nothing', async () => {
     renderDashboard();
     expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
   });
 
-  it("stays silent instead of claiming all caught up when a source failed", async () => {
-    // The sources swallow errors to null, which is indistinguishable from
-    // "nothing pending" once the row is omitted. Rendering the all-clear off
-    // that told associates they had no unsigned agreements when we simply
-    // had not managed to check.
-    vi.mocked(listMyAgreements).mockRejectedValue(new Error("network down"));
+  it('stays silent instead of claiming all caught up when the inbox failed', async () => {
+    vi.mocked(getInbox).mockRejectedValue(new Error('network down'));
     renderDashboard();
-
-    // Wait for a settled dashboard before asserting the absence.
-    await screen.findByText(/my schedule|upcoming|next shift/i);
-    await waitFor(() =>
-      expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument(),
-    );
+    expect(await screen.findByText(/couldn’t check everything just now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
   });
 
-  it("still lists the rows it did manage to load", async () => {
-    vi.mocked(listMyAgreements).mockResolvedValue({
-      agreements: [{ id: "ag-1", status: "PENDING_SIGNATURE" }],
-    } as never);
+  it('counts each thing waiting, beside the heading and on every row, linked to where it is done', async () => {
+    vi.mocked(getInbox).mockResolvedValue({
+      total: 3,
+      sources: [
+        { key: 'my-agreements', label: 'Agreements to sign', description: '', count: 1, path: '/agreements' },
+        { key: 'my-training', label: 'Training due', description: '', count: 2, path: '/learning' },
+        { key: 'my-shifts', label: 'Shifts to confirm', description: '', count: 0, path: '/scheduling' },
+      ],
+    });
     renderDashboard();
+    const list = await screen.findByTestId('associate-needs-you');
+    expect(screen.getByRole('heading', { name: /needs you/i })).toHaveTextContent('3');
+    expect(within(list).getByRole('link', { name: /agreements to sign/i })).toHaveAttribute('href', '/agreements');
+    expect(within(list).getByRole('link', { name: /training due/i })).toHaveAttribute('href', '/learning');
+    expect(within(list).queryByText(/shifts to confirm/i)).not.toBeInTheDocument();
+  });
 
-    expect(await screen.findByText(/agreement/i)).toBeInTheDocument();
-    expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
+  it('puts required training in the flow of work, above the ride', async () => {
+    vi.mocked(getMyTraining).mockResolvedValue({
+      enrollments: [
+        { id: 'e1', courseId: 'c1', courseTitle: 'Forklift safety', courseDescription: null, isRequired: true, status: 'ASSIGNED', assignedAt: new Date().toISOString(), completedAt: null, expiresAt: null, score: null },
+      ],
+    });
+    renderDashboard();
+    const nudge = await screen.findByTestId('training-nudge');
+    expect(nudge).toHaveTextContent('Forklift safety is required and not complete yet.');
+    expect(nudge).toHaveAttribute('href', '/learning');
   });
 });
 

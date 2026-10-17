@@ -106,3 +106,7 @@ export const listAssetAssignments = (params?: {
     `/asset-assignments${suffix}`,
   );
 };
+
+/** Record an asset back in hand (POST /asset-assignments/:id/return). */
+export const returnAssetAssignment = (assignmentId: string, input: { notes?: string | null; newStatus?: AssetStatus } = {}) =>
+  apiFetch<{ ok: true }>(`/asset-assignments/${assignmentId}/return`, { method: 'POST', body: input });

@@ -47,13 +47,13 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
   FINANCE_ACCOUNTANT: 'Time, scheduling, and payroll only — runs pay cycles, no HR data',
   INTERNAL_RECRUITER:
-    'Full org-wide access (no payroll void / PII export) — permissions identical to Workforce and Marketing Manager; the title is the only difference',
+    'Hire to file: the pipeline, interviews, offers, the candidate portal and onboarding handoffs, on the full admin surface (no payroll void / PII export); lands on the recruiter’s day',
   MANAGER:
     'Full org-wide access (no payroll void / PII export); lands on the team dashboard — direct reports, approvals, timesheets',
   WORKFORCE_MANAGER:
     'Field leadership: coverage across all stores, the supervisor corps, scheduling, time & standards, safety, recruiting and onboarding — no payroll, billing, or org-admin surface',
   MARKETING_MANAGER:
-    'Full org-wide access (no payroll void / PII export) — permissions identical to Internal Recruiter and Workforce Manager; the title is the only difference',
+    'Employer brand and the top of the funnel: the careers site, source of hire, referral campaigns and client NPS results — reads People and Recruiting; no payroll, HR, scheduling or settings surface',
   SHIFT_SUPERVISOR:
     'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
   FLOOR_SUPERVISOR:
@@ -192,7 +192,22 @@ export type Capability =
   //  - view:emergency     the live check-in board and the event history
   //  - manage:emergency   declare an emergency, stand it down
   | 'view:emergency'
-  | 'manage:emergency';
+  | 'manage:emergency'
+  // The floor (field roles, 2026-10):
+  //  - report:incident  file an injury or incident at my own store, with a
+  //    photo — it lands in the OSHA log for HR; no reading of the log, no
+  //    manage:compliance
+  //  - message:crew     reach my own crew: an in-app thread with a person
+  //    on my floor, or one text to everyone on a shift — never a broadcast
+  | 'report:incident'
+  | 'message:crew'
+  // Marketing (2026-10-17): the careers site's analytics and employer
+  // brand, referral campaigns and source of hire.
+  //  - view:marketing     read the funnel, the campaigns, the brand
+  //  - manage:marketing   edit the brand page, run campaigns, propose
+  //    referral bonuses (Finance still approves the money)
+  | 'view:marketing'
+  | 'manage:marketing';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -258,6 +273,12 @@ const FULL_ADMIN: Capability[] = [
   // for the one person who holds the switch.
   'view:emergency',
   'manage:emergency',
+  // The floor capabilities, so an admin can grant the supervisor roles.
+  'report:incident',
+  'message:crew',
+  // Marketing too, so an admin can staff the Marketing Manager.
+  'view:marketing',
+  'manage:marketing',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -280,6 +301,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:transport',
     // The board during a storm, never the switch (read-only everywhere).
     'view:emergency',
+    // Client NPS and source of hire are board numbers.
+    'view:marketing',
   ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
@@ -426,8 +449,25 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'ride:transport', 'drive:transport', 'view:transport', 'manage:transport',
     // Field leadership declares the emergency and runs the check-in board.
     'view:emergency', 'manage:emergency',
+    // Every floor is theirs: incidents and the crew on any shift.
+    'report:incident', 'message:crew',
   ]),
-  MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
+  // Marketing's real job (2026-10-17), after years as an admin clone with a
+  // label: the employer brand and the top of the funnel. Reads the People
+  // directory and the recruiting pipeline it feeds; owns the careers site,
+  // referral campaigns and source of hire. Holds NO payroll, HR, scheduling
+  // or settings surface — the money a campaign promises is Finance's to
+  // approve, and the pipeline itself is the recruiter's.
+  MARKETING_MANAGER: new Set<Capability>([
+    'view:dashboard',
+    'view:marketing',
+    'manage:marketing',
+    'view:recruiting',
+    'view:org',
+    'view:analytics',
+    // The in-app inbox/bell and the messenger.
+    'view:communications',
+  ]),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
   // their one client (the scope* helpers enforce the client boundary), plus
   // onboarding invites and progress monitoring for that same client. No
@@ -455,6 +495,11 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:communications',
     // Who on their floor has checked in safe during an emergency.
     'view:emergency',
+    // An injury on their floor is theirs to file, with the photo, the
+    // moment it happens — HR works it from the OSHA log.
+    'report:incident',
+    // Their crew: a thread with one of their people, a text to a shift.
+    'message:crew',
   ]),
   // Step-down from SHIFT_SUPERVISOR: watches the live floor for one
   // client, decides nothing. Deliberately NO manage:time — walk-in
@@ -468,6 +513,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:communications',
     'assist:ops-shifts',
     'ride:transport',
+    // Watch-only decides nothing, but a hazard or a no-show seen on the
+    // floor is raised in two taps — the incident goes to HR, the flag to
+    // their shift supervisor.
+    'report:incident',
   ]),
   // Runs the Alto vans end to end — the transportation command center.
   // Org-wide (every client and store); no HR, payroll or scheduling.

@@ -147,6 +147,9 @@ export const ClientUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   weekStartsOn: z.number().int().min(0).max(6).optional(),
   fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
   fieldglassBillRate: z.number().nonnegative().max(100000).nullable().optional(),
+  /** Invoicing: the standing purchase order and net-days terms every statement takes. */
+  poNumber: z.string().trim().max(60).nullable().optional(),
+  paymentTermsDays: z.number().int().min(0).max(365).optional(),
 }))();
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
@@ -898,6 +901,7 @@ export const QboStatusSchema = /* @__PURE__ */ (() => z.object({
   // Wave 5.2 — JE granularity. AGGREGATE = one JE per run (default);
   // PER_EMPLOYEE = one JE per associate, with EmployeeRef.
   jeMode: QboJeModeSchema,
+  glByCostCenter: z.boolean().optional(),
 }))();
 export type QboStatus = z.infer<typeof QboStatusSchema>;
 
@@ -917,6 +921,8 @@ export const QboAccountConfigInputSchema = /* @__PURE__ */ (() => z.object({
   accountNetPayPayable: z.string().trim().min(1).max(64).nullable().optional(),
   // Wave 5.2 — when omitted, jeMode is left unchanged.
   jeMode: QboJeModeSchema.optional(),
+  /** GL by cost center: split the wage expense debit by the associates' cost centers. */
+  glByCostCenter: z.boolean().optional(),
 }))();
 export type QboAccountConfigInput = z.infer<typeof QboAccountConfigInputSchema>;
 
@@ -2886,6 +2892,7 @@ export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'REGULAR',
   'OVERTIME',
   'DOUBLE_TIME',
+  'RETRO',
   'HOLIDAY',
   'SICK',
   'VACATION',
@@ -3264,9 +3271,10 @@ export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'MISSING_BANK_ACCOUNT',// WARNING  — no primary payout method on file
   'TERMINATED_IN_RUN',   // WARNING  — terminated <= periodEnd but has hours
   'OT_SPIKE',            // INFO     — > 20 OT hours in this period
-  'UNSUPPORTED_STATE',   // INFO     — state has no real SIT table; using fallback
+  'UNSUPPORTED_STATE',   // BLOCKING — state has no SIT table; nothing would be withheld
   'UNAPPROVED_TIME',     // WARNING  — unapproved hours will NOT be paid this run
   'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
+  'RETRO_PAY',           // INFO     — a back-dated rate change adds retroactive pay to this run
 ]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -4434,6 +4442,12 @@ export const CandidateEventKindSchema = /* @__PURE__ */ (() => z.enum([
   'HIRE_UNDONE',
   'REMOVED',
   'RESTORED',
+  // The candidate's own page (routes/candidatePortal).
+  'PORTAL_LINK_SENT',
+  'INTERVIEW_CONFIRMED',
+  'DOCUMENT_REQUESTED',
+  'DOCUMENT_UPLOADED',
+  'DOCUMENT_REVIEWED',
 ]))();
 export type CandidateEventKind = z.infer<typeof CandidateEventKindSchema>;
 
@@ -4800,6 +4814,32 @@ export const RecruiterHomeSchema = /* @__PURE__ */ (() => z.object({
     offerAcceptancePct: z.number().nullable(),
     offersDecided: z.number().int(),
   }),
+  /** The requisitions (Positions) behind the pipeline, by status — what the
+   *  recruiter is hiring against and what is still waiting for approval.
+   *  Optional so older fixtures and clients keep working. */
+  requisitions: z
+    .object({
+      total: z.number().int(),
+      byStatus: z.record(z.string(), z.number().int()),
+      items: z.array(
+        z.object({
+          id: z.string().uuid(),
+          code: z.string(),
+          title: z.string(),
+          clientName: z.string().nullable(),
+          status: z.string(),
+          fteAuthorized: z.number(),
+          targetStartDate: z.string().nullable(),
+          /** The seat's budget, when the headcount plan sets one. */
+          budgetAmount: z.number().nullable().optional(),
+          budgetPeriod: z.enum(['ANNUAL', 'MONTHLY']).nullable().optional(),
+          /** Who a requisition still waiting on approval waits on, and since when. */
+          waitingOn: z.string().nullable().optional(),
+          requestedAt: z.string().nullable().optional(),
+        }),
+      ),
+    })
+    .optional(),
   activity: z.array(
     z.object({
       id: z.string().uuid(),
@@ -6027,7 +6067,12 @@ export const PositionSchema = /* @__PURE__ */ (() => z.object({
   targetStartDate: z.string().nullable(), // YYYY-MM-DD
   minHourlyRate: z.string().nullable(),
   maxHourlyRate: z.string().nullable(),
+  /** Headcount plan (HR pack 2026-10): the money set aside for the seat, per period. */
+  budgetAmount: z.string().nullable(),
+  budgetPeriod: z.enum(['ANNUAL', 'MONTHLY']).nullable(),
   notes: z.string().nullable(),
+  /** Approval engine: the requisition that must be approved before the seat opens (null = none asked yet or not required). */
+  requisition: z.object({ approvalId: UuidSchema, status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']) }).nullable().optional(),
 }))();
 export type Position = z.infer<typeof PositionSchema>;
 
@@ -6049,6 +6094,8 @@ export const PositionInputSchema = /* @__PURE__ */ (() => z.object({
   targetStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   minHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
   maxHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
+  budgetAmount: z.number().min(0).max(99_999_999.99).nullable().optional(),
+  budgetPeriod: z.enum(['ANNUAL', 'MONTHLY']).nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
 }))();
 export type PositionInput = z.infer<typeof PositionInputSchema>;
@@ -6063,6 +6110,191 @@ export const PositionStatusInputSchema = /* @__PURE__ */ (() => z.object({
   status: PositionStatusSchema,
 }))();
 export type PositionStatusInput = z.infer<typeof PositionStatusInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Approval engine (2026-10) — maker-checker on the changes that move money,
+ *  people or access. One record; the decider is never the requester.
+ * -------------------------------------------------------------------------- */
+
+export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
+  'PAY_RATE_CHANGE',
+  'BILL_RATE_CHANGE',
+  'SEPARATION_COMPLETE',
+  'SELF_SERVICE_CHANGE',
+  'PROMOTION',
+  'REQUISITION',
+  'ROLE_CHANGE',
+  'WORKFLOW_GATE',
+]))();
+export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
+
+export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> = {
+  PAY_RATE_CHANGE: 'Pay rate',
+  BILL_RATE_CHANGE: 'Bill rate',
+  SEPARATION_COMPLETE: 'Separation',
+  SELF_SERVICE_CHANGE: 'Profile change',
+  PROMOTION: 'Promotion',
+  REQUISITION: 'Requisition',
+  ROLE_CHANGE: 'Access change',
+  WORKFLOW_GATE: 'Workflow gate',
+};
+
+export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();
+export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
+
+const NamedPersonSchema = /* @__PURE__ */ (() => z.object({ id: UuidSchema, name: z.string() }))();
+
+export const ApprovalRequestSummarySchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  kind: ApprovalRequestKindSchema,
+  status: ApprovalRequestStatusSchema,
+  subjectType: z.string(),
+  subjectId: z.string(),
+  title: z.string(),
+  summary: z.string().nullable(),
+  proposed: z.unknown(),
+  before: z.unknown().nullable(),
+  requester: NamedPersonSchema.nullable(),
+  approverRule: z.object({ capability: z.string().nullable(), userId: z.string().nullable(), role: z.string().nullable() }),
+  clientId: UuidSchema.nullable(),
+  associateId: UuidSchema.nullable(),
+  decidedBy: NamedPersonSchema.nullable(),
+  decidedAt: z.string().nullable(),
+  reason: z.string().nullable(),
+  appliedAt: z.string().nullable(),
+  applyError: z.string().nullable(),
+  createdAt: z.string(),
+  /** Whether the signed-in person may decide it (the server's rule). */
+  mayDecide: z.boolean(),
+}))();
+export type ApprovalRequestSummary = z.infer<typeof ApprovalRequestSummarySchema>;
+
+export const ApprovalDecideInputSchema = /* @__PURE__ */ (() => z.object({
+  decision: z.enum(['APPROVE', 'REJECT']),
+  reason: z.string().trim().max(2000).optional().nullable(),
+}))();
+export type ApprovalDecideInput = z.infer<typeof ApprovalDecideInputSchema>;
+
+/** What a route answers when the change went to a second person instead of landing (HTTP 202). */
+export const PendingApprovalResponseSchema = /* @__PURE__ */ (() => z.object({
+  pending: z.literal(true),
+  approvalId: UuidSchema,
+  title: z.string(),
+}))();
+export type PendingApprovalResponse = z.infer<typeof PendingApprovalResponseSchema>;
+
+export const ApprovalDelegationInputSchema = /* @__PURE__ */ (() => z.object({
+  toUserId: UuidSchema,
+  startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().trim().max(200).optional().nullable(),
+}))();
+export type ApprovalDelegationInput = z.infer<typeof ApprovalDelegationInputSchema>;
+
+export const ApprovalDelegationSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  startsOn: z.string(),
+  endsOn: z.string(),
+  note: z.string().nullable(),
+  from: NamedPersonSchema,
+  to: NamedPersonSchema,
+}))();
+export type ApprovalDelegation = z.infer<typeof ApprovalDelegationSchema>;
+
+/** Temporary elevated access: a role until a date, reverted by the sweep. */
+export const AccessGrantInputSchema = /* @__PURE__ */ (() => z.object({
+  userId: UuidSchema,
+  role: RoleSchema,
+  /** ISO datetime; at most 30 days out. */
+  until: z.string().datetime(),
+  reason: z.string().trim().min(3).max(300),
+}))();
+export type AccessGrantInput = z.infer<typeof AccessGrantInputSchema>;
+
+export const AccessGrantSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  user: z.object({ id: UuidSchema, name: z.string(), email: z.string() }),
+  role: RoleSchema,
+  grantedBy: NamedPersonSchema.nullable(),
+  reason: z.string(),
+  expiresAt: z.string(),
+  revertedAt: z.string().nullable(),
+  revertedWhy: z.string().nullable(),
+  createdAt: z.string(),
+}))();
+export type AccessGrant = z.infer<typeof AccessGrantSchema>;
+
+export const PromotionStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'APPLIED']))();
+export type PromotionStatus = z.infer<typeof PromotionStatusSchema>;
+
+export const PromotionInputSchema = /* @__PURE__ */ (() => z.object({
+  associateId: UuidSchema,
+  jobProfileId: UuidSchema.nullable().optional(),
+  newTitle: z.string().trim().max(120).nullable().optional(),
+  level: z.string().trim().max(40).nullable().optional(),
+  payType: z.enum(['HOURLY', 'SALARY']).nullable().optional(),
+  amount: z.number().positive().max(99_999_999.99).nullable().optional(),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  notes: z.string().trim().max(2000).nullable().optional(),
+}))();
+export type PromotionInput = z.infer<typeof PromotionInputSchema>;
+
+export const PromotionSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  jobProfileId: UuidSchema.nullable(),
+  jobProfileTitle: z.string().nullable(),
+  newTitle: z.string().nullable(),
+  level: z.string().nullable(),
+  payType: z.enum(['HOURLY', 'SALARY']).nullable(),
+  amount: z.string().nullable(),
+  currentAmount: z.string().nullable(),
+  effectiveFrom: z.string(),
+  notes: z.string().nullable(),
+  status: PromotionStatusSchema,
+  approvalRequestId: UuidSchema.nullable(),
+  requestedBy: NamedPersonSchema.nullable(),
+  letterDocumentId: UuidSchema.nullable(),
+  appliedAt: z.string().nullable(),
+  createdAt: z.string(),
+}))();
+export type Promotion = z.infer<typeof PromotionSchema>;
+
+export const WorkflowTaskSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  title: z.string(),
+  details: z.string().nullable(),
+  assigneeUserId: UuidSchema.nullable(),
+  assigneeRole: z.string().nullable(),
+  entityType: z.string().nullable(),
+  entityId: UuidSchema.nullable(),
+  linkUrl: z.string().nullable(),
+  dueAt: z.string().nullable(),
+  status: z.enum(['OPEN', 'DONE']),
+  doneAt: z.string().nullable(),
+  createdAt: z.string(),
+}))();
+export type WorkflowTask = z.infer<typeof WorkflowTaskSchema>;
+
+/** A pay or bill-rate change as Finance reads it from the audit trail. */
+export const PayChangeRowSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  at: z.string(),
+  kind: z.enum(['pay', 'bill']),
+  actor: NamedPersonSchema.nullable(),
+  associateId: UuidSchema.nullable(),
+  associateName: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  position: z.string().nullable(),
+  before: z.unknown().nullable(),
+  after: z.unknown().nullable(),
+  effectiveFrom: z.string().nullable(),
+  reason: z.string().nullable(),
+  approvalRequestId: UuidSchema.nullable(),
+  note: z.string().nullable(),
+}))();
+export type PayChangeRow = z.infer<typeof PayChangeRowSchema>;
 
 export const PositionHeadcountSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
@@ -6799,6 +7031,15 @@ export const OrgBrandingSchema = /* @__PURE__ */ (() => z.object({
   // with a bank change Finance has not verified by the cutoff.
   financeMailbox: z.string().nullable(),
   unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema,
+  // Approval engine (2026-10) — the maker-checker switches. A second person
+  // is required only where one exists.
+  payChangeApprovalPct: z.number().int().min(0).max(100),
+  payChangeAlwaysApprove: z.boolean(),
+  billRateApproval: z.boolean(),
+  separationSecondPerson: z.boolean(),
+  selfServiceApproval: z.boolean(),
+  roleChangeApproval: z.boolean(),
+  requisitionApproval: z.boolean(),
   updatedAt: z.string().datetime(),
 }))();
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -6832,6 +7073,13 @@ export const UpdateOrgBrandingInputSchema = /* @__PURE__ */ (() => z
       .nullable()
       .optional(),
     unverifiedPayoutPolicy: UnverifiedPayoutPolicySchema.optional(),
+    payChangeApprovalPct: z.number().int().min(0).max(100).optional(),
+    payChangeAlwaysApprove: z.boolean().optional(),
+    billRateApproval: z.boolean().optional(),
+    separationSecondPerson: z.boolean().optional(),
+    selfServiceApproval: z.boolean().optional(),
+    roleChangeApproval: z.boolean().optional(),
+    requisitionApproval: z.boolean().optional(),
   })
   .strict())();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
@@ -6870,6 +7118,8 @@ export type MfaDisableInput = z.infer<typeof MfaDisableInputSchema>;
  *  recovery code in `xxxxx-xxxxx` format. The server resolves which
  *  flavour was provided. */
 export const MfaChallengeInputSchema = /* @__PURE__ */ (() => z.object({
+  /** Access pack: remember this device for the tenant's device-trust days (when the tenant allows). */
+  rememberDevice: z.boolean().optional(),
   code: z
     .string()
     .min(1)
@@ -6981,6 +7231,11 @@ export const ClientStatementSchema = /* @__PURE__ */ (() => z.object({
    *  statement is outstanding). paymentRef = check/ACH reference. */
   paidAt: z.string().datetime().nullable().optional(),
   paymentRef: z.string().nullable().optional(),
+  /** Invoicing: the PO billed against, when it falls due (the client's terms), and the reminder cadence's position. */
+  poNumber: z.string().nullable().optional(),
+  dueAt: z.string().nullable().optional(),
+  reminderStage: z.number().int().optional(),
+  lastReminderAt: z.string().datetime().nullable().optional(),
 }))();
 export type ClientStatement = z.infer<typeof ClientStatementSchema>;
 

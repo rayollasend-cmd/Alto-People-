@@ -15,6 +15,9 @@ import { requireCapability } from '../middleware/auth.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { pendingResponse } from '../lib/approvalRequests.js';
+import { requestOpenPosition } from '../lib/requisitions.js';
+import { deciderFrom } from './approvalRequests.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 export const positionsRouter = Router();
@@ -83,8 +86,30 @@ function shape(
       : null,
     minHourlyRate: row.minHourlyRate?.toString() ?? null,
     maxHourlyRate: row.maxHourlyRate?.toString() ?? null,
+    budgetAmount: row.budgetAmount?.toString() ?? null,
+    budgetPeriod: row.budgetPeriod === 'ANNUAL' || row.budgetPeriod === 'MONTHLY' ? row.budgetPeriod : null,
     notes: row.notes,
+    requisition: requisitionOf(row),
   };
+}
+
+/** The requisition's standing, from the approval the position points at (filled in by withRequisitions). */
+const requisitionStatus = new Map<string, Position['requisition']>();
+function requisitionOf(row: { id: string; requisitionApprovalId: string | null }): Position['requisition'] {
+  if (!row.requisitionApprovalId) return null;
+  return requisitionStatus.get(row.id) ?? null;
+}
+/** Load the approval behind each position's requisition before shaping. */
+async function withRequisitions<T extends { id: string; requisitionApprovalId: string | null }>(rows: T[]): Promise<T[]> {
+  const ids = rows.map((r) => r.requisitionApprovalId).filter((x): x is string => !!x);
+  if (ids.length === 0) return rows;
+  const approvals = await prisma.approvalRequest.findMany({ where: { id: { in: ids } }, select: { id: true, status: true } });
+  const byId = new Map(approvals.map((a) => [a.id, a.status]));
+  for (const r of rows) {
+    const status = r.requisitionApprovalId ? byId.get(r.requisitionApprovalId) : undefined;
+    if (status) requisitionStatus.set(r.id, { approvalId: r.requisitionApprovalId!, status });
+  }
+  return rows;
 }
 
 const POS_INCLUDE = {
@@ -105,12 +130,12 @@ positionsRouter.get('/', VIEW, async (req: Request, res: Response) => {
     ...(clientId ? { clientId } : {}),
     ...(status ? { status: status as Position['status'] } : {}),
   };
-  const rows = await prisma.position.findMany({
+  const rows = await withRequisitions(await prisma.position.findMany({
     take: 1000,
     where,
     include: POS_INCLUDE,
     orderBy: [{ status: 'asc' }, { code: 'asc' }],
-  });
+  }));
   const body = PositionListResponseSchema.parse({
     positions: rows.map(shape),
   });
@@ -165,6 +190,81 @@ positionsRouter.get(
   },
 );
 
+/**
+ * Headcount plan (HR pack 2026-10): every position's budget against what
+ * the seat actually costs. Actual = the filled person's current pay,
+ * annualized (hourly × 2080 × FTE; salary as is); paid = their gross pay on
+ * finalized runs year to date. Variance is budget minus projected, so a
+ * negative number is a seat running over its plan. Rolled up by department.
+ */
+positionsRouter.get('/plan', VIEW, async (req: Request, res: Response) => {
+  const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  const year = typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year) ? Number(req.query.year) : new Date().getUTCFullYear();
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+  const rows = await prisma.position.findMany({
+    take: 2000,
+    where: { deletedAt: null, status: { not: 'CLOSED' }, ...(clientId ? { clientId } : {}) },
+    include: {
+      ...POS_INCLUDE,
+      filledBy: { select: { id: true, firstName: true, lastName: true, compRecords: { where: { effectiveTo: null }, take: 1, select: { payType: true, amount: true } } } },
+    },
+    orderBy: [{ department: { name: 'asc' } }, { code: 'asc' }],
+  });
+  const filledIds = rows.map((r) => r.filledByAssociateId).filter((x): x is string => Boolean(x));
+  const paid = filledIds.length
+    ? await prisma.payrollItem.groupBy({
+        by: ['associateId'],
+        where: { associateId: { in: filledIds }, payrollRun: { status: { in: ['FINALIZED', 'DISBURSED'] }, periodStart: { gte: yearStart, lt: yearEnd } } },
+        _sum: { grossPay: true },
+      })
+    : [];
+  const paidBy = new Map(paid.map((p) => [p.associateId, Number(p._sum.grossPay ?? 0)]));
+  const annualBudget = (p: { budgetAmount: Prisma.Decimal | null; budgetPeriod: string | null }) =>
+    p.budgetAmount == null ? null : p.budgetPeriod === 'MONTHLY' ? Number(p.budgetAmount) * 12 : Number(p.budgetAmount);
+  const positions = rows.map((p) => {
+    const comp = p.filledBy?.compRecords[0] ?? null;
+    const fte = Number(p.fteAuthorized);
+    const projected = comp ? (comp.payType === 'HOURLY' ? Number(comp.amount) * 2080 * fte : Number(comp.amount)) : null;
+    const budget = annualBudget(p);
+    return {
+      id: p.id,
+      code: p.code,
+      title: p.title,
+      status: p.status,
+      departmentId: p.departmentId,
+      departmentName: p.department?.name ?? null,
+      fteAuthorized: p.fteAuthorized.toString(),
+      filledByAssociateId: p.filledByAssociateId,
+      filledByName: p.filledBy ? `${p.filledBy.firstName} ${p.filledBy.lastName}`.trim() : null,
+      budgetAmount: p.budgetAmount?.toString() ?? null,
+      budgetPeriod: p.budgetPeriod,
+      annualBudget: budget,
+      projectedAnnualCost: projected,
+      paidYearToDate: p.filledByAssociateId ? (paidBy.get(p.filledByAssociateId) ?? 0) : 0,
+      variance: budget != null && projected != null ? Math.round((budget - projected) * 100) / 100 : null,
+    };
+  });
+  const byDept = new Map<string, { departmentId: string | null; departmentName: string; positions: number; filled: number; budget: number; projected: number; paidYearToDate: number; unbudgeted: number }>();
+  for (const p of positions) {
+    const key = p.departmentId ?? 'none';
+    const d = byDept.get(key) ?? { departmentId: p.departmentId, departmentName: p.departmentName ?? 'No department', positions: 0, filled: 0, budget: 0, projected: 0, paidYearToDate: 0, unbudgeted: 0 };
+    d.positions += 1;
+    if (p.filledByAssociateId) d.filled += 1;
+    if (p.annualBudget != null) d.budget += p.annualBudget;
+    else d.unbudgeted += 1;
+    if (p.projectedAnnualCost != null) d.projected += p.projectedAnnualCost;
+    d.paidYearToDate += p.paidYearToDate;
+    byDept.set(key, d);
+  }
+  const departments = [...byDept.values()].map((d) => ({ ...d, variance: Math.round((d.budget - d.projected) * 100) / 100 }));
+  const totals = departments.reduce(
+    (acc, d) => ({ positions: acc.positions + d.positions, filled: acc.filled + d.filled, budget: acc.budget + d.budget, projected: acc.projected + d.projected, paidYearToDate: acc.paidYearToDate + d.paidYearToDate, unbudgeted: acc.unbudgeted + d.unbudgeted }),
+    { positions: 0, filled: 0, budget: 0, projected: 0, paidYearToDate: 0, unbudgeted: 0 },
+  );
+  res.json({ year, positions, departments, totals: { ...totals, variance: Math.round((totals.budget - totals.projected) * 100) / 100 } });
+});
+
 positionsRouter.post('/', MANAGE, async (req: Request, res: Response) => {
   const input = PositionInputSchema.parse(req.body);
   const dup = await prisma.position.findFirst({
@@ -197,6 +297,8 @@ positionsRouter.post('/', MANAGE, async (req: Request, res: Response) => {
         input.maxHourlyRate == null
           ? null
           : new Prisma.Decimal(input.maxHourlyRate),
+      budgetAmount: input.budgetAmount == null ? null : new Prisma.Decimal(input.budgetAmount),
+      budgetPeriod: input.budgetPeriod ?? null,
       notes: input.notes ?? null,
     },
     include: POS_INCLUDE,
@@ -252,11 +354,22 @@ positionsRouter.put('/:id', MANAGE, async (req: Request, res: Response) => {
           : input.maxHourlyRate == null
             ? null
             : new Prisma.Decimal(input.maxHourlyRate),
+      budgetAmount:
+        input.budgetAmount === undefined
+          ? undefined
+          : input.budgetAmount == null
+            ? null
+            : new Prisma.Decimal(input.budgetAmount),
+      budgetPeriod: input.budgetPeriod === undefined ? undefined : input.budgetPeriod,
       notes: input.notes === undefined ? undefined : input.notes,
     },
     include: POS_INCLUDE,
   });
-  await audit(req, 'position.update', id, {});
+  await audit(req, 'position.update', id, {
+    ...(input.budgetAmount !== undefined || input.budgetPeriod !== undefined
+      ? { budgetAmount: input.budgetAmount ?? null, budgetPeriod: input.budgetPeriod ?? null, previousBudgetAmount: existing.budgetAmount?.toString() ?? null }
+      : {}),
+  });
   res.json(shape(updated));
 });
 
@@ -277,6 +390,18 @@ positionsRouter.post(
         'Cannot mark FILLED without an assigned associate. Use POST /positions/:id/assign first.',
       );
     }
+    if (status === 'OPEN') {
+      // Requisition → approval → posting: a seat opens through the engine, which
+      // carries its budget to a second manage:org holder where the tenant requires one.
+      const pending = await requestOpenPosition(prisma, id, deciderFrom(req.user!));
+      if (pending) {
+        res.status(202).json(pendingResponse(pending));
+        return;
+      }
+      const opened = await withRequisitions([await prisma.position.findUniqueOrThrow({ where: { id }, include: POS_INCLUDE })]);
+      res.json(shape(opened[0]));
+      return;
+    }
     if (status !== 'FILLED' && existing.filledByAssociateId) {
       // Status moving away from FILLED → unassign first.
       await prisma.position.update({
@@ -290,27 +415,6 @@ positionsRouter.post(
       include: POS_INCLUDE,
     });
     await audit(req, 'position.status', id, { from: existing.status, to: status });
-    if (status === 'OPEN') {
-      await emitWorkflow({
-        trigger: 'POSITION_OPENED',
-        entityType: 'Position',
-        entityId: id,
-        clientId: updated.clientId,
-        context: {
-          position: { id: updated.id, code: updated.code, title: updated.title },
-        },
-      });
-      void emitWebhookEvent(
-        'position.opened',
-        {
-          positionId: updated.id,
-          clientId: updated.clientId,
-          code: updated.code,
-          title: updated.title,
-        },
-        { clientId: updated.clientId },
-      );
-    }
     res.json(shape(updated));
   },
 );
